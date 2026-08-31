@@ -2880,8 +2880,20 @@ function serveStatic(req, res, pathname) {
   // clickjacking；referrer 对内不使用（全仓无 document.referrer）、对外不该泄漏控制台路径。
   // 这三个头对正常使用零影响。完整 script-src CSP 不在此列：它需要真浏览器验证（门套件跑不了
   // 浏览器，配错会静默弄坏控制台 —— 模板里满是内联 style），没有判据作保的防线不加。
-  res.writeHead(200, {"content-type": mimeTypes[extname(target)] || "application/octet-stream", "x-content-type-options": "nosniff",
-    "x-frame-options": "DENY", "content-security-policy": "frame-ancestors 'none'", "referrer-policy": "no-referrer"});
+  //
+  // 缓存：静态引用没有 cache-busting（裸 /app.js），此前又没有任何验证器/缓存头 —— 浏览器
+  // 每次页载整下几百 KB。给 no-cache + ETag（内存缓存的 mtimeMs:size 戳现成就是）：每次仍
+  // 必须回源核对（部署后立刻拿到新版，不存在旧 app.js 配新服务端的版本漂移），没变时 304 空体。
+  const etag = `"${cached.stamp}"`;
+  const securityHeaders = {"x-content-type-options": "nosniff", "x-frame-options": "DENY",
+    "content-security-policy": "frame-ancestors 'none'", "referrer-policy": "no-referrer",
+    "cache-control": "no-cache", etag};
+  if (req.headers["if-none-match"] === etag) {
+    res.writeHead(304, securityHeaders);
+    res.end();
+    return;
+  }
+  res.writeHead(200, {"content-type": mimeTypes[extname(target)] || "application/octet-stream", ...securityHeaders});
   res.end(content);
 }
 

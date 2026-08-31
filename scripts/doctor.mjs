@@ -338,6 +338,20 @@ try {
           + " —— 没有它，恶意页面把管理台内嵌一层就能骗人隔着透明框点「吊销/归档」");
       }
     }
+    // 【静态资源要能 304】：没有 cache-busting 也没有验证器时，浏览器每次页载整下几百 KB。
+    // no-cache + ETag = 每次回源核对（部署即拿新版，无版本漂移），没变时 304 空体。
+    const etag = page.headers.get("etag");
+    if (!etag || page.headers.get("cache-control") !== "no-cache") {
+      throw new Error(`控制台页面缺 ETag/no-cache（etag=${JSON.stringify(etag)}，cache-control=${JSON.stringify(page.headers.get("cache-control"))}）—— 浏览器每次页载整下全部静态资源`);
+    }
+    const revalidated = await fetch(`http://127.0.0.1:${port}/`, {headers: {"if-none-match": etag}});
+    await revalidated.text();
+    if (revalidated.status !== 304) {
+      throw new Error(`带 If-None-Match 重取没有 304（HTTP ${revalidated.status}）—— 条件缓存没接上，等于每次都整下`);
+    }
+    if (revalidated.headers.get("x-frame-options") !== "DENY") {
+      throw new Error("304 响应上把安全头丢了 —— 缓存命中的那条路也要带同一套头");
+    }
   }
   console.log(`control console health ok: ${health.status}`);
   const stateReadDenied = await jsonFetch(port, "/api/state");

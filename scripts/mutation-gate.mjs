@@ -3206,11 +3206,19 @@ const MUTATIONS = [
     expect: "起来没先说清自己是谁"
   },
   {
+    name: "静态资源的条件缓存必须真的回 304",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    "cache-control": "no-cache", etag};\n  if (req.headers["if-none-match"] === etag) {',
+    to: '    "cache-control": "no-cache", etag};\n  if (false) {',
+    expect: "没有 304"
+  },
+  {
     name: "控制台页面必须带防内嵌响应头（clickjacking）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
-    from: '    "x-frame-options": "DENY", "content-security-policy": "frame-ancestors \'none\'", "referrer-policy": "no-referrer"});',
-    to: '    "referrer-policy": "no-referrer"});',
+    from: '  const securityHeaders = {"x-content-type-options": "nosniff", "x-frame-options": "DENY",\n    "content-security-policy": "frame-ancestors \'none\'", "referrer-policy": "no-referrer",',
+    to: '  const securityHeaders = {"x-content-type-options": "nosniff",\n    "referrer-policy": "no-referrer",',
     expect: "缺安全响应头 x-frame-options"
   },
   {
