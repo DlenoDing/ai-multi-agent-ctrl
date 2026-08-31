@@ -3933,6 +3933,24 @@ const MUTATIONS = [
     expect: "没有已归档项目时不要多说一句"
   },
   {
+    name: "调优先级必须落到精确档位 admissionPriorityClass（非只写模糊 priorityHint）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "          if (priorityClass) workItem.admissionPriorityClass = priorityClass;\n          else workItem.priorityHint = priorityHint;",
+    to: "          workItem.priorityHint = priorityHint;",
+    expect: "调优先级没落到精确档位"
+  },
+  {
+    name: "调优先级不选档位又无关键词必须拒（不得静默无效）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "      : (priorityKeyword ? null",
+    to: "      : (true ? null",
+    expect: "静默无效"
+  },
+  {
     name: "租约回收不得抢占持有者仍存活的租约",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

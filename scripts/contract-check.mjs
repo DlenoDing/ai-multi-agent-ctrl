@@ -4680,10 +4680,34 @@ function verifyHumanAndOrganizationContracts(output) {
     // human directives consumed oldest-first (FIFO): the newest adjust_priority must win.
     const fifoState = structuredClone(seedState);
     ensureRuntimeCollections(fifoState, {root});
-    createHumanDirective(fifoState, {taskGroupId: "tg_runtime_management", directiveType: "adjust_priority", instruction: "first"}, {actor: "acct_ct"});
-    createHumanDirective(fifoState, {taskGroupId: "tg_runtime_management", directiveType: "adjust_priority", instruction: "second"}, {actor: "acct_ct"});
+    createHumanDirective(fifoState, {taskGroupId: "tg_runtime_management", directiveType: "adjust_priority", priorityClass: "formal_gate", instruction: "first"}, {actor: "acct_ct"});
+    createHumanDirective(fifoState, {taskGroupId: "tg_runtime_management", directiveType: "adjust_priority", priorityClass: "p0_safety", instruction: "second"}, {actor: "acct_ct"});
     consumeQueuedHumanDirectives(fifoState);
-    if (fifoState.taskGroups.find((item) => item.id === "tg_runtime_management").priorityHint !== "second") output.push("directive FIFO: newest adjust_priority did not win (LIFO regression)");
+    const fifoTg = fifoState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    if (fifoTg.priorityHint !== "second" || fifoTg.admissionPriorityClass !== "p0_safety") output.push("directive FIFO: newest adjust_priority did not win (LIFO regression)");
+
+    // 【调优先级要落到 cellAdmissionPriority 真读的档位、且不能静默无效】。选了档位 → 落 admissionPriorityClass
+    // （精确），cellAdmissionPriority 就返回那一档；而不是只写 priorityHint 靠关键词碰运气。
+    const prioSt2 = structuredClone(seedState);
+    ensureRuntimeCollections(prioSt2, {root});
+    const prioTg2 = prioSt2.taskGroups.find((item) => item.id === "tg_runtime_management");
+    prioTg2.workItems = [{id: "wi_prio", title: "提优先级", status: "ready", ownerRole: "agent-runtime", progress: 0}];
+    createHumanDirective(prioSt2, {taskGroupId: "tg_runtime_management", directiveType: "adjust_priority", priorityClass: "unblock_many", workItemId: "wi_prio"}, {actor: "acct_ct"});
+    consumeQueuedHumanDirectives(prioSt2);
+    const prioWi = prioSt2.taskGroups.find((item) => item.id === "tg_runtime_management").workItems.find((item) => item.id === "wi_prio");
+    if (prioWi.admissionPriorityClass !== "unblock_many") {
+      output.push(`调优先级没落到精确档位（admissionPriorityClass=${prioWi.admissionPriorityClass}）—— 调度器读的是它，只写 priorityHint 靠关键词匹配的话，人写非关键词就静默无效`);
+    }
+    if (cellAdmissionPriority(prioWi) !== 1) {  // unblock_many 是 ADMISSION_PRIORITY_TIERS 第 2 档（index 1，比默认 current_condition 更靠前）
+      output.push(`调优先级选了 unblock_many 但 cellAdmissionPriority 没返回那一档（${cellAdmissionPriority(prioWi)}，应为 1）`);
+    }
+    // 缺省不得等于无效果：既没选档位、指令里也没有关键词 —— 必须拒，不能静默无效。
+    let prioRefused = false;
+    try { createHumanDirective(prioSt2, {taskGroupId: "tg_runtime_management", directiveType: "adjust_priority", instruction: "请提高优先级"}, {actor: "acct_ct"}); }
+    catch (error) { prioRefused = error.message.startsWith("human_directive_priority_class_required"); }
+    if (!prioRefused) {
+      output.push("调优先级不选档位、指令又不含关键词时没被拒 —— 人以为调了，实际对执行顺序零影响（静默无效）");
+    }
 
     // Per-cell error isolation (global intelligent scheduling): a cell that throws during processing
     // is quarantined to needs_decision/cell_processing_error and never aborts the whole cycle.

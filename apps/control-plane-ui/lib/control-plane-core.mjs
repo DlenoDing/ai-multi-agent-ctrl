@@ -6165,6 +6165,20 @@ export function createHumanDirective(state, input = {}, options = {}) {
   const directiveType = HUMAN_DIRECTIVE_TYPES.includes(input.directiveType) ? input.directiveType : "free_text";
   const instruction = assertHumanTextWithinLimit(input.instruction || "", "human_directive_instruction", 4000);
   if (!instruction && directiveType === "free_text") throw Object.assign(new Error("human_directive_instruction_required"), {status: 400});
+  // adjust_priority 落到 cellAdmissionPriority 真读的 admissionPriorityClass（精确档位枚举）。此前它只写
+  // priorityHint（自由文本），而 cellAdmissionPriority 对 priorityHint 用关键词匹配 —— 人写「紧急」「提高」
+  // 或任何不含 p0/urgent/... 的话就【静默无效】（优先级没变而没有任何反馈），且缺省 "elevated" 本身就不
+  // 命中。要么给合法档位、要么 instruction 里带那几个关键词，否则拒绝：调优先级不能按了没效果。
+  const priorityKeyword = /p0|safety|funds|corrupt|urgent|critical/u.test(String(input.instruction || "").toLowerCase());
+  const priorityClass = directiveType === "adjust_priority"
+    ? (ADMISSION_PRIORITY_TIERS.includes(input.priorityClass) ? input.priorityClass
+      : (priorityKeyword ? null
+        : (() => { throw Object.assign(new Error("human_directive_priority_class_required"),
+            {status: 400, supported: ADMISSION_PRIORITY_TIERS,
+             // 人话放 details，【不能覆盖 message】——message 是路由当稳定错误码回的（本仓踩过多次）。
+             details: {supported: ADMISSION_PRIORITY_TIERS,
+               message: "调整优先级必须选一个档位（或在指令内容里写明 p0/urgent 等关键词）——否则这条指令对执行顺序没有任何影响"}}); })()))
+    : null;
   const resolution = directiveType === "resolve_decision"
     ? (["reopen", "abandon"].includes(input.resolution) ? input.resolution : requireKnownResolution(input.resolution))
     : null;
@@ -6177,6 +6191,7 @@ export function createHumanDirective(state, input = {}, options = {}) {
     directiveType,
     instruction,
     ...(directiveType === "resolve_decision" ? {resolution, workItemId: input.workItemId || null} : {}),
+    ...(directiveType === "adjust_priority" && priorityClass ? {priorityClass} : {}),
     issuedBy: options.actor || "unknown",
     status: "queued",
     appliedActions: [],
@@ -6385,13 +6400,18 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
         // 人写的是 taskGroup.priorityHint，而调度器读的是 workItem.priorityHint（cellAdmissionPriority）——
         // 写的和读的不是同一个对象，于是"调整优先级"这个杠杆除了往 humanGuidance 追加一行文字，
         // 对执行顺序零影响。指令要落到真正被读的地方去。
+        // 精确档位（admissionPriorityClass）是 cellAdmissionPriority 真读的 explicit 分支；priorityHint 的
+        // 关键词匹配只是模糊 fallback。有档位就落档位，让「调优先级」真正生效到调度器读的那个字段。
+        const priorityClass = ADMISSION_PRIORITY_TIERS.includes(directive.priorityClass) ? directive.priorityClass : null;
         const priorityHint = directive.instruction || "elevated";
         taskGroup.priorityHint = priorityHint;
+        if (priorityClass) taskGroup.admissionPriorityClass = priorityClass;
         const priorityTargets = (taskGroup.workItems || []).filter((item) =>
           (!directive.workItemId || item.id === directive.workItemId)
           && !WORK_ITEM_SETTLED_STATUSES.includes(item.status));
         for (const workItem of priorityTargets) {
-          workItem.priorityHint = priorityHint;
+          if (priorityClass) workItem.admissionPriorityClass = priorityClass;
+          else workItem.priorityHint = priorityHint;
           workItem.updatedAt = at;
         }
         appendHumanGuidance(taskGroup, {directiveRef: directive.directiveId, text: `优先级调整：${directive.instruction}`, addedAt: at});

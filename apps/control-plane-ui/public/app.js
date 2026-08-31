@@ -4252,6 +4252,12 @@ function renderDirectives() {
             ${decisionSelect("resolution", [["reopen", "重开（返回就绪，重置返工计数）"], ["abandon", "放弃（置为已替代，解除关闭阻塞）"]], "请选择处置方式…", {required: false})}
             <span class="small muted">仅“决策处置”类型生效</span>
           </div>
+          <div class="form-row"><label>优先级档位</label>
+            <!-- 仅「调整优先级」类型生效；不 required（浏览器约束不看类型）。空着提交由服务端拒：
+                 调优先级落到调度器真读的 admissionPriorityClass，不选档位又不写关键词就是静默无效。 -->
+            ${decisionSelect("priorityClass", [["p0_safety", t("p0_safety")], ["unblock_many", t("unblock_many")], ["available_window", t("available_window")], ["current_condition", t("current_condition")], ["capability_data", t("capability_data")], ["readiness_preflight", t("readiness_preflight")], ["formal_gate", t("formal_gate")]], "请选择优先级档位…", {required: false})}
+            <span class="small muted">仅“调整优先级”类型生效；不选档位这条指令对执行顺序没有影响</span>
+          </div>
           <div class="form-row"><label>目标工作项 ID</label><input name="workItemId" placeholder="留空只处置该组处于“待人工决策”的格子；要放弃其它状态的工作项必须点名填写它的 ID" /></div>
           <div class="form-row"><label>指令内容</label><textarea name="instruction" placeholder="补充要求 / 自由指令必填，其余类型可选"></textarea></div>
           <button class="primary-button" type="submit">提交指令</button>
@@ -5163,7 +5169,8 @@ document.addEventListener("submit", async (event) => {
         taskGroupId: directiveTaskGroupId,
         directiveType: data.directiveType,
         instruction: data.instruction || "",
-        ...(data.directiveType === "resolve_decision" ? {resolution: data.resolution, ...(String(data.workItemId || "").trim() ? {workItemId: data.workItemId.trim()} : {})} : {})
+        ...(data.directiveType === "resolve_decision" ? {resolution: data.resolution, ...(String(data.workItemId || "").trim() ? {workItemId: data.workItemId.trim()} : {})} : {}),
+        ...(data.directiveType === "adjust_priority" && data.priorityClass ? {priorityClass: data.priorityClass} : {})
       })});
       formTouched = false;
       await loadPage();
