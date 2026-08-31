@@ -105,6 +105,18 @@ const MUTATIONS = [
     expect: "掀动了一个已 verified 的工作项"
   },
   {
+    // mcp-grant.schema.json 此前只压在 createMcpGrant 的夹具上（零生产调用方），真实产出
+    // ensureDispatchMcpGrants（认领派发时写 state.mcpGrants）从没被校 —— 漏个必填字段静静漂移。
+    // 断言把 spec 压到真实信封上；变异去掉必填 grantDigest，required 检查即红。
+    name: "派发绑定的 MCP grant 必须整份符合 mcp-grant schema",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "contract",
+    check: "verifyAgentGatewayContracts",
+    from: "      grantDigest: digestOf(grantSeed)",
+    to: "      grantDigestXX: digestOf(grantSeed)",
+    expect: "DispatchBoundMcpGrant.grantDigest is required"
+  },
+  {
     name: "会话还在跑的 worker lane 不得被 idle",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

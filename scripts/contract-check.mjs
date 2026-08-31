@@ -6261,6 +6261,11 @@ function verifyAgentGatewayContracts(output) {
     }
     const issuedGrant = state.mcpGrants.find((grant) => grant.agentNodeId === node.nodeId && grant.dispatchId === claimed.dispatch.dispatch.dispatchId && grant.grantStatus === "issued");
     if (!issuedGrant) output.push("Agent Gateway did not issue dispatch-bound MCP grants after claim");
+    // mcp-grant.schema.json 的 schema 校验此前只压在 createMcpGrant 造的夹具上（它零生产调用方），
+    // 而【真实产出】—— ensureDispatchMcpGrants 每次认领派发时写进 state.mcpGrants 的信封 —— 从没被校过。
+    // 于是那个生产函数哪天漏个必填字段（grantDigest/riskLevel/leaseRef…）静静漂移，没有门会红。
+    // 把 spec 压到真实写入路径上：这里的 issuedGrant 就是生产函数刚产出的那一份。
+    if (issuedGrant) validateSchema(issuedGrant, mcpGrantSchema, "DispatchBoundMcpGrant", output);
 
     // 执行器（宿主机上那个 AI CLI）此前拿到的是节点令牌 —— 与网关端点同一份凭据。被提示注入的模型
     // 因此不只是能用 MCP：能心跳、能领取本项目内的其他派发、能报执行事件。改为按派发签发、只对

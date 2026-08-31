@@ -421,12 +421,14 @@ const DEAD_EXPORT_ACCEPTED = {
   // 词表"时才等于词表：公布面一按工具收窄，它当场只剩 8 个键，判据静静空转）。给出一个唯一
   // 真相源，比让三处继续各猜各的稳。
   mcpAcceptedInputVocabulary: "只有门在调：MCP 收受面的入参词表，此前三道门各自解析源码去猜它（其中一处在公布面收窄后当场空转）",
-  // 这一条不是"暂时没接上"，是【生产上根本没有这种对象】：真实授权是 state.accessGrants
-  // （subjectRef/resource/role/permissions，由 server.mjs 三处与 core 一处 push 出来），
-  // 而 spec/mcp-grant.schema.json 描述的 MCP 调用信封没有任何生产者。于是契约门那条
-  // schema 校验校的是本函数造出来的夹具，不是真实产出 —— 记在这里免得它被当成覆盖率。
-  // 也别顺手把它接上：它默认发 workId:"*"、30 天有效期、只读工具直接 approval:not-required。
-  createMcpGrant: "MCP 授权信封在生产上没有产生者：只有契约门拿它造夹具校 schema"
+  // createMcpGrant 本身只有契约门在调（零生产调用方），是一个【独立的夹具构造器】。
+  // 但别据此以为"mcp-grant 信封没有生产者"——那句曾写在这里、是错的：真实生产者是
+  // ensureDispatchMcpGrants（agent 认领派发时把完整 mcp-grant/v1 信封写进 state.mcpGrants）。
+  // 那个真实产出此前从没被 schema 校过，契约门只压在本夹具上 = 规范只守着死导出、真写入路径在漂移。
+  // 2026-09-01 已在 verifyAgentGatewayContracts 里对 issuedGrant（真实产出）补 validateSchema，
+  // 并加 gate:contract 变异（去掉必填 grantDigest 即红）。本函数保留为夹具构造器即可，别顺手接上生产：
+  // 它默认发 workId:"*"、30 天有效期、只读工具直接 approval:not-required，与派发绑定信封的收窄相反。
+  createMcpGrant: "独立夹具构造器，零生产调用方；真实信封由 ensureDispatchMcpGrants 产出并已在网关契约门按 schema 校验"
 };
 
 // 扫哪些文件也不手维护：apps/ 下每个带导出函数的模块都算。手列的那份漏了三个
