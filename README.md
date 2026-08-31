@@ -206,7 +206,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 | `AIMAC_ROOM_MESSAGES_MAX_TOTAL_BYTES` | `67108864` | 协作消息总体积（64 MiB）（下限 1048576，更小的值按它生效） | 同上 |
 | `AIMAC_ROOM_MESSAGES_TTL_MS` | `604800000` | 协作消息保留期（7 天）（下限 60000，更小的值按它生效） | 同上 |
 | `AIMAC_ROOM_MESSAGE_MAX_BYTES` | `32768` | 单条协作消息大小（32 KiB）（下限 1024，更小的值按它生效） | 超长的消息会被拒收 |
-| `AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES` | `67108864` | 项目事件库单段大小（64 MiB），到量轮转 | 轮转时要重建索引，段越大重建越久 |
+| `AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES` | `67108864` | 项目事件库单段大小（64 MiB），到量轮转（下限 1024，更小的值按它生效） | 轮转时要重建索引，段越大重建越久 |
 | `AIMAC_WORKER_LANE_MAX_REUSE` | `50` | 一条执行载体最多复用多少代 | 到量后退役、下次建新的 |
 | `AIMAC_VIEW_LEDGER_LIMIT` | `60` | 视图里台账类集合的下发条数（下限 1，更小的值按它生效） | 名单顶部横幅说「只加载了最近的若干条」 |
 | `AIMAC_PROGRESS_WORK_ITEM_CAP` | `300` | 任务组明细一次下发的工作项数（下限 20，更小的值按它生效） | 明细页说清总数与当前展示数 |

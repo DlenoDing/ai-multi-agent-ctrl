@@ -1635,7 +1635,7 @@ end
 # （执行事件必须续上 claimExpiresAt，且只有持有者能续），代理这一半守在这里。
 errors << "代理执行期间必须持续发心跳执行事件（长任务靠它续认领）" unless runtime_source.match?(/lastKeepAliveAt[\s\S]{0,400}?submitExecutionEvent\([^)]*"heartbeat"/m)
 # 间隔只有下界是不够的：配一个超大值就能把续期变成摆设，而故障表现是"跑得久的任务永远交不上检查点"。
-errors << "心跳间隔必须上下都有界（只有 Math.max 的话，一个超大环境变量就能让续认领失效）" unless runtime_source.match?(/keepAliveMs = Math\.min\([\s\S]{0,80}?Math\.max\(/m)
+errors << "心跳间隔必须上下都有界（只有 Math.max 的话，一个超大环境变量就能让续认领失效）" unless runtime_source.match?(/keepAliveMs = Math\.min\([\s\S]{0,80}?(?:Math\.max|clampEnvNumber)\(/m)
 # 上界还必须【按控制面给的真实 TTL 推导】，不能写死常量：TTL 是可配的（下限 60 秒），
 # 写死一个 300 秒在 TTL=60 秒的部署上照样赶不上过期，而那同样是"猜一个数"。
 # 判据取【那一条语句本身】，不看它附近有什么：按邻近判的话，上一行的 claimTtlMs 就能让
@@ -1706,7 +1706,7 @@ errors << %(验收卡片必须说明角色技能回退（否则人以为它按�
 # 原判据写死了 `for (const session of revalidationState.authSessions || [])`，
 # 于是把这段改写成 some()+全量读写（为了不在每拍都水合整份状态）就直接报红 ——
 # 而那次改写恰恰让清扫更省。判据锁写法就会挡住正确的改进。
-realtime_heartbeat_body = server_source[/const realtimeHeartbeat = setInterval\([\s\S]*?\n\}, Math\.max/m].to_s
+realtime_heartbeat_body = server_source[/const realtimeHeartbeat = setInterval\([\s\S]*?\n\}, (?:Math\.max|clampEnvNumber)/m].to_s
 errors << "找不到实时心跳这一段 —— 提取逻辑与代码脱节" if realtime_heartbeat_body.empty?
 errors << %(必须有独立的过期会话清扫（不能只依赖"下一次有人登录"）) unless realtime_heartbeat_body.include?("authSessions") &&
   realtime_heartbeat_body.include?(%(status = "expired")) && realtime_heartbeat_body.include?("writeState(")

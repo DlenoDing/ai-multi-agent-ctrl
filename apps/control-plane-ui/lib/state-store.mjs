@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { clampEnvNumber } from "./env-number.mjs";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -338,7 +339,7 @@ function assertStateVersionAdvanced(state, expectedStateVersion) {
 
 // 保留仍被长期对象引用的决策，其余按时间淘汰。数量以活跃长期对象数为界，不会失控。
 function capPolicyDecisionsKeepingReferenced(state) {
-  const cap = Math.max(100, Number(process.env.AIMAC_POLICY_DECISIONS_CAP || 500));
+  const cap = clampEnvNumber(process.env.AIMAC_POLICY_DECISIONS_CAP, 100, 500);
   // 滞后区：卡在上限线上会让【每一次写】都重建一遍引用集合（要扫 accessGrants + repositoryOutputs，
   // 实测 5000 规模下每写 0.32ms，占请求预算约 6%，而且是随规模线性涨的那种）。
   // 攒够 slack 条再裁一次，摊薄到 1/64；保留强度一个字没变 —— 裁的那一刻照样把被引用的捞回来，
@@ -810,8 +811,8 @@ function pruneCentralState(state) {
 }
 
 function pruneIdempotencyRecords(records) {
-  const ttlMs = Math.max(60 * 60 * 1000, Number(process.env.AIMAC_IDEMPOTENCY_TTL_MS || 7 * 24 * 60 * 60 * 1000));
-  const maxRecords = Math.max(100, Number(process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS || 5000));
+  const ttlMs = clampEnvNumber(process.env.AIMAC_IDEMPOTENCY_TTL_MS, 60 * 60 * 1000, 7 * 24 * 60 * 60 * 1000);
+  const maxRecords = clampEnvNumber(process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS, 100, 5000);
   const cutoff = Date.now() - ttlMs;
   return Object.fromEntries(
     Object.entries(records)

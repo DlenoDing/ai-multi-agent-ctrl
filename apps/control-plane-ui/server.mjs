@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { clampEnvNumber } from "./lib/env-number.mjs";
 import { WebSocketServer } from "ws";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
@@ -1414,7 +1415,7 @@ function loginClientIp(req) {
 function loginRateLimited(req) {
   const entry = loginAttempts.get(loginClientIp(req));
   if (!entry || Date.now() > entry.resetAt) return false;
-  const maxAttempts = Math.max(3, Number(process.env.AIMAC_LOGIN_ATTEMPTS_PER_MINUTE || 10));
+  const maxAttempts = clampEnvNumber(process.env.AIMAC_LOGIN_ATTEMPTS_PER_MINUTE, 3, 10);
   return entry.count >= maxAttempts;
 }
 
@@ -1786,9 +1787,9 @@ function cachedScopedState(state, account, session) {
 }
 
 // 列表视图里每个任务组最多嵌这么多工作单元；真实总数另给 workItemCount。
-const embeddedWorkItemCap = Math.max(5, Number(process.env.AIMAC_VIEW_EMBEDDED_WORK_ITEM_CAP || 20));
+const embeddedWorkItemCap = clampEnvNumber(process.env.AIMAC_VIEW_EMBEDDED_WORK_ITEM_CAP, 5, 20);
 // 明细页（/api/task-groups/:id/progress）比列表视图需要多得多的工作项，但也不能不设上限。
-const progressWorkItemCap = Math.max(20, Number(process.env.AIMAC_PROGRESS_WORK_ITEM_CAP || 300));
+const progressWorkItemCap = clampEnvNumber(process.env.AIMAC_PROGRESS_WORK_ITEM_CAP, 20, 300);
 
 // 只写一处：视图基底与各视角的字段清单都会产出 taskGroups，分别写一遍的话，
 // 后写的那次会把前一次的截断【覆盖掉】——实测就是这么漏的（tasks 视角照旧 89KB）。
@@ -1883,7 +1884,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
   // 截断仍会被如实标记（界面显示"共 N+ 条"），所以少取不等于少说。
   // 上限做成可配：默认 60（每张账本表最多渲染 20 行，3 倍余量），
   // 而门要能把它调小才验得动"截断仍会被如实标记"—— 造 60 条账本记录只为验一个标记，代价不合理。
-  const ledgerLimit = Math.min(capped, Math.max(1, Number(process.env.AIMAC_VIEW_LEDGER_LIMIT || 60)));
+  const ledgerLimit = Math.min(capped, clampEnvNumber(process.env.AIMAC_VIEW_LEDGER_LIMIT, 1, 60));
   const LEDGER_COLLECTIONS = new Set(["modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions",
     "agentExecutionEvents", "agentControlCommands", "workerLanes", "transitionEvidence"]);
   const limitFor = (field) => (LEDGER_COLLECTIONS.has(field) ? ledgerLimit : capped);
@@ -3481,7 +3482,7 @@ async function handleApi(req, res) {
     // the oldest active ones (last resort against a runaway).
     const nowMs = Date.now();
     const liveSessions = state.authSessions.filter((item) => item.status === "active" && new Date(item.expiresAt || 0).getTime() > nowMs);
-    const activeCap = Math.max(200, Number(process.env.AIMAC_ACTIVE_SESSION_CAP || 5000));
+    const activeCap = clampEnvNumber(process.env.AIMAC_ACTIVE_SESSION_CAP, 200, 5000);
     state.authSessions = liveSessions.slice(0, activeCap);
     audit(state, "auth-service", "auth_login", `Account:${account.accountId}`);
     commitUnguardedWrite(state);
@@ -6678,7 +6679,7 @@ const realtimeHeartbeat = setInterval(() => {
     client.isAlive = false;
     try { client.ping(); } catch { realtimeClients.delete(client); }
   }
-}, Math.max(10000, Number(process.env.AIMAC_REALTIME_HEARTBEAT_MS || 30000)));
+}, clampEnvNumber(process.env.AIMAC_REALTIME_HEARTBEAT_MS, 10000, 30000));
 
 // 自治循环此前【没有任何东西驱动它】：runAutonomousCycle 的入口只有 POST /api/orchestrator/run
 // 与一个 MCP 工具，server.mjs 里没有任何定时器调用它。而 task_group:orchestrate 不在任何项目角色
@@ -6885,9 +6886,9 @@ function respondApiError(res, error, requestLabel = "") {
   json(res, error?.status || 500, {error: "server_error", message: error?.message});
 }
 
-server.keepAliveTimeout = Math.max(5000, Number(process.env.AIMAC_KEEP_ALIVE_TIMEOUT_MS || 65000));
+server.keepAliveTimeout = clampEnvNumber(process.env.AIMAC_KEEP_ALIVE_TIMEOUT_MS, 5000, 65000);
 server.headersTimeout = server.keepAliveTimeout + 5000;
-server.requestTimeout = Math.max(server.headersTimeout, Number(process.env.AIMAC_REQUEST_TIMEOUT_MS || 300000));
+server.requestTimeout = clampEnvNumber(process.env.AIMAC_REQUEST_TIMEOUT_MS, server.headersTimeout, 300000);
 
 try {
   assertRuntimeSecurity();

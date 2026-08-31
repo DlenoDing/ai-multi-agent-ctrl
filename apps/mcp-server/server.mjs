@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync } from "node:fs";
+import { clampEnvNumber } from "../control-plane-ui/lib/env-number.mjs";
 import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1425,7 +1426,7 @@ function appendMcpAudit(event) {
 }
 
 function rotateMcpAuditIfNeeded() {
-  const maxBytes = Math.max(1024 * 1024, Number(process.env.AIMAC_MCP_AUDIT_MAX_BYTES || 64 * 1024 * 1024));
+  const maxBytes = clampEnvNumber(process.env.AIMAC_MCP_AUDIT_MAX_BYTES, 1024 * 1024, 64 * 1024 * 1024);
   try {
     if (!existsSync(mcpAuditPath) || statSync(mcpAuditPath).size < maxBytes) return;
     const rotatedPath = `${mcpAuditPath}.${new Date().toISOString().replace(/[^0-9T]/g, "")}.${process.pid}.${randomBytes(4).toString("hex")}.rotated`;
@@ -1437,7 +1438,7 @@ function rotateMcpAuditIfNeeded() {
 }
 
 function pruneMcpAuditRotations() {
-  const keep = Math.max(1, Number(process.env.AIMAC_MCP_AUDIT_ROTATIONS || 20));
+  const keep = clampEnvNumber(process.env.AIMAC_MCP_AUDIT_ROTATIONS, 1, 20);
   const dir = dirname(mcpAuditPath);
   const prefix = `${mcpAuditPath.split("/").pop()}.`;
   const rotated = readdirSync(dir)
@@ -2194,8 +2195,8 @@ function scopedDispatch(state, dispatchId, context = {}) {
 // 实测 1500 单元时它和 full 一样大（3MB），full 需要开关才允许的那道最小权限门因此在体积上
 // 什么也没省下。而这份东西是发给 AI agent 的工具输出：它直接占 agent 的上下文、按 token 计费。
 // 截断可以，但 agent 会据此判断"是不是全部"，所以每一处截断都要带上真实总数与标记。
-const MCP_SUMMARY_CAP = Math.max(5, Number(process.env.AIMAC_MCP_SUMMARY_CAP || 25));
-const MCP_SUMMARY_WORK_ITEM_CAP = Math.max(5, Number(process.env.AIMAC_MCP_SUMMARY_WORK_ITEM_CAP || 20));
+const MCP_SUMMARY_CAP = clampEnvNumber(process.env.AIMAC_MCP_SUMMARY_CAP, 5, 25);
+const MCP_SUMMARY_WORK_ITEM_CAP = clampEnvNumber(process.env.AIMAC_MCP_SUMMARY_WORK_ITEM_CAP, 5, 20);
 
 function summarizeList(items, cap) {
   const list = Array.isArray(items) ? items : [];
@@ -2288,7 +2289,7 @@ function roomJoin(state, args) {
   // 是按调用次数增长的。参与者名单不参与任何授权判定（roomSend/roomWait 从不查询它），也没有任何
   // 门在读它，因此按最近使用截断不会摘掉任何门依赖的东西。
   state.roomParticipants = [participant, ...state.roomParticipants.filter((item) => item.participantId !== participant.participantId)]
-    .slice(0, Math.max(100, Number(process.env.AIMAC_ROOM_PARTICIPANTS_MAX || 5000)));
+    .slice(0, clampEnvNumber(process.env.AIMAC_ROOM_PARTICIPANTS_MAX, 100, 5000));
   return {participant};
 }
 

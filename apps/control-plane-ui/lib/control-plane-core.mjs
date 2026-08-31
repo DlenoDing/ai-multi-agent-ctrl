@@ -8,6 +8,7 @@ import { appendAuditEntry } from "./audit-ledger.mjs";
 import { assertTransition, canonicalTransition, requiresValuesToEvidenceRefs } from "./transition-engine.mjs";
 import { AGENT_DISPATCH_TERMINAL_STATES, isTerminalDispatchStatus } from "./lifecycle-states.mjs";
 import { mcpToolNames } from "./mcp-tool-catalog.mjs";
+import { clampEnvNumber } from "./env-number.mjs";
 
 const controlPlaneRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "../../..");
 const specDigestCache = new Map();
@@ -1965,7 +1966,7 @@ export function makeProjectScopePredicate(taskGroups, scopeProjectId) {
 }
 
 export function wipCapacityForProject(state, projectId) {
-  const perNode = Math.max(1, Number(process.env.AIMAC_WIP_PER_NODE || 2));
+  const perNode = clampEnvNumber(process.env.AIMAC_WIP_PER_NODE, 1, 2);
   let online = 0;
   let registered = 0;
   for (const node of state.agentRuntimeNodes || []) {
@@ -1979,7 +1980,7 @@ export function wipCapacityForProject(state, projectId) {
   // 没有执行方会来领，摊开的全是纯浪费。所以只给它一个很小的头（同场景降到 200 / 7.5MB）；
   // 第一个节点注册上来，下一拍就回到完整队头。
   // 判据是"注册过"而不是"此刻在线"：节点掉线是常态，那时队列恰恰该留着等它回来。
-  const queueHead = Math.max(1, Number(process.env.AIMAC_WIP_QUEUE_HEAD || (registered ? 16 : 2)));
+  const queueHead = clampEnvNumber(process.env.AIMAC_WIP_QUEUE_HEAD, 1, registered ? 16 : 2);
   return queueHead + online * perNode;
 }
 
@@ -2037,7 +2038,7 @@ function recordAdmissionDecision(state, input = {}) {
     cycleRef: input.cycleRef || null,
     decidedAt: new Date().toISOString()
   };
-  const cap = Math.max(50, Number(process.env.AIMAC_ADMISSION_DECISION_CAP || 400));
+  const cap = clampEnvNumber(process.env.AIMAC_ADMISSION_DECISION_CAP, 50, 400);
   state.admissionDecisions = [decision, ...state.admissionDecisions];
   // 这里原先【每记一条决策就整份裁一遍】，而裁一遍要把全部任务组的工作项摊平成 liveCellIds。
   // 更要命的是它的保留规则「每个活单元留最新一条」：8000 个活单元时留存恒在 8400，
@@ -2125,7 +2126,7 @@ function recordAdmissionScan(state, input = {}) {
     cellClasses: Object.fromEntries(decisions.map((decision) => [decision.workItemId, decision.cellClass])),
     sampledAt: new Date().toISOString()
   };
-  const cap = Math.max(20, Number(process.env.AIMAC_ADMISSION_SCAN_CAP || 200));
+  const cap = clampEnvNumber(process.env.AIMAC_ADMISSION_SCAN_CAP, 20, 200);
   // 空转的一拍也会为每个任务组记一条扫描，一天 1440 拍就是几千条"什么都没扫到"的记录。
   // 它们不只是浪费：这份历史是有上限的，噪声会把【真实的准入判断】挤出窗口 ——
   // 等于系统自己把自己的证据删了。同一任务组连着两次扫描结果一模一样时，不再记新的一条，
@@ -2453,7 +2454,7 @@ function runAutonomousCycleBody(state, request = {}) {
       const failedRuns = (state.agentDispatches || []).filter((item) =>
         item.taskGroupId === taskGroup.id && item.workItemId === workItem.id && item.status === "failed");
       const failureCount = Number(workItem.executionFailureCount || 0);
-      const maxExecutionAttempts = Math.max(1, Number(process.env.AIMAC_MAX_EXECUTION_ATTEMPTS || 3));
+      const maxExecutionAttempts = clampEnvNumber(process.env.AIMAC_MAX_EXECUTION_ATTEMPTS, 1, 3);
       if (failureCount >= maxExecutionAttempts && !["verified", "closed"].includes(workItem.status)) {
         const lastFailure = failedRuns.at(-1)?.failureReason || "已被历史上限顶掉，看不到了";
         workItem.status = "needs_decision";
@@ -3696,9 +3697,9 @@ function capBoundedHistories(state) {
   // 于是任务组一旦关闭，它那些记录就再也没有任何代码会去回收，上限形同虚设。
   if (shouldCap(state.completionReadiness, 80)) state.completionReadiness = capPerTaskGroupRecords(state.completionReadiness, state, 80);
   if (shouldCap(state.closeBarriers, 80)) state.closeBarriers = capPerTaskGroupRecords(state.closeBarriers, state, 80);
-  const scanCap = Math.max(20, Number(process.env.AIMAC_ADMISSION_SCAN_CAP || 200));
+  const scanCap = clampEnvNumber(process.env.AIMAC_ADMISSION_SCAN_CAP, 20, 200);
   if (shouldCap(state.admissionScans, scanCap)) state.admissionScans = capPerTaskGroupRecords(state.admissionScans, state, scanCap);
-  const admissionCap = Math.max(50, Number(process.env.AIMAC_ADMISSION_DECISION_CAP || 400));
+  const admissionCap = clampEnvNumber(process.env.AIMAC_ADMISSION_DECISION_CAP, 50, 400);
   if (shouldCap(state.admissionDecisions, admissionCap)) {
     state.admissionDecisions = capAdmissionDecisions(state.admissionDecisions, state, admissionCap);
   }
@@ -4836,7 +4837,7 @@ function reviewFindingLabel(code) { return REVIEW_FINDING_LABELS[code] || code; 
 // 提示按 summary 去重，但每个工作项/派发都会产生自己的一条 —— 实测 60 个单元反复失败就是
 // 60 条，按规模线性涨，而它嵌在任务组里、每个视图每次请求都带上（4000 单元约 800KB）。
 // 加上限：保留最近的若干条，并【记下丢了多少】—— 悄悄丢掉等于让人以为问题只有这几个。
-const TASK_GROUP_BLOCKER_CAP = Math.max(10, Number(process.env.AIMAC_TASK_GROUP_BLOCKER_CAP || 50));
+const TASK_GROUP_BLOCKER_CAP = clampEnvNumber(process.env.AIMAC_TASK_GROUP_BLOCKER_CAP, 10, 50);
 
 function addBlocker(taskGroup, severity, summary) {
   taskGroup.blockers ||= [];
@@ -6920,7 +6921,7 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
     workItem.reviewState = "changes_requested";
     workItem.updatedAt = at;
     const rejectionCount = previousRejections.length + (duplicateRejection ? 0 : 1);
-    const maxReworkAttempts = Math.max(1, Number(process.env.AIMAC_REVIEW_MAX_REWORK_ATTEMPTS || 3));
+    const maxReworkAttempts = clampEnvNumber(process.env.AIMAC_REVIEW_MAX_REWORK_ATTEMPTS, 1, 3);
     if (options.backfill || rejectionCount >= maxReworkAttempts) {
       // Both the max-rework and the backfill failure paths must demote to needs_decision. A backfill
       // review runs against an already-`verified` item that lost its review bundle; if it fails we must
@@ -7306,7 +7307,7 @@ function grantResourceProjectId(state, grant = {}) {
 // 上限在调用时读环境变量，与同一块里的条数/TTL 上限一致 —— 若在模块加载时读，
 // 部署方在启动后设置的值会静默失效，而这种"设了没生效"最难被发现。
 export function roomMessageMaxBytes() {
-  return Math.max(1024, Number(process.env.AIMAC_ROOM_MESSAGE_MAX_BYTES || 32 * 1024));
+  return clampEnvNumber(process.env.AIMAC_ROOM_MESSAGE_MAX_BYTES, 1024, 32 * 1024);
 }
 
 function roomMessageBytes(message) {
@@ -7321,7 +7322,7 @@ function roomMessageBytes(message) {
 // 【已经没有任何留存消息】的房间：消息全部过了 7 天 TTL 才会走到这一步，那时不可能还有读者
 // 挂在它的游标上。仍有留存消息的房间一律不动，序号的单调性由 retainedMax 继续兜住。
 function pruneRoomSequenceKeys(state) {
-  const maxRooms = Math.max(100, Number(process.env.AIMAC_ROOM_SEQUENCE_MAX_ROOMS || 5000));
+  const maxRooms = clampEnvNumber(process.env.AIMAC_ROOM_SEQUENCE_MAX_ROOMS, 100, 5000);
   const keys = Object.keys(state.roomSequenceByRoom || {});
   if (keys.length <= maxRooms) return;
   const roomsWithMessages = new Set((state.roomMessages || []).map((item) => item.roomId));
@@ -7334,14 +7335,14 @@ function pruneRoomSequenceKeys(state) {
 }
 
 function pruneRoomMessages(state) {
-  const maxTotal = Math.max(1000, Number(process.env.AIMAC_ROOM_MESSAGES_MAX_TOTAL || 10000));
-  const maxPerRoom = Math.max(100, Number(process.env.AIMAC_ROOM_MESSAGES_MAX_PER_ROOM || 1000));
-  const ttlMs = Math.max(60 * 1000, Number(process.env.AIMAC_ROOM_MESSAGES_TTL_MS || 7 * 24 * 60 * 60 * 1000));
+  const maxTotal = clampEnvNumber(process.env.AIMAC_ROOM_MESSAGES_MAX_TOTAL, 1000, 10000);
+  const maxPerRoom = clampEnvNumber(process.env.AIMAC_ROOM_MESSAGES_MAX_PER_ROOM, 100, 1000);
+  const ttlMs = clampEnvNumber(process.env.AIMAC_ROOM_MESSAGES_TTL_MS, 60 * 1000, 7 * 24 * 60 * 60 * 1000);
   // 条数上限管不住体积。roomMessages 不在 projectShardCollections 里，整批驻留在中央 state 文档，
   // 而中央 state 在**每一次任意写入**时被整体序列化落盘 —— 只限条数的话，10000 条 × 单条 2MB
   // （HTTP body 上限）就是 20GB 常驻，此后每一次无关的写操作都要序列化这 20GB。
   // 所以再加一道总字节预算：单条上限挡住门口，总量预算兜住无论怎么组合的结果。
-  const maxTotalBytes = Math.max(1024 * 1024, Number(process.env.AIMAC_ROOM_MESSAGES_MAX_TOTAL_BYTES || 64 * 1024 * 1024));
+  const maxTotalBytes = clampEnvNumber(process.env.AIMAC_ROOM_MESSAGES_MAX_TOTAL_BYTES, 1024 * 1024, 64 * 1024 * 1024);
   const cutoff = Date.now() - ttlMs;
   const perRoom = new Map();
   const kept = [];
@@ -8787,7 +8788,7 @@ export function repositoryUrlRegisteredForProject(project, url) {
 // 就是中央文档里 ~40MB，而中央文档【每一次任意写入都要整份重写】—— 一次失败登录的审计写也要。
 // 所以响应体按重放窗口清掉，判据字段照旧长期保留。
 export function purgeExpiredIdempotencyPayloads(state, at = Date.now()) {
-  const ttlMs = Math.max(60000, Number(process.env.AIMAC_IDEMPOTENCY_PAYLOAD_TTL_MS || 600000));
+  const ttlMs = clampEnvNumber(process.env.AIMAC_IDEMPOTENCY_PAYLOAD_TTL_MS, 60000, 600000);
   for (const record of Object.values(state.idempotencyRecords || {})) {
     if (record.payload === undefined || record.payloadExpiredAt) continue;
     if (at - new Date(record.createdAt || 0).getTime() <= ttlMs) continue;
@@ -8826,7 +8827,7 @@ export function recordIdempotentResult(state, key, record, at = Date.now()) {
 // 条数上限。旋钮与落盘那步（state-store 的 pruneIdempotencyRecords）用【同一个】——
 // 两个名字两层上限时生效的永远是更严的那个，调大的那个等于没用（本仓撞过）。
 export function capIdempotencyRecords(state) {
-  const cap = Math.max(100, Number(process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS || 5000));
+  const cap = clampEnvNumber(process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS, 100, 5000);
   const keys = Object.keys(state.idempotencyRecords || {});
   if (keys.length <= cap) return;
   const ordered = keys

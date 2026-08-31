@@ -2928,8 +2928,8 @@ const MUTATIONS = [
     name: "在制品上限：从未注册过节点的项目不得占着完整队头",
     file: CORE,
     check: "verifyQuietProjectsDoNotHoardSlots",
-    from: "(registered ? 16 : 2)",
-    to: "16",
+    from: ", 1, registered ? 16 : 2)",
+    to: ", 1, 16)",
     expect: "纯浪费"
   },
   {
@@ -3204,6 +3204,24 @@ const MUTATIONS = [
     from: "  process.stdout.write(`节点 ${config.nodeName}（${config.nodeId}）已按角色 ${(config.allowedRoles || []).join(\"、\") || \"-\"} 接到控制面 ${config.serverUrl}，正在等待派发（Ctrl+C 停止）\\n`);",
     to: "",
     expect: "起来没先说清自己是谁"
+  },
+  {
+    name: "旋钮值打错必须回默认（clampEnvNumber 的 NaN 守卫）",
+    file: "apps/control-plane-ui/lib/env-number.mjs",
+    gate: "contract",
+    check: "verifyEnvKnobsAreNaNSafe",
+    from: "  return Number.isFinite(numeric) ? Math.max(min, numeric) : Math.max(min, fallback);",
+    to: "  return Math.max(min, numeric);",
+    expect: "NaN 上限让「超限一律拒绝」恒不触发"
+  },
+  {
+    name: "旋钮读取不得回流到 NaN 不安全的旧形态（扫描）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyEnvKnobsAreNaNSafe",
+    from: "const TASK_GROUP_BLOCKER_CAP = clampEnvNumber(process.env.AIMAC_TASK_GROUP_BLOCKER_CAP, 10, 50);",
+    to: "const TASK_GROUP_BLOCKER_CAP = Math.max(10, Number(process.env.AIMAC_TASK_GROUP_BLOCKER_CAP || 50));",
+    expect: "NaN 不安全的旧形态"
   },
   {
     name: "恢复清理的递归删除必须有界（sessionDir 界外不删）",
@@ -4488,8 +4506,8 @@ const MUTATIONS = [
     file: CORE,
     check: "verifyCapacityKnobsAreDocumented",
     gate: "contract",
-    from: "  const cap = Math.max(100, Number(process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS || 5000));",
-    to: "  const cap = Math.max(100, Number(process.env.AIMAC_BRAND_NEW_CAP || 5000));",
+    from: "  const cap = clampEnvNumber(process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS, 100, 5000);",
+    to: "  const cap = clampEnvNumber(process.env.AIMAC_BRAND_NEW_CAP, 100, 5000);",
     expect: "README 里也没写"
   },
   {
@@ -9312,8 +9330,8 @@ const MUTATIONS = [
     name: "钳制提取源缩小时必须报空转（分母静静变小看不出来）",
     file: "scripts/contract-check.mjs",
     check: "verifyEnvValuesAreNotSilentlyClamped",
-    from: "\"apps/control-plane-ui/lib/control-plane-core.mjs\", \"apps/agent-runtime/runtime.mjs\"]) {",
-    to: "\"apps/control-plane-ui/lib/control-plane-core.mjs\"]) {",
+    from: "  // 把提取源扩到运行时，这条知识才由门来守：改小了当场报红，而不是让用例静默测到别的值。\n  for (const rel of [\"apps/control-plane-ui/server.mjs\", \"apps/control-plane-ui/lib/state-store.mjs\",\n    \"apps/control-plane-ui/lib/agent-gateway.mjs\", \"apps/mcp-server/server.mjs\",\n    \"apps/control-plane-ui/lib/control-plane-core.mjs\", \"apps/agent-runtime/runtime.mjs\",\n    \"apps/control-plane-ui/lib/project-event-store.mjs\"]) {",
+    to: "  // 把提取源扩到运行时，这条知识才由门来守：改小了当场报红，而不是让用例静默测到别的值。\n  for (const rel of [\"apps/control-plane-ui/server.mjs\",\n    \"apps/control-plane-ui/lib/control-plane-core.mjs\"]) {",
     expect: "这道门在空转"
   },
   {

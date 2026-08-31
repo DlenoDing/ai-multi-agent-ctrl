@@ -130,6 +130,7 @@ import {
   decideSessionPlacement,
   classifyDerivedTask,
   roomSend,
+  roomMessageMaxBytes,
   effectivePathDenylist,
   computeEffectiveRulesDigest,
   effectiveProjectConfig,
@@ -821,6 +822,7 @@ run(verifyEveryWriteRouteIsGuardedOrRegistered);
 run(verifyEveryCapExplainsWhatItKeeps);
 run(verifyCapKeepsLiveTaskGroupRecords);
 run(verifyExpiredConfirmationsNeverAutoRelease);
+run(verifyEnvKnobsAreNaNSafe);
 run(verifyOneProjectWriteTouchesOneShard);
 run(verifyPanelGatesCoverEveryBlockInside);
 run(verifyTopologyBlockerPartsAllHaveChinese);
@@ -11470,6 +11472,47 @@ function verifyMutationsAreRegisteredAgainstTheRightGate(output) {
     + `另有 ${skipCount} 条 skip，${vague.length} 条理由没点名（应为 0）`);
 }
 
+// 【旋钮值打错不得静默变成"无上限/清空"】。Math.max(下限, Number(env)) 在 env="10k" 时是 NaN：
+// length > NaN 恒 false＝容量阀失效、attempts >= NaN 恒 false＝登录限速失效、slice(0,NaN)=[]＝列表消失。
+// 行为探针压真实导出函数；扫描确保旧形态不回流（clampEnvNumber 里含 "Number(process.env" 子串，
+// 判别要带前置边界，否则新形态自己会被当成旧形态）。
+function verifyEnvKnobsAreNaNSafe(output) {
+  const knob = "AIMAC_ROOM_MESSAGE_MAX_BYTES";
+  const before = process.env[knob];
+  try {
+    process.env[knob] = "32k";   // 打错的值：必须回默认 32*1024，而不是 NaN
+    if (roomMessageMaxBytes() !== 32 * 1024) {
+      output.push(`旋钮值打错时没有回默认：AIMAC_ROOM_MESSAGE_MAX_BYTES="32k" 时 roomMessageMaxBytes()=${roomMessageMaxBytes()}`
+        + " —— NaN 上限让「超限一律拒绝」恒不触发，单条消息能把中央 state 撑到无法运转");
+    }
+    process.env[knob] = "5";     // 低于下限：仍要钳到 1024（原语义保留）
+    if (roomMessageMaxBytes() !== 1024) {
+      output.push(`旋钮低于下限时没被钳制：="5" 时 roomMessageMaxBytes()=${roomMessageMaxBytes()}（应 1024）`);
+    }
+    delete process.env[knob];    // 未设：默认
+    if (roomMessageMaxBytes() !== 32 * 1024) {
+      output.push(`旋钮未设时默认值不对：roomMessageMaxBytes()=${roomMessageMaxBytes()}（应 32768）`);
+    }
+  } finally {
+    if (before === undefined) delete process.env[knob]; else process.env[knob] = before;
+  }
+  const offenders = [];
+  for (const rel of ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/state-store.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs",
+    "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/agent-runtime/runtime.mjs",
+    "apps/control-plane-ui/lib/project-event-store.mjs"]) {
+    const src = readFileSync(join(root, rel), "utf8");
+    for (const match of src.matchAll(/Math\.(?:max|min)\([^\n]*?(?<![A-Za-z])Number\(process\.env/gu)) {
+      offenders.push(`${rel}: ${match[0].slice(0, 80)}`);
+    }
+  }
+  if (offenders.length) {
+    output.push("这些旋钮读取还在用 NaN 不安全的旧形态（Math.max/min 直接包 Number(process.env…)）：\n  "
+      + offenders.join("\n  ") + "\n  —— 值打错会静默变成无上限/清空，一律改用 clampEnvNumber");
+  }
+  if (!output.length) console.log("旋钮 NaN 安全：打错回默认、低于下限仍钳、未设走默认，7 份源码旧形态 0 处");
+}
+
 function verifyEnvValuesAreNotSilentlyClamped(output) {
   const clamps = new Map();
   // agent 运行时也要收：它有 8 处 Math.max 钳制，而 e2e 正在给其中四个传值
@@ -11479,7 +11522,8 @@ function verifyEnvValuesAreNotSilentlyClamped(output) {
   // 把提取源扩到运行时，这条知识才由门来守：改小了当场报红，而不是让用例静默测到别的值。
   for (const rel of ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs",
-    "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/agent-runtime/runtime.mjs"]) {
+    "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/agent-runtime/runtime.mjs",
+    "apps/control-plane-ui/lib/project-event-store.mjs"]) {
     const src = readFileSync(join(root, rel), "utf8");
     const record = (name, kind, boundText) => {
       const bound = boundText.split("*").map((part) => Number(part.trim())).reduce((a, b) => a * b, 1);
@@ -11488,6 +11532,11 @@ function verifyEnvValuesAreNotSilentlyClamped(output) {
     // 形态一：直接钳 process.env
     for (const match of src.matchAll(/Math\.(max|min)\(\s*([\d*\s]+),\s*Number\(process\.env\.([A-Z_]+)/gu)) {
       record(match[3], match[1], match[2]);
+    }
+    // 形态三：clampEnvNumber(process.env.X, 下限, 默认) —— 2026-08-28 起旋钮统一走它
+    // （NaN 安全：值打错回默认，不再让 Math.max(下限, NaN)=NaN 静默关掉阀门）。它就是 max-钳。
+    for (const match of src.matchAll(/clampEnvNumber\(process\.env\.([A-Z_0-9]+),\s*([\d*\s]+),/gu)) {
+      record(match[1], "max", match[2]);
     }
     // 形态二：先存进变量再钳。**唯一被实测撞到的那个真事实正是这种写法**
     // （`const orchestratorIntervalMs = Number(process.env.AIMAC_ORCHESTRATOR_INTERVAL_MS ?? 60000)`
@@ -13352,6 +13401,10 @@ function verifyCapacityKnobsAreDocumented(output) {
     let text = "";
     try { text = readFileSync(join(root, file), "utf8"); } catch { continue; }
     for (const match of text.matchAll(/process\.env\.(AIMAC_[A-Z0-9_]+)\s*\|\|\s*([0-9]+(?:\s*\*\s*[0-9]+)*)/gu)) {
+      if (!defaults.has(match[1])) defaults.set(match[1], match[2].replace(/\s+/gu, ""));
+    }
+    // 形态三（2026-08-28 起旋钮统一走 NaN 安全读取）：默认值是第三个参数。
+    for (const match of text.matchAll(/clampEnvNumber\(process\.env\.(AIMAC_[A-Z0-9_]+),\s*[^,]+,\s*([0-9]+(?:\s*\*\s*[0-9]+)*)\)/gu)) {
       if (!defaults.has(match[1])) defaults.set(match[1], match[2].replace(/\s+/gu, ""));
     }
   }

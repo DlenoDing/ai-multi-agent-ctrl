@@ -313,7 +313,7 @@ async function run(config) {
       : "上次是控制面要求关停排空的，现在重新接入（控制面允许 offline→online 复活）\n");
     delete config.shutdownKind; delete config.shutdownReason;
   }
-  const sweepIntervalMs = Math.max(5 * 60 * 1000, Number(process.env.AIMAC_AGENT_SWEEP_INTERVAL_MS || 60 * 60 * 1000));
+  const sweepIntervalMs = clampEnvNumber(process.env.AIMAC_AGENT_SWEEP_INTERVAL_MS, 5 * 60 * 1000, 60 * 60 * 1000);
   const runSweeps = () => {
     sweepStaleSessionDirectories(config);
     sweepLibraryOverCapacity(config);
@@ -496,7 +496,7 @@ function startControlWatcher(config, dispatchPackage) {
   // 取它的 1/3。写死 300 秒的话，遇到 TTL 配成 60 秒的部署就又不够密了 —— 那也是猜。
   const claimTtlMs = Math.max(60, Number(dispatchPackage?.dispatch?.claimTtlSeconds || 1800)) * 1000;
   const keepAliveCeilingMs = Math.max(5000, Math.floor(claimTtlMs / 3));
-  const keepAliveMs = Math.min(keepAliveCeilingMs, Math.max(15000, Number(process.env.AIMAC_AGENT_EXECUTION_KEEPALIVE_MS || 60000)));
+  const keepAliveMs = Math.min(keepAliveCeilingMs, clampEnvNumber(process.env.AIMAC_AGENT_EXECUTION_KEEPALIVE_MS, 15000, 60000));
   let lastKeepAliveAt = Date.now();
   const loop = (async () => {
     while (state.running && !state.cancelled) {
@@ -678,7 +678,7 @@ async function flushCheckpointOutbox(config) {
       process.stdout.write(`已补交检查点 ${item.dispatchId}（上次没交上的，这次控制面接受了）\n`);
     } catch (error) {
       const attempts = Number(item.replayAttempts || 0) + 1;
-      const attemptCap = Math.max(3, Number(process.env.AIMAC_AGENT_REPLAY_MAX_ATTEMPTS || 30));
+      const attemptCap = clampEnvNumber(process.env.AIMAC_AGENT_REPLAY_MAX_ATTEMPTS, 3, 30);
       // Bound the retries even for "non-terminal" errors (network/5xx/state_write_conflict): otherwise a
       // persistently-failing item (a poisoned 503, or a conflict that never clears) blocks EVERY new claim
       // forever (run loop defers claims while outbox pending > 0), wedging the node out of all work. On cap
@@ -735,7 +735,7 @@ function checkpointReplayErrorIsTerminal(error) {
 }
 
 function sweepStaleSessionDirectories(config) {
-  const ttlMs = Math.max(1, Number(process.env.AIMAC_AGENT_SESSION_TTL_HOURS || 72)) * 60 * 60 * 1000;
+  const ttlMs = clampEnvNumber(process.env.AIMAC_AGENT_SESSION_TTL_HOURS, 1, 72) * 60 * 60 * 1000;
   const orgsRoot = join(config.workDir, "orgs");
   if (!existsSync(orgsRoot)) return;
   const cutoff = Date.now() - ttlMs;
@@ -771,7 +771,7 @@ function sweepStaleSessionDirectories(config) {
 }
 
 function sweepLibraryOverCapacity(config) {
-  const maxBytes = Math.max(64, Number(process.env.AIMAC_AGENT_LIBRARY_MAX_MB || 2048)) * 1024 * 1024;
+  const maxBytes = clampEnvNumber(process.env.AIMAC_AGENT_LIBRARY_MAX_MB, 64, 2048) * 1024 * 1024;
   let unsizedFiles = 0;
   let unsizedEntries = 0;
   const libraryDir = join(config.workDir, "library");
@@ -1169,8 +1169,8 @@ async function runPermissionReport(config, dispatchPackage, block, control) {
   const requestId = submitResult.permissionRequest?.requestId;
   if (!requestId) throw permissionBlockedError("agent_permission_request_not_created:权限单没建起来（控制面没回单号），这一趟停在推送前，活还在这台机器上");
   process.stdout.write(`permission report submitted: ${requestId} promptType=${block.promptType} capability=${block.requestedCapability}\n`);
-  const attempts = Math.max(1, Number(process.env.AIMAC_AGENT_PERMISSION_POLL_ATTEMPTS || 240));
-  const intervalMs = Math.max(200, Number(process.env.AIMAC_AGENT_PERMISSION_POLL_INTERVAL_MS || 1000));
+  const attempts = clampEnvNumber(process.env.AIMAC_AGENT_PERMISSION_POLL_ATTEMPTS, 1, 240);
+  const intervalMs = clampEnvNumber(process.env.AIMAC_AGENT_PERMISSION_POLL_INTERVAL_MS, 200, 1000);
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     control?.throwIfCancelled();
     const statusResult = await mcpToolCall(config, "permission-mcp.permission_status", {requestId, dispatchId: dispatchPackage.dispatch.dispatchId}).catch((error) => {
@@ -1689,6 +1689,15 @@ function syncSkillWorkset(config, dispatchPackage) {
     writeSecretJson(manifestPath, {...workset, files: workset.files.map(({content: _content, ...file}) => file)});
   }
   return {...workset, directory, manifestPath};
+}
+
+// 与控制面 lib/env-number.mjs 同名同实现的本地副本（本文件单文件下发、不 import 仓内模块）：
+// 旋钮值打错（"10k"）时 Number→NaN，Math.max(下限, NaN)=NaN，上限/重试比较恒 false＝阀门静默失效。
+// 认不出就用默认值（unset/空串/垃圾同待遇），认得出才取 max(下限, 值)。
+function clampEnvNumber(raw, min, fallback) {
+  const text = String(raw ?? "").trim();
+  const numeric = text === "" ? Number(fallback) : Number(text);
+  return Number.isFinite(numeric) ? Math.max(min, numeric) : Math.max(min, fallback);
 }
 
 function isSafeCloneUrl(url) {

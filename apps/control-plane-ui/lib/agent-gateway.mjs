@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { clampEnvNumber } from "./env-number.mjs";
 import { PROJECT_SHARD_COLLECTION_LIMITS } from "./state-store.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { normalize, resolve, sep } from "node:path";
@@ -365,7 +366,7 @@ export function heartbeatAgentNode(state, node, input = {}, options = {}) {
   // happens to pull work — never on an idle/degraded/read_only fleet. This makes recovery elapsed-time
   // driven. A requeue here must force a persist even if this node's own fields are unchanged.
   const reconciled = recycleExpiredClaims(state);
-  const heartbeatPersistFloorMs = Math.max(30000, Number(process.env.AIMAC_HEARTBEAT_PERSIST_FLOOR_MS || 120000));
+  const heartbeatPersistFloorMs = clampEnvNumber(process.env.AIMAC_HEARTBEAT_PERSIST_FLOOR_MS, 30000, 120000);
   const persistRequired = reconciled ||
     Boolean(rotatedNodeToken) ||
     node.status !== previousStatus ||

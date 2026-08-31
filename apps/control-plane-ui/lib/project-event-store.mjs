@@ -1,4 +1,5 @@
 import { withDirectoryLock } from "./state-store.mjs";
+import { clampEnvNumber } from "./env-number.mjs";
 import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -201,7 +202,7 @@ function projectExecutionEventReadPaths(runtimeDir, projectId) {
 }
 
 function readEventSource(path, filters = {}) {
-  const maxBytes = Math.max(64 * 1024, Number(process.env.AIMAC_PROJECT_EVENT_TAIL_BYTES || 2 * 1024 * 1024));
+  const maxBytes = clampEnvNumber(process.env.AIMAC_PROJECT_EVENT_TAIL_BYTES, 64 * 1024, 2 * 1024 * 1024);
   const size = statSync(path).size;
   if (size <= maxBytes) return readFileSync(path, "utf8");
   const afterSequence = Number(filters.afterSequence || 0);
@@ -247,7 +248,7 @@ function updateProjectExecutionEventIndex(runtimeDir, event, existingIndex = nul
   const path = projectExecutionEventIndexPath(runtimeDir, event.projectId, {forWrite: true});
   let index = existingIndex || readProjectExecutionEventIndex(runtimeDir, event.projectId) || {};
   index = {schemaVersion: "project-execution-event-index/v4", projectId: event.projectId, fileId: safeProjectId(event.projectId), recentEventKeys: [], eventsByKey: {}, keyIndex: "project-event-key-kv", segments: [], ...index};
-  const keyWindow = Math.max(100, Number(process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS || 500));
+  const keyWindow = clampEnvNumber(process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS, 100, 500);
   index.lastSequence = Math.max(Number(index.lastSequence || 0), Number(event.sequence || 0));
   const entries = Object.entries(index.eventsByKey || {}).filter(([key]) => key && key !== event.eventKey);
   if (event.eventKey) entries.unshift([event.eventKey, event]);
@@ -278,7 +279,7 @@ function ensureProjectExecutionEventIndex(runtimeDir, projectId) {
     backfilledAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
-  const keyWindow = Math.max(100, Number(process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS || 500));
+  const keyWindow = clampEnvNumber(process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS, 100, 500);
   // 重建【不再把整段历史重读重写一遍】。实测 200 个已封存段（2000 条事件）时，一次重建要 3.2 秒，
   // 而它是在项目锁里跑的 —— 这个项目的每一次事件追加都卡在那儿；而重建由「文件快照变了」触发，
   // 也就是【每一次轮转】之后都来一遍。代价还随历史无限涨。三处改动，语义不变：
@@ -287,7 +288,7 @@ function ensureProjectExecutionEventIndex(runtimeDir, projectId) {
   //   ③ 已经有 KV 文件的键不重写：重建多半由轮转触发，那时文件都还在（existsSync 30µs vs 落盘 1.6ms）。
   //      顺带修掉一个真错：重写会把文件 mtime 全刷新，而 GC 正是按 mtime 淘汰最旧的 —— 重建之后
   //      "谁最旧"就成了乱的，它会把该留的删掉。
-  const keyFileCap = Math.max(keyWindow, Number(process.env.AIMAC_PROJECT_EVENT_KEY_FILE_CAP || 5000));
+  const keyFileCap = clampEnvNumber(process.env.AIMAC_PROJECT_EVENT_KEY_FILE_CAP, keyWindow, 5000);
   const keyEntries = [];
   let corruptLines = 0;
   let corruptSample = "";
@@ -404,7 +405,7 @@ function projectExecutionEventKeyDir(runtimeDir, projectId) {
 // (default 500). The full log scan is available only to explicit indexOnly:false /
 // allowFullScan reads. Amortized: runs once every AIMAC_PROJECT_EVENT_KEY_GC_STRIDE appends.
 function maybeGcProjectExecutionEventKeys(runtimeDir, event) {
-  const stride = Math.max(1, Number(process.env.AIMAC_PROJECT_EVENT_KEY_GC_STRIDE || 256));
+  const stride = clampEnvNumber(process.env.AIMAC_PROJECT_EVENT_KEY_GC_STRIDE, 1, 256);
   if (Number(event.sequence || 0) % stride !== 0) return;
   gcProjectExecutionEventKeys(runtimeDir, event.projectId);
 }
@@ -412,8 +413,8 @@ function maybeGcProjectExecutionEventKeys(runtimeDir, event) {
 function gcProjectExecutionEventKeys(runtimeDir, projectId) {
   const dir = projectExecutionEventKeyDir(runtimeDir, projectId);
   if (!existsSync(dir)) return;
-  const keyWindow = Math.max(100, Number(process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS || 500));
-  const cap = Math.max(keyWindow, Number(process.env.AIMAC_PROJECT_EVENT_KEY_FILE_CAP || 5000));
+  const keyWindow = clampEnvNumber(process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS, 100, 500);
+  const cap = clampEnvNumber(process.env.AIMAC_PROJECT_EVENT_KEY_FILE_CAP, keyWindow, 5000);
   let names;
   try {
     names = readdirSync(dir).filter((name) => name.endsWith(".json"));
@@ -464,7 +465,7 @@ function writeProjectExecutionEventManifest(runtimeDir, projectId, manifest) {
 function rotateProjectExecutionEventIfNeeded(runtimeDir, projectId) {
   const path = projectExecutionEventPath(runtimeDir, projectId, {forWrite: true});
   if (!existsSync(path)) return;
-  const maxBytes = Math.max(1024, Number(process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES || 64 * 1024 * 1024));
+  const maxBytes = clampEnvNumber(process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES, 1024, 64 * 1024 * 1024);
   const stat = statSync(path);
   if (stat.size < maxBytes) return;
   const bounds = sequenceBoundsInFile(path);
