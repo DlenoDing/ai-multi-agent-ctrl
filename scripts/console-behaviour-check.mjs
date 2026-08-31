@@ -2476,8 +2476,9 @@ function runReviewAxisCase() {
       agentJoinTokens: [
         {joinTokenId: "ajt_used", projectId: "p1", allowedRoles: ["monitor"], status: "consumed",
           useCount: 1, maxUses: 1, expiresAt: "2026-08-27T00:00:00.000Z"},
+        // 未过期用【动态未来】：固定日期会随时间流逝变成过期，令 issued 令牌显示成「已过期」而非本意的「已签发」。
         {joinTokenId: "ajt_open", projectId: "p1", allowedRoles: ["monitor"], status: "issued",
-          useCount: 0, maxUses: 1, expiresAt: "2026-08-27T00:00:00.000Z"}
+          useCount: 0, maxUses: 1, expiresAt: new Date(Date.now() + 3600000).toISOString()}
       ]
     }, {accountId: "u1", accountType: "system_admin", displayName: "管理员"});
     check("用掉的入网令牌不能写成「已采纳」（那是评审包的词）",
@@ -4606,6 +4607,43 @@ function runClaimMissCase() {
     "没有排队派发时仍然报警 —— 一直在响的警告没人看");
 }
 
+// 【过期的入网令牌不得在列表里显示成「已签发」还带撤销按钮】。令牌过期只在兑换时才被标 expired，
+// 没人兑换就永停在 issued —— 列表若按原始 status 显示，人以为它还在等 agent 来接，实际兑换必被拒。
+// 按 serverNow 派生显示状态（与占位统计同口径）。realI18n：statusBadge 走真词表。
+function runJoinTokenExpiryDisplayCase() {
+  const root = el("div");
+  const probe = loadConsole(root, {realI18n: true});
+  const past = new Date(Date.now() - 1000).toISOString();
+  const future = new Date(Date.now() + 3600000).toISOString();
+  const orgAdmin = {accountId: "u_org", accountType: "org_admin", displayName: "组织管理员", organizationId: "org_default"};
+  probe.renderFullPageWith({schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    projects: [{id: "p1", name: "项目一", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [], findings: [],
+    humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: [],
+    agentJoinTokens: [
+      {joinTokenId: "jt_stale", projectId: "p1", allowedRoles: ["agent-runtime"], status: "issued", useCount: 0, maxUses: 1, expiresAt: past},
+      {joinTokenId: "jt_live", projectId: "p1", allowedRoles: ["agent-runtime"], status: "issued", useCount: 0, maxUses: 1, expiresAt: future}
+    ]}, orgAdmin, "p1", "org-agents");
+  const html = String(root.innerHTML || "");
+  if (!/jt_stale/u.test(html) || !/jt_live/u.test(html)) {
+    check("令牌列表要渲染出来", false, "org-agents 没渲染出令牌行 —— 下面几条什么也没验");
+    return;
+  }
+  // 过期那张：显示「已过期」、且没有撤销按钮（撤销一张已失效的令牌无意义、且暗示它还活着）。
+  const staleRow = html.slice(html.indexOf("jt_stale"), html.indexOf("jt_live"));
+  check("过期的 issued 令牌要显示「已过期」而不是「已签发」",
+    /已过期/u.test(staleRow) && !/已签发/u.test(staleRow),
+    `过期令牌仍显示为已签发（${staleRow.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 140)}）—— 人以为还能等 agent 来接`);
+  check("过期令牌不给撤销按钮（它已失效）",
+    !new RegExp('data-token-id="jt_stale"').test(html),
+    "过期令牌还带撤销按钮 —— 暗示它还活着");
+  // 未过期那张：显示「已签发」、带撤销按钮（正对照，防「一律显示已过期」蒙混）。
+  const liveRow = html.slice(html.indexOf("jt_live"));
+  check("未过期的 issued 令牌仍显示「已签发」并带撤销按钮",
+    /已签发/u.test(liveRow) && new RegExp('data-token-id="jt_live"').test(html),
+    `未过期令牌没正常显示（${liveRow.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 140)}）`);
+}
+
 function runHeartbeatHintCase() {
   const probe = loadConsole(el("div"));
   const fresh = probe.heartbeatStaleHint({status: "online", lastHeartbeatAt: new Date(Date.now() - 30 * 1000).toISOString()});
@@ -4697,6 +4735,7 @@ function runMultiRowRestoreCase() {
 runFormRestoreCase();
 runMultiRowRestoreCase();
 runHeartbeatHintCase();
+runJoinTokenExpiryDisplayCase();
 runClaimMissCase();
 runRuleLengthCase();
 runEvidenceRefsCase();

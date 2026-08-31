@@ -2433,15 +2433,22 @@ function renderProjectMemberForm() {
 }
 
 function renderJoinTokenSection() {
-  const tokens = (state.agentJoinTokens || []).slice(0, 20).map((token) => row([
-    `<span class="mono">${esc(token.joinTokenId)}</span>`,
-    esc(projectNameOf(token.projectId)),
-    esc((token.allowedRoles || []).join("、")),
-    statusBadge("joinToken", token.status),
-    {v: `${token.useCount ?? 0}/${token.maxUses ?? 1}`, c: "num"},
-    {v: fmtTime(token.expiresAt), c: "nowrap"},
-    token.status === "issued" ? `<button class="danger-button" data-action="revoke-join-token" data-token-id="${esc(token.joinTokenId)}">撤销</button>` : "-"
-  ])).join("");
+  const tokens = (state.agentJoinTokens || []).slice(0, 20).map((token) => {
+    // 令牌过期只在【兑换时】才被标 expired（没人兑换就永停在 issued）。列表若按原始 status 显示，
+    // 一张已过期的令牌会显示成「已签发」还带「撤销」按钮 —— 人以为它还在等 agent 来接，实际兑换必被拒。
+    // 按【服务器时钟】(serverNow，抗本机时钟偏移，与过期时间同源) 派生显示状态，与占位统计同口径。
+    const displayStatus = (token.status === "issued" && token.expiresAt
+      && new Date(token.expiresAt).getTime() <= serverNow()) ? "expired" : token.status;
+    return row([
+      `<span class="mono">${esc(token.joinTokenId)}</span>`,
+      esc(projectNameOf(token.projectId)),
+      esc((token.allowedRoles || []).join("、")),
+      statusBadge("joinToken", displayStatus),
+      {v: `${token.useCount ?? 0}/${token.maxUses ?? 1}`, c: "num"},
+      {v: fmtTime(token.expiresAt), c: "nowrap"},
+      displayStatus === "issued" ? `<button class="danger-button" data-action="revoke-join-token" data-token-id="${esc(token.joinTokenId)}">撤销</button>` : "-"
+    ]);
+  }).join("");
   if (!(state.projects || []).length) return noProjectYetNotice("智能体加入令牌");
   return `
     <div class="stack">

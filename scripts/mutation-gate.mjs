@@ -3933,6 +3933,14 @@ const MUTATIONS = [
     expect: "没有已归档项目时不要多说一句"
   },
   {
+    name: "过期的入网令牌在列表里不得显示成「已签发」",
+    file: APP,
+    gate: "console",
+    from: '    const displayStatus = (token.status === "issued" && token.expiresAt\n      && new Date(token.expiresAt).getTime() <= serverNow()) ? "expired" : token.status;',
+    to: "    const displayStatus = token.status;",
+    expect: "过期令牌仍显示为已签发"
+  },
+  {
     name: "过期的入网令牌不得继续占配额位（与签发侧同口径）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyOutstandingJoinTokensHoldTheirQuotaSlot",
@@ -10572,8 +10580,8 @@ const MUTATIONS = [
     name: "用掉的入网令牌不能写成「已采纳」（全局词表里那个词是评审包的）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '    statusBadge("joinToken", token.status),',
-    to: "    badge(token.status),",
+    from: '      statusBadge("joinToken", displayStatus),',
+    to: "      badge(displayStatus),",
     expect: "那是评审包的词"
   },
   {
