@@ -569,10 +569,10 @@ export function ensureRuntimeCollections(state, options = {}) {
 export const DEFAULT_ORGANIZATION_ID = "org_default";
 
 const defaultOrganizationQuotas = {
-  maxMembers: Number(process.env.AIMAC_ORG_DEFAULT_MAX_MEMBERS || 50),
-  maxProjects: Number(process.env.AIMAC_ORG_DEFAULT_MAX_PROJECTS || 20),
-  maxTaskGroups: Number(process.env.AIMAC_ORG_DEFAULT_MAX_TASK_GROUPS || 200),
-  maxAgents: Number(process.env.AIMAC_ORG_DEFAULT_MAX_AGENTS || 100)
+  maxMembers: clampEnvNumber(process.env.AIMAC_ORG_DEFAULT_MAX_MEMBERS, 1, 50),
+  maxProjects: clampEnvNumber(process.env.AIMAC_ORG_DEFAULT_MAX_PROJECTS, 1, 20),
+  maxTaskGroups: clampEnvNumber(process.env.AIMAC_ORG_DEFAULT_MAX_TASK_GROUPS, 1, 200),
+  maxAgents: clampEnvNumber(process.env.AIMAC_ORG_DEFAULT_MAX_AGENTS, 1, 100)
 };
 
 function ensureOrganizations(state) {

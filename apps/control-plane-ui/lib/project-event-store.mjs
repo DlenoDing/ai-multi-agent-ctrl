@@ -670,6 +670,6 @@ function withProjectEventLock(runtimeDir, projectId, fn) {
   const lockPath = join(runtimeDir, "locks", `${safeProjectId(projectId)}.execution-events.lock`);
   mkdirSync(dirname(lockPath), {recursive: true});
   return withDirectoryLock(lockPath, {timeoutCode: `project_event_lock_timeout:${projectId}`,
-    timeoutMs: Number(process.env.AIMAC_PROJECT_EVENT_LOCK_TIMEOUT_MS || 10000)}, fn);
+    timeoutMs: clampEnvNumber(process.env.AIMAC_PROJECT_EVENT_LOCK_TIMEOUT_MS, 0, 10000)}, fn);
 }
 

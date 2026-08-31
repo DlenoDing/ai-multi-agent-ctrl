@@ -470,7 +470,7 @@ function startControlWatcher(config, dispatchPackage) {
     signal: state,
     attachChild(child) {
       state.child = child;
-      if (state.cancelled && child && !state.stopPromise) state.stopPromise = terminateChild(child, Number(process.env.AIMAC_AGENT_STOP_TIMEOUT_MS || 10000));
+      if (state.cancelled && child && !state.stopPromise) state.stopPromise = terminateChild(child, clampEnvNumber(process.env.AIMAC_AGENT_STOP_TIMEOUT_MS, 0, 10000));
     },
     throwIfCancelled() {
       if (!state.cancelled) return;

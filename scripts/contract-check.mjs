@@ -22,6 +22,7 @@ import { assertStateStoreConfig, ensureStoredState, isStateStoreConflict, readSt
 } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, digestProjectShardPayload, canonicalJson } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps/control-plane-ui/lib/pg-sync-store.mjs";
+import { clampEnvNumber } from "../apps/control-plane-ui/lib/env-number.mjs";
 import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
 import { buildExecutionContentBundle as buildBundleForCheck, isSafeGitRemoteUrl } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { publicAgentNode, agentRuntimeOutdated, REQUIRED_AGENT_RUNTIME_VERSION } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
@@ -11496,6 +11497,13 @@ function verifyEnvKnobsAreNaNSafe(output) {
   } finally {
     if (before === undefined) delete process.env[knob]; else process.env[knob] = before;
   }
+  // min=0 的两条语义（0=关闭 那几个旋钮全靠它）：显式 "0" 必须保留为 0（垃圾才回默认，0 是人的决定）。
+  if (clampEnvNumber("0", 0, 60000) !== 0) {
+    output.push("clampEnvNumber 把显式的 0 改写掉了 —— 「写 0 关掉它」那几个旋钮的关闭语义没了");
+  }
+  if (clampEnvNumber("6万", 0, 60000) !== 60000) {
+    output.push("clampEnvNumber 在 min=0 时没把垃圾值回到默认 —— 打错等于关闭，而人没想关");
+  }
   const offenders = [];
   for (const rel of ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs",
@@ -11503,6 +11511,11 @@ function verifyEnvKnobsAreNaNSafe(output) {
     "apps/control-plane-ui/lib/project-event-store.mjs"]) {
     const src = readFileSync(join(root, rel), "utf8");
     for (const match of src.matchAll(/Math\.(?:max|min)\([^\n]*?(?<![A-Za-z])Number\(process\.env/gu)) {
+      offenders.push(`${rel}: ${match[0].slice(0, 80)}`);
+    }
+    // 带回退的裸形态同罪：`Number(env.X || 默认)` 的回退只护 unset，不护打错 —— 垃圾照样 NaN 下行。
+    // 不带回退的 `Number(env.X)` 不在此列：那是「取出来再 isFinite 判」的守卫形态（三处各有自定义语义）。
+    for (const match of src.matchAll(/(?<![A-Za-z])Number\(process\.env\.[A-Z_0-9]+\s*(?:\|\||\?\?)/gu)) {
       offenders.push(`${rel}: ${match[0].slice(0, 80)}`);
     }
   }

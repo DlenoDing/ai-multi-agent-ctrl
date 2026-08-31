@@ -4,6 +4,7 @@
 // exists to reuse physical connections across sequential requests instead of
 // spawning a `psql` process per query (the previous execFileSync approach).
 import { parentPort, workerData } from "node:worker_threads";
+import { clampEnvNumber } from "./env-number.mjs";
 import pg from "pg";
 
 const sig = new Int32Array(workerData.sig);
@@ -16,9 +17,9 @@ function getPool() {
   if (pool) return pool;
   pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL,
-    max: Number(process.env.AIMAC_PG_POOL_MAX || 10),
-    idleTimeoutMillis: Number(process.env.AIMAC_PG_POOL_IDLE_MS || 30000),
-    connectionTimeoutMillis: Number(process.env.AIMAC_PG_POOL_CONNECT_TIMEOUT_MS || 10000)
+    max: clampEnvNumber(process.env.AIMAC_PG_POOL_MAX, 1, 10),
+    idleTimeoutMillis: clampEnvNumber(process.env.AIMAC_PG_POOL_IDLE_MS, 0, 30000),
+    connectionTimeoutMillis: clampEnvNumber(process.env.AIMAC_PG_POOL_CONNECT_TIMEOUT_MS, 0, 10000)
   });
   // Idle-client errors (e.g. server restart) must not crash the worker; the next
   // checkout surfaces the failure to the caller synchronously.

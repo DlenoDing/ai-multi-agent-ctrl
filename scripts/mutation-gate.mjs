@@ -3206,6 +3206,15 @@ const MUTATIONS = [
     expect: "起来没先说清自己是谁"
   },
   {
+    name: "带回退的裸 Number(env) 形态不得回流（扫描）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    check: "verifyEnvKnobsAreNaNSafe",
+    from: "const orchestratorIntervalMs = clampEnvNumber(process.env.AIMAC_ORCHESTRATOR_INTERVAL_MS, 0, 60000);",
+    to: "const orchestratorIntervalMs = Number(process.env.AIMAC_ORCHESTRATOR_INTERVAL_MS ?? 60000);",
+    expect: "NaN 不安全的旧形态"
+  },
+  {
     name: "旋钮值打错必须回默认（clampEnvNumber 的 NaN 守卫）",
     file: "apps/control-plane-ui/lib/env-number.mjs",
     gate: "contract",
@@ -6468,7 +6477,7 @@ const MUTATIONS = [
     name: "运维要用的运行参数不许没写进文档",
     file: "README.md",
     check: "verifyOperatorEnvVarsAreDocumented",
-    from: "| `AIMAC_PORT` | `4317` | 监听端口 |",
+    from: "| `AIMAC_PORT` | `4317` | 监听端口（写 0 则随机挑一个可用端口，启动横幅会显示真正绑上的端口；下限 0） |",
     to: "",
     expect: "文档里一个字都没写"
   },

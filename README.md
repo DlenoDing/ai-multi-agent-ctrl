@@ -75,7 +75,7 @@ export AIMAC_MCP_SERVICE_TOKEN='<central-mcp-service-token>'
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `AIMAC_HOST` | `127.0.0.1` | 监听地址。对外监听（`0.0.0.0`）时必须同时给 `AIMAC_PUBLIC_URL`，否则启动会被拒 |
-| `AIMAC_PORT` | `4317` | 监听端口 |
+| `AIMAC_PORT` | `4317` | 监听端口（写 0 则随机挑一个可用端口，启动横幅会显示真正绑上的端口；下限 0） |
 | `AIMAC_PUBLIC_URL` | 按监听地址推导 | 对外访问地址。它会进安装命令与 MCP 端点，明文远程地址会被拒 |
 | `AIMAC_RUNTIME_DIR` | `.runtime` | 运行态落盘目录（状态、项目分片、审计台账、锁） |
 | `AIMAC_REPOSITORY_ROOT` | 仓库根 | 核验档位下本机工作副本的根目录 |
@@ -182,9 +182,9 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 | `AIMAC_ALLOW_LOCAL_DETERMINISTIC_WORKER` | `false` | 允许控制面用本机确定性执行器（只给 e2e/排障）；生产不要开 | 开了就有一条不经 agent 节点的执行路径 |
 | `AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND` | 无 | 控制面【本机】执行工作项时用的模型执行器命令（只给本地部署/排障；生产把活派给远程节点，不设它） | 不设且本机确定性执行器也没开时，本机路径上的派发阻塞为 agent_runtime_executor_required，等远程节点来领 |
 | `AIMAC_AGENT_ALLOW_INSECURE_HTTP` | `false` | （agent 节点侧）允许用 http 连非本机的控制面 | 节点凭据明文走网络 |
-| `AIMAC_ORG_DEFAULT_MAX_MEMBERS` | `50` | 新组织的成员配额缺省 | 组织管理员可在「组织管理」页改 |
-| `AIMAC_ORG_DEFAULT_MAX_PROJECTS` | `20` | 新组织的项目配额缺省 | 同上 |
-| `AIMAC_ORG_DEFAULT_MAX_TASK_GROUPS` | `200` | 新组织的任务组配额缺省 | 同上 |
+| `AIMAC_ORG_DEFAULT_MAX_MEMBERS` | `50` | 新组织的成员配额缺省（下限 1，更小的值按它生效） | 组织管理员可在「组织管理」页改 |
+| `AIMAC_ORG_DEFAULT_MAX_PROJECTS` | `20` | 新组织的项目配额缺省（下限 1，更小的值按它生效） | 同上 |
+| `AIMAC_ORG_DEFAULT_MAX_TASK_GROUPS` | `200` | 新组织的任务组配额缺省（下限 1，更小的值按它生效） | 同上 |
 | `AIMAC_ORG_DEFAULT_MAX_AGENTS` | `100` | 新组织的智能体节点配额缺省（节点＋未用掉的入网令牌一起算） | 同上 |
 | `AIMAC_PG_POOL_MAX` | `10` | PostgreSQL 连接池上限 | 并发写多时排队 |
 | `AIMAC_PG_POOL_IDLE_MS` | `30000` | 空闲连接回收时间 | — |

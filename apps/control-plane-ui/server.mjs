@@ -163,11 +163,11 @@ const storageFaultCodePattern =
 const agentInstallerPath = join(root, "scripts", "install-agent.sh");
 const agentRuntimePath = join(root, "apps", "agent-runtime", "runtime.mjs");
 const host = process.env.AIMAC_HOST || "127.0.0.1";
-const port = Number(process.env.AIMAC_PORT || 4317);
+const port = clampEnvNumber(process.env.AIMAC_PORT, 0, 4317);
 const executionProfile = process.env.AIMAC_EXECUTION_PROFILE || "production";
 const stateViewCache = new Map();
-const stateViewCacheTtlMs = Number(process.env.AIMAC_STATE_VIEW_CACHE_TTL_MS || 60000);
-const stateViewMaxEntries = Number(process.env.AIMAC_STATE_VIEW_CACHE_MAX_ENTRIES || 200);
+const stateViewCacheTtlMs = clampEnvNumber(process.env.AIMAC_STATE_VIEW_CACHE_TTL_MS, 0, 60000);
+const stateViewMaxEntries = clampEnvNumber(process.env.AIMAC_STATE_VIEW_CACHE_MAX_ENTRIES, 0, 200);
 const agentControlWaitFanout = new Map();
 const projectExecutionWaitFanout = new Map();
 const longPollWaiters = new Map();
@@ -5744,7 +5744,7 @@ async function handleApi(req, res) {
     const memory = process.memoryUsage();
     const cpu = process.cpuUsage();
     const cpuSeconds = (cpu.user + cpu.system) / 1e6;
-    const wattsPerCpu = Number(process.env.AIMAC_ENERGY_WATTS_PER_CPU || 15);
+    const wattsPerCpu = clampEnvNumber(process.env.AIMAC_ENERGY_WATTS_PER_CPU, 0, 15);
     // 量不到的时候要回 null，不能回 0：界面会把 0 原样显示成"0 B"，
     // 而"存储占用 0 字节"是个看起来很正常、实际完全错误的数字 —— 人据此判断容量。
     // 分片目录里个别文件量不到，也要如实标出"这个数是不完整的"。
@@ -6781,7 +6781,8 @@ try {
     }
   }
 } catch { /* 工具表或状态取不到时不影响启动 */ }
-const orchestratorIntervalMs = Number(process.env.AIMAC_ORCHESTRATOR_INTERVAL_MS ?? 60000);
+// 值打错（NaN）必须回默认 60000 而不是被 intervalMs > 0 当成「关闭」——关闭只属于显式写 0 的人（min=0 保留它）。
+const orchestratorIntervalMs = clampEnvNumber(process.env.AIMAC_ORCHESTRATOR_INTERVAL_MS, 0, 60000);
 // 关掉它，后台就没有任何东西推进：人提交的指令一直停在"待处理"，派发不会被领走，
 // 关闭门不会重算 —— 而控制台上一切如常，人会以为系统在跑。这与状态机执行模式同形，
 // 所以同样如实公布：它是"想要多久跑一次"，不是猜的。
