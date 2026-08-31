@@ -7,7 +7,7 @@
 // 换个拷贝顺序也躲不掉（反过来就是分片旧、索引新）。所以做法是：拷完【按索引核一遍】，不对就重来。
 // 实测 cp 本身也会撞上正在改名的临时文件而报 ENOENT（三次里中一次），同样按重试处理。
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 
 // 认不出的参数一律拒（与仓里其它运维入口同一形状）：`--verify` 这种打错的名字被当成"没给"的话，
 // 命令会照跑，而人以为自己开了某个开关。备份只吃两个位置参数。
@@ -17,7 +17,8 @@ const wantsHelp = process.argv.slice(2).some((arg) => arg === "--help" || arg ==
 if (wantsHelp) {
   console.log("用法：npm run backup [-- <运行目录> <备份目录>]");
   console.log("      npm run backup -- --verify <备份目录>   只核对一份已有的备份，不拷贝");
-  console.log("可用环境变量：AIMAC_RUNTIME_DIR（默认源）、AIMAC_BACKUP_ATTEMPTS（重试次数，默认 5）");
+  console.log("可用环境变量：AIMAC_RUNTIME_DIR（默认源）、AIMAC_BACKUP_ATTEMPTS（重试次数，默认 5）、");
+  console.log("              AIMAC_BACKUP_OVERWRITE=true（目标里已有一份运行状态时，确认覆盖它）");
   process.exit(0);
 }
 // 只核对、不拷贝。为什么需要它：备份是在【拷的那一刻】核过的，而人手里的备份未必出自这个命令
@@ -101,6 +102,31 @@ if (checkOnlyMode) {
   console.log("核过的：中央索引点名的每个分片都在且正文长度对得上；段清单点名的每个事件段都在。");
   console.log("还原：停机后把这个目录整个拷回去（或用 AIMAC_RUNTIME_DIR 指向它）再启动。");
   process.exit(0);
+}
+
+// 【先守住 rmSync】。下面的循环每次尝试都会把 target 整个删掉再拷 —— 删之前必须确认 target
+// 不是会让人失去数据的目录，三种形状都真实敲得出来：
+//   · 源=目标（npm run backup -- .runtime .runtime）：rm 删掉的就是源，数据当场全没；
+//   · 互相嵌套：删目标/拷贝会伤到源本身；
+//   · 参数写反（把活运行目录当 target）：live 数据被删掉换成旧备份，丢的是备份以来的一切。
+// 前两种直接拒；第三种认「目标里已有 control-plane-state.json」这个形状 —— 它要么是正在用的
+// 运行目录、要么是一份旧备份，删之前都该有人明说一句（AIMAC_BACKUP_OVERWRITE=true）。
+// 只在进循环前查一次：第 2 次尝试的 target 里躺着的是本脚本上一次的半份拷贝，删它是本意。
+if (target === source) {
+  console.error(`源与目标是同一个目录：${source}`);
+  console.error("拒绝执行 —— 备份第一步是删掉目标目录，源=目标时删掉的就是源，数据当场全没。目录没动。");
+  process.exit(1);
+}
+if (target.startsWith(source + sep) || source.startsWith(target + sep)) {
+  console.error(`源与目标互相嵌套：${source} ↔ ${target}`);
+  console.error("拒绝执行 —— 删目标或递归拷贝会伤到源本身。目录没动。");
+  process.exit(1);
+}
+if (existsSync(join(target, "control-plane-state.json")) && process.env.AIMAC_BACKUP_OVERWRITE !== "true") {
+  console.error(`目标目录里已有一份运行状态：${join(target, "control-plane-state.json")}`);
+  console.error("它要么是【正在用的运行目录】（参数顺序写反了？正确顺序：<运行目录> <备份目录>），要么是一份旧备份。");
+  console.error("确认要覆盖这份旧备份的话：AIMAC_BACKUP_OVERWRITE=true 再跑。拒绝执行，目标目录没动。");
+  process.exit(1);
 }
 
 let lastProblems = ["没跑成"];

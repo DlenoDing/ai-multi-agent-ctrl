@@ -3206,6 +3206,22 @@ const MUTATIONS = [
     expect: "起来没先说清自己是谁"
   },
   {
+    name: "备份不得删掉源（源=目标守卫）",
+    file: "scripts/backup-runtime.mjs",
+    gate: "crash",
+    from: "if (target === source) {",
+    to: "if (false) {",
+    expect: "并保住目录"
+  },
+  {
+    name: "备份不得删掉已含运行状态的目标（参数写反守卫）",
+    file: "scripts/backup-runtime.mjs",
+    gate: "crash",
+    from: 'if (existsSync(join(target, "control-plane-state.json")) && process.env.AIMAC_BACKUP_OVERWRITE !== "true") {',
+    to: "if (false) {",
+    expect: "参数写反最常见的形状"
+  },
+  {
     name: "陈旧时长要分级（小时/天），不得永远堆分钟",
     file: APP,
     gate: "console",

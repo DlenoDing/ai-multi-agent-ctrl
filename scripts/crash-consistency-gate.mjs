@@ -665,6 +665,40 @@ await waitForChildExit(child, 3000);
         check(checkedGoodRun.status === 0 && /核对通过/u.test(`${checkedGoodRun.stdout || ""}`),
           "只核对模式：对着上面那份刚核过的备份必须通过（否则它就是个恒假的实现）",
           `退出码 ${checkedGoodRun.status}：${`${checkedGoodRun.stdout || ""}${checkedGoodRun.stderr || ""}`.trim().split("\n")[0].slice(0, 110)}`);
+
+        // 【备份脚本不许成为数据销毁器】。它每次尝试都先 rmSync(target, recursive) —— 三种真实敲得出的
+        // 参数形状会让这一步删掉不该删的东西：源=目标（删掉的就是源）、参数写反（把活运行目录当 target
+        // 整个删掉换成旧备份）。守卫必须在 rm 之前拒绝，且拒绝后目录一字不动。
+        {
+          const sameDir = join(backupBase, "guard-same");
+          mkdirSync(sameDir, {recursive: true});
+          writeFileSync(join(sameDir, "keep.txt"), "别删我");
+          const same = spawnSync(process.execPath, ["scripts/backup-runtime.mjs", sameDir, sameDir],
+            {cwd: root, encoding: "utf8"});
+          check(same.status !== 0 && existsSync(join(sameDir, "keep.txt")),
+            "备份拒绝「源=目标」并保住目录（否则 rmSync 先删源，数据当场全没）",
+            `退出码 ${same.status}，keep.txt 仍在=${existsSync(join(sameDir, "keep.txt"))}`);
+          const swapSrc = join(backupBase, "guard-src");
+          const swapTarget = join(backupBase, "guard-live");
+          mkdirSync(swapSrc, {recursive: true});
+          mkdirSync(swapTarget, {recursive: true});
+          writeFileSync(join(swapSrc, "control-plane-state.json"), JSON.stringify({stateVersion: 1}));
+          writeFileSync(join(swapTarget, "control-plane-state.json"), JSON.stringify({stateVersion: 99, live: true}));
+          const swapped = spawnSync(process.execPath, ["scripts/backup-runtime.mjs", swapSrc, swapTarget],
+            {cwd: root, encoding: "utf8"});
+          const swappedKept = existsSync(join(swapTarget, "control-plane-state.json"))
+            && /"live":true/u.test(readFileSync(join(swapTarget, "control-plane-state.json"), "utf8"));
+          check(swapped.status !== 0 && swappedKept,
+            "备份拒绝删掉「已含运行状态的目标」（参数写反最常见的形状），拒绝后那份状态一字不动",
+            `退出码 ${swapped.status}，目标状态仍在且未被换掉=${swappedKept}`);
+          // 正面对照：显式确认（AIMAC_BACKUP_OVERWRITE=true）后覆盖旧备份照常可用 ——
+          // 否则「一律拒绝」也能把上面两条蒙混过去。
+          const forced = spawnSync(process.execPath, ["scripts/backup-runtime.mjs", swapSrc, swapTarget],
+            {cwd: root, encoding: "utf8", env: {...process.env, AIMAC_BACKUP_OVERWRITE: "true"}});
+          check(forced.status === 0,
+            "显式确认（AIMAC_BACKUP_OVERWRITE=true）后覆盖旧备份照常可用",
+            `退出码 ${forced.status}：${`${forced.stdout || ""}${forced.stderr || ""}`.trim().split("\n")[0].slice(0, 110)}`);
+        }
       }
     }
   } finally {
