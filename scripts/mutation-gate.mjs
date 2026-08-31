@@ -731,6 +731,17 @@ const MUTATIONS = [
     expect: "同长度的内容损坏也必须拒绝"
   },
   {
+    // runtime_json（默认后端）的读取函数自己核 digest，这道此前无测试。拿掉它，同长度的内容损坏被默认后端
+    // 静默读入（字节数那道过、digest 那道没了）—— 默认部署读出被改过的分片而无感。契约门那条走真实读路径即红。
+    name: "默认后端读分片也必须比摘要而不只比字节",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    gate: "contract",
+    check: "verifyRuntimeJsonConflict",
+    from: "        if (indexedEntry?.storagePayloadDigest &&",
+    to: "        if (false && indexedEntry?.storagePayloadDigest &&",
+    expect: "同长度的内容损坏被静默接受"
+  },
+  {
     // writer 这道门此前也只有一条登记变异（丢更新）。并发下"同一张定稿卡恰好一个人定成"
     // 是人工闸门在多进程部署下的立足点，而它从没被人看着红过：拿掉"已非待确认"这道守卫，
     // 两个进程会各自定稿成功，两份都写进磁盘 —— 谁批的、批了哪一版，从此说不清。

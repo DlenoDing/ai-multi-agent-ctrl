@@ -5869,6 +5869,48 @@ function verifyRuntimeJsonConflict(output) {
           rmSync(blankDir, {recursive: true, force: true});
         }
       }
+      // runtime_json 读路径的【digest 那一维】：同长度的内容损坏（字节数不变、正文变了）。上面走真实读路径的
+      // 那条测的是 blank/identity（它先把索引里的摘要删了，恰好绕过 digest），而【默认后端】的读取
+      // （readRuntimeJsonProjectShards）在自己的读取函数里核 digest —— 那道此前【没有任何测试走到过】。
+      // 删掉它就像备份校验器当初漏 digest 一样无人察觉：默认部署读出被改过的分片而无感。走真实读路径钉住它。
+      {
+        const writeDir = mkdtempSync(join(tmpdir(), "aimac-shard-digest-write-"));
+        const readDir = mkdtempSync(join(tmpdir(), "aimac-shard-digest-read-"));
+        const mkOpt = (dir) => ({root, runtimeDir: dir, statePath: join(dir, "control-plane-state.json"),
+          seedPath: resolve(root, "data", "seed-state.json"), buildInitialState: () => ({stateVersion: 1, runtime: {}})});
+        try {
+          writeStoredState({stateVersion: 1, runtime: {}, projects: [{id: "p_digest", name: "P"}],
+            taskGroups: [{id: "tg_digest", projectId: "p_digest", status: "active", workItems: []}]}, mkOpt(writeDir));
+          cpSync(writeDir, readDir, {recursive: true}); // 冷缓存，强制读盘（否则命中 writeStoredState 填的缓存）
+          const shardDir = join(readDir, "project-db");
+          const shardName = existsSync(shardDir) ? readdirSync(shardDir).find((name) => name.endsWith(".state.json")) : null;
+          if (!shardName) {
+            output.push("runtime_json digest 读路径断言的夹具没造出分片，这条无从验证");
+          } else {
+            const shardPath = join(shardDir, shardName);
+            const text = readFileSync(shardPath, "utf8");
+            // 同长度翻转一个 a-y 字母：storagePayloadBytes 字段（数字）不动、字节数不变、内容摘要变 ——
+            // 于是字节数那道过、只有 digest 那道能拦住它。
+            const corrupted = text.replace(/[a-y]/u, (character) => String.fromCharCode(character.charCodeAt(0) + 1));
+            if (corrupted === text || corrupted.length !== text.length) {
+              output.push("runtime_json digest 读路径断言：造不出同长度损坏，这条在空转");
+            } else {
+              writeFileSync(shardPath, corrupted);
+              try {
+                readStoredState(mkOpt(readDir));
+                output.push("runtime_json 读路径：同长度的内容损坏被静默接受 —— 默认后端读出被改过的分片而无感，"
+                  + "而 assert 那条路（PG / 备份校验器）会拒。两条读路径对同一种损坏必须给同一种反应");
+              } catch (error) {
+                if (!String(error.message).startsWith("project_state_shard_digest_mismatch:")) {
+                  output.push(`runtime_json 读路径的同长度损坏报的是另一件事：${error.message}`);
+                }
+              }
+            }
+          }
+        } finally {
+          for (const dir of [writeDir, readDir]) { try { rmSync(dir, {recursive: true, force: true}); } catch { /* best effort */ } }
+        }
+      }
       // 兼容层必须有退役条件，否则它会无界存在（sys.scope-convergence「不做过度兼容」）。
       // 这里的兼容是【读取时接受旧格式摘要】，它的退役条件是"下一次写入会把该分片规范化"——
       // 因为复用判定比对的是【规范序】摘要，旧格式必然不匹配，因而必然被重写。
