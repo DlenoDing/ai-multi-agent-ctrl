@@ -3206,6 +3206,15 @@ const MUTATIONS = [
     expect: "起来没先说清自己是谁"
   },
   {
+    name: "房间序号：计数器缺失时必须回扫留存消息兜住单调性（迁移守卫）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '  const retainedMax = roomCounter > 0 ? 0\n    : Math.max(0, ...state.roomMessages.filter((item) => item.roomId === roomId).map((item) => Number(item.sequence || 0)));',
+    to: "  const retainedMax = 0;",
+    expect: "序号从头重来，持着旧游标的读者会永远收不到它"
+  },
+  {
     name: "人工确认未定稿不得被 consume 销单（核心守卫）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "mcp",

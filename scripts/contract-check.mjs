@@ -4761,6 +4761,26 @@ function verifyHumanAndOrganizationContracts(output) {
     output.push("room_send consumed a sequence number for a rejected message — the room sequence now has a permanent hole no reader can detect");
   }
 
+  // 序号单调性两条。稳态：计数器在场时它权威，连续两条必须相邻（room_send 已优化为计数器在场时
+  // 跳过 O(n) 回扫，这条钉住优化没把单调性弄丢）。
+  const roomSeqA = roomSend(state, {roomId: "room_seq_ct", [ROOM_SENDER_KEY]: "agent_node:node_ct", payload: {text: "a"}});
+  const roomSeqB = roomSend(state, {roomId: "room_seq_ct", [ROOM_SENDER_KEY]: "agent_node:node_ct", payload: {text: "b"}});
+  if (roomSeqB.message.sequence !== roomSeqA.message.sequence + 1) {
+    output.push("room_send：稳态下连续两条消息的序号不相邻 —— 计数器该权威且单调");
+  }
+  // 迁移守卫（retainedMax 唯一还担着的活）：早于 roomSequenceByRoom 那次改动的旧状态里，房间有消息
+  // 却没有计数器。此时新消息必须接在最大留存序号之后，不能从 1 重来 —— 否则持着旧游标的读者永远
+  // 收不到它。预置一条 sequence=7 的旧消息、并确保该房间的计数器缺失，发一条新的，序号必须是 8。
+  state.roomMessages.push({schemaVersion: "room-message/v1", messageId: "rm_migrate_pre", roomId: "room_migrate_ct",
+    sequence: 7, senderRef: "agent_node:node_ct", payload: {text: "old"}, status: "delivered",
+    createdAt: new Date().toISOString()});
+  delete state.roomSequenceByRoom.room_migrate_ct;
+  const roomMigrated = roomSend(state, {roomId: "room_migrate_ct", [ROOM_SENDER_KEY]: "agent_node:node_ct", payload: {text: "new"}});
+  if (roomMigrated.message.sequence !== 8) {
+    output.push(`room_send：计数器缺失但房间尚有留存消息时，新消息序号是 ${roomMigrated.message.sequence} 而不是接在最大留存序号之后（应为 8）`
+      + " —— 序号从头重来，持着旧游标的读者会永远收不到它");
+  }
+
   // --configure-global-clients 会把 `Bearer <节点令牌>` 写进 ~/.codex/config.toml、~/.claude/mcp.json、
   // ~/.cursor/mcp.json —— 此后这台机器上任何无关项目里开 Claude/Codex/Cursor，都带着这份凭据连控制面。
   // 原先没有任何移除路径：节点被撤销之后配置里那份凭据照样留着，而运维以为撤销就是撤销了。

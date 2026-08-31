@@ -7390,8 +7390,16 @@ export function roomSend(state, args) {
   if (roomTaskGroup && TASK_GROUP_SETTLED_STATUSES.includes(roomTaskGroup.status)) {
     return {ok: false, error: "room_task_group_settled", taskGroupStatus: roomTaskGroup.status};
   }
-  const retainedMax = Math.max(0, ...state.roomMessages.filter((item) => item.roomId === roomId).map((item) => Number(item.sequence || 0)));
-  const nextSequence = Math.max(Number(state.roomSequenceByRoom[roomId] || 0), retainedMax) + 1;
+  // room_send 是每个 agent 默认就有、且无速率限制的高频写。序号计数器（roomSequenceByRoom[roomId]）
+  // 只要房间还有留存消息就【永不被淘汰】（见 pruneRoomSequenceKeys：只删没有消息的房间），
+  // 而它恒 >= 任何留存序号（只有 roomSend 赋号，且赋号那一行紧接着就更新计数器）——所以计数器在时它
+  // 就是权威，每发一条都全量回扫留存消息求 max 是纯开销（结果恒等于计数器）。只有计数器【缺失】时
+  // （早于 roomSequenceByRoom 那次改动的旧状态文件里有消息却没有计数器）才需要回扫兜住序号单调性：
+  // 否则新消息从 1 重来，持着 cursor=N 的读者永远收不到它。两种情形下取值与原先逐字相等。
+  const roomCounter = Number(state.roomSequenceByRoom[roomId] || 0);
+  const retainedMax = roomCounter > 0 ? 0
+    : Math.max(0, ...state.roomMessages.filter((item) => item.roomId === roomId).map((item) => Number(item.sequence || 0)));
+  const nextSequence = Math.max(roomCounter, retainedMax) + 1;
   // 序号在消息确定要落库之后才消费。若先占号再因超限拒绝，房间序列上就留下一个永久空洞，
   // 而 roomWait 只按 sequence > afterSequence 推进、读者无从察觉少了什么。
   const message = {
