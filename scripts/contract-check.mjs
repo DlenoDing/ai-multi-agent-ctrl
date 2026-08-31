@@ -11560,6 +11560,14 @@ function verifyEnvValuesAreNotSilentlyClamped(output) {
       const clamp = src.match(new RegExp(`Math\\.(max|min)\\(\\s*([\\d*\\s]+),\\s*${variable}\\b`, "u"));
       if (clamp) record(envName, clamp[1], clamp[2]);
     }
+    // 形态四：先经 clampEnvNumber 存进变量、再被 Math.max/min 钳 —— NaN 安全化之后形态二的对应形
+    //（orchestrator：声明 min=0 保「0=关闭」，>0 分支里才有 5000 下限）。放在最后：同名旋钮以这里的
+    // 【下游真实生效界】覆盖形态三记下的声明界（完整变异门抓出来的：不覆盖的话 5000 下限从门视野消失）。
+    for (const match of src.matchAll(/const (\w+) = clampEnvNumber\(process\.env\.([A-Z_0-9]+),/gu)) {
+      const [, variable, envName] = match;
+      const clamp = src.match(new RegExp(`Math\\.(max|min)\\(\\s*([\\d*\\s]+),\\s*${variable}\\b`, "u"));
+      if (clamp) record(envName, clamp[1], clamp[2]);
+    }
   }
   if (clamps.size < 36) {
     output.push(`环境变量钳制核对：只认出 ${clamps.size} 处钳制（应至少 36）—— 提取形状或文件清单与代码脱节，这道门在空转`);

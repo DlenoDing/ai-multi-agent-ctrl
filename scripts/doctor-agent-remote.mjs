@@ -545,7 +545,10 @@ try {
       {cwd: root, encoding: "utf8", timeout: 60000, env: {...process.env, AIMAC_AGENT_WORK_DIR: reuseDir, AIMAC_AGENT_NODE_NAME: "doctor-other-host", AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true"}});
     const said = `${reuseCli.stdout || ""}${reuseCli.stderr || ""}`;
     rmSync(reuseDir, {recursive: true, force: true});
-    if (reuseCli.status === 0 || /retryable control-plane conflict/u.test(said) || !/已经被用过了/u.test(said)) {
+    // 「不重试」的判据要盯【现在的】重试话术（「…第 n/m 次重试」）：原先盯的英文旧串
+    // "retryable control-plane conflict" 在重试打印中文化时就没了 —— 这条红腿死了三个月没人知道
+    //（完整变异门抓出来的：把终局拒绝守卫删掉它照样绿）。
+    if (reuseCli.status === 0 || /次重试/u.test(said) || !/已经被用过了/u.test(said)) {
       throw new Error(`用过的票换机器 bootstrap：该一次就说「已经被用过了」且不重试（exit ${reuseCli.status}，${Date.now() - startedAt}ms）：${said.slice(0, 260).replace(/\n/g, " ")}`);
     }
   }
