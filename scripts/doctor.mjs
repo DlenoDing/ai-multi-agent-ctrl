@@ -2832,6 +2832,20 @@ try {
     }
   }
   expectStatus(await g2(`/api/findings/${findingOk.payload.finding.findingId}/resolve`, reviewerAuth, "g2b-finding-resolve-ok", {status: "resolved", evidenceRefs: ["evidence:doctor"], rootCauseOwner: "reviewer"}), 200, "finding resolve happy");
+  // 死信处置出口：造不出真实死信（要命令重试超限），但至少打到路由、断言「找不到」这条确定回答，
+  // 证明这条新接的出口活着（此前 classify/assign/replay/discard 四函数零调用、路由不存在）。
+  {
+    const dlqNf = await g2("/api/dlq-entries/dlq_does_not_exist/resolve", systemAuth, "g2-dlq-notfound", {resolution: "discard", justification: "x"});
+    if (dlqNf.response.status !== 404 || dlqNf.payload?.error !== "dlq_entry_not_found") {
+      throw new Error(`死信处置对不存在的条目该回 404 dlq_entry_not_found，实际 ${dlqNf.response.status} ${JSON.stringify(dlqNf.payload).slice(0, 160)}`);
+    }
+    // 缺处置方式：400（缺省不得等于处置）。
+    const dlqNoRes = await g2("/api/dlq-entries/dlq_does_not_exist/resolve", systemAuth, "g2-dlq-nores", {justification: "x"});
+    // entry 不存在时会先回 404；这里只确认路由把带体的请求收下并按码回话，不再深究顺序。
+    if (![400, 404].includes(dlqNoRes.response.status)) {
+      throw new Error(`死信处置缺参该回 4xx，实际 ${dlqNoRes.response.status}`);
+    }
+  }
   // 已定过的缺陷不得被第二次处置：回 200 意味着后到的那个人以为自己改掉了结论，而记录没动。
   expectStatus(await g2(`/api/findings/${findingOk.payload.finding.findingId}/resolve`, reviewerAuth,
     "g2b-finding-resolve-again", {status: "dismissed", evidenceRefs: ["e2e"]}), 409,

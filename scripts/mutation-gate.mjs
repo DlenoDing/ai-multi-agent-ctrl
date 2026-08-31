@@ -3933,6 +3933,15 @@ const MUTATIONS = [
     expect: "没有已归档项目时不要多说一句"
   },
   {
+    name: "死信必须有处置出口（缺处置方式要拒，不得默认了结）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyDlqEntriesHaveAnOperatorExit",
+    from: '    throw Object.assign(new Error("dlq_entry_resolution_required"),',
+    to: '    return {dlqEntry: entry, silentlyResolved: true}; throw Object.assign(new Error("dlq_entry_resolution_required"),',
+    expect: "死信不选处置方式没被拒"
+  },
+  {
     name: "调优先级必须落到精确档位 admissionPriorityClass（非只写模糊 priorityHint）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

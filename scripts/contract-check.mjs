@@ -102,7 +102,7 @@ import {
   FINDING_TERMINAL_STATUSES,
   artifactRegister,
   expireStaleLeases,
-  expireStaleHumanConfirmations,
+  expireStaleHumanConfirmations, createDlqEntry, operatorResolveDlqEntry, DLQ_ENTRY_TERMINAL_STATES,
   refreshConfirmationsAfterHumanChange,
   HUMAN_ACTOR_KEY,
   // 真人闸门的三份闭集：判据按闭集展开，新增一个取值时自动进入检验面，不必回来改断言。
@@ -825,6 +825,7 @@ run(verifyEveryCapExplainsWhatItKeeps);
 run(verifyCapKeepsLiveTaskGroupRecords);
 run(verifyRealtimeRevalidationSeversRevokedPrincipals);
 run(verifyExpiredConfirmationsNeverAutoRelease);
+run(verifyDlqEntriesHaveAnOperatorExit);
 run(verifyEnvKnobsAreNaNSafe);
 run(verifyOneProjectWriteTouchesOneShard);
 run(verifyPanelGatesCoverEveryBlockInside);
@@ -12042,6 +12043,7 @@ function verifyServerFieldsReachThePerson(output) {
     // 以下都是"把那条记录原样回显"，界面从 state 里取同一条渲染，不从拒绝报文里取：
     approvalRequest: "审批请求对象回显",
     finding: "缺陷对象回显",
+    dlqEntry: "死信条目对象回显，界面从 state 里取同一条渲染（前端 submit 已做客户端校验，服务端这条给直接调接口的人）",
     permissionRequest: "权限申请对象回显",
     reviewPlan: "评审计划对象回显",
     ruleSourceResolution: "规则源处置对象回显",
@@ -18211,6 +18213,34 @@ function verifyExpiredConfirmationsNeverAutoRelease(output) {
     output.push("人工确认过期：到期的派发被放回执行/未升级为人工决策 —— 超时被当成了放行");
   }
   if (output.length === 0) console.log("人工确认过期：未到期的保住原样、到期的升级为人工决策且绝不放行，逐条核过");
+}
+
+// 【死信必须有人工处置出口，否则永久挡关闭门】。此前 classify/assign/replay/discard 四函数零调用，
+// DLQ 建出来停在 created（非终态），no_active_dlq 据此永挡关闭门而界面无处置入口。operatorResolveDlqEntry
+// 接上：走完整转移链到终态；缺 resolution / 缺理由 / 重复处置各有确定回答。
+function verifyDlqEntriesHaveAnOperatorExit(output) {
+  const state = {stateVersion: 1, eventLog: [], transitionEvidence: [], auditLog: [], dlqEntries: []};
+  ensureRuntimeCollections(state, {root});
+  const made = createDlqEntry(state, {commandId: "cmd_dlq", taskGroupId: "tg_runtime_management", projectId: "prj_control_plane", reason: "max_attempts"});
+  if (made.status !== "created") { output.push(`死信初始状态不是 created（${made.status}）—— 本条无从验`); return; }
+  // 缺 resolution：拒（缺省不得等于处置）。
+  let noRes = null; try { operatorResolveDlqEntry(state, made, {justification: "x"}); } catch (e) { noRes = e.message; }
+  if (noRes !== "dlq_entry_resolution_required") output.push(`死信不选处置方式没被拒（${noRes}）—— 一条没人判断过的死信会被默认动作了结`);
+  // 缺理由：拒（问责文字）。
+  let noJust = null; try { operatorResolveDlqEntry(state, made, {resolution: "discard"}); } catch (e) { noJust = e.message; }
+  if (noJust !== "dlq_entry_justification_required") output.push(`死信处置不写理由没被拒（${noJust}）`);
+  // 正路：discard 走到终态 discarded（解开 no_active_dlq）。
+  const done = operatorResolveDlqEntry(state, made, {resolution: "discard", justification: "命令确实失败，丢弃", actor: "acct_ct"});
+  if (done.dlqEntry.status !== "discarded" || !DLQ_ENTRY_TERMINAL_STATES.includes(done.dlqEntry.status)) {
+    output.push(`死信处置后没到终态（${done.dlqEntry?.status}）—— no_active_dlq 会一直挡着关闭门`);
+  }
+  // 重复处置：alreadyResolved，不改写。
+  const again = operatorResolveDlqEntry(state, made, {resolution: "replay", justification: "再来一次"});
+  if (!again.alreadyResolved || made.status !== "discarded") output.push("已处置的死信被二次处置改写了（应回 dlq_entry_already_resolved）");
+  // 找不到条目：core 先回 dlq_entry_not_found（路由据此回 404）。
+  const nf = operatorResolveDlqEntry(state, null, {resolution: "discard", justification: "x"});
+  if (nf.error !== "dlq_entry_not_found") output.push(`死信处置找不到条目时没回 dlq_entry_not_found（${nf.error}）`);
+  if (output.length === 0) console.log("死信处置出口：created→discarded 走通、缺处置/缺理由/重复处置各有确定回答，no_active_dlq 有了可达的解");
 }
 
 // 【撤销必须对已建立的 WebSocket 生效】：六种主体形态逐个过谓词（接线由 validate-specs 钉在心跳体里）。

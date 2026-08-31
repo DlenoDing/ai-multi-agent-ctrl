@@ -407,7 +407,6 @@ export function checkBarrierLiveness() {
 const DEAD_EXPORT_ACCEPTED = {
   cancelCommand: "命令总线的失败分支：生产上只走 runCommandLifecycle 的成功路径，failCommand/retryCommand 无人调用，因此 running->cancelled 不可达",
   compensateCommand: "同上：failed->compensated 依赖命令先失败，而生产上命令不会失败",
-  discardDlqEntry: "同上：死信条目只由 retryCommand 超限产生，生产上从不产生，因此 assigned->discarded 不可达",
   // 下面这些【有人调，但只有门在调】。整族凑齐才看得清全貌：命令总线的失败-重试-死信这一层
   // 代码齐全、spec 建了模、关闭屏障有判据、界面有指引，而产品的写入路径一次都到不了它。
   // 之前只登记了三个"零引用"的，另外六个因为门里调过就被算成"接上了" —— 同一族里
@@ -415,9 +414,6 @@ const DEAD_EXPORT_ACCEPTED = {
   failCommand: "只有契约门在调：生产上 runCommandLifecycle 一路走到 succeeded，没有产生 failed 的路径",
   retryCommand: "只有契约门在调：没有失败就没有重试",
   toDlq: "只有契约门在调：要先 failed 才进死信，而 failed 到不了",
-  classifyDlqEntry: "只有契约门在调：死信条目产生不出来，处置动作自然也到不了",
-  assignDlqEntry: "同上",
-  replayDlqEntry: "同上",
   relatedSharedDefinitionsForTest: "名字里就写明是测试辅助，专为门导出",
   // 只有门在调，但它不是测试辅助：它是这台服务器【收受面】的入参词表（产品内部直接用
   // commonInputProperties()）。三道门此前各自去源码里猜这份词表 —— 两处按 "accountId: string,"

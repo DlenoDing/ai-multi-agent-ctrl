@@ -6836,6 +6836,33 @@ export function discardDlqEntry(state, entry, input = {}) {
   return entry;
 }
 
+// 【人工处置死信的唯一出口】。此前 classify/assign/replay/discard 四个函数全都没有任何调用方，
+// 而 DLQEntry 建出来就停在 created（非终态）—— no_active_dlq 关闭门据此永久挡着，人在界面上又找不到
+// 任何处置它的地方（dlqEntries 连下发都被清空）。命令重试超限造一条死信，整个任务组就再也关不掉。
+// 这里把它接上：人决定丢弃还是重放，内部走完整的状态机转移链（created→classified→assigned→终态），
+// 每一步都是合法边、都留转移证据。缺省不得等于处置：resolution 必须显式给（否则一条没人真正判断过的
+// 死信被一句默认动作了结）；理由必填（这是事后唯一的处置依据，与 finding/quality-gate 同规）。
+export function operatorResolveDlqEntry(state, entry, input = {}) {
+  if (!entry) return {ok: false, error: "dlq_entry_not_found"};
+  if (!["discard", "replay"].includes(input.resolution)) {
+    throw Object.assign(new Error("dlq_entry_resolution_required"),
+      {status: 400, supported: ["discard", "replay"],
+       details: {message: "处置死信必须选择「丢弃」或「重放」——不选它会一直挡着关闭门"}});
+  }
+  if (DLQ_ENTRY_TERMINAL.has(entry.status)) return {dlqEntry: entry, alreadyResolved: true};
+  const justification = assertHumanTextWithinLimit(input.justification || "", "dlq_entry_justification", 2000);
+  if (!justification) throw Object.assign(new Error("dlq_entry_justification_required"),
+    {status: 400, details: {message: "处置死信必须写明理由——这是事后唯一的处置依据"}});
+  const actor = input.actor || "operator";
+  if (entry.status === "created") classifyDlqEntry(state, entry, {rootCauseHint: `operator_review:${entry.entryId}`});
+  if (entry.status === "classified") assignDlqEntry(state, entry, {ownerRole: actor});
+  entry.resolutionJustification = justification;
+  entry.resolvedBy = actor;
+  if (input.resolution === "discard") discardDlqEntry(state, entry, {decisionRecord: `operator:${actor}`});
+  else replayDlqEntry(state, entry, {replayPolicyRef: `operator:${actor}`});
+  return {dlqEntry: entry, resolution: input.resolution};
+}
+
 // Sweeper: applied on the same cadence as expireStaleQueuedDispatches / maintainWorkerLanes.
 // It applies timeout_at_elapsed to running commands whose timeoutAt has passed so a stuck
 // command cannot silently keep the close-barrier `all_commands_terminal` gate blocked.

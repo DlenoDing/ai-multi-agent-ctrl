@@ -3929,7 +3929,7 @@ const COLLECTION_LABELS = {
   qualityGates: "质量门", repositoryOutputs: "仓库产出", reviewBundles: "评审包", reviewPlans: "评审计划",
   roleSkillOverlays: "角色技能叠加", roleSkills: "角色技能", ruleSourceResolutions: "规则来源",
   sessionPlacementDecisions: "会话放置", sharedDefinitions: "共享定义", skillSources: "技能源",
-  systemUpgradeCandidates: "升级候选", taskGroups: "任务组", testResults: "测试结果",
+  systemUpgradeCandidates: "升级候选", taskGroups: "任务组", testResults: "测试结果", dlqEntries: "死信队列",
   workSessions: "工作会话", workerLanes: "载体"
 };
 // 这句话原先是无条件的："这里只保留最近 N 条；更早的记录在归档文件里，不在这一屏内。"
@@ -4629,6 +4629,29 @@ function renderMonitor() {
     // 节点为什么拒/为什么失败，此前写进 command.ackResult 就再没人读过（全仓只有网关那一处写、
     // 零处读）—— 屏幕上只有一个「已拒绝」，人无处可查。它本来就随视图下发了，缺的只是这一列。
     panel("控制通道", table([{label: "序号", c: "num"}, "节点", "命令", "作用对象", "状态", "原因", {label: "更新时间", c: "nowrap"}], commands, {moreText: moreText(commandsInScope.length, 16, "agentControlCommands")}), {wide: true}),
+    (() => {
+      // 死信队列：命令重试超限时产生，非终态会一直挡住关闭门（no_active_dlq）。此前它连下发都没有、
+      // 更没有处置入口 —— 一条死信就能让任务组永远关不掉。这里列出待处置的，给出丢弃/重放的出口。
+      const DLQ_TERMINAL = new Set(["replayed", "discarded", "superseded"]);
+      const dlqActive = (state.dlqEntries || []).filter((entry) => !DLQ_TERMINAL.has(entry.status));
+      const dlqRows = dlqActive.map((entry) => row([
+        `<span class="mono">${esc(entry.entryId)}</span>`,
+        `<span class="mono">${esc(entry.commandId || entry.sourceObjectRef || "-")}</span>`,
+        esc(taskGroupNameOf(entry.taskGroupId)),
+        esc(entry.reason || "-"),
+        badge(entry.status),
+        {v: fmtTime(entry.updatedAt || entry.createdAt), c: "nowrap"},
+        hasGroupPerm(entry.taskGroupId, "task_group:control") ? `
+          <form class="form-grid" data-form="dlq-resolve" data-entry="${esc(entry.entryId)}">
+            ${decisionSelect("resolution", [["discard", "丢弃（放弃这条失败命令）"], ["replay", "重放（判定可以放行）"]], "请选择处置…", {required: false})}
+            <input name="justification" placeholder="处置理由（必填）">
+            <button class="secondary-button" type="submit">处置</button>
+          </form>` : noRightOnThisGroup(entry.taskGroupId, "任务组控制（处置死信）")
+      ]));
+      return panel("死信队列", dlqActive.length
+        ? table(["条目", "命令", "作用对象", "原因", "状态", {label: "更新时间", c: "nowrap"}, "处置"], dlqRows)
+        : `<div class="small muted">没有待处置的死信条目。命令重试超限时才会在这里出现，非终态会挡住任务组关闭。</div>`, {wide: true});
+    })(),
     panel("运行时节点", table(["节点", "状态", "准入", {label: "最近心跳", c: "nowrap"}, "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…", "runtime-nodes")}),
     panel("模型选择记录", table(["角色", "工作项", "模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText(decisionsInScope.length, 10, "modelSelectionDecisions")})),
     panel("会话放置记录", table(["工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态"], placements, {moreText: moreText(placementsInScope.length, 10, "sessionPlacementDecisions")})),
@@ -5178,6 +5201,14 @@ document.addEventListener("submit", async (event) => {
     }
     if (kind === "perm-resolve") {
       await api(`/api/permission-requests/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "rejected"})});
+      await loadPage();
+      return;
+    }
+    if (kind === "dlq-resolve") {
+      if (!data.resolution) throw new Error("处置死信必须选择「丢弃」或「重放」—— 系统不会替你选一个");
+      if (!String(data.justification || "").trim()) throw new Error("处置死信必须写明理由（事后唯一的处置依据）");
+      await api(`/api/dlq-entries/${encodeURIComponent(form.dataset.entry)}/resolve`,
+        {method: "POST", body: JSON.stringify({resolution: data.resolution, justification: data.justification})});
       await loadPage();
       return;
     }

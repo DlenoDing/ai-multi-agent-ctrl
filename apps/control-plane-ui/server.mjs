@@ -65,7 +65,7 @@ import {
   computeCloseBarrier,
   computeCompletionReadiness,
   computeProgressSnapshots,
-  countInFlightDispatchesByProject, realtimePrincipalStillValid,
+  countInFlightDispatchesByProject, realtimePrincipalStillValid, operatorResolveDlqEntry,
   makeProjectScopePredicate,
   wipCapacityForProject,
   cancelPendingConfirmationsForDispatch,
@@ -1325,6 +1325,8 @@ const MACHINE_ALLOWED_ACTIONS = [
   // 它们改的是节奏不是结论，停了还能再起来，所以机器可以做。
   // （取消/中止不在这里 —— 见下面真人专属那份清单。）
   "task_group_pause", "task_group_resume", "task_group_request_review", "task_group_rebound_drift",
+  // 死信处置（丢弃/重放重试超限的命令）是运维对失败的判断，与质量门豁免同类，不交给机器主体。
+  "dlq_entry_resolve",
   // 七、首次引导：空库上建出第一个系统账号，那一刻还没有任何"人"可用。
   "bootstrap_init"
 ];
@@ -1709,7 +1711,7 @@ function scopedStateForAccount(state, account, session) {
   cloned.commands = [];
   cloned.decisionRecords = [];
   cloned.commandEffects = [];
-  cloned.dlqEntries = [];
+  cloned.dlqEntries = (state.dlqEntries || []).filter((item) => item.taskGroupId ? visibleTaskGroupIds.has(item.taskGroupId) : visibleProjectIds.has(item.projectId));
   cloned.integrationBatches = [];
   cloned.idempotencyRecords = {};
   cloned.runtimeIssuePatterns = [];
@@ -1978,6 +1980,8 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     users: ["accounts", "accessGrants", "projects", "agentJoinTokens"],
     projects: ["accounts", "accessGrants", "projects", "repositoryOutputs", "agentJoinTokens"],
     tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "closeBarriers", "humanConfirmationRequests", "humanDirectives", "permissionRequests", "approvalRequests", "findings", "qualityGates", "testResults", "reviewPlans", "sharedDefinitions", "reviewBundles", "ruleSourceResolutions", "systemUpgradeCandidates", "executionTopologies",
+      // 死信队列挡着 no_active_dlq 关闭门、属任务组维度，要下发到 monitor 页才有处置入口。
+      "dlqEntries",
       // artifacts 此前在防泄漏白名单里却【没有任何视图下发它】。关闭门的 artifacts_verified
       // 只说一句"还有产物没核验"、指不出是哪一条，而人被要求"等执行方补齐证据或取消对应工作项"。
       "artifacts"],
@@ -2239,6 +2243,8 @@ function permissionForAction(action) {
   // 结果只有系统管理员能解掉一个任务组层面的阻塞 —— 与同批杠杆口径不一致。
   if (action === "review_plan_resolve") return "task_group:review";
   if (action === "rule_source_settle") return "task_group:control";
+  // 死信处置（丢弃/重放重试超限的命令）是命令总线层的运维决定，与 rule_source_settle 同属任务组控制。
+  if (action === "dlq_entry_resolve") return "task_group:control";
   if (action === "work_item_plan_finalization_set") return "task_group:review";
   if (action === "review_bundle_resolve") return "task_group:review";
   if (action === "system_upgrade_candidate_resolve") return "task_group:control";
@@ -5317,6 +5323,25 @@ async function handleApi(req, res) {
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
+    return;
+  }
+
+  const dlqResolveMatch = url.pathname.match(/^\/api\/dlq-entries\/([^/]+)\/resolve$/);
+  if (req.method === "POST" && dlqResolveMatch) {
+    const entry = (state.dlqEntries || []).find((item) => item.entryId === dlqResolveMatch[1]);
+    const guard = beginGuardedWrite(req, state, "dlq_entry_resolve", `DLQEntry:${dlqResolveMatch[1]}`,
+      entry ? taskGroupScope(state, entry.taskGroupId) : {resourceType: "system", resourceId: "dlq"});
+    if (guard.status) return json(res, guard.status, guard.payload);
+    if (!entry) return json(res, 404, {error: "dlq_entry_not_found"});
+    let result;
+    try { result = operatorResolveDlqEntry(state, entry, {resolution: body.resolution, justification: body.justification, actor: guard.actor}); }
+    catch (error) { return json(res, error.status || 400, {error: error.message}); }
+    if (result.alreadyResolved) return json(res, 409, {error: "dlq_entry_already_resolved", dlqEntry: result.dlqEntry});
+    recomputeBarrierAfterResolve(state, entry.taskGroupId);
+    audit(state, guard.actor, "dlq_entry_resolve", `DLQEntry:${entry.entryId}`, result.resolution);
+    finishGuardedWrite(state, guard, 200, result);
+    writeState(state);
+    json(res, 200, result);
     return;
   }
 
