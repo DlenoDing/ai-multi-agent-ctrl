@@ -1000,6 +1000,7 @@ run(verifyMcpToolTableMatchesImplementation);
 run(verifyI18nKeysAreReachable);
 run(verifyDockerUpTellsWhereTheKeysAre);
 run(verifyConsoleRuntimeConstantsHaveOneWriter);
+run(verifyBlockerRoutesForwardSettledRejection);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
 // 汇总之前把所有 async 检查等干净。少了这一句，它们推进的错误会赶不上报告。
@@ -5620,6 +5621,45 @@ function verifyStorageFaultCodesReachTheOperator(output) {
       output.push(`${code} 被认成存储故障，界面上却没有它的中文说明 —— 出事那一刻人看到的是一个英文码`);
     }
   }
+}
+
+// 这些 core 函数对已终结的任务组返回 {ok:false, error:"task_group_settled"}（是 return，不是 throw）。REST 路由
+// 若不把这个返回原样转发（refusalStatus/refusalPayload），紧接着就会拿 result.<对象>.<id>（undefined）去用 —— 500，
+// 调用方把「任务组已终结」看成系统故障。approval_request_create 早有这道门（其注释写明了这个坑），这一族其余
+// 几处曾经漏了（2026-09-01 补齐）。结构核：每条路由在 core 调用之后、用 result.<字段> 之前，必须有 <var>.ok === false 转发。
+function verifyBlockerRoutesForwardSettledRejection(output) {
+  const before = output.length;
+  const lines = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8").split("\n");
+  // crash：core 返回 {ok:false} 时，路由若不转发就会拿这个字段访问去崩（或把拒绝当成功回出去）。
+  // 窗口精确取【core 调用 → 该崩溃行】之间，不用固定行数（否则会渗进下一条路由、误把它的守卫算成本条的）。
+  // crash 用【模板字面量】形式（${…}）：它只出现在代码的 audit 行里，不会撞上本函数自己的散文注释
+  // （注释里写的是「result.finding.findingId 直接抛」这种无 ${} 的形态）—— 否则 crashIdx 会被注释骗到守卫之前。
+  const routes = [
+    {fn: "findingSubmit", varName: "result", crash: "${result.finding.findingId}"},
+    {fn: "permissionRequestSubmit", varName: "result", crash: "${result.permissionRequest.requestId}"},
+    {fn: "reviewPlanCreate", varName: "result", crash: "${result.reviewPlan.reviewPlanId}"},
+    {fn: "createExecutionTopology", varName: "result", crash: "${result.topology.topologyId}"},
+    {fn: "ruleSourceResolve", varName: "result", crash: "${result.ruleSourceResolution.resolutionId}"},
+    {fn: "createHumanConfirmationRequest", varName: "request", crash: "${request.requestId}"}
+  ];
+  for (const {fn, varName, crash} of routes) {
+    const callIdx = lines.findIndex((line) => new RegExp(`\\b${varName} = ${fn}\\(state`).test(line));
+    if (callIdx < 0) {
+      output.push(`阻塞路由转发核对：找不到 ${fn} 的 REST 调用（${varName} = ${fn}(state…）—— 提取脱节，本条空转`);
+      continue;
+    }
+    const crashIdx = lines.findIndex((line, index) => index > callIdx && line.includes(crash));
+    if (crashIdx < 0) {
+      output.push(`阻塞路由转发核对：${fn} 之后找不到会崩的字段访问「${crash}」—— 提取脱节，本条空转`);
+      continue;
+    }
+    const window = lines.slice(callIdx, crashIdx).join("\n");
+    if (!new RegExp(`${varName}\\.ok === false`).test(window)) {
+      output.push(`${fn} 的 REST 路由没有把 core 的 {ok:false} 拒绝原样转发（core 调用与 ${crash} 之间缺 ${varName}.ok === false）——`
+        + " 往已终结的任务组提交阻塞对象时，调用方收到的是 500 server_error 而不是 409 task_group_settled");
+    }
+  }
+  if (output.length === before) console.log(`阻塞路由转发核对：${routes.length} 条阻塞创建路由都把 core 的 settled 拒绝原样转发（不再报成 500）`);
 }
 
 function verifyRuntimeJsonConflict(output) {

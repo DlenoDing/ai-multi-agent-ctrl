@@ -753,6 +753,17 @@ const MUTATIONS = [
     expect: "两个数各说各的"
   },
   {
+    // 阻塞创建路由必须把 core 的 {ok:false}（如 task_group_settled）原样转发。去掉 finding 路由那道转发，
+    // 往已终结的任务组提交 finding 时会拿 result.finding.findingId(undefined) 去用 → 500 而非 409。契约门那条即红。
+    name: "阻塞创建路由必须转发 core 的 settled 拒绝",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    check: "verifyBlockerRoutesForwardSettledRejection",
+    from: "    if (result.ok === false) return json(res, refusalStatus(result), refusalPayload(result));\n    audit(state, guard.actor, \"finding_submit\", `Finding:${result.finding.findingId}`);",
+    to: "    audit(state, guard.actor, \"finding_submit\", `Finding:${result.finding.findingId}`);",
+    expect: "没有把 core 的 {ok:false} 拒绝原样转发"
+  },
+  {
     // writer 这道门此前也只有一条登记变异（丢更新）。并发下"同一张定稿卡恰好一个人定成"
     // 是人工闸门在多进程部署下的立足点，而它从没被人看着红过：拿掉"已非待确认"这道守卫，
     // 两个进程会各自定稿成功，两份都写进磁盘 —— 谁批的、批了哪一版，从此说不清。

@@ -5276,6 +5276,9 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "finding_submit", `Finding:${body.findingId || "new"}`, taskGroupScope(state, scopeTaskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = findingSubmit(state, body);
+    // core 的拒绝（如 task_group_settled）要原样转发：不接住的话下一行 result.finding.findingId 直接抛，
+    // 调用方收到 500 server_error —— 与 approval_request_create 同规（那处早有这道门，这族其余几处漏了）。
+    if (result.ok === false) return json(res, refusalStatus(result), refusalPayload(result));
     audit(state, guard.actor, "finding_submit", `Finding:${result.finding.findingId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
@@ -5501,6 +5504,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "permission_request_submit", `PermissionRequest:${body.requestId || "new"}`, taskGroupScope(state, body.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = permissionRequestSubmit(state, body);
+    if (result.ok === false) return json(res, refusalStatus(result), refusalPayload(result));
     audit(state, guard.actor, "permission_request_submit", `PermissionRequest:${result.permissionRequest.requestId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
@@ -5561,6 +5565,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "execution_topology_plan", `ExecutionTopology:${body.topologyId || "new"}`, taskGroupScope(state, body.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = createExecutionTopology(state, body, {root: repositoryRoot});
+    if (result.ok === false) return json(res, refusalStatus(result), refusalPayload(result));
     audit(state, guard.actor, "execution_topology_plan", `ExecutionTopology:${result.topology.topologyId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
@@ -5624,6 +5629,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "review_plan_create", `ReviewPlan:${body.reviewPlanId || "new"}`, taskGroupScope(state, body.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = reviewPlanCreate(state, body);
+    if (result.ok === false) return json(res, refusalStatus(result), refusalPayload(result));
     audit(state, guard.actor, "review_plan_create", `ReviewPlan:${result.reviewPlan.reviewPlanId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
@@ -5650,6 +5656,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "rule_source_resolve", `RuleSourceResolution:${body.resolutionId || "new"}`, taskGroupScope(state, body.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = ruleSourceResolve(state, body);
+    if (result.ok === false) return json(res, refusalStatus(result), refusalPayload(result));
     audit(state, guard.actor, "rule_source_resolve", `RuleSourceResolution:${result.ruleSourceResolution.resolutionId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
@@ -6510,6 +6517,9 @@ async function handleApi(req, res) {
     } catch (error) {
       return json(res, error.status || 500, {error: error.message});
     }
+    // core 走【返回 {ok:false}】而不是抛（如 task_group_settled）：try/catch 接不住它，不接住的话下面会拿
+    // request.requestId=undefined 去记审计、再以 201 把这份拒绝当成功回出去。与 finding/approval 同规原样转发。
+    if (request.ok === false) return json(res, refusalStatus(request), refusalPayload(request));
     audit(state, `agent-node:${node.nodeId}`, "human_confirmation_request", `HumanConfirmationRequest:${request.requestId}`);
     commitUnguardedWrite(state);
     json(res, 201, {request});
