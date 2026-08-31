@@ -4194,13 +4194,16 @@ function verifyHumanAndOrganizationContracts(output) {
     // 保证 active 的绝不被淘汰。设了到期时间却没人执行，等于没有到期时间。
     const leaseState = structuredClone(seedState);
     ensureRuntimeCollections(leaseState, {root});
+    // 所有 lease 日期都【相对这个固定 leaseNow】判定，不看真实时间 —— 未来/过期都稳定。
+    // （lease_future 曾写 2026-09-01，恰好等于某天的今天：功能上因固定基准无碍，但会绊倒读代码的人，
+    //  改成明显遥远的未来。测「未过期」的夹具日期绝不能落在可能到达的真实日期上。）
     const leaseNow = Date.parse("2026-08-02T00:00:00Z");
     leaseState.workSessions = [{sessionId: "ws_dead", taskGroupId: "tg_runtime_management", status: "failed"},
       {sessionId: "ws_live", taskGroupId: "tg_runtime_management", status: "active"}];
     leaseState.leases = [
       {leaseId: "lease_expired_dead", resourceRef: "RepositoryOutputTarget:rot_x", holderRef: "session:ws_dead", status: "active", expiresAt: "2026-08-01T00:00:00Z"},
       {leaseId: "lease_expired_live", resourceRef: "RepositoryOutputTarget:rot_y", holderRef: "session:ws_live", status: "active", expiresAt: "2026-08-01T00:00:00Z"},
-      {leaseId: "lease_future", resourceRef: "RepositoryOutputTarget:rot_z", holderRef: "session:ws_dead", status: "active", expiresAt: "2026-09-01T00:00:00Z"}
+      {leaseId: "lease_future", resourceRef: "RepositoryOutputTarget:rot_z", holderRef: "session:ws_dead", status: "active", expiresAt: "2099-01-01T00:00:00Z"}
     ];
     expireStaleLeases(leaseState, leaseNow);
     const leaseById = (id) => leaseState.leases.find((item) => item.leaseId === id);

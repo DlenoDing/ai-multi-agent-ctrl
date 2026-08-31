@@ -3933,6 +3933,33 @@ const MUTATIONS = [
     expect: "没有已归档项目时不要多说一句"
   },
   {
+    name: "租约回收不得抢占持有者仍存活的租约",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "    if (holderAlive) continue;",
+    to: "    if (false) continue;",
+    expect: "持有者仍然存活的租约被强行回收"
+  },
+  {
+    name: "租约回收的条件必须是到期与否（不得回收未到期的）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "    if (!expiresAtMs || expiresAtMs > nowMs) continue;",
+    to: "    if (!expiresAtMs) continue;",
+    expect: "尚未到期的租约被回收"
+  },
+  {
+    name: "到期且持有者已了结的租约必须真被回收（否则永久挡关闭门）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '    lease.status = "expired";\n    lease.expiredReason = holder ? "holder_session_settled" : "holder_missing";',
+    to: '    lease.expiredReason = holder ? "holder_session_settled" : "holder_missing";',
+    expect: "已过期且持有者已了结的租约没有被回收"
+  },
+  {
     name: "过期的入网令牌在列表里不得显示成「已签发」",
     file: APP,
     gate: "console",
