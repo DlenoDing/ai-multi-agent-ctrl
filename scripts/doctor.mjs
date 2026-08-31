@@ -352,6 +352,26 @@ try {
     if (revalidated.headers.get("x-frame-options") !== "DENY") {
       throw new Error("304 响应上把安全头丢了 —— 缓存命中的那条路也要带同一套头");
     }
+    // 【首载要能压缩】：app.js 等约 507KB，gzip 后 164KB。按表示区分 ETag（-gz），Vary 分开中间缓存。
+    const gzipped = await fetch(`http://127.0.0.1:${port}/app.js`, {headers: {"accept-encoding": "gzip"}});
+    const gzBody = await gzipped.arrayBuffer();
+    if (gzipped.headers.get("content-encoding") !== "gzip" || gzipped.headers.get("vary") !== "accept-encoding") {
+      throw new Error(`带 accept-encoding: gzip 请求静态资源没有压缩（content-encoding=${JSON.stringify(gzipped.headers.get("content-encoding"))}，vary=${JSON.stringify(gzipped.headers.get("vary"))}）—— 首载白传三倍字节`);
+    }
+    const gzEtag = gzipped.headers.get("etag") || "";
+    if (!gzEtag.includes("-gz")) {
+      throw new Error(`gzip 表示的 ETag 没按表示区分（${gzEtag}）—— 换 accept-encoding 后 304 会把另一种表示当没变`);
+    }
+    const identity = await fetch(`http://127.0.0.1:${port}/app.js`, {headers: {"accept-encoding": "identity"}});
+    const idBody = await identity.arrayBuffer();
+    if (identity.headers.get("content-encoding")) {
+      throw new Error(`不接受压缩的请求拿到了压缩体（content-encoding=${identity.headers.get("content-encoding")}）`);
+    }
+    // fetch(undici) 会自动解压，gzBody 已是解压后的字节 —— 正好拿来验【压缩表示解开后与原文逐字节一致】
+    //（压错内容比不压更坏：浏览器拿到的是坏 app.js）。
+    if (Buffer.compare(Buffer.from(idBody), Buffer.from(gzBody)) !== 0) {
+      throw new Error(`gzip 表示解压后与原文不一致（${idBody.byteLength} vs ${gzBody.byteLength}）—— 压缩把内容压坏了`);
+    }
   }
   console.log(`control console health ok: ${health.status}`);
   const stateReadDenied = await jsonFetch(port, "/api/state");

@@ -3206,11 +3206,19 @@ const MUTATIONS = [
     expect: "起来没先说清自己是谁"
   },
   {
+    name: "静态资源必须按 accept-encoding 压缩（首载三倍字节）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "  const useGzip = wantsGzip && cached.gzip && cached.gzip.length < content.length;",
+    to: "  const useGzip = false;",
+    expect: "没有压缩"
+  },
+  {
     name: "静态资源的条件缓存必须真的回 304",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
-    from: '    "cache-control": "no-cache", etag};\n  if (req.headers["if-none-match"] === etag) {',
-    to: '    "cache-control": "no-cache", etag};\n  if (false) {',
+    from: '    ...(useGzip ? {"content-encoding": "gzip"} : {})};\n  if (req.headers["if-none-match"] === etag) {',
+    to: '    ...(useGzip ? {"content-encoding": "gzip"} : {})};\n  if (false) {',
     expect: "没有 304"
   },
   {

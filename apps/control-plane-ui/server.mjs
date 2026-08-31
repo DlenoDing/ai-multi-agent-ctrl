@@ -4,6 +4,7 @@ import { WebSocketServer } from "ws";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { accessSync, constants as fsConstants, appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { arch, cpus, freemem, hostname, loadavg, platform, totalmem } from "node:os";
 import { basename, dirname, extname, join, normalize, resolve } from "node:path";
@@ -2871,7 +2872,9 @@ function serveStatic(req, res, pathname) {
   const stamp = `${stat.mtimeMs}:${stat.size}`;
   let cached = staticFileCache.get(target);
   if (!cached || cached.stamp !== stamp) {
-    cached = {stamp, content: readFileSync(target)};
+    const bytes = readFileSync(target);
+    // 压缩在【缓存填充】这一次做（≤64 个文件、mtime 变了才重算），请求路径零压缩 CPU。
+    cached = {stamp, content: bytes, gzip: gzipSync(bytes)};
     if (staticFileCache.size > 64) staticFileCache.clear();
     staticFileCache.set(target, cached);
   }
@@ -2884,17 +2887,23 @@ function serveStatic(req, res, pathname) {
   // 缓存：静态引用没有 cache-busting（裸 /app.js），此前又没有任何验证器/缓存头 —— 浏览器
   // 每次页载整下几百 KB。给 no-cache + ETag（内存缓存的 mtimeMs:size 戳现成就是）：每次仍
   // 必须回源核对（部署后立刻拿到新版，不存在旧 app.js 配新服务端的版本漂移），没变时 304 空体。
-  const etag = `"${cached.stamp}"`;
+  // 首载 app.js+词表+样式约 507KB，gzip 后 164KB。按 accept-encoding 协商；ETag 按【表示】区分
+  //（强 ETag 标识的是这一份字节，gzip 表示加 -gz 后缀，否则 304 会把另一种表示当没变）；
+  // Vary 让中间缓存分开存两种表示。
+  const wantsGzip = /\bgzip\b/u.test(String(req.headers["accept-encoding"] || ""));
+  const useGzip = wantsGzip && cached.gzip && cached.gzip.length < content.length;
+  const etag = `"${cached.stamp}${useGzip ? "-gz" : ""}"`;
   const securityHeaders = {"x-content-type-options": "nosniff", "x-frame-options": "DENY",
     "content-security-policy": "frame-ancestors 'none'", "referrer-policy": "no-referrer",
-    "cache-control": "no-cache", etag};
+    "cache-control": "no-cache", vary: "accept-encoding", etag,
+    ...(useGzip ? {"content-encoding": "gzip"} : {})};
   if (req.headers["if-none-match"] === etag) {
     res.writeHead(304, securityHeaders);
     res.end();
     return;
   }
   res.writeHead(200, {"content-type": mimeTypes[extname(target)] || "application/octet-stream", ...securityHeaders});
-  res.end(content);
+  res.end(useGzip ? cached.gzip : content);
 }
 
 const execFileAsync = promisify(execFile);
