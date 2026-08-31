@@ -8594,6 +8594,13 @@ export function reviewBundleRegister(state, args) {
   assertUniqueRecordId(state.reviewBundles, "reviewBundleId", args.reviewBundleId, "review_bundle_id_conflict");
   const at = new Date().toISOString();
   const taskGroup = taskGroupForRecordOrRefuse(state, args, "评审包");
+  // 已终结的任务组不得再造关闭门的阻塞对象：submitted 的评审包会挂在一个永远关不掉的组上
+  // （no_pending_review_bundles），而没有任何流程能把它 consume/reject —— 谁也处置不掉的死记录。
+  // 与 8 个兄弟 blocker-creator（findingSubmit 等）同规；那些 return {ok:false}，这条按本函数的 throw 约定抛
+  // （assertUniqueRecordId 也是这么抛的），REST 顶层 respondApiError 与 MCP dispatch 的 catch 都把它转成 409。
+  if (TASK_GROUP_SETTLED_STATUSES.includes(taskGroup.status)) {
+    throw Object.assign(new Error("task_group_settled"), {status: 409, taskGroupId: taskGroup.id, taskGroupStatus: taskGroup.status});
+  }
   const bundle = {
     schemaVersion: "review-bundle/v1",
     reviewBundleId: args.reviewBundleId || createId("review_bundle"),

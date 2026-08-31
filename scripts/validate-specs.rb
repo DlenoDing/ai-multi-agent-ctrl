@@ -941,7 +941,9 @@ errors << "resume_dispatch must only revive a blocked dispatch" unless server_so
 # M3/M4: ReviewBundle must use its MODELED terminal set (consumed/rejected, not the phantom "closed"), be
 # registered in a modeled state, and be terminalizable by review_result_consume (else it wedges close).
 errors << "ReviewBundle close-barrier checks must use the modeled terminal set (no phantom 'closed')" if core_source.include?("\"consumed\", \"closed\"")
-errors << "reviewBundleRegister must create a modeled (submitted) bundle, not the unmodeled 'registered'" unless core_source[/function reviewBundleRegister[\s\S]{0,1200}?status: "submitted"/] && !core_source[/function reviewBundleRegister[\s\S]{0,1200}?status: "registered"/]
+# 窗口 1200→1800：2026-09-01 给 reviewBundleRegister 补了 settled 守卫（终结的任务组不得再造评审包），
+# 函数体正当增长把 status:"submitted" 那行推到 1479 字符处。窗口放宽以容纳它，检查意图不变（submitted 出现、registered 不出现）。
+errors << "reviewBundleRegister must create a modeled (submitted) bundle, not the unmodeled 'registered'" unless core_source[/function reviewBundleRegister[\s\S]{0,1800}?status: "submitted"/] && !core_source[/function reviewBundleRegister[\s\S]{0,1800}?status: "registered"/]
 # 终态化评审包必须【按调用方自己的任务组】收口：原断言钉的恰好是未加作用域的那行源码，
 # 于是它在钉住"要终态化"的同时，也把跨租户终态化一并钉死了。
 errors << "review_result_consume must terminalize the referenced review bundle within the caller's task group" unless mcp_source.include?("item.reviewBundleId === args.reviewBundleId && item.taskGroupId === scopedTaskGroupId") && contract_check_source.include?("reviewResultConsume: submitted bundle not terminalized")

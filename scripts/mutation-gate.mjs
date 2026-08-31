@@ -764,6 +764,17 @@ const MUTATIONS = [
     expect: "没有把 core 的 {ok:false} 拒绝原样转发"
   },
   {
+    // reviewBundleRegister 是第 7 个 blocker-creator，此前独缺 settled 守卫：能往已关闭组造 submitted 评审包，
+    // 挂在永远关不掉的组上（no_pending_review_bundles）且没有流程能 consume/reject 它。去掉守卫，settled 族测试即红。
+    name: "终结的任务组不得再造评审包",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  if (TASK_GROUP_SETTLED_STATUSES.includes(taskGroup.status)) {",
+    to: "  if (false && TASK_GROUP_SETTLED_STATUSES.includes(taskGroup.status)) {",
+    expect: "reviewBundleRegister 仍然往它里面写了新东西"
+  },
+  {
     // writer 这道门此前也只有一条登记变异（丢更新）。并发下"同一张定稿卡恰好一个人定成"
     // 是人工闸门在多进程部署下的立足点，而它从没被人看着红过：拿掉"已非待确认"这道守卫，
     // 两个进程会各自定稿成功，两份都写进磁盘 —— 谁批的、批了哪一版，从此说不清。

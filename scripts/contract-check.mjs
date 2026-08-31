@@ -2104,14 +2104,20 @@ function verifyHumanAndOrganizationContracts(output) {
           runnerKind: "git_worktree", isolation: "git_worktree",
           branches: [{branchId: "b_after", objective: "关后", ownedPaths: ["docs/**"], resourceScopes: [], acceptanceChecks: ["docs_lint"]}]})],
         ["ruleSourceResolve", ({st, tg}) => ruleSourceResolve(st, {taskGroupId: tg.id, projectId: tg.projectId,
-          sourceRef: "reference:after-close"})]
+          sourceRef: "reference:after-close"})],
+        // reviewBundleRegister 走 throw 约定（其 assertUniqueRecordId 也是抛的），下面的 catch 会把它包成
+        // "抛出 task_group_settled" —— 所以判据用 includes 而不是 ===，同时认 return {ok:false} 与 throw 两种。
+        ["reviewBundleRegister", ({st, tg}) => reviewBundleRegister(st, {taskGroupId: tg.id,
+          reviewBundleId: `rvb_after_${tg.status}`, reviewMode: "external"})]
       ];
       for (const [label, run] of writeEntries) {
         for (const status of TASK_GROUP_SETTLED_STATUSES) {
           let outcome;
           try { outcome = run(settledFixture(status)); }
           catch (error) { outcome = {error: `抛出 ${error.message}`}; }
-          if (outcome?.error !== "task_group_settled") {
+          // 两种拒绝约定都要认：blocker-creator 多数 return {ok:false, error:"task_group_settled"}，
+          // reviewBundleRegister 走 throw（catch 包成"抛出 task_group_settled"）—— 用 includes 统一。
+          if (!String(outcome?.error || "").includes("task_group_settled")) {
             output.push(`任务组已${status}，${label} 仍然往它里面写了新东西（实际：${outcome?.error || "已受理"}）`
               + " —— 关闭门已经过了，此后的写入不受任何门约束，多数还会变成谁也处置不掉的死记录");
           }
@@ -2120,7 +2126,7 @@ function verifyHumanAndOrganizationContracts(output) {
         let openOutcome;
         try { openOutcome = run(settledFixture("active")); }
         catch (error) { openOutcome = {error: `抛出 ${error.message}`}; }
-        if (openOutcome?.error === "task_group_settled") {
+        if (String(openOutcome?.error || "").includes("task_group_settled")) {
           output.push(`任务组还开着，${label} 却被"已终结"挡住了 —— 这道锁把正常路径一起堵死`);
         }
       }
