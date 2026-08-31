@@ -14,6 +14,7 @@
 // 静默返回空集会让断言"匹配到 0 个元素所以没发现问题"从而永远通过，那是本仓踩过的坑。
 import { accountEffectivePermissions, consoleVocabularies, effectiveProjectConfig, effectiveTaskGroupConfig } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import { AUDIT_LOG_CAP } from "../apps/control-plane-ui/lib/audit-ledger.mjs";
+import { mcpToolNames } from "../apps/control-plane-ui/lib/mcp-tool-catalog.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
@@ -436,6 +437,11 @@ if (process.env.AIMAC_RENDER_REAL) {
   // 盘上的状态没有下发给界面的词表（那是服务端读路径装饰上去的）：不补上，邀请/授权表单会写着「词表未下发」——
   // 与 effectivePermissions 同一类由工具自己制造的假缺陷。用与服务端同一个函数，不另抄一份。
   real.runtime = {...(real.runtime || {}), ...consoleVocabularies(), auditLogCap: AUDIT_LOG_CAP};
+  // 同 consoleVocabularies：runtime.mcp.toolCount 是【代码派生】的（产品每次读都由 ensureRuntimeCollections
+  // 刷成 mcpToolNames.length），盘上存的是冻结那一刻的旧值 —— 曾经是手写常量 81，而目录里实际 85。
+  // 本工具不跑 ensureRuntimeCollections，不补的话屏幕上就是那个旧的 81，会被当成产品少报了 4 个工具去查
+  // （本轮就差点）。用与产品同一个目录 mcpToolNames 刷新，不另抄一份计数。
+  if (real.runtime.mcp) real.runtime.mcp = {...real.runtime.mcp, toolCount: mcpToolNames.length};
   if (wantWho && who?.email !== wantWho) {
     console.log(`（要的是 ${wantWho}，真实状态里没有这个账号 —— 下面渲染的是 ${who?.email}）`);
   }
