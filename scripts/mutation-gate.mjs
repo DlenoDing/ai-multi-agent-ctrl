@@ -3206,6 +3206,22 @@ const MUTATIONS = [
     expect: "起来没先说清自己是谁"
   },
   {
+    name: "授权处置的缺省回退必须是拒绝（不是放行）",
+    file: APP,
+    gate: "console",
+    from: 'await api(`/api/permission-requests/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "rejected"})});',
+    to: 'await api(`/api/permission-requests/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "approved"})});',
+    expect: "授权处置丢了提交器时缺省必须是 rejected"
+  },
+  {
+    name: "机器审批的缺省回退必须是拒绝（不是放行）",
+    file: APP,
+    gate: "console",
+    from: 'await api(`/api/approval-requests/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "rejected"})});',
+    to: 'await api(`/api/approval-requests/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "approved"})});',
+    expect: "回退方向被翻成了放行"
+  },
+  {
     name: "带回退的裸 Number(env) 形态不得回流（扫描）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "contract",

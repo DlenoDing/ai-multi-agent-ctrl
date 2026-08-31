@@ -875,6 +875,32 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
             posts[0] === "approved" && posts[1] === "rejected",
             `发出去的是 ${JSON.stringify(posts)} —— 点的按钮没带进正文，缺省把批准变成了拒绝`);
         }
+        // perm-resolve 的孤儿回退同方向（全类只有这两处 status 回退）：无提交器必须落 rejected。
+        const orphanPerm = mkForm();
+        await probe.submit({target: orphanPerm, submitter: null, preventDefault: () => {}});
+        const orphanPermPost = recorded.filter((item) => item.method === "POST" && /permission-requests\/perm_1\/resolve$/u.test(item.url)).map((item) => item.body?.status).at(-1);
+        check("授权处置丢了提交器时缺省必须是 rejected",
+          orphanPermPost === "rejected",
+          `无提交器那次发出的是 ${JSON.stringify(orphanPermPost)} —— 回退方向被翻成了放行`);
+        // 【机器审批的回退方向必须是拒绝】。approval-resolve 的正文是 data.status || "rejected"：
+        // submitter 丢了（或将来有人把回退写成 approved）时，缺省绝不能是放行 —— 这是机器高危动作的
+        // 审批闸门，缺省=批准 就是「缺省=有利结果」的原型。此前这张表单零探针，翻转回退方向没有任何门会红。
+        const mkApproval = () => el("form", {dataset: {form: "approval-resolve", request: "apr_1"}}, [
+          el("button", {type: "submit", name: "status", value: "approved"}),
+          el("button", {type: "submit", name: "status", value: "rejected"})
+        ]);
+        const orphanApproval = mkApproval();
+        await probe.submit({target: orphanApproval, submitter: null, preventDefault: () => {}});
+        const approveApproval = mkApproval();
+        await probe.submit({target: approveApproval, submitter: approveApproval.children[0], preventDefault: () => {}});
+        const approvalPosts = recorded.filter((item) => item.method === "POST" && /approval-requests\/apr_1\/resolve$/u.test(item.url)).map((item) => item.body?.status);
+        if (approvalPosts.length !== 2) {
+          check("审批表单要发出两次处置（无提交器一次、批准一次）", false, `记录到 ${approvalPosts.length} 次 —— 下面那条什么也没验`);
+        } else {
+          check("审批表单丢了提交器时缺省必须是 rejected（缺省放行＝机器高危动作自动过闸）",
+            approvalPosts[0] === "rejected" && approvalPosts[1] === "approved",
+            `发出去的是 ${JSON.stringify(approvalPosts)} —— 无提交器那次不是 rejected：回退方向被翻成了放行`);
+        }
       } finally {
         probe.setFetch(previousFetch);
       }
