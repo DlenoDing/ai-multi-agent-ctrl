@@ -3307,6 +3307,15 @@ const MUTATIONS = [
     expect: "NaN 不安全的旧形态"
   },
   {
+    name: "manifest 段名不得让读取越界（../ 段名守卫）",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    gate: "contract",
+    check: "verifyManifestSegmentNamesCannotEscape",
+    from: "      if (!segFile || segFile !== basename(segFile) || /^\\.+$/u.test(segFile)) {",
+    to: "      if (false) {",
+    expect: "让读取越界"
+  },
+  {
     name: "路径段净化器不得放出纯点段（safeName 的 .. 守卫）",
     file: "apps/agent-runtime/runtime.mjs",
     gate: "contract",

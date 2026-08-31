@@ -2,7 +2,7 @@ import { withDirectoryLock } from "./state-store.mjs";
 import { clampEnvNumber } from "./env-number.mjs";
 import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { legacySafeProjectId, safeProjectId } from "./project-paths.mjs";
 
 export function appendProjectExecutionEvent(runtimeDir, event) {
@@ -176,7 +176,18 @@ function projectExecutionEventReadPaths(runtimeDir, projectId) {
   const dir = join(runtimeDir, "project-db");
   const fromManifest = (manifest.segments || [])
     .filter((segment) => {
-      const path = join(dir, segment.file);
+      // segment.file 是从 manifest【磁盘文件】读回的，直接 join 进路径 —— 一份被改坏/从坏备份还原
+      // 的 manifest 里塞个 "../../别的租户分片" 就能让下面的 readFileSync 越界读。段文件永远是
+      // project-db 目录下的一个纯文件名：不等于自身 basename（含目录分隔/结尾斜杠）、或整段是点
+      //（basename("..") 仍是 ".."，单靠 basename 封不住）的，一律当坏段跳过并出声，绝不 join 进去。
+      const segFile = String(segment.file || "");
+      if (!segFile || segFile !== basename(segFile) || /^\.+$/u.test(segFile)) {
+        noteEventLogFault("segment-name-illegal",
+          `段清单里有一个不是纯文件名的事件段 ${JSON.stringify(segFile).slice(0, 80)} —— 已拒绝按它读盘`
+            + "（manifest 多半被改坏或从坏备份还原了，一个带 ../ 的段名会让读取越界到别的目录），请核对该 manifest");
+        return false;
+      }
+      const path = join(dir, segFile);
       if (!existsSync(path)) {
         // 段清单说有这一段，盘上却没有 —— 悄悄跳过等于【这段历史凭空消失】：
         // 实测删掉一个已封存段，同一次查询读出来的事件从 40 条变成 35 条，没有任何地方说过。
@@ -189,7 +200,7 @@ function projectExecutionEventReadPaths(runtimeDir, projectId) {
       noteSealedSegmentDamage(path, segment);
       return true;
     })
-    .map((segment) => join(dir, segment.file));
+    .map((segment) => join(dir, segment.file));  // segment.file 已在上面 filter 里核过是纯文件名
   const prefix = `${safeProjectId(projectId)}.execution-events.`;
   const fromDirectory = existsSync(dir)
     ? readdirSync(dir)

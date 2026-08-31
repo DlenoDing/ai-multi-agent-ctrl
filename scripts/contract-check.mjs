@@ -699,6 +699,7 @@ const MACHINE_FACING_ERRORS = {
 };
 
 run(verifyAgentGatewayContracts);
+run(verifyManifestSegmentNamesCannotEscape);
 run(verifyExecutionEventTailStaysBounded);
 run(verifyHumanAndOrganizationContracts);
 
@@ -5981,6 +5982,35 @@ function verifyRuntimeJsonConflict(output) {
 // 【执行事件流的热路径要走尾窗读，不能整文件扫】。监控台每 5 秒轮询、按游标往前读；日志涨到几十 MB 时，
 // 若每次都 readFileSync 整个文件，一次刷新就是几十 MB 的读 + 解析。readEventSource 对超过 tail 窗口的文件只读末尾一段；
 // 只有从 0（或早于窗口）回补历史时才整读。这里造一个超过窗口的日志，验「近游标读＝tail-window、从 0 读＝full」。
+// 【坏 manifest 里的段名不得让读取越界】。segment.file 来自磁盘 manifest，直接 join 进路径 ——
+// 塞个 "../诱饵" 就能把 project-db 之外的文件当事件源读进来（跨租户分片、任意文件）。造一个
+// runtimeDir 外的诱饵（一行合法事件 JSON，含唯一 marker），把段名指向它，读出的事件里绝不能有 marker。
+function verifyManifestSegmentNamesCannotEscape(output) {
+  const base = mkdtempSync(join(tmpdir(), "aimac-seg-escape-"));
+  const runtimeDir = join(base, "runtime");
+  const projectId = "prj_seg_escape";
+  mkdirSync(runtimeDir, {recursive: true});
+  appendProjectExecutionEvent(runtimeDir, {projectId, taskGroupId: "tg_s", dispatchId: "adp_s",
+    eventKey: "seg-1", eventType: "checkpoint_submitted", summary: "real", payload: {progressPercent: 1}});
+  // 诱饵：放在 runtimeDir 之外，内容是一条【看起来合法】的事件（逃逸成功就会被当事件读进来）。
+  const decoyPath = join(base, "decoy.jsonl");
+  writeFileSync(decoyPath, `${JSON.stringify({sequence: 999999, eventId: "evt_leak", summary: "SEG_ESCAPE_LEAK_MARKER"})}\n`);
+  const manifestPath = join(runtimeDir, "project-db", `${safeProjectIdForContract(projectId)}.execution-events.manifest.json`);
+  // 段名带 ../ 指到 runtimeDir 外的诱饵（相对 project-db 目录往上两级到 base）。
+  writeFileSync(manifestPath, JSON.stringify({segments: [{file: "../../decoy.jsonl", firstSequence: 1, lastSequence: 999999, size: 1, digest: "sha256:x"}]}));
+  const read = readProjectExecutionEvents(runtimeDir, projectId, {afterSequence: 0, limit: 500});
+  const leaked = (read.events || []).some((event) => JSON.stringify(event).includes("SEG_ESCAPE_LEAK_MARKER"));
+  if (leaked) {
+    output.push("坏 manifest 里带 ../ 的段名让读取越界：project-db 之外的文件被当事件源读了进来（跨租户分片/任意文件泄漏）");
+  }
+  const fault = projectEventLogFault();
+  if (!fault || !/段名|不是纯文件名|segment-name/u.test(JSON.stringify(fault))) {
+    output.push("拒绝了越界段名却没出声 —— manifest 被改坏这件事必须让人看得见");
+  }
+  rmSync(base, {recursive: true, force: true});
+  if (output.length === 0) console.log("事件段名越界防护：manifest 里带 ../ 的段名被拒且出声，诱饵内容没有被当事件读进来");
+}
+
 function verifyExecutionEventTailStaysBounded(output) {
   const dir = mkdtempSync(join(tmpdir(), "aimac-evt-tail-"));
   const projectId = "prj_tail_probe";
