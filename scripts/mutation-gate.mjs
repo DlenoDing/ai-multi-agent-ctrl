@@ -742,6 +742,17 @@ const MUTATIONS = [
     expect: "同长度的内容损坏被静默接受"
   },
   {
+    // 签发令牌的配额强制必须把已签发未用令牌（quota.reserved）算进去，否则第 N+1 张能签出、超过 maxAgents，
+    // 而页面显示已满 —— 页面数与强制数各说各的。忽略 reserved 即让第 3 张放行，契约门那条即红。
+    name: "签发令牌配额必须把预留令牌算进去",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "contract",
+    check: "verifyOutstandingJoinTokensHoldTheirQuotaSlot",
+    from: "  const outstandingJoinTokens = quota.reserved || 0;",
+    to: "  const outstandingJoinTokens = 0;",
+    expect: "两个数各说各的"
+  },
+  {
     // writer 这道门此前也只有一条登记变异（丢更新）。并发下"同一张定稿卡恰好一个人定成"
     // 是人工闸门在多进程部署下的立足点，而它从没被人看着红过：拿掉"已非待确认"这道守卫，
     // 两个进程会各自定稿成功，两份都写进磁盘 —— 谁批的、批了哪一版，从此说不清。

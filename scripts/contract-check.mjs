@@ -8255,7 +8255,32 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
   if (after.agentsReserved !== 0) {
     output.push(`一张待用令牌都没有时 agentsReserved 仍是 ${after.agentsReserved} —— 页面会凭空多挂一句解释`);
   }
-  console.log(`配额占位：${usage.agents} 台节点 + ${usage.agentsReserved} 张待用令牌，两者分列且节点数不受令牌影响`);
+  // 【强制那一侧也真跑一次】。上面测的是 recompute 出来的 agentsReserved（页面显示那个数），而签发令牌的
+  // 配额强制是另一条路：它此前各写一份 filter 数占位令牌，现在改成从 quota.reserved 取（同一处）。要钉住
+  // 强制真的把 reserved 算进去了 —— 否则页面显示已满、签发却放行，就又是「两个数各说各的」。
+  // 把配额压到刚好被两张待用令牌占满（0 节点 + maxAgents=2），第三张必须被拒。
+  {
+    const enforce = structuredClone(seedState);
+    ensureRuntimeCollections(enforce, {root});
+    const enforceOrg = (enforce.organizations || []).find((item) => item.orgId === orgId);
+    if (enforceOrg) {
+      enforceOrg.quotas = {...enforceOrg.quotas, maxAgents: 2};
+      enforce.agentRuntimeNodes = [];
+      enforce.agentJoinTokens = [
+        {tokenId: "jt_e1", status: "issued", organizationId: orgId, expiresAt: soon},
+        {tokenId: "jt_e2", status: "issued", organizationId: orgId, expiresAt: soon}
+      ];
+      let threw = null;
+      try {
+        createAgentJoinToken(enforce, {projectId: "prj_control_plane", allowedRoles: ["*"]}, {publicUrl: "https://control.example.test"});
+      } catch (error) { threw = error; }
+      if (!threw || !/org_quota_exceeded/u.test(String(threw?.message))) {
+        output.push("签发第 3 张入网令牌没被拒：0 节点 + 2 张待用令牌已占满 maxAgents=2 —— "
+          + "强制侧没把 reserved 算进配额（quota.reserved），页面显示已满、签发却放行，两个数各说各的");
+      }
+    }
+  }
+  console.log(`配额占位：${usage.agents} 台节点 + ${usage.agentsReserved} 张待用令牌，两者分列且节点数不受令牌影响；强制侧签发第 3 张被拒`);
 }
 
 // 一笔写被拒时，人最先想知道的是"我这次到底改没改成"。

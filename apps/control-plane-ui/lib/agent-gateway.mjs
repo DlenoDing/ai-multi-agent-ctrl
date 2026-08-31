@@ -91,8 +91,10 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
       hint: "该项目已归档，不能再往里接入 agent。要继续这条线，请先恢复该项目或另建一个项目"});
   }
   const tokenOrgId = tokenProject.organizationId || "org_default";
-  const outstandingJoinTokens = (state.agentJoinTokens || []).filter((item) => item.status === "issued" && (item.organizationId || "org_default") === tokenOrgId && new Date(item.expiresAt).getTime() > Date.now()).length;
   const quota = organizationQuotaCheck(state, tokenOrgId, "agents");
+  // 已签发未用的令牌占位数【从配额检查那一处取】（quota.reserved 就是 recompute 的 usage.agentsReserved）——
+  // 不再在这里各写一份 filter：页面显示的那格与这里的强制从此是同一个数，不会再漂成「页面 2/3、签发说 3/3」。
+  const outstandingJoinTokens = quota.reserved || 0;
   if (!quota.allowed || quota.usage + outstandingJoinTokens >= quota.quota) {
     // 这个 usage 是"节点 + 未使用的令牌"，与页面上那格【同一口径】（usage.agentsReserved 就是后一半）。
     // 分开报出来，人才对得上："我明明只有 2 台节点"——第三格是自己上次签发还没用掉的那张令牌。

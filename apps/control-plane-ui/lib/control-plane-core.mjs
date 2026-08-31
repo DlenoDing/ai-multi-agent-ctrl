@@ -780,7 +780,11 @@ export function organizationQuotaCheck(state, orgId, kind) {
     return {allowed: false, error: "org_quota_unreadable", quota, usage, kind};
   }
   if (usage >= quota) return {allowed: false, error: "org_quota_exceeded", quota, usage, kind};
-  return {allowed: true, quota, usage, kind};
+  // agents 配额分两半：节点(usage) + 已签发未用的入网令牌占位(reserved)。把 reserved 从【这一处】一并给出，
+  // 签发令牌的强制点就不必再各写一份 filter —— 页面显示那格与配额强制从此是同一个数（都来自 recompute 的
+  // usage.agentsReserved），不会再出现「页面 2/3、签发却说 3/3」。其余 kind 没有预留概念，恒 0。
+  const reserved = kind === "agents" ? Number(org.usage?.agentsReserved || 0) : 0;
+  return {allowed: true, quota, usage, kind, reserved};
 }
 
 function normalizeProjectOwnerAccessGrants(state) {
