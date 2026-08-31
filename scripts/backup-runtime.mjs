@@ -8,6 +8,7 @@
 // 实测 cp 本身也会撞上正在改名的临时文件而报 ENOENT（三次里中一次），同样按重试处理。
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
+import { clampEnvNumber } from "../apps/control-plane-ui/lib/env-number.mjs";
 
 // 认不出的参数一律拒（与仓里其它运维入口同一形状）：`--verify` 这种打错的名字被当成"没给"的话，
 // 命令会照跑，而人以为自己开了某个开关。备份只吃两个位置参数。
@@ -38,7 +39,7 @@ if (unknownFlags.length) {
 const positional = rest.filter((item) => !item.startsWith("-"));
 const source = resolve(positional[0] || process.env.AIMAC_RUNTIME_DIR || ".runtime");
 const target = resolve(positional[1] || `${source}-backup-${new Date().toISOString().replace(/[^0-9]/gu, "").slice(0, 14)}`);
-const attempts = Math.max(1, Number(process.env.AIMAC_BACKUP_ATTEMPTS || 5));
+const attempts = clampEnvNumber(process.env.AIMAC_BACKUP_ATTEMPTS, 1, 5);
 
 if (!existsSync(source)) {
   console.error(`备份源不存在：${source}\n用法：node scripts/backup-runtime.mjs [运行目录] [备份目录]`);

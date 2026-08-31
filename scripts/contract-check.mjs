@@ -3679,7 +3679,7 @@ function verifyHumanAndOrganizationContracts(output) {
       if (!reworkWork) {
         output.push("返工上限断言找不到检查点对应的工作项 —— 本条在空转");
       } else {
-        const attempts = Math.max(1, Number(process.env.AIMAC_REVIEW_MAX_REWORK_ATTEMPTS || 3));
+        const attempts = clampEnvNumber(process.env.AIMAC_REVIEW_MAX_REWORK_ATTEMPTS, 1, 3);
         const summariesAt = [];
         for (let round = 0; round < attempts; round += 1) {
           reworkWork.status = "checkpoint_submitted";
@@ -5621,7 +5621,7 @@ function verifyRuntimeJsonConflict(output) {
     // 该捞回来的那条就已经不在数组里了。实测过：server 那处按 120 盲切、core 那处按 500 盲切，
     // 两处都在保护之前跑，于是「这条授权凭什么发的」答不出来（10 条活跃授权里 4 条依据没了）。
     {
-      const cap = Math.max(100, Number(process.env.AIMAC_POLICY_DECISIONS_CAP || 500));
+      const cap = clampEnvNumber(process.env.AIMAC_POLICY_DECISIONS_CAP, 100, 500);
       const at = new Date().toISOString();
       const referencedId = "pd_referenced_by_active_grant";
       const evidenceState = {stateVersion: 1, runtime: {},
@@ -7940,7 +7940,7 @@ function verifyOutputTargetKeepsItsPolicyDecision(output) {
     decisionRecordRef: "decision:caller-supplied",
     policyDecisionRef: "pd_must_survive"}];
   // 灌满上限：淘汰只在超过 cap 时发生。
-  const cap = Math.max(100, Number(process.env.AIMAC_POLICY_DECISIONS_CAP || 500));
+  const cap = clampEnvNumber(process.env.AIMAC_POLICY_DECISIONS_CAP, 100, 500);
   // +200 而不是 +20：裁剪有 64 条滞后区（贴着上限裁会让每写一次都重建一遍引用集合）。
   // 只多 20 条根本不触发，这一段会静静空转 —— 下面那句自报正是防这个的。
   for (let index = 0; index < cap + 200; index += 1) {
@@ -7976,7 +7976,7 @@ function verifyOutputTargetKeepsItsPolicyDecision(output) {
       subjectRef: {subjectType: "account", subjectId: "acct_probe"},
       resource: {resourceType: "project", resourceId: "prj_control_plane"},
       policyDecisionRef: "pd_mcp_must_survive"}];
-    const mcpCap = Math.max(100, Number(process.env.AIMAC_POLICY_DECISIONS_CAP || 500));
+    const mcpCap = clampEnvNumber(process.env.AIMAC_POLICY_DECISIONS_CAP, 100, 500);
     // +200：同上，裁剪有 64 条滞后区，只多 20 条不触发。
     for (let index = 0; index < mcpCap + 200; index += 1) {
       mcpProbe.policyDecisions.unshift({id: `pd_noise_${index}`, action: "noise", createdAt: "2026-01-02T00:00:00.000Z"});
@@ -11506,11 +11506,16 @@ function verifyEnvKnobsAreNaNSafe(output) {
     output.push("clampEnvNumber 在 min=0 时没把垃圾值回到默认 —— 打错等于关闭，而人没想关");
   }
   const offenders = [];
+  // scripts 也在列：backup 是真实运维脚本（attempts 打错→循环零次→备份恒败）；contract-check 里
+  // 镜像产品旋钮计算的行必须与产品同式，否则设了 env 时两边判据分叉。mutation-gate 不在列——
+  // 它的 to: 字符串就是故意的坏形态。
   for (const rel of ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs",
     "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/agent-runtime/runtime.mjs",
-    "apps/control-plane-ui/lib/project-event-store.mjs"]) {
-    const src = readFileSync(join(root, rel), "utf8");
+    "apps/control-plane-ui/lib/project-event-store.mjs",
+    "scripts/backup-runtime.mjs", "scripts/contract-check.mjs"]) {
+    // 去掉行注释再扫：形态二的历史样例就引用在本文件注释里，注释不是违规（gates-must-see 的反面：门也不能把自己的注释当代码）。
+    const src = readFileSync(join(root, rel), "utf8").replace(/\/\/[^\n]*/gu, "");
     for (const match of src.matchAll(/Math\.(?:max|min)\([^\n]*?(?<![A-Za-z])Number\(process\.env/gu)) {
       offenders.push(`${rel}: ${match[0].slice(0, 80)}`);
     }
@@ -11524,7 +11529,7 @@ function verifyEnvKnobsAreNaNSafe(output) {
     output.push("这些旋钮读取还在用 NaN 不安全的旧形态（Math.max/min 直接包 Number(process.env…)）：\n  "
       + offenders.join("\n  ") + "\n  —— 值打错会静默变成无上限/清空，一律改用 clampEnvNumber");
   }
-  if (!output.length) console.log("旋钮 NaN 安全：打错回默认、低于下限仍钳、未设走默认，7 份源码旧形态 0 处");
+  if (!output.length) console.log("旋钮 NaN 安全：打错回默认、低于下限仍钳、未设走默认，9 份源码（含 backup 与本门自身）旧形态 0 处");
 }
 
 function verifyEnvValuesAreNotSilentlyClamped(output) {
@@ -14679,7 +14684,7 @@ function verifyAdmissionLedgerDoesNotGrowWithFlapping(output) {
   const afterFirst = (state.admissionDecisions || []).length;
   flap(16);
   const afterSecond = (state.admissionDecisions || []).length;
-  const admissionCap = Math.max(50, Number(process.env.AIMAC_ADMISSION_DECISION_CAP || 400));
+  const admissionCap = clampEnvNumber(process.env.AIMAC_ADMISSION_DECISION_CAP, 50, 400);
   if (afterSecond <= admissionCap + 64) {
     output.push(`准入账本自检：总量 ${afterSecond} 条没有压过上限 ${admissionCap}+64，裁剪路径根本没被走到，`
       + "下面那条'不许把活单元裁光'在空转");
@@ -18826,7 +18831,7 @@ function verifyPerScopeRecordsSurviveTheirCap(output) {
   if (liveGroupIds.length <= 144) output.push("上限抖动自检：造出来的任务组没有压过上限+裁剪余量，任务组这一侧没有被真正检验");
   const liveCellCount = (state.taskGroups || []).flatMap((group) => group.workItems || [])
     .filter((item) => !["verified", "closed", "superseded", "cancelled", "aborted"].includes(item.status)).length;
-  const admissionCap = Math.max(50, Number(process.env.AIMAC_ADMISSION_DECISION_CAP || 400));
+  const admissionCap = clampEnvNumber(process.env.AIMAC_ADMISSION_DECISION_CAP, 50, 400);
   if (liveCellCount <= admissionCap + 64) {
     output.push(`上限抖动自检：活单元只有 ${liveCellCount} 个，没有压过准入决策上限 ${admissionCap}+64，准入这一侧没有被真正检验`);
   }
@@ -18846,7 +18851,7 @@ function verifyTaskGroupBlockersStayBounded(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});
   const taskGroup = state.taskGroups.find((item) => item.id === "tg_runtime_management");
-  const cap = Math.max(10, Number(process.env.AIMAC_TASK_GROUP_BLOCKER_CAP || 50));
+  const cap = clampEnvNumber(process.env.AIMAC_TASK_GROUP_BLOCKER_CAP, 10, 50);
   taskGroup.workItems = Array.from({length: cap + 20}, (_, index) => ({
     id: `w_blk_${index}`, title: `单元${index}`, status: "draft", ownerRole: "agent-runtime", progress: 0}));
   for (let round = 0; round < 6; round += 1) {
@@ -19034,7 +19039,7 @@ function verifyRepeatedExecutionFailureStops(output) {
     }
   }
   const dispatches = (state.agentDispatches || []).filter((item) => item.workItemId === "w_always_fail");
-  const maxAttempts = Math.max(1, Number(process.env.AIMAC_MAX_EXECUTION_ATTEMPTS || 3));
+  const maxAttempts = clampEnvNumber(process.env.AIMAC_MAX_EXECUTION_ATTEMPTS, 1, 3);
   if (dispatches.length > maxAttempts + 1) {
     output.push(`同一个工作项连续失败，${rounds} 轮编排仍为它造了 ${dispatches.length} 个派发 —— `
       + "没有上限就是无限重试，每一轮都在真实烧模型额度");

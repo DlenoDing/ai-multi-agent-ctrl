@@ -3271,6 +3271,15 @@ const MUTATIONS = [
     expect: "回退方向被翻成了放行"
   },
   {
+    name: "运维脚本的旋钮也不得回流旧形态（backup attempts）",
+    file: "scripts/backup-runtime.mjs",
+    gate: "contract",
+    check: "verifyEnvKnobsAreNaNSafe",
+    from: "const attempts = clampEnvNumber(process.env.AIMAC_BACKUP_ATTEMPTS, 1, 5);",
+    to: "const attempts = Math.max(1, Number(process.env.AIMAC_BACKUP_ATTEMPTS || 5));",
+    expect: "NaN 不安全的旧形态"
+  },
+  {
     name: "带回退的裸 Number(env) 形态不得回流（扫描）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "contract",
