@@ -1905,6 +1905,15 @@ const MUTATIONS = [
     expect: "clamp persisted poll/heartbeat intervals against hot-spin"
   },
   {
+    // 盘上 config 的 URL 被手改成 http:// 时，挂着 nodeToken 的请求会把凭据明文发出去。挂 token 的唯一入口必须复校 https。
+    name: "带凭据的请求不得走明文 URL",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "specs",
+    from: "  if (options.token) requireSecureServerUrl(url);",
+    to: "  if (false) requireSecureServerUrl(url);",
+    expect: "refuse to send the node credential over an insecure URL"
+  },
+  {
     // 孪生分支：陈旧会话目录清不掉时同样只有"若干天后盘满"这一个症状。
     name: "陈旧会话清不掉时必须出声",
     file: "apps/agent-runtime/runtime.mjs",

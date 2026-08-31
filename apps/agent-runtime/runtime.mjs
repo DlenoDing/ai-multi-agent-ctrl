@@ -2115,6 +2115,12 @@ function writableDirectory(path) {
 }
 
 async function jsonRequest(url, options = {}) {
+  // 带凭据的请求绝不走明文。bootstrap 用 requireSecureServerUrl 校过 --server 是 https，但 run/status/self-check
+  // 发请求用的是【盘上】agent-config.json 里的 URL（serverUrl 与 gateway.*），而运维会手改这个文件 ——
+  // 改成 http://（把内网/公网地址误写成明文）就会把 nodeToken 这个 Bearer 凭据明文发出去。这里在挂 token 的
+  // 唯一入口复校，一个点覆盖所有 URL 与所有命令；不带 token 的请求（如拉取 /agent-runtime.mjs 构件）不受影响，
+  // 本地回环 http 与显式放开的 AIMAC_AGENT_ALLOW_INSECURE_HTTP 仍照 requireSecureServerUrl 的规矩放行。
+  if (options.token) requireSecureServerUrl(url);
   const timeoutMs = Math.max(1000, Number(options.timeoutMs || process.env.AIMAC_AGENT_REQUEST_TIMEOUT_MS || 30000));
   const response = await fetch(url, {
     method: options.method || (options.body ? "POST" : "GET"),

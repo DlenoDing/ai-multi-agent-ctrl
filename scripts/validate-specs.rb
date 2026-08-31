@@ -737,6 +737,9 @@ errors << "Agent Runtime must stream execution events before final checkpoint" u
 # run 用的是盘上 agent-config.json 里的间隔（运维会手改这个文件）；裸 `|| 5` 只挡 falsy，手滑改成负数/非数字会让
 # delay(负/NaN) 被 setTimeout 当 0＝循环热转、每毫秒打一次控制面。必须按下限归一（与同函数 env 间隔 clamp 同规）。
 errors << "Agent Runtime must clamp persisted poll/heartbeat intervals against hot-spin" unless agent_runtime_source.include?("clampEnvNumber(config.pollIntervalSeconds") && agent_runtime_source.include?("clampEnvNumber(config.heartbeatIntervalSeconds")
+# bootstrap 校过 --server 是 https，但 run/status/self-check 发请求用的是盘上 config 的 URL（运维会手改）；改成 http://
+# 就会把 nodeToken 明文发出去。必须在挂 Bearer 的唯一入口（jsonRequest）复校，一个点覆盖所有 URL 与命令。
+errors << "Agent Runtime must refuse to send the node credential over an insecure URL" unless agent_runtime_source.include?("if (options.token) requireSecureServerUrl(url)")
 errors << "Execution events must be isolated into project-level server files" unless project_event_store_source.include?("project-db") && project_event_store_source.include?("appendProjectExecutionEvent") && server_source.include?("readProjectExecutionEvents")
 errors << "Execution events must be idempotent through a persistent key index and tail-readable" unless project_event_store_source.include?("project-execution-event-key/v1") && project_event_store_source.include?("ensureProjectExecutionEventIndex") && project_event_store_source.include?("tail-window") && agent_runtime_source.include?("eventKey")
 errors << "Execution events must require eventKey and rotate project JSONL segments" unless load_json("spec/agent-execution-event.schema.json").fetch("required").include?("eventKey") && server_source.include?("execution_event_key_required") && project_event_store_source.include?("execution-events.manifest.json") && project_event_store_source.include?("rotateProjectExecutionEventIfNeeded") && contract_check_source.include?("segment manifest")
