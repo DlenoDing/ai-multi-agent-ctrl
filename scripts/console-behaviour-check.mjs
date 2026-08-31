@@ -4585,6 +4585,14 @@ function runHeartbeatHintCase() {
   const revoked = probe.heartbeatStaleHint({status: "revoked", lastHeartbeatAt: new Date(Date.now() - 42 * 60 * 1000).toISOString()});
   check("已终态的不重复报警", revoked === "",
     "已撤销的节点还在提示心跳陈旧 —— 它本来就不该再有心跳");
+  // 陈旧时长要分级显示，不堆分钟：真实运行态里读到过「已 11173 分钟没有心跳」——超过一小时就该
+  // 按小时/天说，否则运维得对着一个四五位数的分钟数自己换算有多久。
+  const staleHours = probe.heartbeatStaleHint({status: "online", lastHeartbeatAt: new Date(Date.now() - 185 * 60 * 1000).toISOString()});
+  check("以小时计的心跳陈旧要按小时说、不堆分钟", staleHours.includes("小时") && !/\d+ 分钟/u.test(staleHours),
+    `一个 3 小时没心跳的节点仍以分钟堆着显示（${JSON.stringify(staleHours)}）—— 运维得自己把「185 分钟」换算成几个钟头`);
+  const staleDays = probe.heartbeatStaleHint({status: "online", lastHeartbeatAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()});
+  check("以天计的心跳陈旧要按天说", staleDays.includes("天") && !/\d+ 分钟/u.test(staleDays),
+    `一个 3 天没心跳的节点没有按天显示（${JSON.stringify(staleDays)}）—— 「4320 分钟」这种数运维读不出是几天`);
 
   // 心跳超过服务端判死阈值时，同一行上的「在线」是假的：status 只有在扫描跑过之后才翻成 offline，
   // 而扫描挂在编排拍上。真实运行态上读到过同一行【在线 + 已 175 分钟没有心跳】并排。

@@ -227,12 +227,23 @@ function heartbeatTimedOut(node) {
   return Number.isFinite(ageMs) && ageMs >= timeoutMs;
 }
 
+// 时长（毫秒）→ 人话，与 sinceText 同一套分级：分钟数一大就升到小时/天，否则运维得对着
+// 「已 11173 分钟没有心跳」自己换算是几天（真实运行态里读到过这种值）。传入的必须是【已按服务器
+// 时钟算好】的时长（heartbeatAgeMs / serverNow 那份），不在这里读 Date.now —— 那会把本机时钟
+// 偏移当成真实时长，正是「本机快 20 分钟→所有节点都显示已 20 分钟没心跳」那类假警报的来源。
+function durationText(ms) {
+  const minutes = Math.floor(Number(ms) / 60000);
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} 小时`;
+  return `${Math.round(hours / 24)} 天`;
+}
+
 function heartbeatStaleHint(node) {
   if (!node.lastHeartbeatAt || ["revoked", "offline"].includes(node.status)) return "";
   const ageMs = heartbeatAgeMs(node);
   if (!Number.isFinite(ageMs) || ageMs < 3 * 60 * 1000) return "";
-  const minutes = Math.floor(ageMs / 60000);
-  return `<div class="small warn-text">⚠ 已 ${minutes} 分钟没有心跳${heartbeatTimedOut(node)
+  return `<div class="small warn-text">⚠ 已 ${durationText(ageMs)}没有心跳${heartbeatTimedOut(node)
     ? "（已超过判死阈值，服务端会在下一次编排拍时把它标成离线）" : ""}</div>`;
 }
 
@@ -3691,7 +3702,7 @@ function orchestratorHealthText(status) {
   const tickAgeMs = status.lastTickAt ? serverNow() - new Date(status.lastTickAt).getTime() : NaN;
   const intervalMs = Number(status.intervalMs || 0);
   if (Number.isFinite(tickAgeMs) && intervalMs > 0 && tickAgeMs > Math.max(intervalMs * 5, 3 * 60 * 1000)) {
-    return `<span class="warn-text">（⚠ 已 ${Math.floor(tickAgeMs / 60000)} 分钟没有推进过 ——`
+    return `<span class="warn-text">（⚠ 已 ${durationText(tickAgeMs)}没有推进过 ——`
       + `说好每 ${Math.round(intervalMs / 1000)} 秒一拍，自治周期多半已经停摆）</span>`;
   }
   return status.lastTickAt ? `（上一拍 ${esc(t(status.lastTickResult) || status.lastTickResult || "ran")}）` : "";
@@ -3811,7 +3822,7 @@ function orchestratorStalledNotice() {
   const intervalMs = Number(status.intervalMs || 0);
   if (failures < 2 && Number.isFinite(tickAgeMs) && intervalMs > 0
     && tickAgeMs > Math.max(intervalMs * 5, 3 * 60 * 1000)) {
-    return `<div class="notice warn-notice">自治循环已经 ${esc(Math.floor(tickAgeMs / 60000))} 分钟没有推进过，`
+    return `<div class="notice warn-notice">自治循环已经 ${esc(durationText(tickAgeMs))}没有推进过，`
       + `而它自称每 ${esc(Math.round(intervalMs / 1000))} 秒一拍 —— 它没有报错，只是【不跑了】：`
       + `不会再有新的派发、关闭门不会重算、人工指令会一直停在待处理；`
       + `而【已经排队的派发仍会被领走并执行】—— 认领走的是网关，不归它管。`

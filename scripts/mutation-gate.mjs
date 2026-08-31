@@ -3206,6 +3206,14 @@ const MUTATIONS = [
     expect: "起来没先说清自己是谁"
   },
   {
+    name: "陈旧时长要分级（小时/天），不得永远堆分钟",
+    file: APP,
+    gate: "console",
+    from: "  if (minutes < 60) return `${minutes} 分钟`;",
+    to: "  if (minutes < 9999999) return `${minutes} 分钟`;",
+    expect: "换算成几个钟头"
+  },
+  {
     name: "房间序号：计数器缺失时必须回扫留存消息兜住单调性（迁移守卫）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",
