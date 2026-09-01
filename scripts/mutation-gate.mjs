@@ -559,6 +559,16 @@ const MUTATIONS = [
     expect: "没有给人挂 S1 阻塞"
   },
   {
+    // Math.max(0, Math.min(1, NaN)) 钳不住 NaN：评分信号非数值时 totalScore 成 NaN、
+    // 流进 selectModel 的 `b.totalScore - a.totalScore` 比较器＝候选排序失序。
+    name: "模型评分 totalScore 的 clamp 必须钳得住 NaN",
+    check: "verifyAgentGatewayContracts",
+    file: CORE,
+    from: "Number((weighted / 12).toFixed(4)) || 0)),",
+    to: "Number((weighted / 12).toFixed(4)))),",
+    expect: "评分信号非数值时 totalScore 成 NaN"
+  },
+  {
     name: "模型选择策略的声明必须与引擎实际做的一致",
     check: "verifyNoModelFallbackMatchesWhatEngineDoes",
     file: CORE,

@@ -6280,6 +6280,24 @@ function verifyAgentGatewayContracts(output) {
   if (deepAnalysisDecision.taskExecutionClass !== "deep_analysis" || deepAnalysisDecision.escalationAllowed !== false || !deepAnalysisDecision.modelDecision?.startsWith("modelDecision:") || deepAnalysisDecision.modelDecision.length > 240) {
     output.push("Model selection did not create a bounded one-line integration-owner modelDecision");
 	  }
+  // 残缺/被写坏的能力档案（评分信号非数值）不得毒化整个排序：totalScore 必须始终有限。
+  // rankModel 的 clamp 是 Math.max(0, Math.min(1, X))，而 Math.max(0, Math.min(1, NaN)) 是 NaN ——
+  // 钳不住 NaN。totalScore 一旦 NaN 就流进 selectModel 的 `b.totalScore - a.totalScore` 比较器＝返回
+  // NaN、候选排序失序（可能把更差的可选模型排到前面被选中）。只用两个模型（好+毒），两者都落进
+  // candidateRankings（top-8），断言其 totalScore 全部有限；去掉 clamp 的 `|| 0` 兜底即红。
+  {
+    const poisonState = JSON.parse(JSON.stringify(seedState));
+    ensureRuntimeCollections(poisonState, {root});
+    const good = poisonState.modelCapabilities[0];
+    poisonState.modelCapabilities = [
+      good,
+      {...good, providerId: "prov_poison", modelId: "model_poison", qualitySignals: {...good.qualitySignals, reasoningScore: "abc"}}
+    ];
+    const poisonDecision = selectModel(poisonState, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", roleId: "ui-console-service"}, {persist: false});
+    if (poisonDecision.candidateRankings.some((item) => !Number.isFinite(item.totalScore))) {
+      output.push("模型评分 clamp 钳不住 NaN：某能力档案评分信号非数值时 totalScore 成了 NaN，会搅乱 selectModel 的候选排序");
+    }
+  }
   const unavailableState = JSON.parse(JSON.stringify(seedState));
   ensureRuntimeCollections(unavailableState, {root});
   const baselineDecision = selectModel(unavailableState, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", roleId: "ui-console-service"});

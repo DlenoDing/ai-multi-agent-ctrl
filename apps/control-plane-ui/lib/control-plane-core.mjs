@@ -1172,7 +1172,11 @@ function rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstrai
     providerClass: candidateModel.providerClass,
     providerId: candidateModel.providerId,
     modelId: candidateModel.modelId,
-    totalScore: Math.max(0, Math.min(1, Number((weighted / 12).toFixed(4)))),
+    // Math.max(0, Math.min(1, NaN)) 是 NaN —— clamp 钳不住 NaN。任一评分信号非数值（残缺/被写坏的
+    // 能力档案：reasoningScore="abc" 之类）都会让 weighted→NaN，totalScore 随之 NaN，流进下面 sort 的
+    // `b.totalScore - a.totalScore` 比较器＝返回 NaN、候选排序失序（可能把更差的可选模型排到前面被选中）。
+    // `|| 0` 把 NaN 兜成 0（NaN falsy），让这类档案排到同等可选里的最末，而不是搅乱整个排序。
+    totalScore: Math.max(0, Math.min(1, Number((weighted / 12).toFixed(4)) || 0)),
     eligible: reasons.length === 0,
     capabilityProfileRef: `${candidateModel.providerId}/${candidateModel.modelId}`,
     availability,
