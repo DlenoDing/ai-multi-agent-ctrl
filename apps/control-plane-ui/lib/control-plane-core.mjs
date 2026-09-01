@@ -3506,15 +3506,25 @@ export function recordOrchestratorTickOutcome(previous = {}, outcome = {}) {
 export function computeProgressSnapshots(state) {
   const at = new Date().toISOString();
   const snapshots = [];
+  // 分组用 push 而不是 `set(k, [...get(k), v])`：后者每来一个成员就把该键已有的整份数组复制一遍，
+  // 同一项目 K 个任务组就是 O(K²)——computeProgressSnapshots 在【每次 writeState】都跑，实测同项目 16000
+  // 个任务组时这条从 O(n) 退化成 514ms/写。push 就地追加、同序同内容，O(n)。
   const taskGroupsByProject = new Map();
   for (const taskGroup of state.taskGroups || []) {
-    taskGroupsByProject.set(taskGroup.projectId, [...(taskGroupsByProject.get(taskGroup.projectId) || []), taskGroup]);
+    const list = taskGroupsByProject.get(taskGroup.projectId);
+    if (list) list.push(taskGroup); else taskGroupsByProject.set(taskGroup.projectId, [taskGroup]);
   }
   const outputsByProject = new Map();
   const outputsByTaskGroup = new Map();
   for (const target of state.repositoryOutputs || []) {
-    if (target.projectId) outputsByProject.set(target.projectId, [...(outputsByProject.get(target.projectId) || []), target]);
-    if (target.taskGroupId) outputsByTaskGroup.set(target.taskGroupId, [...(outputsByTaskGroup.get(target.taskGroupId) || []), target]);
+    if (target.projectId) {
+      const list = outputsByProject.get(target.projectId);
+      if (list) list.push(target); else outputsByProject.set(target.projectId, [target]);
+    }
+    if (target.taskGroupId) {
+      const list = outputsByTaskGroup.get(target.taskGroupId);
+      if (list) list.push(target); else outputsByTaskGroup.set(target.taskGroupId, [target]);
+    }
   }
   for (const project of state.projects || []) {
     const taskGroups = taskGroupsByProject.get(project.id) || [];
