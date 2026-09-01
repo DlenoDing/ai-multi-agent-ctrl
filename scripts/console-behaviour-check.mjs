@@ -1063,7 +1063,9 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         const post = recorded.find((item) => item.method === "POST" && /orgs\/org_1\/quotas$/u.test(item.url));
         const quotas = post?.body?.quotas || {};
         check("改配额：留空的项不发、填了的按数发",
-          post && !("maxMembers" in quotas) && !("maxTaskGroups" in quotas) && quotas.maxProjects === 30 && quotas.maxAgents === 7,
+          // Boolean(post)：post 是 .find() 结果，没记录到提交时是 undefined，`undefined && ...` 求值成
+          // undefined（非布尔）会触发 check 的参数顺序自守卫抛错、把整门打崩（同 readonly 那处）。
+          Boolean(post) && !("maxMembers" in quotas) && !("maxTaskGroups" in quotas) && quotas.maxProjects === 30 && quotas.maxAgents === 7,
           post ? `发出去的是 ${JSON.stringify(quotas)} —— 留空成了 0` : "没记录到提交");
       } finally {
         probe.setFetch(previousFetch);
@@ -1390,7 +1392,9 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     `只读成员的项目设置配置行上仍有 ${cfgDelButtons} 个 cfg-del 删除按钮`);
   const repoUrlInput = /<input[^>]*name="repoUrl"[^>]*>/u.exec(roHtml);
   check("只读成员的配置输入必须是 readonly（否则能就地改、却存不下）",
-    repoUrlInput && /\breadonly\b/u.test(repoUrlInput[0]),
+    // Boolean(...)：repoUrlInput 是 exec 结果，未命中时是 null，`null && ...` 求值成 null（非布尔），
+    // 会触发 check 的参数顺序自守卫抛错、连带把整门打崩、掩盖同一轮里别的断言（cfgSource=config 变异下实测）。
+    Boolean(repoUrlInput) && /\breadonly\b/u.test(repoUrlInput[0]),
     `只读成员的仓库地址输入不是 readonly：${repoUrlInput ? repoUrlInput[0].slice(0, 100) : "（没找到 repoUrl 输入）"}`);
 }
 

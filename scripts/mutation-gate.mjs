@@ -6932,7 +6932,9 @@ const MUTATIONS = [
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyExecutionFailureCapSurvivesHistoryAndReopen",
     from: "      const failureCount = Number(workItem.executionFailureCount || 0);",
-    to: "      const failureCount = failedRuns.length;",
+    // 内联「从派发历史现数」这一反模式（原先用 failedRuns，但性能修复 7d52d6b 把它移进了分支、这里已取不到）。
+    // 在 evicted 用例（agentDispatches=[]）里现数得 0、上限失效即红。
+    to: '      const failureCount = (state.agentDispatches || []).filter((item) => item.taskGroupId === taskGroup.id && item.workItemId === workItem.id && item.status === "failed").length;',
     expect: "被历史上限顶光之后这条上限就不挡了"
   },
   {
