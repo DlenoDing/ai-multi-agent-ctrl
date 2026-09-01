@@ -2392,8 +2392,14 @@ function grantAppliesToResource(state, grant, resourceScope = {}) {
   if (grantResource.resourceType === "project") {
     if (resourceScope.resourceType === "project") return grantResource.resourceId === resourceScope.resourceId;
     if (resourceScope.resourceType === "task_group") {
-      const taskGroup = state.taskGroups.find((item) => item.id === resourceScope.resourceId);
-      return taskGroup?.projectId === grantResource.resourceId || resourceScope.projectId === grantResource.resourceId;
+      // resourceScope.projectId 由所有构造点从任务组解析而来（恒＝该任务组的真实 project，或任务组不存在时
+      // 为 undefined），所以它给了就直接用、不必再 state.taskGroups.find 一次 —— 否则 hasPermission 每次调
+      // 都对每条 project 型 grant 做一次全表 find，而判权在【每个任务组】上都跑（作用域视图/关闭门），
+      // 就是 O(任务组²) 的读路径热点（与 scopedForAccount 的 self-find 同量级）。给不出 projectId 才回退 find。
+      const scopeProjectId = resourceScope.projectId !== undefined && resourceScope.projectId !== null
+        ? resourceScope.projectId
+        : state.taskGroups.find((item) => item.id === resourceScope.resourceId)?.projectId;
+      return scopeProjectId === grantResource.resourceId;
     }
     return false;
   }
