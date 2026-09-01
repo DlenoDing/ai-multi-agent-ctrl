@@ -2234,7 +2234,11 @@ function jsonHead(text) {
 }
 
 function syncJson(url, token) {
-  const result = spawnSync("curl", ["-fsSL", "--config", "-", url], {input: `header = "Authorization: Bearer ${token}"\n`, encoding: "utf8", maxBuffer: 32 * 1024 * 1024});
+  // 技能包下载也命中网络：curl 默认不会因对端只接受不响应而退出。给 curl 自己的墙钟（--max-time /
+  // --connect-timeout），并给 spawnSync 一个略大的 timeout 兜底（curl 忽略信号时也杀得掉）——否则一个挂死的
+  // 下载会阻塞这条调用。复用 agent 的网络超时旋钮（AIMAC_AGENT_GIT_TIMEOUT_MS，默认 10 分钟）。
+  const netTimeoutMs = gitNetworkTimeoutMs();
+  const result = spawnSync("curl", ["-fsSL", "--connect-timeout", "30", "--max-time", String(Math.ceil(netTimeoutMs / 1000)), "--config", "-", url], {input: `header = "Authorization: Bearer ${token}"\n`, encoding: "utf8", maxBuffer: 32 * 1024 * 1024, timeout: netTimeoutMs + 5000});
   if (result.error || result.status !== 0) throw new Error(`skill_workset_download_failed:${result.stderr || result.error?.message}`);
   try {
     return JSON.parse(result.stdout);

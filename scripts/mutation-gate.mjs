@@ -2028,6 +2028,17 @@ const MUTATIONS = [
     expect: "dispatch git clone must set a wall-clock timeout"
   },
   {
+    // 技能包 curl 下载也命中网络：默认不因对端只接受不响应而退出，挂死会阻塞下载调用。去掉 --max-time+timeout 即红。
+    name: "技能包 curl 下载必须带墙钟超时",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "specs",
+    // 锚在 opts 尾部（不含模板字面量的 input，避开 mutation-gate 单引号串里 \n 的转义歧义）：去掉
+    // spawnSync 的 timeout 后，validate-specs 那条「--max-time 且 timeout:」的 curl 检查就红。
+    from: "maxBuffer: 32 * 1024 * 1024, timeout: netTimeoutMs + 5000});",
+    to: "maxBuffer: 32 * 1024 * 1024});",
+    expect: "skill-workset curl download must set a wall-clock timeout"
+  },
+  {
     // 控制面侧：技能源 clone 跑在 orchestrator tick（主线程 execFileSync），挂死的技能源远端会冻住整个控制面。去掉超时即红。
     name: "技能源 git clone 必须带墙钟超时（挂死远端不得冻住自治周期）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",

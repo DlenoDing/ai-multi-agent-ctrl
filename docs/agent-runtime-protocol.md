@@ -612,7 +612,7 @@ runtime_start
 | 变量 | 默认 | 它决定什么 | 改错了的表现 |
 | --- | --- | --- | --- |
 | `AIMAC_AGENT_REQUEST_TIMEOUT_MS` | `30000` | 单个控制面请求超时（最低 1 秒） | — |
-| `AIMAC_AGENT_GIT_TIMEOUT_MS` | `600000` | 命中网络的 git（内容传输 fetch、派发仓库 clone）单次墙钟超时（10 分钟；下限 60000，更小的值按它生效） | 太小会让大仓克隆超时；不设则挂死的远端会无限阻塞整台节点 |
+| `AIMAC_AGENT_GIT_TIMEOUT_MS` | `600000` | 命中网络的操作（内容传输 git fetch、派发仓库 git clone、技能包 curl 下载）单次墙钟超时（10 分钟；下限 60000，更小的值按它生效） | 太小会让大仓克隆超时；不设则挂死的远端会无限阻塞整台节点 |
 | `AIMAC_AGENT_RETRY_ATTEMPTS` | `4`（最低 1） | 可重试请求的尝试次数 | — |
 | `AIMAC_AGENT_REPLAY_MAX_ATTEMPTS` | `30` | 发件箱里一条检查点最多重放多少次，超过挪进恢复区并上报（最低 3） | 太小会把暂时性故障当成永久失败 |
 | `AIMAC_AGENT_PERMISSION_POLL_ATTEMPTS` | `240` | 等人处置权限申请时轮询多少次（最低 1） | 与间隔相乘就是等待上限（默认约 4 分钟） |

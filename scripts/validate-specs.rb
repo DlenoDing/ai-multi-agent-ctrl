@@ -745,6 +745,10 @@ git_clone_call = agent_runtime_source[/execFileSync\("git", \["clone"[\s\S]*?\}\
 errors << "Agent Runtime content-bundle git transfer must set a wall-clock timeout (a hung remote otherwise blocks the whole node)" unless git_transfer_opts&.include?("timeout:")
 errors << "Agent Runtime dispatch git clone must set a wall-clock timeout (a hung remote otherwise blocks the whole node)" unless git_clone_call&.include?("timeout:")
 errors << "Agent Runtime git network timeout must be NaN-safe with a floor (clampEnvNumber)" unless agent_runtime_source.include?("function gitNetworkTimeoutMs") && agent_runtime_source.include?("clampEnvNumber(process.env.AIMAC_AGENT_GIT_TIMEOUT_MS")
+# 技能包下载的 curl 也命中网络：默认不因对端只接受不响应而退出。提取 syncJson 里那条 curl 调用来核，
+# 既要有 curl 自己的 --max-time，也要有 spawnSync 的 timeout 兜底；去掉即红。
+skill_curl_call = agent_runtime_source[/spawnSync\("curl"[\s\S]*?maxBuffer: 32 \* 1024 \* 1024[^)]*\)/]
+errors << "Agent Runtime skill-workset curl download must set a wall-clock timeout (a hung download otherwise blocks the call)" unless skill_curl_call&.include?("--max-time") && skill_curl_call&.include?("timeout:")
 # 控制面侧命中网络的 git 同样必须带墙钟超时——最危险的是 syncSkillSource 的 clone/fetch 跑在
 # runAutonomousCycle→orchestrator tick（主线程 execFileSync），一个挂死的技能源远端会冻住整个控制面。
 # 通用 git()/gitStrict 包装器（含 ls-remote）也要有超时；提取各自的体来核，去掉任一处即红。
