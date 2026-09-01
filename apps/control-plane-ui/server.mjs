@@ -2843,7 +2843,9 @@ async function prepareRemoteGitVerification(target, checkpointInput) {
     throw error;
   }
   const gitEnv = {...process.env, GIT_ALLOW_PROTOCOL: "file:https:ssh:git", GIT_TERMINAL_PROMPT: "0"};
-  const git = (args) => execFileAsync("git", args, {env: gitEnv});
+  // 命中网络的 fetch（下面对远端拉分支/提交）必须有墙钟超时：execFileAsync 默认无超时，挂死的远端会让
+  // 这次检查点验证请求永远悬挂、git 子进程堆积。到点 execFileAsync 会杀进程并 reject，请求干净失败。
+  const git = (args) => execFileAsync("git", args, {timeout: clampEnvNumber(process.env.AIMAC_GIT_COMMAND_TIMEOUT_MS, 60000, 600000), env: gitEnv});
   const safeTargetId = String(target.targetId).replace(/[^A-Za-z0-9._-]+/gu, "_");
   const verificationRoot = join(runtimeDir, "git-verification", `${safeTargetId}.git`);
   mkdirSync(dirname(verificationRoot), {recursive: true});

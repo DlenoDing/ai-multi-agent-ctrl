@@ -193,6 +193,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 | `AIMAC_LOGIN_ATTEMPTS_PER_MINUTE` | `10` | 同一来源每分钟允许的登录尝试次数（最低 3） | 超过后登录被限流 |
 | `AIMAC_NODE_HEARTBEAT_TIMEOUT_MS` | `900000` | 节点多久没心跳算离线（15 分钟；允许 1 分钟到 24 小时）。健康检查的在线数与节点页的「心跳已超时」用同一阈值 | 过短会把慢网络的节点误判离线 |
 | `AIMAC_NODE_RETIRE_TIMEOUT_MS` | `604800000` | 离线多久后节点被退役、名额释放（7 天；允许 1 小时到 30 天） | 退役后要重新入网 |
+| `AIMAC_GIT_COMMAND_TIMEOUT_MS` | `600000` | 控制面侧命中网络的 git（远端检查点验证 fetch、技能源 clone·fetch、ls-remote）单次墙钟超时（10 分钟；下限 1 分钟，更小的值按它生效） | 太小会让大仓/慢网超时；不设则挂死的远端会冻住自治周期或悬挂验证请求 |
 | `AIMAC_ROOM_PARTICIPANTS_MAX` | `5000` | 房间参与者总数（下限 100，更小的值按它生效） | 超出后新参与者加不进来 |
 | `AIMAC_ROOM_SEQUENCE_MAX_ROOMS` | `5000` | 记着序号的房间数（下限 100，更小的值按它生效） | 太老的房间序号从头开始 |
 | `AIMAC_PROJECT_EVENT_KEY_FILE_CAP` | `5000` | 项目事件的幂等键文件条数 | 更早的事件重放不再去重 |

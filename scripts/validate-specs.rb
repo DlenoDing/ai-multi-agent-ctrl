@@ -745,6 +745,20 @@ git_clone_call = agent_runtime_source[/execFileSync\("git", \["clone"[\s\S]*?\}\
 errors << "Agent Runtime content-bundle git transfer must set a wall-clock timeout (a hung remote otherwise blocks the whole node)" unless git_transfer_opts&.include?("timeout:")
 errors << "Agent Runtime dispatch git clone must set a wall-clock timeout (a hung remote otherwise blocks the whole node)" unless git_clone_call&.include?("timeout:")
 errors << "Agent Runtime git network timeout must be NaN-safe with a floor (clampEnvNumber)" unless agent_runtime_source.include?("function gitNetworkTimeoutMs") && agent_runtime_source.include?("clampEnvNumber(process.env.AIMAC_AGENT_GIT_TIMEOUT_MS")
+# 控制面侧命中网络的 git 同样必须带墙钟超时——最危险的是 syncSkillSource 的 clone/fetch 跑在
+# runAutonomousCycle→orchestrator tick（主线程 execFileSync），一个挂死的技能源远端会冻住整个控制面。
+# 通用 git()/gitStrict 包装器（含 ls-remote）也要有超时；提取各自的体来核，去掉任一处即红。
+core_git_wrapper = core_source[/function git\(root = process\.cwd\(\)[\s\S]*?\n\}/]
+core_gitstrict_wrapper = core_source[/function gitStrict\(root = process\.cwd\(\)[\s\S]*?\n\}/]
+skill_sync_clone = core_source[/execFileSync\("git", \["clone", "--", repoUrl[^)]*\)/]
+skill_sync_fetch = core_source[/execFileSync\("git", \["-C", repoDir, "fetch"[^)]*\)/]
+errors << "control-plane git() wrapper must set a wall-clock timeout (ls-remote and others must not hang the request/cycle)" unless core_git_wrapper&.include?("timeout: gitCommandTimeoutMs()")
+errors << "control-plane gitStrict() wrapper must set a wall-clock timeout" unless core_gitstrict_wrapper&.include?("timeout: gitCommandTimeoutMs()")
+errors << "skill-source git clone must set a wall-clock timeout (a hung skill remote otherwise freezes the whole control plane via the orchestrator tick)" unless skill_sync_clone&.include?("timeout:")
+errors << "skill-source git fetch must set a wall-clock timeout" unless skill_sync_fetch&.include?("timeout:")
+errors << "control-plane git command timeout must be NaN-safe with a floor (clampEnvNumber)" unless core_source.include?("function gitCommandTimeoutMs") && core_source.include?("clampEnvNumber(process.env.AIMAC_GIT_COMMAND_TIMEOUT_MS")
+# server 侧远端检查点验证的 git（execFileAsync）挂死会悬挂验证请求、堆积 git 进程 —— 也要超时。
+errors << "remote git verification (server) must set a wall-clock timeout on execFileAsync git" unless server_source.include?("execFileAsync(\"git\", args, {timeout: clampEnvNumber(process.env.AIMAC_GIT_COMMAND_TIMEOUT_MS")
 # bootstrap 校过 --server 是 https，但 run/status/self-check 发请求用的是盘上 config 的 URL（运维会手改）；改成 http://
 # 就会把 nodeToken 明文发出去。必须在挂 Bearer 的唯一入口（jsonRequest）复校，一个点覆盖所有 URL 与命令。
 errors << "Agent Runtime must refuse to send the node credential over an insecure URL" unless agent_runtime_source.include?("if (options.token) requireSecureServerUrl(url)")

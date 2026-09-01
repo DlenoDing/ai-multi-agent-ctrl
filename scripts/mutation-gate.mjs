@@ -2028,6 +2028,24 @@ const MUTATIONS = [
     expect: "dispatch git clone must set a wall-clock timeout"
   },
   {
+    // 控制面侧：技能源 clone 跑在 orchestrator tick（主线程 execFileSync），挂死的技能源远端会冻住整个控制面。去掉超时即红。
+    name: "技能源 git clone 必须带墙钟超时（挂死远端不得冻住自治周期）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "specs",
+    from: 'execFileSync("git", ["clone", "--", repoUrl, repoDir], {stdio: "pipe", timeout: gitCommandTimeoutMs(), env: gitEnv});',
+    to: 'execFileSync("git", ["clone", "--", repoUrl, repoDir], {stdio: "pipe", env: gitEnv});',
+    expect: "skill-source git clone must set a wall-clock timeout"
+  },
+  {
+    // 控制面通用 git() 包装器（含 ls-remote 网络操作）无超时会挂住请求/自治周期。去掉超时即红。
+    name: "控制面 git() 包装器必须带墙钟超时",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "specs",
+    from: 'return execFileSync("git", ["-C", root, ...args], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: gitCommandTimeoutMs()}).trim();\n  } catch {\n    return fallback;',
+    to: 'return execFileSync("git", ["-C", root, ...args], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]}).trim();\n  } catch {\n    return fallback;',
+    expect: "control-plane git() wrapper must set a wall-clock timeout"
+  },
+  {
     // 盘上 config 的 URL 被手改成 http:// 时，挂着 nodeToken 的请求会把凭据明文发出去。挂 token 的唯一入口必须复校 https。
     name: "带凭据的请求不得走明文 URL",
     file: "apps/agent-runtime/runtime.mjs",

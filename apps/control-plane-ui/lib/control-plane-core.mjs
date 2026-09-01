@@ -4361,9 +4361,9 @@ export function syncSkillSource(state, sourceId, options = {}) {
   let actualCommit;
   try {
     if (!existsSync(join(repoDir, ".git"))) {
-      execFileSync("git", ["clone", "--", repoUrl, repoDir], {stdio: "pipe", env: gitEnv});
+      execFileSync("git", ["clone", "--", repoUrl, repoDir], {stdio: "pipe", timeout: gitCommandTimeoutMs(), env: gitEnv});
     }
-    execFileSync("git", ["-C", repoDir, "fetch", "origin", "--", defaultRef], {stdio: "pipe", env: gitEnv});
+    execFileSync("git", ["-C", repoDir, "fetch", "origin", "--", defaultRef], {stdio: "pipe", timeout: gitCommandTimeoutMs(), env: gitEnv});
     execFileSync("git", ["-C", repoDir, "checkout", "--detach", pinnedCommit], {stdio: "pipe", env: gitEnv});
     actualCommit = execFileSync("git", ["-C", repoDir, "rev-parse", "HEAD"], {encoding: "utf8"}).trim();
   } catch (error) {
@@ -4940,9 +4940,19 @@ function agentForRole(state, roleId) {
   return state.agents.find((agent) => agent.role === roleId && agent.status === "active") || state.agents.find((agent) => agent.status === "active");
 }
 
+// 命中网络的 git（ls-remote / 技能源 clone·fetch / push）必须有墙钟超时：execFileSync 默认无超时，
+// 一个只接受不响应的远端会让它无限阻塞。其中【最危险的是同步阻塞事件循环】——syncSkillSource 跑在
+// runAutonomousCycle→orchestrator tick（主线程）里，一次挂死的技能源 clone 就能冻住整个控制面（不再服务
+// 任何请求）。本地快操作（rev-parse 等）远在超时之内、不受影响；超时到点 execFileSync 会 SIGTERM 掉 git
+// 并抛 ETIMEDOUT，各调用点本就 catch（git() 返 fallback、gitStrict 抛 git_command_failed、技能同步转
+// skillSyncBlocked），挂死因此变成干净降级。默认 10 分钟，AIMAC_GIT_COMMAND_TIMEOUT_MS 可调、下限 1 分钟、NaN 安全。
+function gitCommandTimeoutMs() {
+  return clampEnvNumber(process.env.AIMAC_GIT_COMMAND_TIMEOUT_MS, 60000, 600000);
+}
+
 function git(root = process.cwd(), args = [], fallback = "") {
   try {
-    return execFileSync("git", ["-C", root, ...args], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]}).trim();
+    return execFileSync("git", ["-C", root, ...args], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: gitCommandTimeoutMs()}).trim();
   } catch {
     return fallback;
   }
@@ -4953,7 +4963,7 @@ function git(root = process.cwd(), args = [], fallback = "") {
 // 变成运维在控制台看到的那句失败摘要 —— 既没说为什么，又把服务器的绝对路径给了出去。
 function gitStrict(root = process.cwd(), args = []) {
   try {
-    return execFileSync("git", ["-C", root, ...args], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]}).trim();
+    return execFileSync("git", ["-C", root, ...args], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: gitCommandTimeoutMs()}).trim();
   } catch (error) {
     // stderr/status 原样带上：commitWithRuntimeIdentity 这类调用方要靠它认出"缺身份"那一种失败。
     throw Object.assign(new Error(`git_command_failed:${gitFailureText(args, error)}`),
