@@ -5179,8 +5179,25 @@ function verifyHumanAndOrganizationContracts(output) {
   // 写入禁区必须是【下限】而不是默认值。原先每个生产者各写一份 `request.pathDenylist || [...]`：
   // 调用方传个空数组就抹掉整个禁区，而 REST 那条创建路径根本没写这个字段 —— 服务端与执行侧的
   // 禁区判据同时对着空集，允许集里写上 CI 目录就能改流水线配置并推上去，CI 再拿仓库凭据执行。
-  if (!MANDATORY_PATH_DENYLIST.includes(".github/workflows/**")) {
+  if (!MANDATORY_PATH_DENYLIST.includes("**/.github/workflows/**")) {
     output.push("mandatory path denylist does not cover CI configuration — allowing an agent to edit it upgrades write access into execution with the repository's credentials");
+  }
+  // 禁区必须在【任何深度】命中：本仓是 monorepo，子目录里的 .env / node_modules / 子模块 .git /
+  // 各 app 自己的 CI 配置极常见，根锚模式会让它们全部逃过唯一的服务端强制点（pathMatchesAllowlist
+  // 对着 effectivePathDenylist，正是 checkpoint 接受路径 3364 用的那个表达式）。逐条造子目录样本核。
+  const denyFloor = effectivePathDenylist({});
+  for (const sensitive of ["apps/control-plane-ui/.env", "apps/web/.env.local", "services/api/.env.staging",
+      "apps/x/node_modules/left-pad/index.js", "vendor/sub/.git/config", "services/api/Jenkinsfile",
+      "apps/web/.gitlab-ci.yml", "apps/foo/.github/workflows/deploy.yml"]) {
+    if (!pathMatchesAllowlist(sensitive, denyFloor)) {
+      output.push(`mandatory path denylist misses a nested sensitive path (${sensitive}) — a subdirectory secret/CI-config/node_modules escapes the only server-side enforcement point under a wide allowlist`);
+    }
+  }
+  // 精度：禁区不得误伤名字相近的正常文件（否则「守卫过头且不出声」——人按规则写文件却被判越界）。
+  for (const innocuous of ["apps/x/foo.env", "apps/x/environment.ts", "apps/x/notnode_modules/a", "apps/x/.gitignore"]) {
+    if (pathMatchesAllowlist(innocuous, denyFloor)) {
+      output.push(`mandatory path denylist over-matched an innocuous path (${innocuous}) — the guard rejects legitimate writes without saying the rule itself is too broad`);
+    }
   }
   for (const probe of [{}, {pathDenylist: []}, {pathDenylist: ["docs/**"]}, {forbiddenPathRules: []}]) {
     const effective = effectivePathDenylist(probe);

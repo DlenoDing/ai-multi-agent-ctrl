@@ -126,6 +126,15 @@ const MUTATIONS = [
     expect: "still-running session was freed"
   },
   {
+    name: "禁区必须在任何深度命中（子目录 node_modules 不得逃过根锚模式）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '  "**/.runtime/**", "**/.git/**", "**/node_modules/**", "**/.env", "**/.env.*",',
+    to: '  "**/.runtime/**", "**/.git/**", "node_modules/**", "**/.env", "**/.env.*",',
+    expect: "a subdirectory secret/CI-config/node_modules escapes"
+  },
+  {
     name: "人工确认未到期不得被提前回收（continue 守卫）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

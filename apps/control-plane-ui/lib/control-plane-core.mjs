@@ -8824,10 +8824,17 @@ export const HUMAN_ACTOR_KEY = Symbol.for("dleno.control-plane.humanActor");
 // 服务端的禁区判据 `target.pathDenylist || []` 随之恒为空集，执行侧同理。
 // 结果是一个具备任务组写作用域的用户可以建一个 pathAllowlist 含 ".github/workflows/**" 的目标，
 // agent 改掉 CI 配置、推上去，CI 拿仓库凭据执行 —— 两侧都没有禁区。
+// 每条都带 `**/` 前缀：禁区的语义是「这些名字在【任何深度】都禁」，而不是「只在仓库根禁」。
+// 本仓是 monorepo，子目录里的 .env / node_modules / 子模块 .git / 各 app 自己的 CI 配置极常见 ——
+// 根锚模式（".env" 只等于根 .env、"node_modules/**" 只匹配根 node_modules）会让 apps/x/.env、
+// apps/x/node_modules/**、services/api/Jenkinsfile 全部逃过禁区。而禁区是【唯一的服务端强制点】
+// （执行方自查不算），配一个宽 allowlist（apps/**）子目录密钥/CI 配置就被接受提交。
+// `**/.env` + `**/.env.*` 覆盖所有 env 变体（.env / .env.local / .env.staging …）且精确：
+// 不误伤 foo.env、environment.ts（段必须以 .env 起头）。
 export const MANDATORY_PATH_DENYLIST = Object.freeze([
-  ".runtime/**", ".git/**", "node_modules/**", ".env", ".env.local", ".env.production",
+  "**/.runtime/**", "**/.git/**", "**/node_modules/**", "**/.env", "**/.env.*",
   // CI 配置等于"仓库凭据可执行的代码"：允许改它，等于把写代码的权限升级成执行权限。
-  ".github/workflows/**", ".github/actions/**", ".gitlab-ci.yml", "Jenkinsfile"
+  "**/.github/workflows/**", "**/.github/actions/**", "**/.gitlab-ci.yml", "**/Jenkinsfile"
 ]);
 
 // 使用点求取：已经落库的旧目标（含那些完全没有该字段的）也要拿到这个下限，
