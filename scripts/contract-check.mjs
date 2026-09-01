@@ -2138,6 +2138,30 @@ function verifyHumanAndOrganizationContracts(output) {
           output.push(`任务组还开着，${label} 却被"已终结"挡住了 —— 这道锁把正常路径一起堵死`);
         }
       }
+      // workItemId 旁路：taskGroupForRecord 经 taskGroupId 【或】workItemId 解析，所以只传 workItemId、不带
+      // taskGroupId 的调用会绕过任何"在解析前按 args.taskGroupId 判 settled"的守卫（settled 用 undefined→跳过、
+      // 随后经 workItemId 仍解析出终态组建记录，已行为复现）。守卫必须按【解析出的任务组】判。逐个用只带
+      // workItemId 的入参撞终态组。
+      const workItemBypass = [
+        ["findingSubmit", (st, wid) => findingSubmit(st, {workItemId: wid, severity: "high", summary: "workItemId 旁路"})],
+        ["approvalRequestCreate", (st, wid) => approvalRequestCreate(st, {workItemId: wid, action: "release", approvalType: "release", summary: "workItemId 旁路"})],
+        ["ruleSourceResolve", (st, wid) => ruleSourceResolve(st, {workItemId: wid, sourceRef: "reference:bypass"})],
+        ["createExecutionTopology", (st, wid) => createExecutionTopology(st, {workItemId: wid, mode: "parallel_active",
+          runnerKind: "git_worktree", isolation: "git_worktree",
+          branches: [{branchId: "b_bypass", objective: "旁路", ownedPaths: ["docs/**"], resourceScopes: [], acceptanceChecks: ["docs_lint"]}]})]
+      ];
+      for (const [label, run] of workItemBypass) {
+        for (const status of TASK_GROUP_SETTLED_STATUSES) {
+          const {st, tg} = settledFixture(status);
+          let outcome;
+          try { outcome = run(st, tg.workItems[0].id); }
+          catch (error) { outcome = {error: `抛出 ${error.message}`}; }
+          if (!String(outcome?.error || "").includes("task_group_settled")) {
+            output.push(`任务组已${status}，${label} 只凭 workItemId（不带 taskGroupId）就绕过了 settled 守卫（实际：${outcome?.error || "已受理"}）`
+              + " —— 守卫必须按【解析出的任务组】判，不能按 args.taskGroupId（后者为空时这道门形同虚设）");
+          }
+        }
+      }
     }
 
     // 【终态一次性】这一族：了结过的记录不得被第二次调用改写成【另一个结论】。

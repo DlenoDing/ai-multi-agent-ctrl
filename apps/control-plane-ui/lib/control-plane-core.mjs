@@ -5627,8 +5627,6 @@ export function createHumanConfirmationRequest(state, input = {}) {
     return {ok: false, error: "expires_at_invalid", received: String(input.expiresAt).slice(0, 60),
       message: "到期时间解析不了 —— 落库之后所有比较都会静默失败，所以这里拒绝"};
   }
-  const settledRejection = taskGroupSettledRejection(state, input.taskGroupId);
-  if (settledRejection) return settledRejection;
   ensureRuntimeCollections(state);
   const decisionType = String(input.decisionType || "runtime_execution");
   const isMajor = MAJOR_DECISION_TYPES.includes(decisionType);
@@ -5640,6 +5638,11 @@ export function createHumanConfirmationRequest(state, input = {}) {
   if (dispatch && input.taskGroupId && input.taskGroupId !== dispatch.taskGroupId) throw Object.assign(new Error("confirmation_task_group_mismatch"), {status: 409});
   const taskGroup = (state.taskGroups || []).find((item) => item.id === (dispatch?.taskGroupId || input.taskGroupId));
   if (!taskGroup) throw Object.assign(new Error("task_group_not_found"), {status: 404});
+  // 终结的任务组里不得再造确认单。按【解析出的任务组】判（它可能来自 dispatch.taskGroupId），而不是
+  // input.taskGroupId —— 否则只传 dispatchId 的调用方会绕过这道门（input.taskGroupId 为空→跳过、
+  // 随后经 dispatch.taskGroupId 仍在终态组上建单）。
+  const settledRejection = taskGroupSettledRejection(state, taskGroup.id);
+  if (settledRejection) return settledRejection;
   const summary = String(input.question?.summary || input.summary || "").trim().slice(0, 300);
   if (!summary) throw Object.assign(new Error("human_confirmation_question_required"), {status: 400});
   const aiOptions = (Array.isArray(input.options) ? input.options : [])
@@ -7704,7 +7707,9 @@ function globScopesOverlap(left, right) {
 }
 
 export function createExecutionTopology(state, args, options = {}) {
-  const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);
+  // 按【解析出的任务组】判终态，而不是 args.taskGroupId —— taskGroupForRecord 经 taskGroupId 或 workItemId
+  // 二者之一解析，只传 workItemId 的调用方否则会绕过这道门（settled 用 undefined→跳过、随后仍解析出终态组建记录）。
+  const settledRejection = taskGroupSettledRejection(state, taskGroupForRecord(state, args)?.id);
   if (settledRejection) return settledRejection;
   const taskGroup = taskGroupForRecordOrRefuse(state, args, "执行拓扑");
   const workItem = (taskGroup?.workItems || []).find((item) => item.id === (args.workItemId || args.workId))
@@ -8630,7 +8635,8 @@ export function reviewBundleRegister(state, args) {
 }
 
 export function approvalRequestCreate(state, args) {
-  const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);
+  // 按解析出的任务组判终态（避开只传 workItemId 的绕过，见 createExecutionTopology 处注释）。
+  const settledRejection = taskGroupSettledRejection(state, taskGroupForRecord(state, args)?.id);
   if (settledRejection) return settledRejection;
   // 冒名的审批请求可自带 quorum:1 / riskClass:low，让高危多方审批塌缩成一次点击。
   assertUniqueRecordId(state.approvalRequests, "approvalId", args.approvalId, "approval_request_id_conflict");
@@ -8775,7 +8781,8 @@ export function taskGroupSettledRejection(state, taskGroupId) {
 }
 
 export function findingSubmit(state, args) {
-  const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);
+  // 按解析出的任务组判终态（避开只传 workItemId 的绕过，见 createExecutionTopology 处注释）。
+  const settledRejection = taskGroupSettledRejection(state, taskGroupForRecord(state, args)?.id);
   if (settledRejection) return settledRejection;
   const at = new Date().toISOString();
   if (args.findingId) {
@@ -9020,7 +9027,8 @@ export const RULE_SOURCE_HUMAN_ONLY_STATUSES = ["active"];
 export const RULE_SOURCE_TERMINAL_STATUSES = ["reference_only", "quarantined", "rejected", "superseded"];
 
 export function ruleSourceResolve(state, args) {
-  const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);
+  // 按解析出的任务组判终态（避开只传 workItemId 的绕过，见 createExecutionTopology 处注释）。
+  const settledRejection = taskGroupSettledRejection(state, taskGroupForRecord(state, args)?.id);
   if (settledRejection) return settledRejection;
   // 同上：判定走 find(resolutionId === x)，同 id 两条会留下一个永远停在 discovered 的孤儿。
   assertUniqueRecordId(state.ruleSourceResolutions, "resolutionId", args.resolutionId, "rule_source_resolution_id_conflict");
@@ -9132,12 +9140,6 @@ export function sharedDefinitionCreate(state, args) {
   assertUniqueRecordId(state.sharedDefinitions, "contractId", args.contractId, "shared_definition_id_conflict");
   // definitionType / conflictPolicy 规范里就是 enum，这条路原先原样收 —— 与 REST 那条同一个漏。
   assertSharedDefinitionClosedSets(args);
-  // 与 contractPublish（它早有这道门）同规：终结的任务组里不得再造共享定义契约 ——
-  // 它是关闭门的阻塞对象，落在已关闭的组上就成了谁也处置不掉的死记录。
-  if (args.taskGroupId) {
-    const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);
-    if (settledRejection) return settledRejection;
-  }
   const at = new Date().toISOString();
   // 【点了名却认不出，不等于没点名】。上面那个解析器把这两件事都返回 null，而下面原先是
   // `taskGroup?.id || args.taskGroupId` + `|| "prj_control_plane"`：写错一个任务组 id 的请求
@@ -9146,6 +9148,13 @@ export function sharedDefinitionCreate(state, args) {
   // core 里另外 14 处工厂早就改成「认不出就具名拒绝」了，这一处是漏网的最后一个。
   // 契约本身允许【项目级】（不挂任务组）—— 那种情况必须点名 projectId，不再硬回落到种子项目。
   const taskGroup = taskGroupForRecord(state, args);
+  // 与 contractPublish 同规：终结的任务组里不得再造共享定义契约（它是关闭门的阻塞对象，落在已关闭的组上
+  // 就成了谁也处置不掉的死记录）。按【解析出的任务组】判，而不是 args.taskGroupId —— 否则只传 workItemId
+  // 的调用方会绕过（解析仍经 workItemId 命中终态组）。契约允许项目级（无任务组），故解析不到时不拦。
+  if (taskGroup) {
+    const settledRejection = taskGroupSettledRejection(state, taskGroup.id);
+    if (settledRejection) return settledRejection;
+  }
   if (!taskGroup && args.taskGroupId) {
     throw Object.assign(new Error("task_group_not_found"), {status: 400, details: {
       taskGroupId: args.taskGroupId,

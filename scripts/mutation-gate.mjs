@@ -805,6 +805,17 @@ const MUTATIONS = [
     expect: "artifactRegister 仍然往它里面写了新东西"
   },
   {
+    // settled 守卫必须按【解析出的任务组】判，不能按 args.taskGroupId：taskGroupForRecord 经 taskGroupId 或
+    // workItemId 解析，改回 args.taskGroupId 后，只传 workItemId 的调用就绕过守卫在终态组上建记录（已行为复现）。
+    name: "settled 守卫必须按解析出的任务组判（防 workItemId 旁路）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "export function findingSubmit(state, args) {\n  // 按解析出的任务组判终态（避开只传 workItemId 的绕过，见 createExecutionTopology 处注释）。\n  const settledRejection = taskGroupSettledRejection(state, taskGroupForRecord(state, args)?.id);",
+    to: "export function findingSubmit(state, args) {\n  const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);",
+    expect: "只凭 workItemId（不带 taskGroupId）就绕过了 settled 守卫"
+  },
+  {
     // writer 这道门此前也只有一条登记变异（丢更新）。并发下"同一张定稿卡恰好一个人定成"
     // 是人工闸门在多进程部署下的立足点，而它从没被人看着红过：拿掉"已非待确认"这道守卫，
     // 两个进程会各自定稿成功，两份都写进磁盘 —— 谁批的、批了哪一版，从此说不清。
@@ -1736,8 +1747,8 @@ const MUTATIONS = [
     name: "任务组终结后不得再加新东西",
     file: CORE,
     check: "verifyHumanAndOrganizationContracts",
-    from: "  const settledRejection = taskGroupSettledRejection(state, input.taskGroupId);\n  if (settledRejection) return settledRejection;",
-    to: "",
+    from: "  const settledRejection = taskGroupSettledRejection(state, taskGroup.id);\n  if (settledRejection) return settledRejection;\n  const summary = String(input.question?.summary || input.summary || \"\").trim().slice(0, 300);",
+    to: "  const summary = String(input.question?.summary || input.summary || \"\").trim().slice(0, 300);",
     expect: "仍然往它里面写了新东西"
   },
   {
@@ -10891,8 +10902,8 @@ const MUTATIONS = [
     name: "终结的任务组里不得再造共享定义契约（孪生的契约发布早有这道门）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",
-    from: "  if (args.taskGroupId) {\n"
-      + "    const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);\n"
+    from: "  if (taskGroup) {\n"
+      + "    const settledRejection = taskGroupSettledRejection(state, taskGroup.id);\n"
       + "    if (settledRejection) return settledRejection;\n  }",
     to: "  if (false) {}",
     expect: "还能造「共享定义契约」"
