@@ -1321,6 +1321,12 @@ errors << %(控制台不得把会话令牌放进 WebSocket 查询串（会被访
 errors << %(控制台必须用子协议头携带实时通道令牌) unless app_js_source.include?(%q{["aimac.bearer", authToken]})
 # 握手必须回显一个客户端提供过的子协议，否则浏览器立刻断开；且绝不能回显令牌本身（那等于换个地方泄露）。
 errors << %(实时通道握手必须回显 aimac.bearer 子协议，且不得回显令牌本身) unless server_source.include?("handleProtocols") && server_source.include?(%q{? "aimac.bearer" : false})
+# 实时通道入站只有极小的订阅控制帧；ws 默认 maxPayload 100MB，一个已认证客户端就能发含数百万频道字符串
+# 的巨消息、让 subscribe 循环在主线程阻塞事件循环。WSS 配置必须显式限制 maxPayload；去掉即红。
+realtime_wss_config = server_source[/new WebSocketServer\(\{[\s\S]*?\n\}\)/]
+# 认【配置键 maxPayload:】（带冒号），不认注释里裸写的 maxPayload —— 否则这条会被上面注释里的 maxPayload 一词
+# 撞成恒真（本仓踩过的「门读到自己写的字」）。
+errors << %(实时 WebSocket 必须限制入站消息大小 maxPayload（否则一条巨订阅帧能在主线程阻塞事件循环）) unless realtime_wss_config&.match?(/maxPayload:\s*\d/)
 
 # 人打开控制台看不出"现在轮到我做什么"：菜单写死无计数，唯一的待办数字不可点击且只算当前项目，
 # 而等人拍板的东西被拆在两个页面上，其中一个还叫"执行监控" —— 名字完全不暗示这里有等你签字的东西。

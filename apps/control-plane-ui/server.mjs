@@ -6609,6 +6609,11 @@ function safeRequestPathname(req) {
 // --- Real-time WebSocket push (additive over long-poll) --------------------------------------
 const realtimeServer = new WebSocketServer({
   noServer: true,
+  // 入站只有极小的订阅控制帧（subscribe/unsubscribe + 频道名）。ws 默认 maxPayload 是 100MB：一个已认证
+  // 的客户端就能发一条含数百万频道字符串的巨消息，handleRealtimeMessage 的 subscribe 循环会逐个遍历它、
+  // 在主线程上阻塞事件循环数百毫秒（即便频道都授权不过也照样遍历）。限到 64KB —— 对真实订阅帧绰绰有余，
+  // 超了 ws 直接关连接，数组因此也被限住、循环不会失控。
+  maxPayload: 64 * 1024,
   // 客户端用子协议头携带令牌（["aimac.bearer", "<token>"]）。握手必须回显【一个】它提供过的
   // 子协议，否则浏览器会立刻断开。这里固定回显 aimac.bearer，绝不回显令牌本身 ——
   // 回显令牌会把它写进响应头，等于换个地方继续泄露。

@@ -3456,6 +3456,15 @@ const MUTATIONS = [
     expect: "必须按谓词复核主体"
   },
   {
+    // 去掉 WSS 的 maxPayload：ws 回落到默认 100MB，一条巨订阅帧能让 subscribe 循环阻塞事件循环。去掉即红。
+    name: "实时 WebSocket 必须限制入站消息大小 maxPayload",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "specs",
+    from: "  maxPayload: 64 * 1024,",
+    to: "  ",
+    expect: "必须限制入站消息大小 maxPayload"
+  },
+  {
     name: "授权处置的缺省回退必须是拒绝（不是放行）",
     file: APP,
     gate: "console",
