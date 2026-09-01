@@ -2478,11 +2478,14 @@ function runAutonomousCycleBody(state, request = {}) {
       // 与独立评审的返工上限同理：到点就停下来，把责任明确交回人手上，并说清楚为什么。
       // 计数取自工作项上的持久值（见 noteWorkItemExecutionFailure）：派发历史会被 240 条上限顶掉，
       // 拿它现数会让这条上限在忙碌部署里悄悄失效。最近一次失败原因仍从历史里取（取不到就说取不到）。
-      const failedRuns = (state.agentDispatches || []).filter((item) =>
-        item.taskGroupId === taskGroup.id && item.workItemId === workItem.id && item.status === "failed");
       const failureCount = Number(workItem.executionFailureCount || 0);
       const maxExecutionAttempts = clampEnvNumber(process.env.AIMAC_MAX_EXECUTION_ATTEMPTS, 1, 3);
       if (failureCount >= maxExecutionAttempts && !["verified", "closed"].includes(workItem.status)) {
+        // 回扫派发表只为取"最近一次失败原因"这一句展示文案，且只有这个罕见分支用得到。放在 if 外面会让
+        // 【每个工作项每一拍】都做一次 O(派发数) 的全表 filter（判据是持久计数 executionFailureCount，
+        // 不依赖这次扫描），在忙碌部署里就是一个 O(工作项×派发) 的平方项。移进分支：只有真撞上失败上限时才扫。
+        const failedRuns = (state.agentDispatches || []).filter((item) =>
+          item.taskGroupId === taskGroup.id && item.workItemId === workItem.id && item.status === "failed");
         const lastFailure = failedRuns.at(-1)?.failureReason || "已被历史上限顶掉，看不到了";
         workItem.status = "needs_decision";
         workItem.blockedReason = "execution_failed_repeatedly";
