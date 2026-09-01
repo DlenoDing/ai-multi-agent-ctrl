@@ -548,7 +548,7 @@ const MUTATIONS = [
     gate: "console",
     from: "：${payload.decidedOption}` : \"\"}",
     to: "：${esc(payload.decidedOption)}` : \"\"}",
-    expect: "自由文本被双重转义成 &lt; 字面"
+    expect: "decidedOption 被双重转义或漏掉"
   },
   {
     name: "没有可用模型时要给人挂 S1 阻塞",
@@ -566,7 +566,7 @@ const MUTATIONS = [
     file: CORE,
     from: "Number((weighted / 12).toFixed(4)) || 0)),",
     to: "Number((weighted / 12).toFixed(4)))),",
-    expect: "评分信号非数值时 totalScore 成 NaN"
+    expect: "模型评分 clamp 钳不住 NaN"
   },
   {
     name: "模型选择策略的声明必须与引擎实际做的一致",
