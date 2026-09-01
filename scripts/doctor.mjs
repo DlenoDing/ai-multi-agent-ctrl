@@ -520,6 +520,28 @@ try {
       throw new Error("请求体里规范不认识的字段被原样存进了模型能力档案 ——"
         + " 规范是 additionalProperties:false，这条记录违反它自己声明的规范，而这件事只有恰好造出它时才会发现");
     }
+    // 认不出的 providerClass 没有默认模板：存下的 profile 会缺 qualitySignals 等，rankModel 读到 undefined
+    // 子字段算出 NaN 分，selectModel 的排序比较器返回 NaN＝排序失序甚至崩溃（undefined.reasoningScore）。认不出就拒。
+    const unknownClass = await jsonFetch(port, "/api/model-capabilities", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-model-cap-unknown-class", authorization: systemAuth},
+      body: JSON.stringify({providerId: "probe", providerClass: "no_such_provider", modelId: "probe-x"})});
+    if (unknownClass.response.status !== 400 || unknownClass.payload?.error !== "model_capability_provider_class_unknown") {
+      throw new Error(`认不出的 providerClass 被收下了（${unknownClass.response.status}/${unknownClass.payload?.error}）`
+        + " —— 存下的 profile 缺评分字段，rankModel 会算出 NaN 分、把模型选择的排序打乱");
+    }
+    // 只给了部分 qualitySignals：浅展开会把模板里完整那份整个换成残缺的。存回来的必须是深合并后的完整对象，
+    // 否则 rankModel 的 quality = (reasoningScore + undefined + undefined)/3 = NaN，totalScore 随之 NaN。
+    const partial = await jsonFetch(port, "/api/model-capabilities", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-model-cap-partial", authorization: systemAuth},
+      body: JSON.stringify({providerId: "probe", providerClass: "openai", modelId: "probe-partial",
+        qualitySignals: {reasoningScore: 0.95}})});
+    const qs = partial.payload?.qualitySignals || {};
+    const missingQs = ["reasoningScore", "codingScore", "reviewScore", "latencyClass", "reliabilityScore"]
+      .filter((field) => qs[field] === undefined);
+    if (!partial.response.ok || missingQs.length || Number(qs.reasoningScore) !== 0.95) {
+      throw new Error(`只给部分 qualitySignals 注册后，存回来的不完整（缺 ${missingQs.join("、") || "无"}，`
+        + `reasoningScore=${qs.reasoningScore}）—— 浅展开把模板的完整评分换成了残缺的，rankModel 会算出 NaN 分`);
+    }
   }
 
   if (!stateResult.payload.skillSources.some((source) => source.sourceId === "agency-agents-zh")) {

@@ -76,6 +76,7 @@ import {
   decideHumanConfirmation,
   decideSessionPlacement,
   defaultModelCapabilities,
+  providerClasses,
   DEFAULT_ORGANIZATION_ID,
   digestOf,
   workItemCreateStatus,
@@ -4104,9 +4105,24 @@ async function handleApi(req, res) {
       json(res, 400, {error: "model_capability_observed_at_invalid", received: String(body.observedAt).slice(0, 60)});
       return;
     }
+    // 模板按 providerClass 取（含默认的 "custom"）。认不出的 providerClass 没有模板 —— 此时 profile 只剩 body
+    // 那几个字段，缺 qualitySignals/limits/costSignals 就会让 rankModel 读到 undefined 子字段、算出 NaN 分
+    // （selectModel 的排序比较器返回 NaN＝排序失序、甚至崩溃），而且这条无效记录违反 model-capability 规范。
+    // 认不出就拒，不静默存一条会毒化模型选择的残缺记录。
+    const template = defaultModelCapabilities(now()).find((item) => item.providerClass === (body.providerClass || "custom"));
+    if (!template) {
+      json(res, 400, {error: "model_capability_provider_class_unknown", received: String(body.providerClass).slice(0, 60),
+        supported: providerClasses});
+      return;
+    }
     const profile = {
-      ...defaultModelCapabilities(now()).find((item) => item.providerClass === (body.providerClass || "custom")),
+      ...template,
       ...picked,
+      // 评分相关的嵌套对象要【深合并】：body 只给了部分（如只 reasoningScore）时，上面的浅展开会把模板里
+      // 完整的那份整个换成残缺对象 —— rankModel 读到 undefined 子字段算出 NaN 分。逐个并回模板默认值。
+      qualitySignals: {...template.qualitySignals, ...picked.qualitySignals},
+      limits: {...template.limits, ...picked.limits},
+      costSignals: {...template.costSignals, ...picked.costSignals},
       schemaVersion: "model-capability/v1",
       capabilityDigest: body.capabilityDigest || digestOf(body),
       observedAt: observedAt || now()

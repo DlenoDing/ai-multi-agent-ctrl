@@ -3156,6 +3156,25 @@ const MUTATIONS = [
     expect: "改配额：留空的项不发"
   },
   {
+    // 部分 qualitySignals 若不深合并回模板，浅展开会把完整评分换成残缺对象 → rankModel 算出 NaN 分、
+    // selectModel 排序失序。去掉深合并即让 probe-partial 注册后存回残缺 qualitySignals。
+    name: "模型能力注册要深合并评分对象而不是整替",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "      qualitySignals: {...template.qualitySignals, ...picked.qualitySignals},",
+    to: "      qualitySignals: {...picked.qualitySignals},",
+    expect: "存回来的不完整"
+  },
+  {
+    // 认不出的 providerClass 没有模板：不拒的话 profile 缺评分字段（甚至 template undefined 直接崩），毒化模型选择。
+    name: "认不出的 providerClass 注册要拒",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    if (!template) {\n      json(res, 400, {error: \"model_capability_provider_class_unknown\"",
+    to: "    if (false) {\n      json(res, 400, {error: \"model_capability_provider_class_unknown\"",
+    expect: "认不出的 providerClass 被收下了"
+  },
+  {
     name: "建组织时填错的配额要拒（不是钳成 1 或回落缺省）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

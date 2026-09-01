@@ -102,6 +102,7 @@
     member_default_project_archived: "这个项目已归档（不能再建新工作）：新成员一进来就无事可做",
     command_timeout_at_invalid: "命令的超时时间不是一个能识别的日期（要 ISO-8601）—— 存进去它就永远不会超时",
     model_capability_observed_at_invalid: "观测时间不是一个能识别的日期（要 ISO-8601，例如 2026-08-23T10:00:00Z）",
+    model_capability_provider_class_unknown: "认不出的供应商类别：没有对应的默认模板，注册会缺评分字段而扰乱模型选择。请用受支持的类别（openai / anthropic / … / custom）",
     lease_expired: "租约过期，这份产出目标被顶替",
     skill_source_retired: "技能源已退役",
     agent_control_command_unsupported: "节点认不出这条控制命令（它的运行时版本可能比控制面旧）",
