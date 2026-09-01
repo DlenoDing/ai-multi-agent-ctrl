@@ -1574,19 +1574,23 @@ function canReadResource(state, account, resourceScope = {}) {
   return true;
 }
 
-function canReadProject(state, account, projectId) {
+function canReadProject(state, account, projectId, resolvedProject) {
   if (!projectId) return false;
-  const project = state.projects.find((item) => item.id === projectId);
+  // resolvedProject：调用方已握有该 project 对象时传进来，省掉一次 state.projects.find —— 作用域视图
+  // 构建里对每个 project 逐个判权，若这里再全表 find 就是 filter 里套 find＝O(项目数²)（读路径热点）。
+  const project = resolvedProject || state.projects.find((item) => item.id === projectId);
   if (account.accountType === "org_admin" && project && (project.organizationId || DEFAULT_ORGANIZATION_ID) === account.organizationId) return true;
   if (project?.ownerAccountId === account.accountId || (project?.members || []).some((member) => member.accountId === account.accountId)) return true;
   return ["project:view", "project:*"].some((permission) => hasPermission(state, account.accountId, permission, {resourceType: "project", resourceId: projectId}));
 }
 
-function canReadTaskGroup(state, account, taskGroupId) {
-  const taskGroup = state.taskGroups.find((item) => item.id === taskGroupId);
+function canReadTaskGroup(state, account, taskGroupId, resolvedTaskGroup, resolvedProject) {
+  // resolvedTaskGroup/resolvedProject：作用域视图构建里对每个任务组逐个判权，若这里再全表 find 就是
+  // filter 里套 find＝O(任务组²)+O(任务组×项目)（读路径热点，每次写后非系统账号首请求重建时跑）。
+  const taskGroup = resolvedTaskGroup || state.taskGroups.find((item) => item.id === taskGroupId);
   if (!taskGroup) return false;
   if (isSystemAccount(account)) return true;
-  const project = state.projects.find((item) => item.id === taskGroup.projectId);
+  const project = resolvedProject || state.projects.find((item) => item.id === taskGroup.projectId);
   if (project?.ownerAccountId === account.accountId) return true;
   return ["task_group:read", "task_group:review", "task_group:control", "task_group:orchestrate", "task_group:monitor", "task_group:*"].some((permission) =>
     hasPermission(state, account.accountId, permission, {resourceType: "task_group", resourceId: taskGroupId, projectId: taskGroup.projectId})
@@ -1635,8 +1639,12 @@ function scopedStateForAccount(state, account, session) {
     ...(item.accountId === account.accountId ? {effectivePermissions: accountEffectivePermissions(state, account)} : {})
   }));
   if (isSystem) return cloned;
-  const visibleProjectIds = new Set((state.projects || []).filter((project) => canReadProject(state, account, project.id)).map((project) => project.id));
-  const visibleTaskGroupIds = new Set((state.taskGroups || []).filter((taskGroup) => canReadTaskGroup(state, account, taskGroup.id)).map((taskGroup) => taskGroup.id));
+  // 把已握有的 project/taskGroup 对象直接传给判权函数（并用一张 projectById 现算任务组的项目），
+  // 免得每项再全表 find —— 否则这两行是 filter 里套 find＝O(项目²)+O(任务组²)+O(任务组×项目)（实测
+  // 8000 任务组仅这几处 self-find 就 154ms/次，且每次写后非系统账号首请求都重建）。
+  const projectById = new Map((state.projects || []).map((project) => [project.id, project]));
+  const visibleProjectIds = new Set((state.projects || []).filter((project) => canReadProject(state, account, project.id, project)).map((project) => project.id));
+  const visibleTaskGroupIds = new Set((state.taskGroups || []).filter((taskGroup) => canReadTaskGroup(state, account, taskGroup.id, taskGroup, projectById.get(taskGroup.projectId))).map((taskGroup) => taskGroup.id));
   cloned.projects = (state.projects || []).filter((project) => visibleProjectIds.has(project.id));
   cloned.taskGroups = (state.taskGroups || []).filter((taskGroup) => visibleTaskGroupIds.has(taskGroup.id));
   cloned.repositoryOutputs = (state.repositoryOutputs || []).filter((target) =>
