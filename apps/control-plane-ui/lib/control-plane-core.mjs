@@ -3158,6 +3158,11 @@ export function classifyExecutorSpawnFailure(result) {
     return "agent_runtime_executor_output_too_large:"
       + `agent 输出超过 ${EXECUTOR_MAX_OUTPUT_BYTES / (1024 * 1024)} MB 上限，收到的部分是截断的、不能用`;
   }
+  // 超时被终止（上面 spawnSync 的 timeout）：单独认出来，别混进笼统的 executor_failed ——
+  // 人要判断的是"执行器卡死了、被墙钟砍掉"而不是"执行器自己报错退出"，处置方向完全不同。
+  if (result?.error?.code === "ETIMEDOUT") {
+    return "agent_runtime_executor_timed_out:执行器超时未结束、已被墙钟终止（控制面在进程内同步跑它，久挂会冻死整个进程）——AIMAC_AGENT_EXECUTION_TIMEOUT_MS 可调，0 禁用";
+  }
   if (result?.error) return `agent_runtime_executor_failed:${result.error.message}`;
   // 退出码非 0：原因在 stderr 里，stdout 只是兜底。两个都空时要说出"没留下任何原因"，
   // 而不是甩一个空的失败码 —— 人拿着空字符串没法往下查。
@@ -3179,6 +3184,12 @@ function runExecutorBackedAgentWorker(state, request) {
   if (!contract) throw new Error("task_contract_missing_for_executor");
   const command = process.env.AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND;
   if (gitStatusPaths(root).length) throw new Error("agent_runtime_executor_requires_clean_worktree");
+  // 控制面【在进程内】同步 spawnSync 跑执行器（这是 AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND 部署模式）——
+  // spawnSync 阻塞事件循环，执行器一挂就永不返回、整个控制面进程冻死（连 /api/health 都答不出）。
+  // 远程 agent 那条执行路径早有墙钟超时 + terminateChild（AIMAC_AGENT_EXECUTION_TIMEOUT_MS），这条是
+  // 同一件事的另一半、此前没有。复用同一把旋钮（默认 2h，0 禁用）；超时后 spawnSync 置 result.error
+  //（code ETIMEDOUT），下面 classifyExecutorSpawnFailure 接住并报成一次执行失败，循环继续、进程不冻。
+  // killSignal 用 SIGKILL：SIGTERM 可能被 shell 吞掉、spawnSync 会一直等它死，SIGKILL 保证返回。
   const input = {
     schemaVersion: "agent-runtime-executor-input/v1",
     repositoryRoot: root,
@@ -3195,13 +3206,16 @@ function runExecutorBackedAgentWorker(state, request) {
     repositoryOutputTarget: target,
     requiredOutputs: ["git_changes", "artifact_manifest", "commit", "push", "checkpoint_evidence"]
   };
+  const configuredExecutorTimeout = Number(process.env.AIMAC_AGENT_EXECUTION_TIMEOUT_MS);
+  const executorTimeoutMs = Number.isFinite(configuredExecutorTimeout) ? Math.max(0, configuredExecutorTimeout) : 7200000;
   const result = spawnSync(command, {
     cwd: root,
     input: `${JSON.stringify(input)}\n`,
     encoding: "utf8",
     shell: true,
     env: process.env,
-    maxBuffer: EXECUTOR_MAX_OUTPUT_BYTES
+    maxBuffer: EXECUTOR_MAX_OUTPUT_BYTES,
+    ...(executorTimeoutMs > 0 ? {timeout: executorTimeoutMs, killSignal: "SIGKILL"} : {})
   });
   const spawnFailure = classifyExecutorSpawnFailure(result);
   if (spawnFailure) throw new Error(spawnFailure);

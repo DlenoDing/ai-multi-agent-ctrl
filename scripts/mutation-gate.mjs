@@ -2039,6 +2039,16 @@ const MUTATIONS = [
     expect: "content-bundle git transfer must set a wall-clock timeout"
   },
   {
+    // 控制面在进程内同步 spawnSync 跑执行器（AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND 模式）无墙钟超时时，
+    // 执行器一挂 spawnSync 永不返回、整个控制面事件循环冻死（连 /api/health 都答不出）。去掉 timeout 即红。
+    name: "控制面在进程内跑的执行器必须带墙钟超时（挂死不得冻死整个进程）",
+    file: CORE,
+    gate: "specs",
+    from: 'timeout: executorTimeoutMs, killSignal: "SIGKILL"',
+    to: 'killSignal: "SIGKILL"',
+    expect: "control-plane in-process executor must have a wall-clock timeout"
+  },
+  {
     // 派发仓库的 git clone 同样无超时：挂死远端会在仓库准备阶段无限阻塞。去掉 clone 的 timeout 即红。
     name: "派发仓库 git clone 必须带墙钟超时",
     file: "apps/agent-runtime/runtime.mjs",

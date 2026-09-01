@@ -887,6 +887,11 @@ errors << "agent runtime must git clean the persistent checkout before each disp
 errors << "agent runtime must parse git -z rename records field-by-field (no corrupt slice-map)" unless agent_runtime_source.include?("if (/[RC]/.test(entry.slice(0, 2)))") && !agent_runtime_source.include?(".map((entry) => entry.slice(3)).map((path) => path.includes(\" -> \")")
 # H2: the model executor must have a wall-clock timeout (a hung executor otherwise pins the node forever).
 errors << "agent runtime model executor must have a wall-clock timeout" unless agent_runtime_source.include?("AIMAC_AGENT_EXECUTION_TIMEOUT_MS") && agent_runtime_source.include?("terminateChild(child)")
+# H2b: the CONTROL-PLANE in-process executor (AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND mode) runs the executor via a
+# SYNCHRONOUS spawnSync that blocks the event loop — a hung executor freezes the whole control plane forever
+# (even /api/health stops answering). It needs the same wall-clock timeout as the remote path (H2), and the
+# ETIMEDOUT must be surfaced as a distinct timeout failure (not the generic executor_failed).
+errors << "control-plane in-process executor must have a wall-clock timeout" unless core_source.include?("timeout: executorTimeoutMs, killSignal: \"SIGKILL\"") && core_source.include?("agent_runtime_executor_timed_out")
 # F1: the node heartbeat must NOT blanket-renew dispatch claims (only execution events renew) — else an
 # orphaned running dispatch is kept alive forever and wedges its close barrier.
 errors << "node heartbeat must not blanket-renew dispatch claims (orphan wedge)" unless !agent_gateway_source.include?("renewNodeDispatchClaims")
