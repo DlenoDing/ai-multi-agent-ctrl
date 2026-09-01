@@ -925,7 +925,7 @@ function syncContentBundleGitTransfer(config, bundle, bundleDir) {
   const paths = (Array.isArray(transfer.paths) ? transfer.paths : []).filter((path) => typeof path === "string" && path && !path.startsWith("/") && !path.startsWith("-") && !path.includes("..") && !/[\0]/u.test(path));
   try {
     // Restrict git to safe network transports so a hostile repository URL cannot invoke a local command.
-    const gitOpts = {stdio: "pipe", env: {...process.env, GIT_ALLOW_PROTOCOL: "https:ssh:git"}};
+    const gitOpts = {stdio: "pipe", timeout: gitNetworkTimeoutMs(), env: {...process.env, GIT_ALLOW_PROTOCOL: "https:ssh:git"}};
     if (!existsSync(join(transferDir, ".git"))) {
       mkdirSync(dirname(transferDir), {recursive: true});
       execFileSync("git", ["init", "-q", transferDir], gitOpts);
@@ -1713,6 +1713,16 @@ function clampEnvNumber(raw, min, fallback) {
   return Number.isFinite(numeric) ? Math.max(min, numeric) : Math.max(min, fallback);
 }
 
+// 命中网络的 git（clone/fetch）必须有墙钟超时：execFileSync 默认【无超时】，一个只接受不响应的远端
+// 会让 git 无限阻塞，而它跑在 agent 主循环里、又不在 executor 的 spawnAndCapture 超时覆盖内 ——
+// 结果是整台 agent 静默挂死（不再心跳、不再处理别的派发），控制面 15 分钟后判死重排派发，
+// agent 进程本身却成僵尸直到被杀。超时到点 execFileSync 会 SIGTERM 掉 git 并抛 ETIMEDOUT，
+// 被上层 catch 转成 git_command_failed、这次派发干净失败、agent 照常继续。默认 10 分钟（够浅取/普通克隆），
+// 大仓可用 AIMAC_AGENT_GIT_TIMEOUT_MS 调大；下限 1 分钟防打错值把正常操作也掐了。
+function gitNetworkTimeoutMs() {
+  return clampEnvNumber(process.env.AIMAC_AGENT_GIT_TIMEOUT_MS, 60000, 600000);
+}
+
 function isSafeCloneUrl(url) {
   const value = String(url || "");
   if (!value || value.startsWith("-")) return false;
@@ -1730,7 +1740,7 @@ function prepareRepository(config, target) {
     // 克隆失败（认证被拒 / 仓库不在 / 连不上）此前抛的是 "Command failed: git clone <url> <本机路径>"：
     // 它会作为失败摘要上报，直接显示在控制台上 —— 没说原因，还带着 agent 本机的目录。
     try {
-      execFileSync("git", ["clone", target.repositoryUrl, repositoryRoot], {stdio: "pipe", env: {...process.env, GIT_ALLOW_PROTOCOL: "file:https:ssh:git"}});
+      execFileSync("git", ["clone", target.repositoryUrl, repositoryRoot], {stdio: "pipe", timeout: gitNetworkTimeoutMs(), env: {...process.env, GIT_ALLOW_PROTOCOL: "file:https:ssh:git"}});
     } catch (error) {
       throw Object.assign(new Error(`git_command_failed:git clone（${gitFailureDetail(error)}）`), {cause: error});
     }

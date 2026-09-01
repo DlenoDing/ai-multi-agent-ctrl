@@ -2009,6 +2009,25 @@ const MUTATIONS = [
     expect: "clamp persisted poll/heartbeat intervals against hot-spin"
   },
   {
+    // 命中网络的 git（内容传输 fetch）无墙钟超时：execFileSync 默认无超时，挂死远端让 git 无限阻塞 agent
+    // 主循环（不在 executor 的 spawnAndCapture 超时内）＝整台节点静默挂死。去掉 gitOpts 的 timeout 即红。
+    name: "内容传输的 git 必须带墙钟超时（挂死远端不得阻塞整台节点）",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "specs",
+    from: 'const gitOpts = {stdio: "pipe", timeout: gitNetworkTimeoutMs(), env: {...process.env, GIT_ALLOW_PROTOCOL: "https:ssh:git"}};',
+    to: 'const gitOpts = {stdio: "pipe", env: {...process.env, GIT_ALLOW_PROTOCOL: "https:ssh:git"}};',
+    expect: "content-bundle git transfer must set a wall-clock timeout"
+  },
+  {
+    // 派发仓库的 git clone 同样无超时：挂死远端会在仓库准备阶段无限阻塞。去掉 clone 的 timeout 即红。
+    name: "派发仓库 git clone 必须带墙钟超时",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "specs",
+    from: 'execFileSync("git", ["clone", target.repositoryUrl, repositoryRoot], {stdio: "pipe", timeout: gitNetworkTimeoutMs(), env: {...process.env, GIT_ALLOW_PROTOCOL: "file:https:ssh:git"}});',
+    to: 'execFileSync("git", ["clone", target.repositoryUrl, repositoryRoot], {stdio: "pipe", env: {...process.env, GIT_ALLOW_PROTOCOL: "file:https:ssh:git"}});',
+    expect: "dispatch git clone must set a wall-clock timeout"
+  },
+  {
     // 盘上 config 的 URL 被手改成 http:// 时，挂着 nodeToken 的请求会把凭据明文发出去。挂 token 的唯一入口必须复校 https。
     name: "带凭据的请求不得走明文 URL",
     file: "apps/agent-runtime/runtime.mjs",

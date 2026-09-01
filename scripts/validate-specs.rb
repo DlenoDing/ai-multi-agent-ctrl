@@ -737,6 +737,14 @@ errors << "Agent Runtime must stream execution events before final checkpoint" u
 # run 用的是盘上 agent-config.json 里的间隔（运维会手改这个文件）；裸 `|| 5` 只挡 falsy，手滑改成负数/非数字会让
 # delay(负/NaN) 被 setTimeout 当 0＝循环热转、每毫秒打一次控制面。必须按下限归一（与同函数 env 间隔 clamp 同规）。
 errors << "Agent Runtime must clamp persisted poll/heartbeat intervals against hot-spin" unless agent_runtime_source.include?("clampEnvNumber(config.pollIntervalSeconds") && agent_runtime_source.include?("clampEnvNumber(config.heartbeatIntervalSeconds")
+# 命中网络的 git（内容传输的 fetch、派发仓库的 clone）必须带墙钟超时：execFileSync 默认无超时，一个
+# 只接受不响应的远端会让 git 无限阻塞 agent 主循环（不在 executor 的 spawnAndCapture 超时内）＝整台节点
+# 静默挂死。提取那两处各自的 opts / 调用来核，去掉任一处的 timeout 都要红（全局 include 会被另一处遮住）。
+git_transfer_opts = agent_runtime_source[/const gitOpts = \{[^}]*\}/]
+git_clone_call = agent_runtime_source[/execFileSync\("git", \["clone"[\s\S]*?\}\)/]
+errors << "Agent Runtime content-bundle git transfer must set a wall-clock timeout (a hung remote otherwise blocks the whole node)" unless git_transfer_opts&.include?("timeout:")
+errors << "Agent Runtime dispatch git clone must set a wall-clock timeout (a hung remote otherwise blocks the whole node)" unless git_clone_call&.include?("timeout:")
+errors << "Agent Runtime git network timeout must be NaN-safe with a floor (clampEnvNumber)" unless agent_runtime_source.include?("function gitNetworkTimeoutMs") && agent_runtime_source.include?("clampEnvNumber(process.env.AIMAC_AGENT_GIT_TIMEOUT_MS")
 # bootstrap 校过 --server 是 https，但 run/status/self-check 发请求用的是盘上 config 的 URL（运维会手改）；改成 http://
 # 就会把 nodeToken 明文发出去。必须在挂 Bearer 的唯一入口（jsonRequest）复校，一个点覆盖所有 URL 与命令。
 errors << "Agent Runtime must refuse to send the node credential over an insecure URL" unless agent_runtime_source.include?("if (options.token) requireSecureServerUrl(url)")
