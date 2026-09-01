@@ -2108,7 +2108,15 @@ function verifyHumanAndOrganizationContracts(output) {
         // reviewBundleRegister 走 throw 约定（其 assertUniqueRecordId 也是抛的），下面的 catch 会把它包成
         // "抛出 task_group_settled" —— 所以判据用 includes 而不是 ===，同时认 return {ok:false} 与 throw 两种。
         ["reviewBundleRegister", ({st, tg}) => reviewBundleRegister(st, {taskGroupId: tg.id,
-          reviewBundleId: `rvb_after_${tg.status}`, reviewMode: "external"})]
+          reviewBundleId: `rvb_after_${tg.status}`, reviewMode: "external"})],
+        // 与 reviewBundleRegister 同族的三个证据/产出写入口，此前都漏了终态守卫（都用 taskGroupForRecordOrRefuse
+        // 解析、却不查解析出的任务组是否已终结）：制品参与关闭门、测试结果/质量门喂就绪门、产出目标是改动落点。
+        ["artifactRegister", ({st, tg}) => artifactRegister(st, {taskGroupId: tg.id,
+          workItemId: tg.workItems[0].id, artifactManifestRef: "docs/after-close.json"})],
+        ["testResultSubmit", ({st, tg}) => testResultSubmit(st, {taskGroupId: tg.id,
+          workItemId: tg.workItems[0].id, status: "passed", summary: "关后测试结果"})],
+        ["repositoryOutputTargetSelect", ({st, tg}) => repositoryOutputTargetSelect(st, {taskGroupId: tg.id,
+          workItemId: tg.workItems[0].id})]
       ];
       for (const [label, run] of writeEntries) {
         for (const status of TASK_GROUP_SETTLED_STATUSES) {

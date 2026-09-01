@@ -794,6 +794,17 @@ const MUTATIONS = [
     expect: "reviewBundleRegister 仍然往它里面写了新东西"
   },
   {
+    // artifactRegister 是与 reviewBundleRegister 同族的证据写入口，此前同样漏了 settled 守卫：
+    // 能往已关闭组登记制品（制品参与关闭门），关后新登一条就是谁也处置不掉的死记录。去掉守卫，settled 族测试即红。
+    name: "终结的任务组不得再登记产出物",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  const settledRejection = taskGroupSettledRejection(state, taskGroup.id);\n  if (settledRejection) return settledRejection;\n  const artifact = {",
+    to: "  const artifact = {",
+    expect: "artifactRegister 仍然往它里面写了新东西"
+  },
+  {
     // writer 这道门此前也只有一条登记变异（丢更新）。并发下"同一张定稿卡恰好一个人定成"
     // 是人工闸门在多进程部署下的立足点，而它从没被人看着红过：拿掉"已非待确认"这道守卫，
     // 两个进程会各自定稿成功，两份都写进磁盘 —— 谁批的、批了哪一版，从此说不清。

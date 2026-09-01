@@ -2532,6 +2532,10 @@ export function testResultSubmit(state, args) {
   const at = new Date().toISOString();
   // 质量门记录挂在哪个任务组下不许猜：它直接喂给关闭门，记错组＝替别人把门开了。
   const taskGroup = taskGroupForRecordOrRefuse(state, args, "质量门结果");
+  // 任务组终结后不得再提交测试结果/质量门：它们喂给就绪门与关闭门，关后新提一条就是谁也处置不掉的
+  // 死记录。与 reviewBundleRegister / findingSubmit 同族。用【解析出的任务组 id】判（避开只传 workItemId 的绕过）。
+  const testResultSettled = taskGroupSettledRejection(state, taskGroup.id);
+  if (testResultSettled) return testResultSettled;
   // status 原先缺省即 "passed"：一次不带任何参数的调用就能造出一道【通过】的质量门，
   // 而质量门正是人看到"全通过"时的唯一依据、并直接喂给关闭门。
   // 缺信息永远不该变成通过 —— 误差不对称：错记一次通过，比错记一次未通过危险得多。
@@ -3335,6 +3339,11 @@ export function repositoryOutputTargetSelect(state, args) {
   // 种子任务组名下、工作项写成 "work_unknown"、projectId 取调用方自填值 —— 一份谁也说不清
   // 归属的产出目标。
   const outputTaskGroup = taskGroupForRecordOrRefuse(state, args, "产出目标");
+  // 任务组终结后不得再选/建产出目标：它是"agent 的改动落到哪个仓库/分支/路径"的绑定，关后再建一份
+  // 就是给已了结的工作绑定新的写落点。与 reviewBundleRegister / findingSubmit 同族。用【解析出的任务组
+  // id】判（避开只传 workItemId 的绕过）。
+  const outputSettled = taskGroupSettledRejection(state, outputTaskGroup.id);
+  if (outputSettled) return outputSettled;
   const taskGroup = outputTaskGroup;
   const workItem = findWorkItem(state, outputTaskGroup.id, args.workItemId || args.workId);
   const outputWorkItemId = args.workItemId || args.workId || workItem?.id;

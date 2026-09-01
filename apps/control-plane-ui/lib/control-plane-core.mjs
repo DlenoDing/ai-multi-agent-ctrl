@@ -8197,6 +8197,11 @@ export function artifactRegister(state, args) {
   assertUniqueRecordId(state.artifacts, "artifactId", args.artifactId, "artifact_id_conflict");
   const at = new Date().toISOString();
   const taskGroup = taskGroupForRecordOrRefuse(state, args, "产出物登记");
+  // 任务组终结后不得再登记产出物：制品参与关闭门（registered 但无自证摘要就挡门），关后新登一条
+  // 就是一条谁也处置不掉的死记录。与 reviewBundleRegister / findingSubmit 等同族。用【解析出的任务组
+  // id】判，而不是 args.taskGroupId —— 否则只传 workItemId 的调用方会绕过这道门。
+  const settledRejection = taskGroupSettledRejection(state, taskGroup.id);
+  if (settledRejection) return settledRejection;
   const artifact = {
     schemaVersion: "artifact/v1",
     artifactId: args.artifactId || createId("artifact"),
