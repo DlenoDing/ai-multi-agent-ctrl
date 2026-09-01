@@ -541,6 +541,16 @@ const MUTATIONS = [
     expect: "被截断却不报总数"
   },
   {
+    // requestFailureHint 产出纯文本，Error.message 的两个显示口（toast/横幅）都会整体 esc 一次。
+    // 函数内再 esc 自由文本＝双重转义：含 < & 的 decidedOption/账号名显示成 &lt; 字面乱码。
+    name: "确认单冲突提示的自由文本不得二次转义（转义交给 sink）",
+    file: APP,
+    gate: "console",
+    from: "：${payload.decidedOption}` : \"\"}",
+    to: "：${esc(payload.decidedOption)}` : \"\"}",
+    expect: "自由文本被双重转义成 &lt; 字面"
+  },
+  {
     name: "没有可用模型时要给人挂 S1 阻塞",
     check: "verifyNoModelFallbackMatchesWhatEngineDoes",
     file: CORE,

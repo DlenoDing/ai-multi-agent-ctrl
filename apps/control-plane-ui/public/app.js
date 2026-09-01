@@ -945,12 +945,16 @@ function requestFailureHint(payload) {
   if (Array.isArray(payload.permissions) && payload.permissions.length) hint += `（涉及：${payload.permissions.join("、")}）`;
   // 核心决策闸门上最容易并发的一步：两个人同时打开同一张确认单各自点定稿。CAS 只让一个写成，
   // 输的那一方原先只看到"该确认单已不在待处理状态"，不知道是谁、定了什么，只能自己去翻记录。
+  // 本函数产出的是【纯文本】提示，最终嵌进 Error.message，而 message 的两个显示口
+  //（toast 的 esc(message)、顶部横幅的 esc(lastError)）都会整体转义一次。所以这里【不要】再 esc：
+  // 再 esc 就是双重转义，含 < & " 的自由文本（如 decidedOption、账号名）会显示成 &lt; 字面乱码。
+  // 本函数其余十几处字段（permissions/required/supported/received…）本来就没 esc，这里对齐它们。
   if (payload.decidedBy || payload.decidedAction) {
     const who = payload.decidedBy ? accountName(payload.decidedBy) : "另一个人";
     const what = payload.decidedAction === "finalize" ? "定稿" : payload.decidedAction === "reject" ? "打回返工" : payload.decidedAction === "revise" ? "提交了修改意见" : "处理";
-    hint += `（${esc(who)} 已在 ${fmtTime(payload.decidedAt)} ${what}${payload.decidedOption ? `：${esc(payload.decidedOption)}` : ""}；刷新即可看到结果，重复提交不会生效）`;
+    hint += `（${who} 已在 ${fmtTime(payload.decidedAt)} ${what}${payload.decidedOption ? `：${payload.decidedOption}` : ""}；刷新即可看到结果，重复提交不会生效）`;
   } else if (payload.currentRound !== undefined) {
-    hint += `（当前轮次已是第 ${esc(payload.currentRound)} 轮，你看到的是更早的一轮 —— AI 在你点击前修订过候选方案，请刷新后重新查看再决定）`;
+    hint += `（当前轮次已是第 ${payload.currentRound} 轮，你看到的是更早的一轮 —— AI 在你点击前修订过候选方案，请刷新后重新查看再决定）`;
   }
   // 配额超限时服务端已经算出了【哪一类、用了多少、上限多少】，前端原先只取 error ——
   // 人看到"组织配额已超限"，不知道是成员、项目、任务组还是智能体，也不知道差多少，
@@ -966,8 +970,8 @@ function requestFailureHint(payload) {
     // 智能体这一格的"已用"是节点 + 未使用的入网令牌。不拆开的话，只有 2 台节点的人
     // 看到"3/3 已满"会以为系统数错了 —— 页面上那格现在也按同一口径显示。
     const breakdown = payload.outstandingJoinTokens
-      ? `（其中 ${esc(payload.nodes)} 台节点 + ${esc(payload.outstandingJoinTokens)} 张未使用的入网令牌）` : "";
-    hint += `（${kindLabel} ${esc(payload.usage)}/${esc(payload.quota)} 已满${breakdown}：到「组织管理」页调高这一项配额，`
+      ? `（其中 ${payload.nodes} 台节点 + ${payload.outstandingJoinTokens} 张未使用的入网令牌）` : "";
+    hint += `（${kindLabel} ${payload.usage}/${payload.quota} 已满${breakdown}：到「组织管理」页调高这一项配额，`
       + `${freeUp}，再重试）`;
   }
   // 服务端在不少错误里写了给人看的说明（message / reason / required），前端原先只取 error 一个字段，

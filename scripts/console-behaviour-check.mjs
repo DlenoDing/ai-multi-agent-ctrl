@@ -782,6 +782,17 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
       check(`拒绝提示「${label}」要点名拼错的与可用的`, mustName.every((word) => String(hint).includes(word)),
         `提示里少了 ${mustName.filter((word) => !String(hint).includes(word)).join("、")}：${String(hint).slice(0, 160)}`);
     }
+    // requestFailureHint 产出【纯文本】，最终嵌进 Error.message，两个显示口（toast 的 esc(message)、
+    // 顶部横幅的 esc(lastError)）都会整体转义一次。若函数内部再 esc 自由文本字段（decidedOption、账号名），
+    // 就是双重转义：含 < & 的值会显示成 &lt; 字面乱码。这条钉住「函数内不得二次转义」——
+    // 断言产出里保留原始特殊字符、且不含 HTML 实体（把内部任一 esc 加回来即红）。
+    {
+      const conflictHint = probe.requestFailureHint(
+        {decidedBy: "lead@local", decidedAction: "finalize", decidedOption: "<b>选项 & 值</b>"});
+      check("确认单冲突提示的自由文本须为纯文本（转义交给 sink，函数内不得二次转义）",
+        conflictHint.includes("<b>选项 & 值</b>") && !conflictHint.includes("&lt;") && !conflictHint.includes("&amp;"),
+        `decidedOption 被双重转义或漏掉：${String(conflictHint).slice(0, 200)}`);
+    }
     // 【成员创建表单提交的正文要与勾选一致】。这是全站第一条走到 submit 处理器的用例：此前门只模拟点击与渲染，
     // 每个表单真正发出去的正文一条都没被钉过。权限按 input[name='perm']:checked 收 —— 收错（把没勾的也收进去）
     // 就是给人多发权限。
