@@ -1689,7 +1689,7 @@ spawn_sites.each do |at|
 end
 # 原先是"函数名之后 400 字符内出现 attachChild"。往 spawn 后面加几行注释就会让它误报 ——
 # 而它想问的其实是"这个函数体里到底有没有把子进程交出去"。按函数体切（到下一个顶格 } 为止）。
-spawn_capture_body = runtime_source[/^function spawnAndCapture[\s\S]*?^\}/m].to_s
+spawn_capture_body = runtime_source[/^(?:export )?function spawnAndCapture[\s\S]*?^\}/m].to_s
 errors << "spawnAndCapture 必须把子进程交给控制监视器（attachChild），否则取消只能挡住 push、停不下正在烧的那一步" unless spawn_capture_body.include?("attachChild(child)")
 errors << "控制监视器附加子进程时若已处于取消态，必须当场终止（覆盖'取消先到、子进程后起'的竞态）" unless runtime_source.match?(/attachChild\(child\)\s*\{[\s\S]{0,300}?state\.cancelled && child[\s\S]{0,120}?terminateChild/m)
 

@@ -1474,7 +1474,7 @@ function createExecutorOutputReporter(config, dispatchPackage) {
   };
 }
 
-function spawnAndCapture(commandName, commandArgs, options = {}) {
+export function spawnAndCapture(commandName, commandArgs, options = {}) {
   return new Promise((resolveResult, reject) => {
     const child = spawn(commandName, commandArgs, {cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32"});
     activeChildProcesses.add(child);
@@ -1512,6 +1512,12 @@ function spawnAndCapture(commandName, commandArgs, options = {}) {
       options.onOutput?.("stderr", text);
     });
     child.on("error", (error) => { if (timer) clearTimeout(timer); activeChildProcesses.delete(child); reject(error); });
+    // 执行器可能在读完 stdin 前就退出、或主动关掉读端（快速失败、崩在启动、或从文件/env 读任务而根本
+    // 不读 stdin）。那时下面 child.stdin.end(input) 的写入会异步抛 EPIPE 到 child.stdin 上 —— 它是
+    // 独立于 child 的流，child.on("error") 接不到；一个【未处理的 'error' 事件会崩掉整个 agent 守护
+    // 进程】（连带心跳、其他在跑的派发一起没），而不是让这一次派发干净地失败。子进程的真实结局由
+    // child.on("close") 上报（status/stderr 都在），写 stdin 失败本身不是要传播的错误——吞掉它。
+    child.stdin.on("error", () => {});
     child.on("close", (status, signal) => {
       if (timer) clearTimeout(timer);
       activeChildProcesses.delete(child);

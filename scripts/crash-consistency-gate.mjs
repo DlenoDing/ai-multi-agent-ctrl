@@ -11,7 +11,7 @@ import {installGateFetch} from "./lib/gate-fetch.mjs";
 installGateFetch("崩溃一致性门");
 
 import {basename, dirname, resolve} from "node:path";
-import {fileURLToPath} from "node:url";
+import {fileURLToPath, pathToFileURL} from "node:url";
 import {createChildTracker, waitForChildExit} from "./lib/child-tracking.mjs";
 
 // 起过的子进程一律登记，并在【所有】退出路径上收掉。
@@ -732,6 +732,26 @@ await waitForChildExit(child, 3000);
   } finally {
     rmSync(backupBase, {recursive: true, force: true});
   }
+}
+// 执行器提前关掉 stdin（快速失败、崩在启动、或从文件/env 读任务而根本不读 stdin）时，agent 侧向它的
+// stdin 写任务输入会抛 EPIPE；child.stdin 没有 error 处理器的话，这个【未处理的 'error' 事件会崩掉整个
+// agent 守护进程】（心跳、其他在跑的派发一起没），而不是让这一次派发干净失败。在子进程里跑真实的
+// spawnAndCapture：执行器销毁自己的 stdin 后再存活半秒（保证读端在管道存活时关闭），父侧写 4MB 输入
+// （远超管道缓冲，必触发 EPIPE）。修好时它干净 resolve（PROBE_OK）；处理器被删掉时探针进程当场崩掉。
+{
+  const runtimeUrl = pathToFileURL(join(root, "apps/agent-runtime/runtime.mjs")).href;
+  const probe = [
+    `import(${JSON.stringify(runtimeUrl)}).then(async (m) => {`,
+    `  const r = await m.spawnAndCapture("node", ["-e", "process.stdin.destroy(); setTimeout(()=>process.exit(3), 500)"], {input: "x".repeat(4*1024*1024)});`,
+    `  if (r.status === 3) { console.log("PROBE_OK"); process.exit(0); }`,
+    `  console.log("PROBE_BAD_STATUS:"+r.status); process.exit(2);`,
+    `}).catch((e) => { console.log("PROBE_THREW:"+e.message); process.exit(4); });`
+  ].join("\n");
+  const res = spawnSync(process.execPath, ["--input-type=module", "-e", probe], {cwd: root, encoding: "utf8", timeout: 20000});
+  const survived = res.status === 0 && /PROBE_OK/u.test(res.stdout || "");
+  check(survived,
+    "执行器提前关 stdin 时 agent 不崩：spawnAndCapture 向已关读端的子进程写大输入，EPIPE 被 child.stdin 的 error 处理器吞掉，这次派发干净失败而非整台节点静默挂掉",
+    `退出码 ${res.status}${res.signal ? ` 信号 ${res.signal}` : ""}：${`${res.stdout || ""}${res.stderr || ""}`.trim().split("\n").slice(-1)[0]?.slice(0, 120) || ""}`);
 }
 console.log(fails.length
   ? `crash consistency gate failed: ${fails.join("；")}`

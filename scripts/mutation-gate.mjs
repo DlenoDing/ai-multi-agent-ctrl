@@ -834,6 +834,14 @@ const MUTATIONS = [
     expect: "这道扫描在空转"
   },
   {
+    name: "执行器提前关 stdin 时 agent 守护进程不得崩（child.stdin 必须有 error 处理器吞 EPIPE）",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "crash",
+    from: '    child.stdin.on("error", () => {});',
+    to: '    void 0;',
+    expect: "执行器提前关 stdin 时 agent 不崩"
+  },
+  {
     // agent 侧那半是结构判据，同样要能被改坏后报红。
     name: "agent 运行时每处起 git 子进程的地方都要取失败原因",
     file: "apps/agent-runtime/runtime.mjs",
