@@ -6869,7 +6869,7 @@ const MUTATIONS = [
     name: "断言搜索面自查的记账不得断掉",
     file: "scripts/validate-specs.rb",
     gate: "specs",
-    from: "    @probes << needle\n    super",
+    from: "    (@probes ||= []) << needle\n    super",
     to: "    super",
     expect: "这道扫描在空转"
   },

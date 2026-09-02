@@ -26,7 +26,7 @@ class ScopedSource < String
   end
 
   def include?(needle)
-    @probes << needle
+    (@probes ||= []) << needle
     super
   end
 end
@@ -45,6 +45,19 @@ end
 
 def load_yaml(path)
   YAML.load_file(File.join(ROOT, path))
+end
+
+def count_values(items)
+  items.each_with_object(Hash.new(0)) { |item, counts| counts[item] += 1 }
+end
+
+def source_windows(source, anchor, before: 0, after: 6)
+  lines = source.lines
+  lines.each_index.select { |index| lines[index].include?(anchor) }.map do |index|
+    first = [index - before, 0].max
+    last = [index + after, lines.length - 1].min
+    lines[first..last].join
+  end
 end
 
 def fail_with(errors)
@@ -828,7 +841,7 @@ i18n_zh_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/i18n-zh
 # 提取必须认得住实际写法：这份字典里既有独占一行的键，也有一行写多个的（`a: "x", b: "y",`）。
 # 只认行首键的话，行内那些重复【看不见】—— 实测正是这样：15 个关闭门名各被定义了两次、
 # 两套不同的中文，后定义的静默覆盖前一套，而这条守卫的全部意义就是防这个。
-i18n_dup_keys = i18n_zh_source.scan(/(?:^|[,{]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/).flatten.tally.select { |_k, count| count > 1 }.keys
+i18n_dup_keys = count_values(i18n_zh_source.scan(/(?:^|[,{]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/).flatten).select { |_k, count| count > 1 }.keys
 # 本条不得空转：这份字典有几百个键，提取不到就说明写法又变了。
 errors << "zh i18n duplicate-key check only saw #{i18n_zh_source.scan(/(?:^|[,{]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/).size} keys — extraction has drifted from the file's actual shape" if i18n_zh_source.scan(/(?:^|[,{]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/).size < 300
 errors << "zh i18n dictionary has duplicate keys: #{i18n_dup_keys.join(', ')}" unless i18n_dup_keys.empty?
@@ -858,7 +871,8 @@ errors << "Console i18n must localize admission enums and blocked-reason codes" 
 # 2026-07-27 full-system multi-dimension review corrections (5-lens sweep). Each guards a fixed defect:
 # Core-1: a cell blocked on an inactive shared definition must `continue` the admission scan (never
 # break, even in single mode) or it permanently starves every executable cell behind it.
-errors << "shared_definition_not_active must not break the admission scan (global scheduling)" unless core_source[/shared_definition_not_active.*?\n(?:.*\n){0,6}?\s*continue;/m] && !core_source[/shared_definition_not_active.*?\n(?:.*\n){0,6}?\s*break;/m]
+shared_definition_windows = source_windows(core_source, "shared_definition_not_active", after: 6)
+errors << "shared_definition_not_active must not break the admission scan (global scheduling)" unless shared_definition_windows.any? { |window| window.include?("continue;") } && shared_definition_windows.none? { |window| window.include?("break;") }
 # Core-2: a failed backfill review must demote the item to needs_decision (distinct reason) so it is not
 # left `verified` forever re-reviewing with no resolve_decision lever.
 errors << "backfill review failure must demote to needs_decision with a distinct reason" unless core_source.include?("independent_review_backfill_failed") && i18n_zh_source.include?("independent_review_backfill_failed")
