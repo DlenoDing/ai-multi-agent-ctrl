@@ -316,7 +316,7 @@ const MENUS = {
     {id: "sys-orgs", label: "组织管理"},
     {id: "sys-settings", label: "系统设置"},
     {id: "sys-accounts", label: "账号与授权"},
-    {divider: "项目支持（排障）"},
+    {divider: "当前项目"},
     ...PROJECT_MENU_TAIL
   ],
   org: [
@@ -1802,8 +1802,8 @@ function renderLogin() {
   const hintBlock = loginHint
     ? `
       <div class="login-hint">
-        <div>初始化令牌：${loginHint.bootstrapTokenConfigured ? "已配置（系统管理员可用初始化令牌登录）" : "未配置"}</div>
-        ${!loginHint.tokenHintsExposed && loginHint.bootstrapTokenConfigured ? `<div class="small muted">登录账号是哪一个：见 <span class="mono">npm run init</span> 的输出或 README —— 生产环境不在公开登录页上显示它，那等于把凭据的一半送出去。</div>` : ""}
+        <div><strong>本地调试</strong>：初始化令牌${loginHint.bootstrapTokenConfigured ? "已配置" : "未配置"}。</div>
+        ${!loginHint.tokenHintsExposed && loginHint.bootstrapTokenConfigured ? `<div class="small muted">系统管理员账号和初始化令牌请看 <span class="mono">npm run init</span> 输出。生产环境不会在登录页显示账号或令牌。</div>` : ""}
         ${loginHint.tokenHintsExposed && loginHint.systemAdminLogin ? `<div>系统管理员登录账号：<span class="mono">${esc(loginHint.systemAdminLogin)}</span>（填在上面的「登录账号」处，令牌填初始化令牌）</div>` : ""}
         ${loginHint.tokenHintsExposed && loginHint.tokenHint ? `<div>本机令牌提示：<span class="mono">${esc(loginHint.tokenHint)}</span></div>` : ""}
         ${loginHint.tokenHintsExposed && loginHint.localAccountTokenHints ? Object.entries(loginHint.localAccountTokenHints).map(([accountId, hint]) => `<div>${esc(accountId)}：<span class="mono">${esc(hint)}</span></div>`).join("") : ""}
@@ -1817,15 +1817,15 @@ function renderLogin() {
           <span class="brand-mark">智</span>
           <h1>AI 多智能体管控台</h1>
         </div>
-        <p class="login-sub">面向人的组织化管理后台 · 系统管理员、组织管理员、组织成员</p>
+        <p class="login-sub">系统管理、组织管理、项目执行控制统一入口</p>
         ${lastError ? `<div class="notice error-notice" style="margin-bottom:14px;">登录失败：${esc(lastError)}</div>` : ""}
         <form class="form-grid" data-form="login">
           <div class="form-row"><label for="loginEmail">登录账号（邮箱或账号 ID）</label><input id="loginEmail" name="email" required autocomplete="username"></div>
-          <div class="form-row"><label for="loginSecret">登录令牌 / 密码</label><input id="loginSecret" name="secret" type="password" required autocomplete="current-password"></div>
-          <button class="primary-button" type="submit">登 录</button>
+          <div class="form-row"><label for="loginSecret">登录令牌或密码</label><input id="loginSecret" name="secret" type="password" required autocomplete="current-password"></div>
+          <button class="primary-button" type="submit">登录</button>
         </form>
         ${hintBlock}
-        <p class="small muted" style="margin-top:16px;">首次使用一次性令牌登录后，可在顶栏「设置密码」处设置个人密码（设过之后那里会变成「修改密码」）。</p>
+        <p class="small muted" style="margin-top:16px;">首次用一次性令牌登录后，可在顶栏「设置密码」处设置个人密码。</p>
       </div>
     </div>
   `;
@@ -2042,10 +2042,15 @@ function renderSysOverview() {
     panel("系统服务", table(["服务", "状态", "健康度"], services)),
     panel("维护操作", `
       <div class="stack">
-        <div class="notice warn-notice">重新初始化会把运行态【整个】重置为种子数据：全部组织、项目、任务组、账号、
-          访问授权与审计记录都会消失，不可撤销、没有备份。它的用途是本地排障，但
-          <strong>生产环境同样点得动</strong> —— 服务端没有环境判据，拦住误操作的只有下一步的打字确认：
-          只要这里有人真干过活（有会话、派发、确认单或工作项超出种子），就必须原样输入当前规模才放行。</div>
+        <div class="notice warn-notice">
+          <strong>高危操作：重新初始化运行态</strong>
+          <div>重新初始化会把运行态整个重置为种子数据，生产环境同样点得动；真正拦住误操作的是下一步的打字确认。</div>
+          <ul class="danger-summary">
+            <li>会清空组织、项目、任务组、账号、授权和审计记录，并恢复为种子数据。</li>
+            <li>该操作不可撤销；生产环境同样可执行，请只用于明确的本地排障或重建。</li>
+            <li>下一步会要求按页面提示输入确认串；有会话、派发、确认单或工作项超出种子时，还会校验当前规模。</li>
+          </ul>
+        </div>
         <div class="button-row"><button class="danger-button" data-action="bootstrap-init">重新初始化运行态</button></div>
       </div>
     `),
@@ -2320,7 +2325,7 @@ function renderSysAccounts() {
         <div class="form-row"><label>角色（逗号分隔；只认服务端词表里的：${esc((state.runtime?.accountRoles || []).map((role) => t(role)).join("、") || "词表未下发")}）</label>
           <input name="roles" value="viewer" list="account-role-options">
           <datalist id="account-role-options">${(state.runtime?.accountRoles || []).map((role) => `<option value="${esc(role)}">${esc(t(role))}</option>`).join("")}</datalist></div>
-        <div class="form-row"><label>默认权限（逗号分隔；只认服务端词表里的）</label><input name="permissions" value="project:view" list="known-permission-options"><datalist id="known-permission-options">${(state.runtime?.knownPermissions || []).map((permission) => `<option value="${esc(permission)}">${esc(t(permission))}</option>`).join("")}</datalist></div>
+        <div class="form-row"><label>默认权限（逗号分隔；只认服务端词表里的）</label><input name="permissions" value="project:view" list="known-permission-options"><datalist id="known-permission-options">${(state.runtime?.knownPermissions || []).map((permission) => `<option value="${esc(permission)}">${esc(permLabel(permission))}</option>`).join("")}</datalist></div>
         <button class="primary-button" type="submit">邀请并签发一次性令牌</button>
       </form>
     `),
@@ -2332,7 +2337,7 @@ function renderSysAccounts() {
         </div>
         <div class="form-row"><label>资源 ID</label><input name="resourceId" required placeholder="prj_... / tg_..."></div>
         <div class="form-row"><label>角色（权限模板；只认服务端词表里的）</label><input name="role" value="viewer" list="grant-role-options"><datalist id="grant-role-options">${[...new Set(Object.values(state.runtime?.grantRoleTemplates || {}).flat())].map((role) => `<option value="${esc(role)}">${esc(t(role))}</option>`).join("")}</datalist></div>
-        <div class="form-row"><label>权限（逗号分隔；只认服务端词表里的）</label><input name="permissions" value="project:view" list="known-permission-options"><datalist id="known-permission-options">${(state.runtime?.knownPermissions || []).map((permission) => `<option value="${esc(permission)}">${esc(t(permission))}</option>`).join("")}</datalist></div>
+        <div class="form-row"><label>权限（逗号分隔；只认服务端词表里的）</label><input name="permissions" value="project:view" list="known-permission-options"><datalist id="known-permission-options">${(state.runtime?.knownPermissions || []).map((permission) => `<option value="${esc(permission)}">${esc(permLabel(permission))}</option>`).join("")}</datalist></div>
         <button class="primary-button" type="submit">新增授权</button>
       </form>
     `),
@@ -2565,7 +2570,7 @@ const PERMISSION_LABELS = {
   "project:update": "编辑项目",
   "project:create": "创建项目",
   "project:*": "项目全部权限",
-  "task_group:orchestrate": "编排调度",
+  "task_group:orchestrate": "任务组编排调度",
   "task_group:checkpoint_submit": "提交检查点",
   "task_group:*": "任务组全部权限",
   "org:member_admin": "组织成员管理",

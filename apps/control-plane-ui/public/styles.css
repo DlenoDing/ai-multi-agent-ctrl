@@ -349,6 +349,8 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 }
 .notice.error-notice { background: var(--red-bg); color: var(--red); }
 .notice.warn-notice { background: var(--orange-bg); color: var(--orange); }
+.danger-summary { margin: 6px 0 0; padding-left: 18px; }
+.danger-summary li { margin: 2px 0; }
 /* 用于正文里需要人停下来看一眼的短句（如"没有任何一方考察过替代路径"）。 */
 .warn-text { color: var(--orange); }
 /* 菜单上的待办计数：等人拍板的东西藏在别的页面里时，人不会主动去点那一页。 */
@@ -374,7 +376,8 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   background: #fbfcfe;
 }
 .record-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.record-meta { display: flex; gap: 14px; flex-wrap: wrap; color: var(--text-sub); font-size: 13px; margin-top: 4px; }
+.record-meta { display: flex; gap: 14px; flex-wrap: wrap; color: var(--text-sub); font-size: 13px; margin-top: 4px; min-width: 0; }
+.record-meta > * { min-width: 0; overflow-wrap: anywhere; }
 
 .tree { display: flex; flex-direction: column; gap: 8px; }
 .tree-item { border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 12px; background: #fbfcfe; }
@@ -506,10 +509,77 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 
 @media (max-width: 860px) {
   .app-shell { flex-direction: column; }
-  .sidebar { width: 100%; flex: none; height: auto; position: static; }
-  .nav { flex-direction: row; flex-wrap: wrap; }
-  .nav-item { border-left: none; }
+  .sidebar { width: 100%; flex: none; height: auto; position: static; overflow: hidden; }
+  .brand { padding: 10px 14px; }
+  .brand-mark { width: 30px; height: 30px; font-size: 14px; border-radius: 8px; }
+  .brand span { display: none; }
+  .nav {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 4px;
+    padding: 8px 10px 10px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .nav-item {
+    border-left: none;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: 8px 11px;
+    border-radius: 8px;
+  }
   .nav-item.active { border-bottom: 3px solid var(--brand-accent); font-weight: 600; }
+  .nav-divider {
+    flex: 0 0 auto;
+    margin: 0 6px;
+    padding: 8px 0 0;
+    border-top: 0;
+    align-self: center;
+    white-space: nowrap;
+  }
+  .topbar {
+    position: static;
+    padding: 10px 14px;
+    gap: 8px;
+    align-items: flex-start;
+  }
+  .topbar > div:first-child { flex: 1 1 100%; min-width: 0; }
+  .topbar h1 { font-size: 16px; }
+  .topbar .subtitle { display: none; }
+  .topbar-actions {
+    width: 100%;
+    margin-left: 0;
+    gap: 8px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+    align-items: center;
+  }
+  .topbar-actions > .small.muted { white-space: nowrap; }
+  .topbar-actions > .small.warn-text { grid-column: 1 / -1; }
+  .topbar-actions button { padding: 6px 8px; }
+  .project-switch {
+    width: 100%;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 6px;
+  }
+  .project-switch select { width: 100%; min-width: 0; height: 32px; }
+  .account-chip {
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-radius: 8px;
+    padding: 4px 8px;
+  }
+  .content { padding: 14px 12px 32px; gap: 12px; }
+  .panel-header, .panel-body { padding-left: 12px; padding-right: 12px; }
+  .record-meta { gap: 4px 8px; flex-direction: column; align-items: flex-start; }
+  .button-row { gap: 6px; }
+  button, input, select, textarea { max-width: 100%; }
 }
 
 /* ============ 表格增强：数字右对齐 / 文本截断 / 时间列 / 空态 ============ */
