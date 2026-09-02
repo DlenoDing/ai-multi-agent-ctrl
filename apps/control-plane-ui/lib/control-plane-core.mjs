@@ -981,6 +981,18 @@ export function defaultModelCapabilities(observedAt = new Date().toISOString()) 
   });
 }
 
+// 精确钉模型：把用户指定的模型解析成注册表里的规范 modelId。宽进（modelId / providerId / 别名任一命中），
+// 严出（存的与下游选型比对都用规范 modelId）。不填＝不钉（返回 pinnedModelId: null）；填了但注册表里
+// 没有＝拒（返回 error），不能悄悄当没填 —— 否则用户以为钉住了某个模型，系统却照旧自动选型（缺省不得等于有利结果）。
+export function normalizePinnedModelId(state, raw) {
+  if (raw === undefined || raw === null || String(raw).trim() === "") return {pinnedModelId: null};
+  const wanted = String(raw).trim();
+  const match = (state.modelCapabilities || []).find((model) =>
+    model.modelId === wanted || model.providerId === wanted || (model.aliases || []).includes(wanted));
+  if (!match) return {error: "pinned_model_not_registered", pinnedModelId: wanted};
+  return {pinnedModelId: match.modelId};
+}
+
 function defaultModelSelectionPolicies() {
   const common = {
     schemaVersion: "model-selection-policy/v1",
@@ -1068,7 +1080,10 @@ export function selectModel(state, request = {}, options = {}) {
     ...(policy?.requiredCapabilities || []),
     ...inferCapabilities(`${workItem.title || ""} ${workItem.ownerRole || roleId}`)
   ]);
-  const hardConstraints = {...(policy?.hardConstraints || {}), ...(request.hardConstraints || {}), maxReasoningLevel: modelCeiling.maxReasoningLevel};
+  // 精确钉模型：本次调用显式传的 request.pinnedModelId 优先，其次请求硬约束里带的，最后工作项上钉的
+  // （workItem.pinnedModelId）—— 于是「建工作项时指定模型」在这个工作项被派发时会自动生效，无需改派发路径。
+  const pinnedModelId = request.pinnedModelId ?? request.hardConstraints?.pinnedModelId ?? workItem.pinnedModelId ?? null;
+  const hardConstraints = {...(policy?.hardConstraints || {}), ...(request.hardConstraints || {}), ...(pinnedModelId ? {pinnedModelId} : {}), maxReasoningLevel: modelCeiling.maxReasoningLevel};
   const selectionMode = normalizeSelectionMode(request.selectionMode);
   const candidates = state.modelCapabilities.map((candidateModel) => rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstraints, selectionMode, taskExecution, modelCeiling, policy?.fallbackPolicy || {}));
   candidates.sort((a, b) => Number(b.eligible) - Number(a.eligible) || b.totalScore - a.totalScore);
@@ -1094,6 +1109,7 @@ export function selectModel(state, request = {}, options = {}) {
     escalationAllowed: modelCeiling.escalationAllowed,
     escalationRationaleRefs: modelCeiling.escalationRationaleRefs,
     selectionMode,
+    ...(hardConstraints.pinnedModelId ? {pinnedModelId: hardConstraints.pinnedModelId} : {}),
     modelDecision,
     candidateRankings: candidates.slice(0, Math.min(8, candidates.length)).map((candidate, index) => ({
       rank: index + 1,
@@ -1145,6 +1161,10 @@ function rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstrai
   const reasons = [];
   const availability = candidateModel.availability || "available";
   if (availability === "unavailable") reasons.push("availability_unavailable");
+  // 精确钉模型：钉住某个模型时，其余模型全部判不合格 —— 只留被钉的这一个进入候选。钉的是规范 modelId
+  // （normalizePinnedModelId 已把 providerId/别名解析成规范值），此处严格按 modelId 比对。被钉的模型本身
+  // 仍要过其余硬约束与天花板：钉一个不满足的模型不会绕过治理，而是走到「无候选→挂阻塞待人工处置」。
+  if (hardConstraints.pinnedModelId && candidateModel.modelId !== hardConstraints.pinnedModelId) reasons.push("model_not_pinned");
   if (availability === "quota_limited" && fallbackPolicy.onQuotaLimited === "select_next_ranked") reasons.push("availability_quota_limited");
   if (availability === "degraded" && fallbackPolicy.onProviderDegraded === "select_next_ranked") reasons.push("availability_degraded");
   if (hardConstraints.minContextWindowTokens && candidateModel.limits.contextWindowTokens < hardConstraints.minContextWindowTokens) reasons.push("context_window");

@@ -1048,6 +1048,7 @@
     unsupported_task_group_control_action: "不支持的任务组控制动作",
     task_group_id_conflict: "任务组 ID 冲突",
     work_item_id_conflict: "工作项 ID 冲突",
+    pinned_model_not_registered: "指定的模型不在模型能力注册表里：请在「系统设置 → 模型能力注册」核对可用模型，或改选「自动」",
     work_session_not_found: "未找到工作会话",
     dispatch_not_found: "未找到派发",
     owner_account_not_found: "未找到负责人账号",

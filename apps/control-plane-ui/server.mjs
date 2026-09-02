@@ -139,7 +139,7 @@ import {
   STRING_LIST_MAX_ITEM_LENGTH,
   projectRepositories,
   isSafeGitRef,
-  noteWorkItemExecutionFailure} from "./lib/control-plane-core.mjs";
+  noteWorkItemExecutionFailure, normalizePinnedModelId} from "./lib/control-plane-core.mjs";
 import { isTerminalDispatchStatus } from "./lib/lifecycle-states.mjs";
 
 // 真正绑上的端口（listen 回调写入）；localEndpoint 用它。放在模块顶部：读状态的路径在 listen 之前就会调它。
@@ -1203,6 +1203,10 @@ function createWorkItemRecord(state, taskGroupId, input = {}, options = {}) {
   if ((taskGroup.workItems || []).some((item) => item.id === workItemId)) {
     return {ok: false, status: 409, error: "work_item_id_conflict"};
   }
+  // 精确钉模型（可选）：填了就必须是注册表里的模型，否则当场拒 —— 与 MCP 建工作项同用 core 的同一个校验，
+  // 不让两份实现各写一套而漂移。存的是规范 modelId，派发时 selectModel 读 workItem.pinnedModelId 生效。
+  const pin = normalizePinnedModelId(state, input.pinnedModelId);
+  if (pin.error) return {ok: false, status: 400, error: pin.error, pinnedModelId: pin.pinnedModelId};
   const at = now();
   const workItem = {
     id: workItemId,
@@ -1216,6 +1220,7 @@ function createWorkItemRecord(state, taskGroupId, input = {}, options = {}) {
     ownerRole: normalizeOwnerRole(input.ownerRole || input.roleId),
     progress: 0,
     requirements: normalizeStringList(input.requirements, [], "work_item_requirements"),
+    ...(pin.pinnedModelId ? {pinnedModelId: pin.pinnedModelId} : {}),
     auditRef: options.auditRef,
     createdAt: at,
     updatedAt: at

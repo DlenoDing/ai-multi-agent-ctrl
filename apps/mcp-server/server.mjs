@@ -88,7 +88,7 @@ import {
   STRING_LIST_MAX_ITEMS,
   STRING_LIST_MAX_ITEM_LENGTH,
   taskGroupForRecordOrRefuse,
-  requiredRoomId, ACCOUNT_ROLES, unknownAccountRoles, unknownOwnerRoles} from "../control-plane-ui/lib/control-plane-core.mjs";
+  requiredRoomId, ACCOUNT_ROLES, unknownAccountRoles, unknownOwnerRoles, normalizePinnedModelId} from "../control-plane-ui/lib/control-plane-core.mjs";
 import {
   createAgentControlCommand,
   revokeDispatchMcpGrants
@@ -115,7 +115,7 @@ export { mcpToolGroups, mcpToolNames } from "../control-plane-ui/lib/mcp-tool-ca
 const toolDescriptions = {
   "orchestration-mcp.project_create": "Create a project control object and initialize scoped progress state.",
   "orchestration-mcp.task_group_create": "Create a task group under a project with AI-native work items.",
-  "orchestration-mcp.work_item_create": "Create one bounded work item inside a task group.",
+  "orchestration-mcp.work_item_create": "Create one bounded work item inside a task group. Optional pinnedModelId (a registered modelId/providerId/alias) forces every dispatch of this work item to use that exact model.",
   "orchestration-mcp.work_assign": "Assign a work item to a role and update scheduler state.",
   "orchestration-mcp.orchestrator_run": "Run one autonomous orchestrator cycle and enqueue AgentDispatch work.",
   "orchestration-mcp.state_get": "Read the authoritative control-plane state through the MCP proxy boundary.",
@@ -130,7 +130,7 @@ const toolDescriptions = {
   "agent-control-mcp.session_cancel": "Cancel an active work session and its queued dispatch.",
   "agent-control-mcp.session_recover": "Recover a paused or failed session into active state.",
   "agent-control-mcp.dispatch_status": "Read a remotely claimed AgentDispatch status without executing work on the control-plane server.",
-  "scheduler-mcp.model_select": "Select the best available model for a role and task requirement.",
+  "scheduler-mcp.model_select": "Select the best available model for a role and task requirement. Pass pinnedModelId (a registered modelId/providerId/alias) to force that exact model; it must still satisfy availability, hard constraints and the task ceiling, otherwise the decision is rejected.",
   "scheduler-mcp.session_place": "Choose new-session or subagent placement from machine signals.",
   "scheduler-mcp.work_assign": "Assign a role to a work item using the scheduler policy surface.",
   "scheduler-mcp.capacity_snapshot": "Return scheduler-visible session and agent capacity.",
@@ -142,7 +142,7 @@ const toolDescriptions = {
   "resource-mcp.resource_snapshot": "Return active leases and repository output target state.",
   "model-mcp.model_capabilities": "Return model provider capability profiles for common model providers.",
   "model-mcp.model_policy_get": "Return model selection policy for a role.",
-  "model-mcp.model_select": "Select a model through the model registry surface.",
+  "model-mcp.model_select": "Select a model through the model registry surface. Pass pinnedModelId (a registered modelId/providerId/alias) to force that exact model.",
   "skill-mcp.skill_source_sync": "Sync and index the pinned agency-agents-zh role skill source.",
   "skill-mcp.role_skill_parse": "Return parsed role skills by source, category or capability.",
   "skill-mcp.role_skill_overlay_validate": "Create and validate a project/task-group role skill overlay.",
@@ -471,6 +471,7 @@ function commonInputProperties() {
     pathAllowlist: array,
     payload: object,
     permission: string,
+    pinnedModelId: string,
     projectId: string,
     pushRefs: array,
     quorum: number,
@@ -1921,6 +1922,9 @@ function createWorkItem(state, args) {
   if (settledRejection) return settledRejection;
   const workItemId = args.workItemId || createId("work");
   if ((taskGroup.workItems || []).some((item) => item.id === workItemId)) return {ok: false, error: "work_item_id_conflict"};
+  // 精确钉模型（可选）：与 REST 侧共用 core 的同一个校验，填了必须是注册表里的模型，否则拒。存规范 modelId。
+  const pin = normalizePinnedModelId(state, args.pinnedModelId);
+  if (pin.error) return {ok: false, error: pin.error, pinnedModelId: pin.pinnedModelId};
   const at = new Date().toISOString();
   const workItem = {
     id: workItemId,
@@ -1931,6 +1935,7 @@ function createWorkItem(state, args) {
     ownerRole: mcpWorkItemOwnerRole(args.roleId || args.ownerRole),
     progress: 0,
     requirements: normalizeMcpStringList(args.requirements, [], "work_item_requirements"),
+    ...(pin.pinnedModelId ? {pinnedModelId: pin.pinnedModelId} : {}),
     createdAt: at,
     updatedAt: at
   };

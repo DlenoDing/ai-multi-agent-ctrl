@@ -569,6 +569,26 @@ const MUTATIONS = [
     expect: "模型评分 clamp 钳不住 NaN"
   },
   {
+    // 去掉 rankModel 里 model_not_pinned 的拦截 → 精确钉模型失效：pinnedModelId 指定后不再只留被钉的那个，
+    // 选型选回自动首选。contract-check 的钉模型断言会红。
+    name: "精确钉模型的拦截必须真的把其余模型判不合格",
+    check: "verifyAgentGatewayContracts",
+    file: CORE,
+    from: '  if (hardConstraints.pinnedModelId && candidateModel.modelId !== hardConstraints.pinnedModelId) reasons.push("model_not_pinned");',
+    to: "",
+    expect: "精确钉模型未生效"
+  },
+  {
+    // 去掉 selectModel 里对 workItem.pinnedModelId 的读取 → 「建工作项时指定模型」在派发时失效
+    // （只剩本次调用显式传的那条路）。contract-check 的工作项钉模型断言会红。
+    name: "建工作项时指定的模型必须在派发选型时被读到",
+    check: "verifyAgentGatewayContracts",
+    file: CORE,
+    from: "request.hardConstraints?.pinnedModelId ?? workItem.pinnedModelId ?? null;",
+    to: "request.hardConstraints?.pinnedModelId ?? null;",
+    expect: "工作项上钉的模型未在派发选型时生效"
+  },
+  {
     name: "模型选择策略的声明必须与引擎实际做的一致",
     check: "verifyNoModelFallbackMatchesWhatEngineDoes",
     file: CORE,

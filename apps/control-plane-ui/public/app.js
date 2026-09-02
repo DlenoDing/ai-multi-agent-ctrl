@@ -1500,7 +1500,16 @@ async function loadPage() {
       ensureProjectSelection();
       loadPendingConfirmCount();
     } else if (page === "tg") {
-      state = await fetchState("tasks", {projectId: currentProjectId});
+      // 建工作项表单里的「指定模型」下拉要读 modelCapabilities，而 tasks 视图不含它。
+      // 用轻量的 /api/model-registry（只回模型清单，不是整份 runtime 视图）并回补 —— 取不到就只显示「自动」，不挡建工作项。
+      const [tasksState, modelRegistry] = await Promise.all([
+        fetchState("tasks", {projectId: currentProjectId}),
+        api("/api/model-registry").catch(() => ({modelCapabilities: []}))
+      ]);
+      state = {
+        ...tasksState,
+        modelCapabilities: modelRegistry.modelCapabilities || []
+      };
       ensureProjectSelection();
       if (expandedTaskGroupId) await loadTaskGroupDetail(expandedTaskGroupId);
     } else if (page === "review") {
@@ -3030,6 +3039,14 @@ function renderTaskGroups() {
         </div>
         <div class="form-row"><label>工作项标题</label><input name="title" required></div>
         <div class="form-row"><label>执行角色</label><select name="ownerRole">${roleOptions}</select></div>
+        <div class="form-row"><label>指定模型（可选）</label>
+          <select name="pinnedModelId">
+            <option value="">自动（按角色与任务选型）</option>
+            ${(state.modelCapabilities || []).map((profile) =>
+              `<option value="${esc(profile.modelId)}">${esc(profile.modelId)}</option>`).join("")}
+          </select>
+          <div class="small">选「自动」由系统按角色与任务选最合适的模型；指定后这个工作项每次派发都只用这个模型——它若不满足任务的约束或天花板，就挂阻塞交人工处置，而不会悄悄换一个。</div>
+        </div>
         <div class="form-row"><label>机器可执行要求（每行一条）</label><textarea name="requirements" placeholder="每行一条约束或验收条件"></textarea></div>
         ${groups.length ? "" : `<div class="notice">先创建任务组后再追加工作项。</div>`}
         <button class="primary-button" type="submit" ${groups.length ? "" : "disabled"}>创建工作项</button>
@@ -3202,7 +3219,7 @@ function renderTaskGroupDetail(taskGroup) {
       <div class="record">
         <div class="record-title"><strong>${esc(workItem.title)}</strong>${badge(workItem.status)}</div>
         ${progressLine(workItem.progress)}
-        <div class="record-meta"><span>执行角色：${esc(t(workItem.ownerRole))}</span>${workItem.blockedReason ? `<span>受阻原因：${esc(explainCoded(workItem.blockedReason))}</span>` : ""}${humanTraceHtml(workItem)}</div>
+        <div class="record-meta"><span>执行角色：${esc(t(workItem.ownerRole))}</span>${workItem.pinnedModelId ? `<span>指定模型：<span class="mono">${esc(workItem.pinnedModelId)}</span></span>` : ""}${workItem.blockedReason ? `<span>受阻原因：${esc(explainCoded(workItem.blockedReason))}</span>` : ""}${humanTraceHtml(workItem)}</div>
         <!-- 被阻塞的工作项：屏幕上要么给出【出口】，要么明说【系统会自清】。只写一句"受阻原因"
              等于把人留在原地 —— 后端有杠杆而界面没入口，等于这个杠杆不存在；而系统自清的也必须
              说出来，否则人会去找一个并不需要的操作。每一条都按代码里真实的清除路径写：
@@ -5096,7 +5113,8 @@ document.addEventListener("submit", async (event) => {
       const payload = {
         title: data.title,
         ownerRole: data.ownerRole,
-        requirements: String(data.requirements || "").split(/\n/u).map((item) => item.trim()).filter(Boolean)
+        requirements: String(data.requirements || "").split(/\n/u).map((item) => item.trim()).filter(Boolean),
+        ...(data.pinnedModelId ? {pinnedModelId: data.pinnedModelId} : {})
       };
       await api(`/api/task-groups/${encodeURIComponent(taskGroupId)}/work-items`, {method: "POST", body: JSON.stringify(payload)});
       expandedTaskGroupId = taskGroupId;

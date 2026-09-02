@@ -144,6 +144,7 @@ import {
   advanceWorkItemToReviewRequested,
   ROOM_SENDER_KEY,
   selectModel,
+  normalizePinnedModelId,
   updateTaskGroupLanguagePolicy,
   createCommand,
   dispatchCommand,
@@ -6312,6 +6313,41 @@ function verifyAgentGatewayContracts(output) {
   const rejectedDecision = selectModel(unavailableState, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", roleId: "ui-console-service"});
   if (rejectedDecision.status !== "rejected" || !rejectedDecision.candidateRankings.some((item) => String(item.rejectionReason || "").includes("availability_unavailable"))) {
     output.push("Model selection did not fail closed when all models were unavailable");
+  }
+  // 精确钉模型：pinnedModelId 指定后，选型必须选中被钉的那个模型（哪怕它本来排不到第一），且决策上留痕。
+  // 钉的对象特意选一个"合格但不是自动首选"的模型，这样只有真的按 modelId 拦截才会改变结果 ——
+  // 去掉 rankModel 的 model_not_pinned 拦截即红（钉不住，选回自动首选）。
+  {
+    const pinState = JSON.parse(JSON.stringify(seedState));
+    ensureRuntimeCollections(pinState, {root});
+    const autoDecision = selectModel(pinState, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", roleId: "ui-console-service"}, {persist: false});
+    const autoModelId = autoDecision.selectedModel?.modelId;
+    const pinnable = (autoDecision.candidateRankings || []).find((item) => item.eligible && item.modelId !== autoModelId);
+    if (!pinnable) {
+      output.push("精确钉模型自检夹具无效：候选里找不到第二个合格模型可供钉住（检查种子模型注册表）");
+    } else {
+      const pinnedDecision = selectModel(pinState, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", roleId: "ui-console-service", pinnedModelId: pinnable.modelId}, {persist: false});
+      if (pinnedDecision.selectedModel?.modelId !== pinnable.modelId) {
+        output.push("精确钉模型未生效：pinnedModelId 指定后选型没有选中被钉的模型");
+      }
+      if (pinnedDecision.pinnedModelId !== pinnable.modelId) {
+        output.push("精确钉模型未在决策上留痕：selectModel 的决策没有回显 pinnedModelId");
+      }
+      // 「调用 agent 时指定模型」的真实路径：模型钉在工作项上，派发时 selectModel 读 workItem.pinnedModelId 生效
+      // （无需改派发路径）。去掉 selectModel 里的 `?? workItem.pinnedModelId` 即红。
+      const viaWorkItem = selectModel(pinState, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", roleId: "orchestrator", workItem: {id: "work_pinned_probe", title: "钉模型探针", ownerRole: "orchestrator", requirements: ["pin probe"], pinnedModelId: pinnable.modelId}}, {persist: false});
+      if (viaWorkItem.selectedModel?.modelId !== pinnable.modelId) {
+        output.push("工作项上钉的模型未在派发选型时生效：selectModel 没有读 workItem.pinnedModelId");
+      }
+    }
+    // 校验入口：钉未注册的模型必须判错（不能悄悄当没填）；不填＝不钉。
+    if (normalizePinnedModelId(pinState, "nonexistent:model-zzz").error !== "pinned_model_not_registered") {
+      output.push("精确钉模型：钉一个未注册的模型时没有判错（应 pinned_model_not_registered）");
+    }
+    const emptyPin = normalizePinnedModelId(pinState, "");
+    if (emptyPin.pinnedModelId !== null || emptyPin.error) {
+      output.push("精确钉模型：不填时应视为不钉（pinnedModelId=null），而不是判错");
+    }
   }
   try {
     buildTaskContract(unavailableState, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", root});
