@@ -3864,7 +3864,9 @@ function runPendingTruncationCase() {
       /没有任何在线的 agent 节点/.test(offlineView),
       "一个能干活的节点都没有，界面却只显示'执行中' —— 人会一直等一件永远不会发生的事");
     check("提示要说清已注册几个、以及该去哪儿看",
-      /已注册 2 个/.test(offlineView) && /「AI 智能体」页/.test(offlineView),
+      /已注册 2 个/.test(offlineView)
+        && (/智能体接入/.test(offlineView) || /AI 智能体/.test(offlineView))
+        && /切到「项目管理」|切到「组织管理」|联系项目管理员|联系组织管理员/u.test(offlineView),
       "只说没有在线节点，不说是一台都没装还是装了都挂了，人不知道下一步做什么");
 
     const withNode = structuredClone(base);
@@ -5116,7 +5118,7 @@ await runCodedApiErrorCase();
     /没有任何在线的 agent 节点/.test(stalled),
     "进度条不会再动，而这一页一个字都不说 —— 人会一直等，并且会以为是 agent 在慢慢做");
   check("要说清它们不会有进展、以及去哪儿看",
-    /不会有任何进展/.test(stalled) && /「AI 智能体」页/.test(stalled),
+    /不会有任何进展/.test(stalled) && /智能体接入/.test(stalled) && /切到「项目管理」|联系项目管理员/u.test(stalled),
     "只说没节点，不说这对他意味着什么、下一步做什么");
   check("有在线 agent 时不挂这条提示",
     !/没有任何在线的 agent 节点/.test(probe.renderTaskGroupsWith(withCells("assigned", {online: 1, total: 2}), account, "p1", null, {})),
@@ -5176,7 +5178,7 @@ await runCodedApiErrorCase();
     /在制品已经达到上限/.test(wipFull) && /8/.test(wipFull),
     "后端按额度把单元判成 resource_queued，界面却什么都不说 —— 人只看到单元不动，无从判断是背压还是坏了");
   check("要说清这是背压、会自己恢复，以及想更宽怎么做",
-    /不需要你动手/.test(wipFull) && /「AI 智能体」页/.test(wipFull),
+    /不需要你动手/.test(wipFull) && /AI 智能体/.test(wipFull) && /准入/u.test(wipFull),
     "只说达到上限，不说会不会自己好、也不说怎么调宽 —— 人会去找一个并不存在的故障");
   check("额度没用满时不挂这条提示",
     !/在制品已经达到上限/.test(probe.renderTaskGroupsWith(withWip({inFlight: 3, capacity: 8}, {online: 2, total: 2}), account, "p1", null, {})),

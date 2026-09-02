@@ -6052,7 +6052,7 @@ const MUTATIONS = [
     name: "刚装完的指路要指这个账号点得到的那一页",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '    system: "先切到「系统管理」，打开账号与授权里的「智能体入网令牌」面板",',
+    from: '    system: "先切到「项目管理」，打开项目设置里的「智能体接入」面板",',
     to: '    system: "「AI 智能体」页的「加入令牌管理」面板",',
     expect: "而这一屏的导航里没有这几页"
   },
@@ -7670,8 +7670,8 @@ const MUTATIONS = [
     name: "在制品提示要说清额度按什么算",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyWipHintMatchesHowCapacityIsCounted",
-    from: "    + `\u60f3\u8ba9\u5b83\u8dd1\u5f97\u66f4\u5bbd\uff0c\u5c31\u5230\u300cAI \u667a\u80fd\u4f53\u300d\u9875\u591a\u63a5\u5165\u51e0\u53f0\u8282\u70b9\uff1a\u989d\u5ea6\u6309\u3010\u5728\u7ebf\u4e14\u5df2\u901a\u8fc7\u81ea\u68c0\u3011\u7684\u8282\u70b9\u6570\u4e0a\u8c03 \u2014\u2014 `",
-    to: "    + `\u60f3\u8ba9\u5b83\u8dd1\u5f97\u66f4\u5bbd\uff0c\u5c31\u5230\u300cAI \u667a\u80fd\u4f53\u300d\u9875\u591a\u63a5\u5165\u51e0\u53f0\u8282\u70b9\uff08\u6bcf\u591a\u4e00\u53f0\u5728\u7ebf\u8282\u70b9\uff0c\u989d\u5ea6\u81ea\u52a8\u4e0a\u8c03\uff09\u3002`",
+    from: "    + `\u60f3\u8ba9\u5b83\u8dd1\u5f97\u66f4\u5bbd\uff0c${esc(agentNodeManagementPath({needMoreCapacity: true}))}\uff1b\u989d\u5ea6\u6309\u3010\u5728\u7ebf\u4e14\u5df2\u901a\u8fc7\u81ea\u68c0\u3011\u7684\u8282\u70b9\u6570\u4e0a\u8c03\uff0c`",
+    to: "    + `\u60f3\u8ba9\u5b83\u8dd1\u5f97\u66f4\u5bbd\uff0c${esc(agentNodeManagementPath({needMoreCapacity: true}))}\uff1b\u6bcf\u591a\u4e00\u53f0\u5728\u7ebf\u8282\u70b9\uff0c\u989d\u5ea6\u81ea\u52a8\u4e0a\u8c03\u3002`",
     expect: "而提示只说「在线节点」"
   },
   {
@@ -9441,8 +9441,8 @@ const MUTATIONS = [
     name: "不许用没加书名号的英文页名指路（「到 agent 页」实测 4 处）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyGuidanceNamesRealPages",
-    from: "要么先到「AI 智能体」页把节点恢复",
-    to: "要么先到 agent 页把节点恢复",
+    from: '    return `切到「组织管理」，打开 AI 智能体，${action}${suffix ? `；${suffix}` : ""}`;',
+    to: '    return `到 agent 页，${action}${suffix ? `；${suffix}` : ""}`;',
     expect: "没加书名号"
   },
   {
@@ -9521,7 +9521,7 @@ const MUTATIONS = [
     name: "产品报文不得指路到界面上没有的页（实测「运行时」页 10 处）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyGuidanceNamesRealPages",
-    from: "装好后到「AI 智能体」页对该节点点「刷新」（重新采集自检）确认它认出来了",
+    from: "装好后切到「组织管理」，打开 AI 智能体，对该节点点「刷新」（重新采集自检）确认它认出来了",
     to: "装好后到「运行时」页对该节点点「刷新」确认它认出来了",
     expect: "界面上没有这个"
   },

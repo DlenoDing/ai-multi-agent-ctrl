@@ -315,6 +315,8 @@ html, body {
   gap: 10px;
 }
 
+.space-hub .module-grid { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+
 .module-card {
   appearance: none;
   text-align: left;

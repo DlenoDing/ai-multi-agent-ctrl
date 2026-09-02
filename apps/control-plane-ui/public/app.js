@@ -2020,6 +2020,80 @@ function renderContent() {
   return body;
 }
 
+function spaceHubHtml({title, score, scoreText, scoreLabel, meta = [], modules = []}) {
+  const normalizedScore = Math.max(0, Math.min(100, Number(score || 0)));
+  return `
+    <section class="project-hub space-hub wide">
+      <div class="project-hub-main">
+        <div class="project-score" style="--score:${normalizedScore};"><strong>${esc(scoreText)}</strong><span>${esc(scoreLabel)}</span></div>
+        <div class="project-hub-text">
+          <div class="project-hub-title">${esc(title)}</div>
+          <div class="project-hub-meta">${meta.map((item) => `<span>${item}</span>`).join("")}</div>
+        </div>
+      </div>
+      <div class="module-grid">${modules.map((item) => projectModuleCard(item)).join("")}</div>
+    </section>
+  `;
+}
+
+function healthScore(part, total) {
+  const denominator = Number(total || 0);
+  if (!denominator) return 100;
+  return Math.round((Math.max(0, Number(part || 0)) / denominator) * 100);
+}
+
+function renderSystemManagementHub(overview) {
+  const services = state.runtime?.services || [];
+  const healthyServices = services.filter((service) =>
+    TONE_GREEN.has(String(service.health || "")) && TONE_GREEN.has(String(service.status || ""))).length;
+  const orgCount = overview?.runtime?.organizations ?? (organizations.length || (state.organizations || []).length);
+  const projectCount = overview?.runtime?.projects ?? (state.projects || []).length;
+  const activeAccounts = (state.accounts || []).filter((account) => !["retired", "suspended", "disabled"].includes(account.status)).length;
+  const mcpToolCount = state.runtime?.mcp?.toolCount ?? "—";
+  return spaceHubHtml({
+    title: "系统管理总览",
+    score: healthScore(healthyServices, services.length),
+    scoreText: services.length ? `${healthyServices}/${services.length}` : "—",
+    scoreLabel: "服务健康",
+    meta: [
+      `运行 ${badge(state.runtime?.status)}`,
+      `状态版本 <span class="mono">${esc(overview?.runtime?.stateVersion ?? state.stateVersion ?? "-")}</span>`,
+      `更新 ${fmtTime(overview?.at)}`
+    ],
+    modules: [
+      {pageId: "sys-orgs", title: "组织与配额", metric: `${orgCount}`, detail: "创建组织、调整配额、启停组织", action: "管理组织", tone: "blue"},
+      {pageId: "sys-accounts", title: "账号与授权", metric: `${activeAccounts}`, detail: "系统账号、访问授权与后台代签令牌", action: "管理授权", tone: "blue"},
+      {pageId: "sys-settings", title: "模型与技能源", metric: `${mcpToolCount}`, detail: "模型能力、技能源同步、指令压缩指标", action: "查看设置", tone: "blue"},
+      {pageId: "proj-overview", title: "项目空间", metric: `${projectCount}`, detail: "进入当前项目的任务组、审核、指令和监控", action: "进入项目", tone: projectCount ? "blue" : "gray"}
+    ]
+  });
+}
+
+function renderOrgManagementHub(org, projects, openTaskGroups) {
+  const members = (orgMembers || []).filter((account) => account.accountType !== "service_account");
+  const aliveNodes = (orgAgentNodes || []).filter((node) => node.status !== "revoked");
+  const onlineNodes = aliveNodes.filter((node) => node.status === "online").length;
+  const activeProjects = (projects || []).filter((project) => project.status !== "archived").length;
+  const quotaStatus = org ? `${org.usage?.projects ?? activeProjects}/${org.quotas?.maxProjects ?? "—"}` : "—";
+  return spaceHubHtml({
+    title: org ? `组织管理总览 · ${org.name}` : "组织管理总览",
+    score: healthScore(onlineNodes, aliveNodes.length),
+    scoreText: aliveNodes.length ? `${onlineNodes}/${aliveNodes.length}` : "—",
+    scoreLabel: "在线节点",
+    meta: [
+      `组织状态 ${statusBadge("organization", org?.status)}`,
+      `项目配额 ${esc(quotaStatus)}`,
+      `活跃任务组 ${esc(openTaskGroups.length)}`
+    ],
+    modules: [
+      {pageId: "org-members", title: "成员管理", metric: `${members.length}`, detail: "创建成员、重发邀请、停用或注销账号", action: "管理成员", tone: members.length ? "blue" : "gray"},
+      {pageId: "org-agents", title: "AI 智能体", metric: aliveNodes.length ? `${onlineNodes}/${aliveNodes.length}` : "0", detail: "节点状态、自检、加入令牌与吊销", action: "管理节点", tone: onlineNodes ? "green" : "orange"},
+      {pageId: "org-projects", title: "项目列表", metric: `${activeProjects}/${projects.length}`, detail: "创建项目、归档项目、补充分配授权", action: "管理项目", tone: activeProjects ? "blue" : "gray"},
+      {pageId: "proj-overview", title: "项目空间", metric: `${(state.taskGroups || []).length}`, detail: "进入当前项目的任务组、审核、指令和监控", action: "进入项目", tone: projects.length ? "blue" : "gray"}
+    ]
+  });
+}
+
 /* ---------------- 系统管理员：系统概览 ---------------- */
 
 function renderSysOverview() {
@@ -2038,6 +2112,7 @@ function renderSysOverview() {
   ])).join("");
 
   const overviewPanels = overview ? [
+    renderSystemManagementHub(overview),
     panel("运行指标", `
       <div class="metric-grid">
         <div class="metric"><span>在线节点</span><strong>${esc(overview.runtime.onlineNodes)}/${esc(overview.runtime.totalNodes)}</strong></div>
@@ -2124,6 +2199,17 @@ function renderSysOverview() {
 /* ---------------- 系统管理员：组织管理 ---------------- */
 
 function renderSysOrgs() {
+  const activeOrgs = organizations.filter((org) => org.status === "active").length;
+  const suspendedOrgs = organizations.filter((org) => org.status !== "active").length;
+  const quotaPressure = organizations.filter((org) => {
+    const pairs = [
+      [org.usage?.members, org.quotas?.maxMembers],
+      [org.usage?.projects, org.quotas?.maxProjects],
+      [org.usage?.taskGroups, org.quotas?.maxTaskGroups],
+      [org.usage?.agents + (org.usage?.agentsReserved || 0), org.quotas?.maxAgents]
+    ];
+    return pairs.some(([used, max]) => Number(max) > 0 && Number(used || 0) / Number(max) >= 0.8);
+  }).length;
   const orgRows = organizations.map((org) => row([
     `<strong>${esc(org.name)}</strong><div class="small muted mono">${esc(org.orgId)}</div>`,
     statusBadge("organization", org.status),
@@ -2141,6 +2227,17 @@ function renderSysOrgs() {
   ])).join("");
 
   return [
+    panel("组织管理总览", `
+      <div class="metric-grid">
+        <div class="metric"><span>组织总数</span><strong>${organizations.length}</strong></div>
+        <div class="metric"><span>启用中</span><strong>${activeOrgs}</strong></div>
+        <div class="metric"><span>停用 / 异常</span><strong>${suspendedOrgs}</strong></div>
+        <div class="metric"><span>配额接近上限</span><strong>${quotaPressure}</strong>
+          <div class="small muted">任一配额使用达到 80% 即计入</div></div>
+      </div>
+    `, {wide: true}),
+    panel("组织列表", table(["组织", "状态", "成员", "项目", "任务组", "智能体", "创建时间", "操作"], orgRows,
+      {emptyText: listEmptyText("组织列表")}), {wide: true, headerSide: filterInput("按组织名过滤…", "orgs")}),
     panel("创建组织", `
       <form class="form-grid" data-form="org-create">
         <div class="form-row"><label>组织名称</label><input name="name" required placeholder="示例：华东研发中心"></div>
@@ -2163,9 +2260,7 @@ function renderSysOrgs() {
         <div class="record"><div class="record-title"><strong>三级职责边界</strong></div><div class="record-meta"><span>系统管理员负责组织与配额；组织管理员负责成员、智能体与项目；组织成员在被授权的项目内工作。</span></div></div>
         <div class="record"><div class="record-title"><strong>配额强制</strong></div><div class="record-meta"><span>成员、项目、任务组、智能体创建时校验配额，超限将返回“组织配额超限”。</span></div></div>
       </div>
-    `),
-    panel("组织列表", table(["组织", "状态", "成员", "项目", "任务组", "智能体", "创建时间", "操作"], orgRows,
-      {emptyText: listEmptyText("组织列表")}), {wide: true, headerSide: filterInput("按组织名过滤…", "orgs")})
+    `)
   ].join("");
 }
 
@@ -2499,8 +2594,14 @@ function renderProjectMemberForm() {
   `;
 }
 
-function renderJoinTokenSection() {
-  const tokens = (state.agentJoinTokens || []).slice(0, 20).map((token) => {
+function renderJoinTokenSection(options = {}) {
+  const scopedProjectId = options.projectId || "";
+  const scopedProjects = scopedProjectId
+    ? joinTokenTargetProjects().filter((project) => project.id === scopedProjectId)
+    : joinTokenTargetProjects();
+  const scopedTokens = (state.agentJoinTokens || [])
+    .filter((token) => !scopedProjectId || token.projectId === scopedProjectId);
+  const tokens = scopedTokens.slice(0, 20).map((token) => {
     // 令牌过期只在【兑换时】才被标 expired（没人兑换就永停在 issued）。列表若按原始 status 显示，
     // 一张已过期的令牌会显示成「已签发」还带「撤销」按钮 —— 人以为它还在等 agent 来接，实际兑换必被拒。
     // 按【服务器时钟】(serverNow，抗本机时钟偏移，与过期时间同源) 派生显示状态，与占位统计同口径。
@@ -2517,13 +2618,27 @@ function renderJoinTokenSection() {
     ]);
   }).join("");
   if (!(state.projects || []).length) return noProjectYetNotice("智能体加入令牌");
+  if (!scopedProjects.length) {
+    return `<div class="notice warn-notice">${scopedProjectId
+      ? "当前项目不可签发智能体加入令牌：项目可能已归档，或当前账号没有这个项目的管理权限。"
+      : "你能看到的项目里没有可签发智能体加入令牌的目标。"}`
+      + "归档项目不能再接入新节点；需要继续执行时，请先创建或切换到一个未归档项目。</div>";
+  }
+  const selectedProject = scopedProjects.find((project) => project.id === currentProjectId) || scopedProjects[0];
+  const projectField = scopedProjectId
+    ? `<input type="hidden" name="projectId" value="${esc(scopedProjectId)}">
+       <div class="record-meta"><span>当前项目：${esc(projectNameOf(scopedProjectId))}</span></div>`
+    : `<div class="form-row"><label>目标项目</label>
+        <select name="projectId">${scopedProjects.map((project) => `<option value="${esc(project.id)}" ${project.id === selectedProject?.id ? "selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}</select>
+      </div>`;
   return `
     <div class="stack">
+      ${options.context === "project"
+        ? `<div class="notice">执行节点通过一次性加入令牌注册到当前项目。服务端集中托管 MCP 与技能同步，agent 端只运行注册脚本和执行器。</div>`
+        : ""}
       <form class="form-grid" data-form="join-token">
         <div class="form-row-inline">
-          <div class="form-row"><label>目标项目</label>
-            <select name="projectId">${joinTokenTargetProjects().map((project) => `<option value="${esc(project.id)}" ${project.id === currentProjectId ? "selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}</select>
-          </div>
+          ${projectField}
           <div class="form-row"><label>节点名（可留空）</label><input name="nodeName" placeholder="自动生成"></div>
           <div class="form-row"><label>角色范围（逗号分隔；只认已登记的执行角色，* 表示不限）</label><input name="allowedRoles" value="agent-runtime" list="join-token-role-options">
             <datalist id="join-token-role-options"><option value="*">不限</option>${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
@@ -2531,7 +2646,7 @@ function renderJoinTokenSection() {
         </div>
         <button class="primary-button" type="submit">签发一次性加入令牌</button>
       </form>
-      ${table(["令牌", "项目", "角色范围", "状态", {label: "已用次数", c: "num"}, {label: "过期时间", c: "nowrap"}, "操作"], tokens, {moreText: moreText((state.agentJoinTokens || []).length, 20, "agentJoinTokens")})}
+      ${table(["令牌", "项目", "角色范围", "状态", {label: "已用次数", c: "num"}, {label: "过期时间", c: "nowrap"}, "操作"], tokens, {moreText: moreText(scopedTokens.length, 20, "agentJoinTokens")})}
     </div>
   `;
 }
@@ -2576,6 +2691,7 @@ function renderOrgOverview() {
   ])).join("");
 
   return [
+    renderOrgManagementHub(org, projects, openTaskGroups),
     quotaPanel,
     panel("组织运行统计", `
       <div class="metric-grid">
@@ -2815,7 +2931,12 @@ function renderOrgAgents() {
 /* ---------------- 组织管理员：项目管理 ---------------- */
 
 function renderOrgProjects() {
-  const projectRows = (state.projects || []).map((project) => row([
+  const projects = state.projects || [];
+  const activeProjects = projects.filter((project) => project.status !== "archived");
+  const archivedProjects = projects.length - activeProjects.length;
+  const unhealthyProjects = projects.filter((project) => !["ok", "healthy", "normal"].includes(project.progress?.health)).length;
+  const memberLinks = projects.reduce((sum, project) => sum + (project.members || []).length, 0);
+  const projectRows = projects.map((project) => row([
     `<strong>${esc(project.name)}</strong><div class="small muted mono">${esc(project.id)}</div>`,
     badge(project.status),
     progressLine(project.progress?.percent),
@@ -2829,6 +2950,16 @@ function renderOrgProjects() {
   ])).join("");
 
   return [
+    panel("项目管理总览", `
+      <div class="metric-grid">
+        <div class="metric"><span>项目总数</span><strong>${projects.length}</strong></div>
+        <div class="metric"><span>在用项目</span><strong>${activeProjects.length}</strong></div>
+        <div class="metric"><span>已归档</span><strong>${archivedProjects}</strong></div>
+        <div class="metric"><span>成员授权</span><strong>${memberLinks}</strong></div>
+        <div class="metric"><span>健康异常</span><strong>${unhealthyProjects}</strong></div>
+      </div>
+    `, {wide: true}),
+    panel("项目列表", table(["项目", "状态", "进度", "阶段", "健康度", "成员", "操作"], projectRows), {wide: true}),
     panel("创建项目", `
       <form class="form-grid" data-form="org-project-create">
         <div class="form-row"><label>项目名称</label><input name="name" required></div>
@@ -2836,8 +2967,7 @@ function renderOrgProjects() {
         <button class="primary-button" type="submit">创建项目</button>
       </form>
     `),
-    panel("项目成员授权", renderProjectMemberForm()),
-    panel("项目列表", table(["项目", "状态", "进度", "阶段", "健康度", "成员", "操作"], projectRows), {wide: true})
+    panel("项目成员授权", renderProjectMemberForm())
   ].join("");
 }
 
@@ -2932,7 +3062,7 @@ function projectHubHtml(project, groups, openGroups, eventsInScope, repoTargets)
           pageId: "proj-settings",
           title: "项目设置",
           metric: `${repoTargets.length}`,
-          detail: "仓库、规则、默认角色与授权边界",
+          detail: "仓库、规则、默认角色、授权边界与智能体接入",
           action: "配置项目",
           tone: repoTargets.length ? "blue" : "gray"
         })}
@@ -3726,19 +3856,19 @@ const STUCK_EXIT_HINT = {
   credential_required: "在承接它的 agent 节点上配置所需的凭据环境变量",
   agent_runtime_executor_required: "该节点上没有模型执行器：到那台机器上装 codex / claude / gemini / ollama 任一个"
     + "（节点会自动探测这四个命令），或用 --executor-command 指定自定义执行器后重新加入；"
-    + "装好后到「AI 智能体」页对该节点点「刷新」（重新采集自检）确认它认出来了",
+    + "装好后切到「组织管理」，打开 AI 智能体，对该节点点「刷新」（重新采集自检）确认它认出来了",
   // 下面三条是【节点拒绝了人的控制指令且重试已用尽】。它们不会自己好，而且最要紧的一点是：
   // 控制面这边已经停了，那台机器上的 agent 可能还在跑 —— 出口是绕开节点配合的强制吊销。
-  control_pause_rejected_by_node: "节点拒绝了暂停且重试已用尽：让组织管理员到「AI 智能体」页对该节点点「立即切断」，再确认它确实停了",
-  control_cancel_rejected_by_node: "节点拒绝了取消且重试已用尽：让组织管理员到「AI 智能体」页对该节点点「立即切断」，再确认它确实停了",
-  assigned_node_stop_control_failed_retries_exhausted: "节点停止控制重试已用尽：让组织管理员到「AI 智能体」页对该节点点「立即切断」（不需要节点配合）",
+  control_pause_rejected_by_node: "节点拒绝了暂停且重试已用尽：让组织管理员切到「组织管理」，打开 AI 智能体，对该节点点「立即切断」，再确认它确实停了",
+  control_cancel_rejected_by_node: "节点拒绝了取消且重试已用尽：让组织管理员切到「组织管理」，打开 AI 智能体，对该节点点「立即切断」，再确认它确实停了",
+  assigned_node_stop_control_failed_retries_exhausted: "节点停止控制重试已用尽：让组织管理员切到「组织管理」，打开 AI 智能体，对该节点点「立即切断」（不需要节点配合）",
   // 这两条只在【节点失联超时】后才会被自动重排；节点若还在心跳却始终不 ACK，它会一直等下去。
   // 所以不能登记成"会自己好"，出口是不需要节点配合的立即切断。
-  assigned_node_revocation_pending_stop: "正在等节点确认吊销：节点失联超时后系统会自动重排；若它仍在心跳却迟迟不确认，让组织管理员到「AI 智能体」页点「立即切断」",
+  assigned_node_revocation_pending_stop: "正在等节点确认吊销：节点失联超时后系统会自动重排；若它仍在心跳却迟迟不确认，让组织管理员切到「组织管理」，打开 AI 智能体点「立即切断」",
   // 关停与吊销是同一条代码路径的两个分支，恢复方式也一样。孪生项里只有吊销那一半写了
   // 中文和出口，停机那一半两样都没有 —— 于是同一件事，走吊销的人看到中文指引，
   // 走关停的人看到一串英文、且没有下一步。
-  assigned_node_shutdown_pending_stop: "正在等节点确认关停：节点失联超时后系统会自动重排；若它仍在心跳却迟迟不确认，让组织管理员到「AI 智能体」页点「立即切断」",
+  assigned_node_shutdown_pending_stop: "正在等节点确认关停：节点失联超时后系统会自动重排；若它仍在心跳却迟迟不确认，让组织管理员切到「组织管理」，打开 AI 智能体点「立即切断」",
   task_group_pause: "整个任务组被人暂停了：到该任务组页点「恢复执行」"
 };
 // 提示只在【当前真的有派发卡在这些原因上】时出现，且按出现过的原因去重 —— 逐行重复同一句话
@@ -3870,6 +4000,27 @@ function orchestratorHealthText(status) {
   return status.lastTickAt ? `（上一拍 ${esc(t(status.lastTickResult) || status.lastTickResult || "ran")}）` : "";
 }
 
+function agentNodeManagementPath({needSelfCheck = false, needMoreCapacity = false, waitForAi = false} = {}) {
+  const action = needMoreCapacity
+    ? "接入更多已通过自检的节点"
+    : needSelfCheck
+      ? "确认节点状态与自检结果"
+      : waitForAi
+        ? "恢复可用节点"
+        : "接入或恢复节点";
+  const suffix = needMoreCapacity
+    ? "刚接上的节点处于“受限”、自检有缺项的处于“只读”，这两种都不加额度"
+    : "";
+  const perspective = perspectiveOf(currentAccount);
+  if (perspective === "org") {
+    return `切到「组织管理」，打开 AI 智能体，${action}${suffix ? `；${suffix}` : ""}`;
+  }
+  if (perspective === "system") {
+    return `切到「项目管理」，打开项目设置里的「智能体接入」面板签发当前项目的加入令牌；已有节点离线或自检异常时，让对应组织管理员在 AI 智能体里${action}${suffix ? `；${suffix}` : ""}`;
+  }
+  return `联系项目管理员到「项目设置」里的「智能体接入」面板签发当前项目的加入令牌；已有节点异常时，由组织管理员在 AI 智能体里${action}${suffix ? `；${suffix}` : ""}`;
+}
+
 // 派发排着队、会话挂着 active，但一个能干活的 agent 都没有 —— 这时控制台看上去一片繁忙，
 // 而真相是没有任何东西在跑。系统自己知道（节点数它有），此前却从不说。
 // 判据用"在线"而不是"存在"：降级节点领不到活，把它算进去等于报喜不报忧。
@@ -3886,7 +4037,7 @@ function fleetOfflineNotice() {
   return `<div class="notice warn-notice">这个项目有 ${esc(waiting)} 个派发在排队或执行中，`
     + `但【没有任何在线的 agent 节点】${total ? `（已注册 ${esc(total)} 个，此刻都不在线或已降级）` : "（一个都还没注册）"}：`
     + `这些活现在不会有任何进展，界面上的"执行中"只是挂着。`
-    + `先到「AI 智能体」页确认节点状态与自检结果${total ? "，把降级的那台修好或重启" : "，按安装指引接入一台"}。</div>`;
+    + `${esc(agentNodeManagementPath({needSelfCheck: true}))}${total ? "，把降级的那台修好或重启" : "，按安装指引接入一台"}。</div>`;
 }
 
 // 人把方案「交回 AI 再分析」之后，卡片会停在 awaitingAiAnalysis 等着 agent 来回答。
@@ -3906,7 +4057,7 @@ function cellsWaitingWithNoAgentNotice(groups) {
   const total = Number(fleet.total || 0);
   return `<div class="notice warn-notice">这个项目有 ${esc(waiting)} 个单元已经交给执行方，`
     + `而当前【没有任何在线的 agent 节点】${total ? `（已注册 ${esc(total)} 个，此刻都不在线或已降级）` : "（一个都还没注册）"}：`
-    + `它们不会有任何进展，进度条也不会再动。先到「AI 智能体」页确认节点状态${total ? "，把降级的那台修好或重启" : "，按安装指引接入一台"}。</div>`;
+    + `它们不会有任何进展，进度条也不会再动。${esc(agentNodeManagementPath())}${total ? "，把降级的那台修好或重启" : "，按安装指引接入一台"}。</div>`;
 }
 
 // 在制品额度用满时的出口。这条与"没有在线 agent"那条是两回事，不能合并：
@@ -3936,9 +4087,8 @@ function wipCapacityNotice(groups) {
     // 额度按【在线且准入为 full】的节点数算（wipCapacityForProject）。只说"在线"会让人白等：
     // 刚注册的节点是 limited、自检有缺项的是 read_only，两者都在线、都不加额度、也领不到活。
     // 人接上一台看额度没动，会以为系统坏了或自己接错了。
-    + `想让它跑得更宽，就到「AI 智能体」页多接入几台节点：额度按【在线且已通过自检】的节点数上调 —— `
-    + `刚接上的节点处于"受限"、自检有缺项的处于"只读"，这两种都不加额度，`
-    + `在那一页看它的「准入」列，缺项也列在那里。</div>`;
+    + `想让它跑得更宽，${esc(agentNodeManagementPath({needMoreCapacity: true}))}；额度按【在线且已通过自检】的节点数上调，`
+    + `在该节点管理入口看它的「准入」列，缺项也列在那里。</div>`;
 }
 
 function aiAnalysisStalledNotice(requests) {
@@ -3949,7 +4099,7 @@ function aiAnalysisStalledNotice(requests) {
   const total = Number(fleet.total || 0);
   return `<div class="notice warn-notice">有 ${esc(waiting)} 张卡片在等 AI 再分析，`
     + `而当前【没有任何在线的 agent 节点】${total ? `（已注册 ${esc(total)} 个，此刻都不在线或已降级）` : "（一个都还没注册）"}：`
-    + `这个等待不会有结果。要么先到「AI 智能体」页把节点恢复，要么直接在这里定稿或打回 —— 不必等它回话。</div>`;
+    + `这个等待不会有结果。要么${esc(agentNodeManagementPath({waitForAi: true}))}，要么直接在这里定稿或打回 —— 不必等它回话。</div>`;
 }
 
 // 连续失败就不只是"参数里的一行小字"了：它意味着此刻没有任何东西在推进，
@@ -4749,8 +4899,8 @@ function renderMonitor() {
   // 项目空间已经和系统/组织空间拆开，跨空间指路不能再写成"去某某页"：
   // 人在当前左侧菜单里看不到那一项，会以为功能丢了。先点空间，再说面板名。
   const JOIN_TOKEN_ENTRY_BY_PERSPECTIVE = {
-    system: "先切到「系统管理」，打开账号与授权里的「智能体入网令牌」面板",
-    org: "先切到「组织管理」，打开 AI 智能体里的「加入令牌管理」面板"
+    system: "先切到「项目管理」，打开项目设置里的「智能体接入」面板",
+    org: "先切到「项目管理」，打开项目设置里的「智能体接入」面板；也可以在「组织管理」的 AI 智能体里统一管理节点"
   };
   const joinTokenWhere = JOIN_TOKEN_ENTRY_BY_PERSPECTIVE[perspectiveOf(currentAccount)];
   const nothingRanYetNotice = nothingRanYet
@@ -5048,6 +5198,7 @@ function renderProjectSettings() {
         <button class="primary-button" type="submit" ${editDisabled}>保存项目配置</button>
       </form>
     `, {wide: true}),
+    panel("智能体接入", renderJoinTokenSection({projectId: project.id, context: "project"}), {wide: true}),
     !rulesLoaded
       ? panel("规则配置", projConfigStatus === "failed"
         ? `<div class="notice warn-notice">暂时无法读取项目规则配置（配置接口这一次没取到：${esc(projConfigError || "原因未记下")}），已隐藏规则编辑器以避免误保存清空规则。请点击右上角刷新重试。</div>`
@@ -5895,7 +6046,7 @@ document.addEventListener("click", async (event) => {
       const agent = (state.agents || []).find((item) => item.id === target.dataset.agent);
       if (agent?.status === "active" && !(await confirmDialog({title: "停用智能体", message: "确认停用该智能体档案？",
         // 这里最容易被误解成"把跑着的 agent 停了"。档案与运行中的节点是两回事，必须说破。
-        sub: "停用的是这份档案：该角色的新工作会改落到其它启用中的档案。它不会让正在运行的智能体节点停下来 ——要让节点停，到组织的「AI 智能体」页用「关停节点」或「立即切断」（本页管的是档案，不是节点）。随时可以再启用。",
+        sub: "停用的是这份档案：该角色的新工作会改落到其它启用中的档案。它不会让正在运行的智能体节点停下来 ——要让节点停，切到「组织管理」后打开 AI 智能体，用「关停节点」或「立即切断」（本页管的是档案，不是节点）。随时可以再启用。",
         danger: true, confirmText: "停用"}))) return;
       await api(`/api/agents/${encodeURIComponent(target.dataset.agent)}/activate`, {method: "POST", body: JSON.stringify({active: agent?.status !== "active"})});
       await loadPage();
