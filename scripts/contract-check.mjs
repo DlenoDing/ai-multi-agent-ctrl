@@ -6601,7 +6601,7 @@ function verifyAgentGatewayContracts(output) {
 	      if (!eventLog.events.some((item) => item.eventId === durableEvent.eventId) || eventLog.storage.storageKind !== "project-jsonl") {
 	        output.push("Project-level execution event store did not isolate and return the dispatch event");
 	      }
-	      const eventByKey = readProjectExecutionEventByKey(eventRuntimeDir, event.projectId, event.eventKey);
+	      const eventByKey = readProjectExecutionEventByKey(eventRuntimeDir, event.projectId, event.eventKey, {dispatchId: event.dispatchId});
 	      if (!eventByKey || eventByKey.eventId !== durableEvent.eventId || eventByKey.sequence !== durableEvent.sequence) {
 	        output.push("Project-level execution event store did not return the durable event by eventKey");
 	      }
@@ -6618,11 +6618,20 @@ function verifyAgentGatewayContracts(output) {
             appendProjectExecutionEvent(eventRuntimeDir, {...event, eventId: "evt_missing_key", eventKey: ""});
             output.push("Project-level execution event store accepted a missing eventKey");
           } catch {}
+          try {
+            const {dispatchId, ...eventWithoutDispatch} = event;
+            appendProjectExecutionEvent(eventRuntimeDir, {...eventWithoutDispatch, eventId: "evt_missing_dispatch", eventKey: "missing-dispatch"});
+            output.push("Project-level execution event store accepted a missing dispatchId");
+          } catch (error) {
+            if (error.message !== "project_execution_event_dispatch_required") {
+              output.push(`Project-level execution event store rejected a missing dispatchId with the wrong error: ${error.message}`);
+            }
+          }
           for (let index = 0; index < 8; index += 1) {
             appendProjectExecutionEvent(eventRuntimeDir, {...event, eventId: `evt_segment_${index}`, eventKey: `segment-${index}`, summary: "x".repeat(1200), sequence: 1});
           }
           const segmentedRead = readProjectExecutionEvents(eventRuntimeDir, event.projectId, {afterSequence: 0, limit: 50});
-          const segmentEvent = readProjectExecutionEventByKey(eventRuntimeDir, event.projectId, "segment-7");
+          const segmentEvent = readProjectExecutionEventByKey(eventRuntimeDir, event.projectId, "segment-7", {dispatchId: event.dispatchId});
           if (!segmentEvent || !segmentedRead.events.some((item) => item.eventId === "evt_segment_7")) {
             output.push("Project-level execution event store did not read events across rotated project segments");
           }
@@ -10880,11 +10889,13 @@ async function verifyEventIndexRebuildKeepsItsPromises(output) {
         const probe = await import(pathToFileURL(copy).href);
         const probeDir = join(fsyncDir, "runtime");
         probe.appendProjectExecutionEvent(probeDir, {projectId: "prj_fsync_probe",
-          schemaVersion: "agent-execution-event/v1", eventKey: "fk1", eventType: "probe",
+          schemaVersion: "agent-execution-event/v1", dispatchId: "adp_fsync",
+          eventKey: "fk1", eventType: "probe",
           taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z"});
         probe.__fsynced.length = 0;
         probe.appendProjectExecutionEvent(probeDir, {projectId: "prj_fsync_probe",
-          schemaVersion: "agent-execution-event/v1", eventKey: "fk2", eventType: "probe",
+          schemaVersion: "agent-execution-event/v1", dispatchId: "adp_fsync",
+          eventKey: "fk2", eventType: "probe",
           taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z"});
         const fsynced = [...probe.__fsynced];
         const loggedSynced = fsynced.filter((path) => path.endsWith(".execution-events.jsonl"));
@@ -10922,7 +10933,8 @@ function verifySealedEventSegmentsAreNotSilentlyLost(output) {
   const projectId = "prj_segment_probe";
   try {
     for (let i = 1; i <= 20; i += 1) {
-      appendProjectExecutionEvent(dir, {projectId, eventKey: `sk${i}`, sequence: i, eventType: "probeAAAA",
+      appendProjectExecutionEvent(dir, {projectId, dispatchId: "adp_segment_probe",
+        eventKey: `sk${i}`, sequence: i, eventType: "probeAAAA",
         createdAt: "2026-01-01T00:00:00.000Z", payload: {filler: "x".repeat(80)}});
     }
     const pdb = join(dir, "project-db");
@@ -10992,7 +11004,8 @@ function verifyCorruptEventLinesAreReported(output) {
     const projectId = "prj_corrupt_probe";
     for (let index = 1; index <= 3; index += 1) {
       appendProjectExecutionEvent(dir,
-        {projectId, eventKey: `k${index}`, sequence: index, eventType: "probe",
+        {projectId, dispatchId: "adp_corrupt_probe",
+          eventKey: `k${index}`, sequence: index, eventType: "probe",
           createdAt: "2026-01-01T00:00:00.000Z"});
     }
     // 直接找日志文件：storageInfo 只收一个参数，多传一个会被 JS 静默丢掉（门刚拦下我这一手）。
@@ -11007,7 +11020,8 @@ function verifyCorruptEventLinesAreReported(output) {
     // 索引重建由【文件快照变化】触发，而它只在追加时被调用 —— 所以要真的再写一条事件。
     // 第一版只做了读，重建那条路根本没走到，判据报的红其实是"我的用例没打到被测面"。
     appendProjectExecutionEvent(dir,
-      {projectId, eventKey: "k5", sequence: 5, eventType: "probe", createdAt: "2026-01-01T00:00:00.000Z"});
+      {projectId, dispatchId: "adp_corrupt_probe",
+        eventKey: "k5", sequence: 5, eventType: "probe", createdAt: "2026-01-01T00:00:00.000Z"});
     const fault = projectEventLogFault();
     if (!fault) {
       output.push("事件日志里有解析不了的行，重建索引时静默跳过了 —— "
@@ -11022,12 +11036,13 @@ function verifyCorruptEventLinesAreReported(output) {
     {
       const probeDir = mkdtempSync(join(tmpdir(), "aimac-eventkey-"));
       try {
-        appendProjectExecutionEvent(probeDir, {projectId, eventKey: "kk1", sequence: 1,
+        appendProjectExecutionEvent(probeDir, {projectId, dispatchId: "adp_corrupt_lookup",
+          eventKey: "kk1", sequence: 1,
           eventType: "probe", createdAt: "2026-01-01T00:00:00.000Z"});
         const probePath = readdirSync(probeDir, {recursive: true}).map(String)
           .filter((name) => name.endsWith("execution-events.jsonl")).map((name) => join(probeDir, name))[0];
         writeFileSync(probePath, `${readFileSync(probePath, "utf8")}{"eventKey":"kk2","seq\n`);
-        readProjectExecutionEventByKey(probeDir, projectId, "kk-never", {allowFullScan: true});
+        readProjectExecutionEventByKey(probeDir, projectId, "kk-never", {dispatchId: "adp_corrupt_lookup", allowFullScan: true});
         const after = projectEventLogFault();
         if (!/按幂等键查找时跳过/u.test(after)) {
           output.push("按幂等键查找时读到解析不了的行，一声不吭 —— 已经写过的事件会被判成没做过，"
@@ -11042,7 +11057,34 @@ function verifyCorruptEventLinesAreReported(output) {
         rmSync(probeDir, {recursive: true, force: true});
       }
     }
-    console.log(`事件日志损坏：重建索引与按幂等键查找【两条路径】各造了一行撕裂写，都报出来了`);
+    // 第三条路：scoped KV 文件本身损坏。读路径要回落，但也要出声，否则会退化成慢路径还没人知道。
+    {
+      const probeDir = mkdtempSync(join(tmpdir(), "aimac-eventkey-kv-"));
+      try {
+        appendProjectExecutionEvent(probeDir, {projectId, dispatchId: "adp_corrupt_kv",
+          eventKey: "kv1", sequence: 1,
+          eventType: "probe", createdAt: "2026-01-01T00:00:00.000Z"});
+        const keyPath = readdirSync(join(probeDir, "project-db", "event-keys"), {recursive: true}).map(String)
+          .filter((name) => name.endsWith(".json")).map((name) => join(probeDir, "project-db", "event-keys", name))[0];
+        if (!keyPath) {
+          output.push("事件幂等键索引损坏判据没造出索引文件");
+        } else {
+          writeFileSync(keyPath, "{bad");
+          const found = readProjectExecutionEventByKey(probeDir, projectId, "kv1",
+            {dispatchId: "adp_corrupt_kv", allowFullScan: true});
+          const after = projectEventLogFault();
+          if (found?.eventKey !== "kv1") {
+            output.push("事件幂等键索引损坏后没有回落到事件日志慢路径");
+          }
+          if (!/事件幂等键索引/u.test(after) || !/慢路径/u.test(after)) {
+            output.push(`事件幂等键索引损坏没有留下可见故障：${String(after).slice(0, 120)}`);
+          }
+        }
+      } finally {
+        rmSync(probeDir, {recursive: true, force: true});
+      }
+    }
+    console.log(`事件日志损坏：重建索引、按幂等键查找与坏 KV 回落【三条路径】都报出来了`);
   } finally {
     try { rmSync(dir, {recursive: true, force: true}); } catch { /* best effort */ }
   }

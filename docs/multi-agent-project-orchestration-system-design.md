@@ -840,7 +840,7 @@ sh install-agent.sh \
 
 每个 dispatch 执行过程中必须持续向 `/api/agent/v1/events` 回送带 `eventKey` 的幂等 `AgentExecutionEvent`，至少覆盖 dispatch 接收、Skill 同步、模型启动、模型输出摘要、仓库变更、commit、push、checkpoint 准备、checkpoint 提交、阻断和跑偏信号。监测角色和总控读取 `/api/agent-dispatches/:dispatchId/events`、`/api/work-sessions/:sessionId/execution-events` 或 `/api/task-groups/:taskGroupId/execution-events`，实时发现偏离并下发纠偏命令。
 
-项目运行数据按项目隔离存放到系统服务器：任务组、session、dispatch、contract、checkpoint、仓库输出目标、控制命令和近期事件投影进入 `.runtime/project-db/p_<projectId_sha256>.<generation>.state.json` 或 PostgreSQL `aimac_project_state_shards` 项目行；中心索引用 generation、payload digest 和 size 指向当前有效 shard。完整执行事件追加到 `.runtime/project-db/p_<projectId_sha256>.execution-events.jsonl` 当前段，超过阈值后轮转为 `.runtime/project-db/p_<projectId_sha256>.execution-events.<firstSeq>-<lastSeq>.<sealedAt>.jsonl`，并使用 manifest、eventKey KV 索引与 tail-window 读取。中央 state 只保存系统级数据、项目 shard 索引、非项目对象和近期摘要，避免项目数量、任务数量或模型输出规模增长后撑爆单个全局状态文件或单个项目事件文件。
+项目运行数据按项目隔离存放到系统服务器：任务组、session、dispatch、contract、checkpoint、仓库输出目标、控制命令和近期事件投影进入 `.runtime/project-db/p_<projectId_sha256>.<generation>.state.json` 或 PostgreSQL `aimac_project_state_shards` 项目行；中心索引用 generation、payload digest 和 size 指向当前有效 shard。完整执行事件追加到 `.runtime/project-db/p_<projectId_sha256>.execution-events.jsonl` 当前段，超过阈值后轮转为 `.runtime/project-db/p_<projectId_sha256>.execution-events.<firstSeq>-<lastSeq>.<sealedAt>.jsonl`，并使用 manifest、按 `dispatchId + eventKey` 作用域的 KV 索引与 tail-window 读取；旧 eventKey-only 索引首次触碰项目时会在项目事件锁内重建为 v5。中央 state 只保存系统级数据、项目 shard 索引、非项目对象和近期摘要，避免项目数量、任务数量或模型输出规模增长后撑爆单个全局状态文件或单个项目事件文件。
 
 ### 10.8 任务组统一语言策略
 

@@ -6262,6 +6262,14 @@ const MUTATIONS = [
     expect: "没有被冻结"
   },
   {
+    name: "执行事件必须绑定派发 id",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    check: "verifyAgentGatewayContracts",
+    from: '    if (!dispatchId) throw new Error("project_execution_event_dispatch_required");',
+    to: '    if (false) throw new Error("project_execution_event_dispatch_required");',
+    expect: "accepted a missing dispatchId"
+  },
+  {
     // 落盘策略按写入种类分：日志必须按次 fsync（唯一的事实来源）。
     // 这条变异在它前面插一句 return —— 源码里那行 fsyncSync 还在，所以"搜源码"型的判据骗得过，
     // 真数一遍就骗不过（判据把模块复制一份、把 fsyncSync 换成记账壳来数）。

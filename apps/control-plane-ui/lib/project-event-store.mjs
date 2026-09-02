@@ -9,12 +9,14 @@ export function appendProjectExecutionEvent(runtimeDir, event) {
   return withProjectEventLock(runtimeDir, event.projectId, () => {
     const eventKey = String(event.eventKey || "");
     if (!eventKey) throw new Error("project_execution_event_key_required");
+    const dispatchId = String(event.dispatchId || "").trim();
+    if (!dispatchId) throw new Error("project_execution_event_dispatch_required");
     rotateProjectExecutionEventIfNeeded(runtimeDir, event.projectId);
     const path = projectExecutionEventPath(runtimeDir, event.projectId, {forWrite: true});
     mkdirSync(dirname(path), {recursive: true});
     const index = ensureProjectExecutionEventIndex(runtimeDir, event.projectId);
     const existingEvent = readProjectExecutionEventByKey(runtimeDir, event.projectId, eventKey,
-      {indexOnly: true, dispatchId: event.dispatchId}) || indexedEventByKey(index, eventKey, {dispatchId: event.dispatchId});
+      {indexOnly: true, dispatchId}) || indexedEventByKey(index, eventKey, {dispatchId});
     if (existingEvent) {
       return {
         storageKind: "project-jsonl",
@@ -26,6 +28,7 @@ export function appendProjectExecutionEvent(runtimeDir, event) {
     }
     const storedEvent = {
       ...event,
+      dispatchId,
       sequence: Number(index.lastSequence || 0) + 1
     };
     appendDurableLine(path, `${JSON.stringify(storedEvent)}\n`);
@@ -101,7 +104,7 @@ export function readProjectExecutionEventByKey(runtimeDir, projectId, eventKey, 
 
 // 按【成因】各记一条。原先是一个字符串加 `||` 保护：第一条路径先报了，
 // 后面两条就永远说不出话 —— 而它们说的是不同的后果（序号被重用 / 段范围不准 / 幂等失效）。
-// 成因是固定的六种，不会随文件数涨（同一成因只留先撞上的那一条，具体是哪一段写在正文里）。
+// 成因是固定集合，不会随文件数涨（同一成因只留先撞上的那一条，具体是哪一段写在正文里）。
 const eventLogFaults = new Map();
 
 function noteEventLogFault(cause, text) {
@@ -367,7 +370,7 @@ function readProjectExecutionEventIndex(runtimeDir, projectId) {
     try {
       return JSON.parse(readFileSync(path, "utf8"));
     } catch {
-      return null;
+      continue;
     }
   }
   return null;
@@ -408,7 +411,10 @@ function readProjectExecutionEventKey(runtimeDir, projectId, eventKey, options =
       const event = storedExecutionEvent(record.event);
       if (event && event.eventKey === key && (!options.dispatchId || event.dispatchId === options.dispatchId)) return event;
     } catch {
-      return null;
+      noteEventLogFault("key-file-lookup",
+        `${path.split("/").pop()} 不是合法事件幂等键索引，按幂等键查找时已回落到其它索引或事件日志`
+          + " —— 已经写过的事件可能要走慢路径才能查到，请核对该文件");
+      continue;
     }
   }
   return null;
