@@ -133,6 +133,18 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 
 常规 Agent Runtime 必须具备选中模型 provider 的凭证。Runtime 会优先调用已探测到的 Codex、Claude 或 Gemini CLI，也可在安装时用 `--executor-command` 绑定其他模型/Agent 适配器；executor 接收 task contract、有效指令包、远程 MCP 和 Skill 工作集路径。`AIMAC_EXECUTION_PROFILE=verification` 才能使用服务器内的确定性验证 worker；生产 profile 永远由远程注册节点执行，缺少模型适配器或凭证时只能上报失败，不能在服务器伪造完成。
 
+## 模型选择与精确钉模型
+
+默认是**按能力自动选型**：控制面对模型能力注册表按角色技能、任务性质（深度分析/实现/验证等）、模型天花板打分，选出合格的最高分模型，并留一条 `ModelSelectionDecision` 审计。系统内置约 19 个 provider 的默认模型（OpenAI、Anthropic、Google、xAI、Meta、Mistral、DeepSeek、通义千问、月之暗面、智谱、百度文心、腾讯混元、OpenRouter、Azure OpenAI、AWS Bedrock、Google Vertex AI、Ollama、vLLM、自定义），可在管理界面「系统设置 → 模型能力注册」查看，或读 `/api/model-registry`；也可通过模型注册端点新增/覆盖模型（含 `custom` 类接入自有模型）。
+
+需要**精确指定某个模型**时用 `pinnedModelId`（取值可以是注册表里的 modelId、providerId 或别名，如 `anthropic:claude-sonnet-4-5`），三条入口：
+
+- **界面**：任务组页「创建工作项」表单的「指定模型（可选）」下拉。默认「自动」；选定后写在工作项上，回显在工作项卡的「指定模型」一行。
+- **MCP**：给 `model_select` 传 `pinnedModelId` 立即钉住本次选型；给 `work_item_create` 传 `pinnedModelId` 把模型钉在工作项上，该工作项**每次派发都只用这个模型**。
+- **REST**：建工作项与选型决定的请求体都接受 `pinnedModelId`。
+
+语义要点：钉模型只把候选收窄到那一个，**被钉的模型仍要满足其余硬性约束与任务天花板**——钉一个不满足的模型不会绕过治理，而是判定无候选、把工作项挂成阻塞交人工处置，绝不会静默换成别的模型。取值优先级为「本次调用显式传的 > 请求硬约束里带的 > 工作项上钉的」。填的模型不在注册表里会当场拒绝（`pinned_model_not_registered`），不会被当作没填。
+
 ## 生产高并发边界
 
 当前代码路径按“简单可运行的单控制面进程 + PostgreSQL 权威状态 + 项目事件分片”实现。它适合单实例生产、小集群前验证和中等并发任务编排；高并发高流量部署必须使用 PostgreSQL，前置 HTTPS 反向代理，并明确收窄系统、项目、Agent node 与 MCP service token 的 scope。
