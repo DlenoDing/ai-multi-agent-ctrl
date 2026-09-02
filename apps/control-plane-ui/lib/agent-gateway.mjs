@@ -88,7 +88,7 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
   // 界面那份清单也一并收窄（只藏选项不锁门＝改个请求就绕过去了）。
   if (tokenProject.status === "archived") {
     throw gatewayError("project_archived", 409, {projectId,
-      hint: "该项目已归档，不能再往里接入 agent。要继续这条线，请先恢复该项目或另建一个项目"});
+      hint: "该项目已归档（终态，不可撤销），不能再往里接入 agent。要继续这条线，请另建一个项目"});
   }
   const tokenOrgId = tokenProject.organizationId || "org_default";
   const quota = organizationQuotaCheck(state, tokenOrgId, "agents");

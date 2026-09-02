@@ -2712,7 +2712,9 @@ function retryExecutionEventProjection(req, body) {
     try {
       const dispatch = (latest.agentDispatches || []).find((item) => item.dispatchId === body.dispatchId);
       if (!dispatch) return {ok: false, error: "dispatch_not_found"};
-      const storedEvent = body.eventKey ? readProjectExecutionEventByKey(runtimeDir, dispatch.projectId, body.eventKey) : null;
+      const storedEvent = body.eventKey
+        ? readProjectExecutionEventByKey(runtimeDir, dispatch.projectId, body.eventKey, {dispatchId: dispatch.dispatchId})
+        : null;
       if (storedEvent && storedEvent.nodeId !== latestNode.nodeId) return {ok: false, error: "event_node_binding_mismatch"};
       const prepared = storedEvent ? null : prepareAgentExecutionEvent(latest, latestNode, body);
       const storage = storedEvent
@@ -3220,7 +3222,9 @@ async function handleApi(req, res) {
       prepared = prepareAgentExecutionEvent(state, node, body);
     } catch (error) {
       const historicalDispatch = (state.agentDispatches || []).find((item) => item.dispatchId === body.dispatchId);
-      const historicalEvent = historicalDispatch && body.eventKey ? readProjectExecutionEventByKey(runtimeDir, historicalDispatch.projectId, body.eventKey) : null;
+      const historicalEvent = historicalDispatch && body.eventKey
+        ? readProjectExecutionEventByKey(runtimeDir, historicalDispatch.projectId, body.eventKey, {dispatchId: historicalDispatch.dispatchId})
+        : null;
       if (!historicalEvent || historicalEvent.nodeId !== node.nodeId) throw error;
       prepared = {event: historicalEvent, duplicate: true, historical: true};
     }

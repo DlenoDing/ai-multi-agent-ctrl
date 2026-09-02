@@ -112,7 +112,7 @@
     shared_definition_type_not_recognized: "认不出这个共享定义类型：请从规范登记的类型里选一个（回执的 supported 里列着）",
     shared_definition_conflict_policy_not_recognized: "认不出这个冲突处置策略：请从回执 supported 列出的取值里选",
     room_task_group_settled: "该任务组已终结，它的协作房间不再接收消息",
-    project_archived: "该项目已归档，不能再往里新建任务组。要继续这条线，请先恢复该项目，或另建一个项目",
+    project_archived: "该项目已归档（终态，不可撤销），不能再新增任务组、接入智能体或修改配置。要继续这条线，请另建一个项目",
     task_group_settled: "该任务组已终结，不能再往里面新增内容（发现项/许可申请/审批/确认单/执行方案/规则来源）。要继续这条线，请另开一个任务组",
     room_message_payload_too_large: "协作消息过大，已拒绝：请改为提交产出物并在消息里引用它",
     permission_request_status_invalid: "无法识别的处置结果：授权请求只能被批准或拒绝",

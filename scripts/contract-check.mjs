@@ -10719,21 +10719,31 @@ async function verifyEventIndexRebuildKeepsItsPromises(output) {
   const eventCount = 110;
   const dir = mkdtempSync(join(tmpdir(), "aimac-event-rebuild-"));
   const projectId = "prj_rebuild_probe";
+  const dispatchA = "ad_rebuild_a";
+  const dispatchB = "ad_rebuild_b";
+  const retainedProbeKey = `rk${eventCount - 4}`;
   try {
     for (let i = 1; i <= eventCount; i += 1) {
       // schemaVersion 不能省：KV 与索引两处查找都只认 agent-execution-event/v1 的记录
       // （真实生产者 agent-gateway 每条都打）。不打的话下面「重建之后还认不认得出重复」那条
       // 恒为红，而红的其实是夹具 —— 所以紧接着先验一次基线。
       appendProjectExecutionEvent(dir, {projectId, schemaVersion: "agent-execution-event/v1",
-        eventKey: `rk${i}`, sequence: i, eventType: "probe",
+        dispatchId: dispatchA, eventKey: `rk${i}`, sequence: i, eventType: "probe",
         taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z", payload: {filler: "x".repeat(120)}});
     }
     // 基线：重建【之前】就要认得出重复。这一条红了说明夹具没造出想测的情形，不是产品的问题。
     const baselineDuplicate = appendProjectExecutionEvent(dir, {projectId,
-      schemaVersion: "agent-execution-event/v1", eventKey: "rk5", eventType: "probe",
+      schemaVersion: "agent-execution-event/v1", dispatchId: dispatchA, eventKey: retainedProbeKey, eventType: "probe",
       taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z"});
     if (!baselineDuplicate.duplicate) {
-      output.push("索引重建判据没造出想测的情形：重建之前就认不出重复（夹具的事件多半缺 schemaVersion）");
+      output.push("索引重建判据没造出想测的情形：重建之前就认不出重复（夹具的事件多半缺 schemaVersion 或落出保留窗口）");
+      return;
+    }
+    const crossDispatchSameKey = appendProjectExecutionEvent(dir, {projectId,
+      schemaVersion: "agent-execution-event/v1", dispatchId: dispatchB, eventKey: retainedProbeKey, eventType: "probe",
+      taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z"});
+    if (crossDispatchSameKey.duplicate) {
+      output.push("执行事件持久层仍按全局 eventKey 去重 —— 不同派发的同名 key 被误当成重复，实时证据会互相压制");
       return;
     }
     const pdb = join(dir, "project-db");
@@ -10762,14 +10772,14 @@ async function verifyEventIndexRebuildKeepsItsPromises(output) {
     // 逼出一次重建：索引文件没了，文件快照自然对不上。
     rmSync(join(pdb, readdirSync(pdb).find((name) => name.endsWith("execution-events.index.json"))), {force: true});
     const appended = appendProjectExecutionEvent(dir, {projectId,
-      schemaVersion: "agent-execution-event/v1", eventKey: "rk_after_rebuild",
+      schemaVersion: "agent-execution-event/v1", dispatchId: dispatchA, eventKey: "rk_after_rebuild",
       eventType: "probe", taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z"});
-    if (Number(appended.event?.sequence) !== eventCount + 1) {
-      output.push(`重建之后接着追加，序号是 ${appended.event?.sequence}（应为 ${eventCount + 1}）—— `
+    if (Number(appended.event?.sequence) !== eventCount + 2) {
+      output.push(`重建之后接着追加，序号是 ${appended.event?.sequence}（应为 ${eventCount + 2}）—— `
         + "序号被重用意味着两条不同的事件顶着同一个号，事后没法说清哪件事先发生");
     }
     const duplicate = appendProjectExecutionEvent(dir, {projectId,
-      schemaVersion: "agent-execution-event/v1", eventKey: "rk5",
+      schemaVersion: "agent-execution-event/v1", dispatchId: dispatchA, eventKey: retainedProbeKey,
       eventType: "probe", taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z"});
     if (!duplicate.duplicate) {
       output.push("重建之后，重建之前写过的事件键没被认出是重复 —— 幂等失效，重放会被当成新事件"
@@ -10796,15 +10806,15 @@ async function verifyEventIndexRebuildKeepsItsPromises(output) {
       writeFileSync(indexPath, '{"schemaVersion":"project-execution-event-index/v4","eventsB');
       writeFileSync(survivingKeyFile, "{\"eventKey\":\"rk");
       const afterTorn = appendProjectExecutionEvent(dir, {projectId,
-        schemaVersion: "agent-execution-event/v1", eventKey: "rk_after_torn",
+        schemaVersion: "agent-execution-event/v1", dispatchId: dispatchA, eventKey: "rk_after_torn",
         eventType: "probe", taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z"});
-      if (Number(afterTorn.event?.sequence) !== eventCount + 2) {
+      if (Number(afterTorn.event?.sequence) !== eventCount + 3) {
         output.push(`索引被写坏（断电后的半截文件）之后接着追加，序号是 ${afterTorn.event?.sequence}`
-          + `（应为 ${eventCount + 2}）—— 派生文件不按次 fsync 的前提就是"坏了能从日志重算"，`
+          + `（应为 ${eventCount + 3}）—— 派生文件不按次 fsync 的前提就是"坏了能从日志重算"，`
           + "这里算不回来就说明那个前提不成立");
       }
       const stillDeduped = appendProjectExecutionEvent(dir, {projectId,
-        schemaVersion: "agent-execution-event/v1", eventKey: `rk${eventCount - 3}`,
+        schemaVersion: "agent-execution-event/v1", dispatchId: dispatchA, eventKey: `rk${eventCount - 3}`,
         eventType: "probe", taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z"});
       if (!stillDeduped.duplicate) {
         output.push("键文件被写坏之后，这个键就认不出重复了 —— 半截的 KV 文件必须退回索引与日志去查，"

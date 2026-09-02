@@ -13,7 +13,8 @@ export function appendProjectExecutionEvent(runtimeDir, event) {
     const path = projectExecutionEventPath(runtimeDir, event.projectId, {forWrite: true});
     mkdirSync(dirname(path), {recursive: true});
     const index = ensureProjectExecutionEventIndex(runtimeDir, event.projectId);
-    const existingEvent = readProjectExecutionEventByKey(runtimeDir, event.projectId, eventKey, {indexOnly: true}) || indexedEventByKey(index, eventKey);
+    const existingEvent = readProjectExecutionEventByKey(runtimeDir, event.projectId, eventKey,
+      {indexOnly: true, dispatchId: event.dispatchId}) || indexedEventByKey(index, eventKey, {dispatchId: event.dispatchId});
     if (existingEvent) {
       return {
         storageKind: "project-jsonl",
@@ -79,20 +80,20 @@ export function readProjectExecutionEvents(runtimeDir, projectId, filters = {}) 
 export function readProjectExecutionEventByKey(runtimeDir, projectId, eventKey, options = {}) {
   const key = String(eventKey || "");
   if (!key) return null;
-  const keyIndexed = readProjectExecutionEventKey(runtimeDir, projectId, key);
+  const keyIndexed = readProjectExecutionEventKey(runtimeDir, projectId, key, {dispatchId: options.dispatchId});
   if (keyIndexed) return keyIndexed;
-  const indexed = indexedEventByKey(readProjectExecutionEventIndex(runtimeDir, projectId), key);
+  const indexed = indexedEventByKey(readProjectExecutionEventIndex(runtimeDir, projectId), key, {dispatchId: options.dispatchId});
   if (indexed) return indexed;
   if (options.indexOnly) return null;
   const paths = projectExecutionEventReadPaths(runtimeDir, projectId);
   if (!paths.length) return null;
   for (const path of paths) {
-    const tailMatch = findEventByKey(readEventSource(path, {afterSequence: Number.MAX_SAFE_INTEGER}), key);
+    const tailMatch = findEventByKey(readEventSource(path, {afterSequence: Number.MAX_SAFE_INTEGER}), key, {dispatchId: options.dispatchId});
     if (tailMatch) return tailMatch;
   }
   if (process.env.AIMAC_PROJECT_EVENT_ALLOW_FULL_KEY_SCAN !== "true" && !options.allowFullScan) return null;
   for (const path of paths) {
-    const match = findEventByKey(readFileSync(path, "utf8"), key);
+    const match = findEventByKey(readFileSync(path, "utf8"), key, {dispatchId: options.dispatchId});
     if (match) return match;
   }
   return null;
@@ -115,12 +116,12 @@ export function projectEventLogFault() {
 // 第三条读路径。上一轮补了索引重建与段序号扫描两处，漏了这一处 —— 而它恰恰是【幂等查找】：
 // 坏行被静默跳过时，一条其实已经写过的事件会被判成"没见过"，调用方于是再执行一遍。
 // 幂等这件事本身就是"出问题时才起作用"，它失效时更不能一声不吭。
-function findEventByKey(source, eventKey) {
+function findEventByKey(source, eventKey, options = {}) {
   let corrupt = 0;
   for (const line of source.split(/\r?\n/u).filter(Boolean).reverse()) {
     try {
       const event = JSON.parse(line);
-      if (event.eventKey === eventKey) return event;
+      if (event.eventKey === eventKey && (!options.dispatchId || event.dispatchId === options.dispatchId)) return event;
     } catch {
       corrupt += 1;
     }
@@ -157,8 +158,12 @@ function projectExecutionEventManifestPath(runtimeDir, projectId, options = {}) 
   return projectEventPath(runtimeDir, projectId, "execution-events.manifest.json", options);
 }
 
-function projectExecutionEventKeyPath(runtimeDir, projectId, eventKey) {
-  const digest = createHash("sha256").update(String(eventKey)).digest("hex");
+function executionEventDedupKey(eventKey, dispatchId = "") {
+  return createHash("sha256").update(JSON.stringify([String(dispatchId || ""), String(eventKey || "")])).digest("hex");
+}
+
+function projectExecutionEventKeyPath(runtimeDir, projectId, eventKey, options = {}) {
+  const digest = executionEventDedupKey(eventKey, options.dispatchId);
   return join(runtimeDir, "project-db", "event-keys", safeProjectId(projectId), `${digest}.json`);
 }
 
@@ -258,11 +263,15 @@ function firstSequenceInSource(source) {
 function updateProjectExecutionEventIndex(runtimeDir, event, existingIndex = null) {
   const path = projectExecutionEventIndexPath(runtimeDir, event.projectId, {forWrite: true});
   let index = existingIndex || readProjectExecutionEventIndex(runtimeDir, event.projectId) || {};
-  index = {schemaVersion: "project-execution-event-index/v4", projectId: event.projectId, fileId: safeProjectId(event.projectId), recentEventKeys: [], eventsByKey: {}, keyIndex: "project-event-key-kv", segments: [], ...index};
+  index = {schemaVersion: "project-execution-event-index/v5", projectId: event.projectId, fileId: safeProjectId(event.projectId), recentEventKeys: [], eventsByKey: {}, keyIndex: "project-event-key-kv", keyScope: "dispatchId+eventKey", segments: [], ...index};
   const keyWindow = clampEnvNumber(process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS, 100, 500);
   index.lastSequence = Math.max(Number(index.lastSequence || 0), Number(event.sequence || 0));
-  const entries = Object.entries(index.eventsByKey || {}).filter(([key]) => key && key !== event.eventKey);
-  if (event.eventKey) entries.unshift([event.eventKey, event]);
+  const scopedKey = event.eventKey ? executionEventDedupKey(event.eventKey, event.dispatchId) : "";
+  const entries = Object.entries(index.eventsByKey || {}).filter(([key, stored]) => {
+    const storedEvent = storedExecutionEvent(stored);
+    return key && key !== scopedKey && !(storedEvent?.eventKey === event.eventKey && storedEvent?.dispatchId === event.dispatchId);
+  });
+  if (event.eventKey) entries.unshift([scopedKey, event]);
   index.eventsByKey = Object.fromEntries(entries.slice(0, keyWindow));
   index.recentEventKeys = Object.keys(index.eventsByKey).slice(0, keyWindow);
   index.segments = readProjectExecutionEventManifest(runtimeDir, event.projectId).segments || [];
@@ -276,14 +285,15 @@ function ensureProjectExecutionEventIndex(runtimeDir, projectId) {
   const currentPaths = projectExecutionEventReadPaths(runtimeDir, projectId);
   const currentSnapshot = snapshotProjectEventFiles(currentPaths);
   const index = readProjectExecutionEventIndex(runtimeDir, projectId);
-  if (index?.schemaVersion === "project-execution-event-index/v4" && snapshotsEqual(index.fileSnapshot || [], currentSnapshot)) return index;
+  if (index?.schemaVersion === "project-execution-event-index/v5" && index.keyScope === "dispatchId+eventKey" && snapshotsEqual(index.fileSnapshot || [], currentSnapshot)) return index;
   const rebuilt = {
-    schemaVersion: "project-execution-event-index/v4",
+    schemaVersion: "project-execution-event-index/v5",
     projectId,
     fileId: safeProjectId(projectId),
     recentEventKeys: [],
     eventsByKey: {},
     keyIndex: "project-event-key-kv",
+    keyScope: "dispatchId+eventKey",
     segments: readProjectExecutionEventManifest(runtimeDir, projectId).segments || [],
     lastSequence: 0,
     fileSnapshot: currentSnapshot,
@@ -321,7 +331,7 @@ function ensureProjectExecutionEventIndex(runtimeDir, projectId) {
         rebuilt.lastSequence = Math.max(Number(rebuilt.lastSequence || 0), Number(event.sequence || 0));
         if (event.eventKey) {
           // 键的落盘推迟到扫完再做：这里还不知道它落不落在淘汰窗口里。
-          keyEntries.push([event.eventKey, event, path]);
+          keyEntries.push([executionEventDedupKey(event.eventKey, event.dispatchId), event, path]);
         }
       } catch {
         // 索引重建时跳过一行坏数据，后果具体且都看不见：
@@ -335,7 +345,7 @@ function ensureProjectExecutionEventIndex(runtimeDir, projectId) {
     }
   }
   for (const [, event, path] of keyEntries.slice(0, keyFileCap)) {
-    if (existsSync(projectExecutionEventKeyPath(runtimeDir, event.projectId, event.eventKey))) continue;
+    if (existsSync(projectExecutionEventKeyPath(runtimeDir, event.projectId, event.eventKey, {dispatchId: event.dispatchId}))) continue;
     writeProjectExecutionEventKey(runtimeDir, event, path);
   }
   rebuilt.eventsByKey = Object.fromEntries(keyEntries.slice(0, keyWindow).map(([key, event]) => [key, event]));
@@ -367,38 +377,69 @@ function legacyProjectExecutionEventIndexPath(runtimeDir, projectId) {
   return join(runtimeDir, "project-db", `${legacySafeProjectId(projectId)}.execution-events.index.json`);
 }
 
-function indexedEventByKey(index, eventKey) {
+function indexedEventByKey(index, eventKey, options = {}) {
   const key = String(eventKey || "");
   if (!index || !key) return null;
-  const stored = index.eventsByKey?.[key];
-  if (stored?.schemaVersion === "agent-execution-event/v1") return stored;
-  if (stored?.event?.schemaVersion === "agent-execution-event/v1") return stored.event;
+  const scopedKey = options.dispatchId ? executionEventDedupKey(key, options.dispatchId) : "";
+  const stored = scopedKey ? index.eventsByKey?.[scopedKey] : null;
+  const storedEvent = storedExecutionEvent(stored);
+  if (storedEvent && storedEvent.eventKey === key
+    && (!options.dispatchId || storedEvent.dispatchId === options.dispatchId)) return storedEvent;
+  for (const candidate of Object.values(index.eventsByKey || {})) {
+    const event = storedExecutionEvent(candidate);
+    if (event && event.eventKey === key
+      && (!options.dispatchId || event.dispatchId === options.dispatchId)) return event;
+  }
   return null;
 }
 
-function readProjectExecutionEventKey(runtimeDir, projectId, eventKey) {
-  const path = projectExecutionEventKeyPath(runtimeDir, projectId, eventKey);
-  if (!existsSync(path)) return null;
-  try {
-    const record = JSON.parse(readFileSync(path, "utf8"));
-    return record.event?.schemaVersion === "agent-execution-event/v1" ? record.event : null;
-  } catch {
-    return null;
+function readProjectExecutionEventKey(runtimeDir, projectId, eventKey, options = {}) {
+  const key = String(eventKey || "");
+  const paths = options.dispatchId
+    ? [
+      projectExecutionEventKeyPath(runtimeDir, projectId, key, {dispatchId: options.dispatchId}),
+      legacyProjectExecutionEventKeyPath(runtimeDir, projectId, key)
+    ]
+    : [legacyProjectExecutionEventKeyPath(runtimeDir, projectId, key)];
+  for (const path of paths) {
+    if (!existsSync(path)) continue;
+    try {
+      const record = JSON.parse(readFileSync(path, "utf8"));
+      const event = storedExecutionEvent(record.event);
+      if (event && event.eventKey === key && (!options.dispatchId || event.dispatchId === options.dispatchId)) return event;
+    } catch {
+      return null;
+    }
   }
+  return null;
+}
+
+function storedExecutionEvent(value) {
+  if (!value || typeof value !== "object") return null;
+  const event = value.event && typeof value.event === "object" ? value.event : value;
+  if (event.schemaVersion === "agent-execution-event/v1") return event;
+  return event.eventKey && event.dispatchId ? event : null;
 }
 
 function writeProjectExecutionEventKey(runtimeDir, event, path) {
   if (!event.eventKey) return;
-  appendSafeJson(projectExecutionEventKeyPath(runtimeDir, event.projectId, event.eventKey), {
+  appendSafeJson(projectExecutionEventKeyPath(runtimeDir, event.projectId, event.eventKey, {dispatchId: event.dispatchId}), {
     schemaVersion: "project-execution-event-key/v1",
     projectId: event.projectId,
+    dispatchId: event.dispatchId,
     eventKey: event.eventKey,
+    keyScope: "dispatchId+eventKey",
     eventId: event.eventId,
     sequence: event.sequence,
     file: path.split("/").pop(),
     event,
     updatedAt: new Date().toISOString()
   }, {durable: false});   // 派生数据：崩了退到索引与日志扫描
+}
+
+function legacyProjectExecutionEventKeyPath(runtimeDir, projectId, eventKey) {
+  const digest = createHash("sha256").update(String(eventKey)).digest("hex");
+  return join(runtimeDir, "project-db", "event-keys", safeProjectId(projectId), `${digest}.json`);
 }
 
 function projectExecutionEventKeyDir(runtimeDir, projectId) {
@@ -683,4 +724,3 @@ function withProjectEventLock(runtimeDir, projectId, fn) {
   return withDirectoryLock(lockPath, {timeoutCode: `project_event_lock_timeout:${projectId}`,
     timeoutMs: clampEnvNumber(process.env.AIMAC_PROJECT_EVENT_LOCK_TIMEOUT_MS, 0, 10000)}, fn);
 }
-

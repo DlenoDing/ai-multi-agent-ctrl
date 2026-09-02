@@ -6302,7 +6302,7 @@ const MUTATIONS = [
     name: "重建不得重写已经存在的键文件",
     file: "apps/control-plane-ui/lib/project-event-store.mjs",
     check: "verifyEventIndexRebuildKeepsItsPromises",
-    from: "    if (existsSync(projectExecutionEventKeyPath(runtimeDir, event.projectId, event.eventKey))) continue;",
+    from: "    if (existsSync(projectExecutionEventKeyPath(runtimeDir, event.projectId, event.eventKey, {dispatchId: event.dispatchId}))) continue;",
     to: "    if (false) continue;",
     expect: "重写了一遍"
   },
