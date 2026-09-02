@@ -3,6 +3,23 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { dockerFailureAdvice } from "./lib/docker-failure-advice.mjs";
 
 const root = new URL("..", import.meta.url).pathname;
+
+process.on("uncaughtException", (error) => {
+  if (error?.friendlyDockerFailure) {
+    console.error(error.message);
+    process.exit(1);
+  }
+  const said = `${error?.stdout || ""}${error?.stderr || ""}`;
+  const advice = dockerFailureAdvice(said);
+  if (advice) {
+    console.error(`docker compose doctor blocked: ${advice}`);
+    console.error(`docker 原话：${said.trim().split("\n").slice(0, 3).join(" / ")}`);
+    process.exit(1);
+  }
+  console.error(error?.stack || String(error));
+  process.exit(1);
+});
+
 // 运维起容器走的是 scripts/docker-up.sh。两个 compose 命令都不在时，原先落到 exec 上，
 // 人看到的是 "docker-compose: command not found" —— 那指的是已废弃的 v1，照着去装反而走错路。
 // 这条不需要真的 docker：把 PATH 收窄到系统目录跑一次即可。
@@ -238,7 +255,11 @@ function run(command, args, options = {}) {
   } catch (error) {
     const said = `${error?.stdout || ""}${error?.stderr || ""}`;
     const advice = dockerFailureAdvice(said);
-    if (advice) throw new Error(`${advice}\ndocker 原话：${said.trim().split("\n").slice(0, 3).join(" / ")}`);
+    if (advice) {
+      const friendly = new Error(`docker compose doctor blocked: ${advice}\ndocker 原话：${said.trim().split("\n").slice(0, 3).join(" / ")}`);
+      friendly.friendlyDockerFailure = true;
+      throw friendly;
+    }
     throw error;
   }
 }

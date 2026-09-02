@@ -488,7 +488,10 @@ const DOCKER_FAILURE_SAMPLES = [
     + ' "desktop-linux": context not found: open /tmp/x/contexts/meta/abc/meta.json: no such file or directory',
     expect: "连不上 docker 守护进程"},
   {what: "守护进程没起来", said: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock."
-    + " Is the docker daemon running?", expect: "连不上 docker 守护进程"}
+    + " Is the docker daemon running?", expect: "连不上 docker 守护进程"},
+  {what: "socket 路径不存在", said: "failed to connect to the docker API at unix:///Users/example/.docker/run/docker.sock;"
+    + " check if the path is correct and if the daemon is running: dial unix /Users/example/.docker/run/docker.sock:"
+    + " connect: no such file or directory", expect: "连不上 docker 守护进程"}
 ];
 
 const PATH_ALLOWLIST_CASES = [

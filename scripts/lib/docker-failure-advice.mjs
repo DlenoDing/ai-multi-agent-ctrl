@@ -8,7 +8,7 @@ export function dockerFailureAdvice(said = "") {
       + "出路二选一：把 Docker Desktop 的 bin 目录加进 PATH 后重开终端；"
       + "或者先手动把 postgres:16-alpine 与 node:22-alpine 拉到本地，这道门就不需要再联网取镜像了。";
   }
-  if (/unable to resolve docker endpoint|Cannot connect to the Docker daemon/u.test(said)) {
+  if (/unable to resolve docker endpoint|Cannot connect to the Docker daemon|failed to connect to the docker API/u.test(said)) {
     return "连不上 docker 守护进程 —— 本仓的代码没有问题。"
       + "要么 Docker Desktop 没启动，要么 DOCKER_CONFIG 被指到了一个缺 contexts/ 的目录。";
   }
