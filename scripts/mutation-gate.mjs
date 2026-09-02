@@ -9851,8 +9851,8 @@ const MUTATIONS = [
     name: "文档点名的接口必须真存在（照着它接入的人会撞 404）",
     file: "docs/core-control-plane-spec.md",
     check: "verifyDocumentedApiPathsExist",
-    from: "| POST | `/api/integration-batches` | **未实现**（设计意向；集成批次在编排链内部处理，没有独立接口）— 创建集成批次 | release、orchestrator |",
-    to: "| POST | `/api/integration-batches-v2` | **未实现**（设计意向；集成批次在编排链内部处理，没有独立接口）— 创建集成批次 | release、orchestrator |",
+    from: "| POST | `/api/integration-batches` | **非入口设计项**：集成批次由编排链内部处理；当前没有独立 HTTP 创建入口 | release、orchestrator |",
+    to: "| POST | `/api/integration-batches-v2` | **非入口设计项**：集成批次由编排链内部处理；当前没有独立 HTTP 创建入口 | release、orchestrator |",
     expect: "撞 404"
   },
   {

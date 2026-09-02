@@ -28,7 +28,7 @@
 
 | 优先级 | 项目 | 问题 | 简单 | 稳定 | 性能 | 处理状态 |
 | --- | --- | --- | --- | --- | --- | --- |
-| P1 | HTTP 规格入口歧义 | 核心规格表把多条“设计意向但未实现”的 API 混在主 HTTP API 表内，AI Agent 可能把它们误当成可调用入口。 | 将可低风险实现的只读别名补齐；其余明确放入非入口清单。 | 别名必须复用现有 `requireRead` / scope 过滤，不新增绕权路径。 | 只读别名返回瘦对象，避免全量 state dump。 | 待处理 |
+| P1 | HTTP 规格入口歧义 | 核心规格表把多条“设计意向但未实现”的 API 混在主 HTTP API 表内，AI Agent 可能把它们误当成可调用入口。 | 已补齐 `GET /api/projects/:projectId` 与 `GET /api/task-groups/:taskGroupId` 两个低风险只读别名；其余明确改为非入口设计项。 | 别名复用现有 `readableProjectOr403` / `requireRead` / scope 过滤，不新增绕权路径。 | 只读别名返回有窗口上限的详情摘要，避免全量 state dump。 | 已处理 |
 | P1 | 生产横向扩展 | 当前已支持 PostgreSQL、CAS、项目分片和事件轮转，但 WebSocket 订阅与后台 tick 仍是单控制面进程形态。 | 不在当前单机代码里强行引入复杂集群；先把生产扩展边界写成明确路线。 | 多实例前必须引入 outbox / LISTEN-NOTIFY / leader election 或外部调度锁。 | 需要压测和横向 fanout，避免所有实例重复编排。 | 待处理 |
 | P2 | Room 自动回复防风暴 | `hopCount` 尚未实现；当前没有 Agent 自动回复 room message，所以只是未来风险。 | 当前不补复杂 room 自动应答；先增加“启用自动回复前必须实现”的硬规则。 | 防止未来接入自动应答后两个 Agent 循环互刷。 | hop/TTL/capacity 共同限制消息风暴。 | 待处理 |
 | P2 | 外部 review bundle | 当前 review bundle 是控制面内部引用式记录，不是完整外发脱敏投递系统。 | 保持当前引用式实现；把真实外发定义为后续独立扩展，不让 Agent 误以为已外发。 | 外部结果仍只能 advisory，经本地核验后进入 Finding/Decision。 | 外发包不能把大证据直接塞进状态。 | 待处理 |

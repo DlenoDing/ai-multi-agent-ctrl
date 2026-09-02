@@ -11286,9 +11286,8 @@ async function verifyDocumentedApiPathsExist(output) {
     "/api/system-upgrade-candidates/import-external-result": "外部结果回填尚未落地",
     // 2026-08-28 存在性判据改成真打之后补上：它是 WebSocket upgrade 路径，普通 HTTP 回 404 是对的。
     "/api/realtime": "WebSocket upgrade 路径：握手在 upgrade 事件里接，普通 HTTP 请求回 404 是对的",
-    // 同日真打抓出的两条：老判据按正则前缀把 /api/projects/:id/progress 当成了 /api/projects/:id（它自己注释里警告过的那种假阳性）。
-    "/api/projects/:projectId": "单个项目没有独立读路由：经 /api/projects 列表或 /api/state?view=projects 读",
-    "/api/task-groups/:taskGroupId": "单个任务组没有独立读路由：经 /api/task-groups/:taskGroupId/progress 或 /api/state 读"
+    // 单个项目与单个任务组的只读详情路由已实现。不要再把它们登记在这里：否则文档明明可调，
+    // 本门却告诉下游"它还没建"，这和漏建接口一样会误导机器接入。
   };
   const servers = ["apps/control-plane-ui/server.mjs", "apps/mcp-server/server.mjs"]
     .map((file) => readFileSync(join(root, file), "utf8")).join("\n");
@@ -12213,7 +12212,17 @@ function verifyServerFieldsReachThePerson(output) {
     runtimeUrl: "装机清单，install-agent.sh 下载运行时用",
     runtimeChecksumUrl: "装机清单，install-agent.sh 下完运行时比对 sha256 用",
     installScriptChecksumUrl: "装机清单，agentctl 的 verified 模式先下它再校验安装脚本",
-    skillSynchronization: "装机清单，声明技能由服务端按需下发（docker-compose 的部署自检比对它）"
+    skillSynchronization: "装机清单，声明技能由服务端按需下发（docker-compose 的部署自检比对它）",
+    taskGroupCount: "GET /api/projects/:projectId 详情摘要，Orchestrator/Monitor 用它判断分页窗口是否完整",
+    taskGroupsTruncated: "GET /api/projects/:projectId 详情摘要，Orchestrator/Monitor 用它判断是否需要带更大 taskGroupLimit 重取",
+    repositoryOutputCount: "GET /api/projects/:projectId 详情摘要，Orchestrator/Monitor 用它判断仓库产出摘要是否完整",
+    repositoryOutputsTruncated: "GET /api/projects/:projectId 详情摘要，Orchestrator/Monitor 用它判断是否需要转专用产出查询",
+    workSessionCount: "GET /api/task-groups/:taskGroupId 详情摘要，Orchestrator/Monitor 用它判断 session 窗口是否完整",
+    workSessionsTruncated: "GET /api/task-groups/:taskGroupId 详情摘要，Orchestrator/Monitor 用它判断是否需要缩小任务组范围重取",
+    agentDispatchCount: "GET /api/task-groups/:taskGroupId 详情摘要，Orchestrator/Monitor 用它判断 dispatch 窗口是否完整",
+    agentDispatchesTruncated: "GET /api/task-groups/:taskGroupId 详情摘要，Orchestrator/Monitor 用它判断是否需要读取实时事件端点",
+    latestReadiness: "GET /api/task-groups/:taskGroupId 详情摘要，Orchestrator/Monitor 用它判断是否已有最近完成就绪记录",
+    latestCloseBarrier: "GET /api/task-groups/:taskGroupId 详情摘要，Orchestrator/Monitor 用它判断是否已有最近关闭门记录"
   };
   const fields = new Set();
   // 【按花括号配对切，别用 [^}]】。负向字符类遇到第一个 `}` 就停 —— 回执里只要出现一处嵌套

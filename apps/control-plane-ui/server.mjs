@@ -3634,6 +3634,66 @@ async function handleApi(req, res) {
   // 一个没人用、对多数账号又静默返回空的接口，留着只会坑下一个发现它的人。
   // 进度数据的正主是 GET /api/task-groups/:id/progress（按需取一个任务组，控制台用的就是它）。
 
+  const projectDetailMatch = url.pathname.match(/^\/api\/projects\/([^/]+)$/);
+  if (req.method === "GET" && projectDetailMatch) {
+    const resolved = readableProjectOr403(req, state, projectDetailMatch[1]);
+    if (resolved.denial) {
+      json(res, resolved.denial.status, resolved.denial.payload);
+      return;
+    }
+    const project = resolved.project;
+    const taskGroupLimit = Math.max(1, Math.min(200, Number(url.searchParams.get("taskGroupLimit") || 50)));
+    const taskGroups = (state.taskGroups || []).filter((item) => item.projectId === project.id);
+    const repositoryOutputs = (state.repositoryOutputs || []).filter((target) => target.projectId === project.id);
+    json(res, 200, {
+      project,
+      taskGroups: projectTaskGroupsForView(taskGroups.slice(0, taskGroupLimit)),
+      taskGroupCount: taskGroups.length,
+      ...(taskGroups.length > taskGroupLimit ? {taskGroupsTruncated: true} : {}),
+      repositoryOutputs: repositoryOutputs.slice(0, 200),
+      repositoryOutputCount: repositoryOutputs.length,
+      ...(repositoryOutputs.length > 200 ? {repositoryOutputsTruncated: true} : {})
+    });
+    return;
+  }
+
+  const taskGroupDetailMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)$/);
+  if (req.method === "GET" && taskGroupDetailMatch) {
+    const taskGroup = (state.taskGroups || []).find((item) => item.id === taskGroupDetailMatch[1]);
+    if (!taskGroup) {
+      const denial = missingRecordDenial(req, state, "task_group_not_found", "permission_denied");
+      json(res, denial.status, denial.payload);
+      return;
+    }
+    const reader = requireRead(req, state, taskGroupScope(state, taskGroup.id));
+    if (reader.status) {
+      json(res, reader.status, reader.payload);
+      return;
+    }
+    const workItemLimit = Math.max(1, Math.min(500, Number(url.searchParams.get("workItemLimit") || progressWorkItemCap)));
+    const workItems = Array.isArray(taskGroup.workItems) ? taskGroup.workItems : [];
+    const taskGroupSessions = (state.workSessions || []).filter((session) => session.taskGroupId === taskGroup.id);
+    const taskGroupDispatches = (state.agentDispatches || []).filter((dispatch) => dispatch.taskGroupId === taskGroup.id);
+    json(res, 200, {
+      taskGroup: {
+        ...taskGroup,
+        workItems: workItems.slice(0, workItemLimit),
+        workItemCount: workItems.length,
+        ...(workItems.length > workItemLimit ? {workItemsTruncated: true} : {})
+      },
+      repositoryOutputs: (state.repositoryOutputs || []).filter((target) => target.taskGroupId === taskGroup.id),
+      workSessions: taskGroupSessions.slice(0, 100),
+      workSessionCount: taskGroupSessions.length,
+      ...(taskGroupSessions.length > 100 ? {workSessionsTruncated: true} : {}),
+      agentDispatches: taskGroupDispatches.slice(0, 100),
+      agentDispatchCount: taskGroupDispatches.length,
+      ...(taskGroupDispatches.length > 100 ? {agentDispatchesTruncated: true} : {}),
+      latestReadiness: (state.completionReadiness || []).find((item) => item.taskGroupId === taskGroup.id) || null,
+      latestCloseBarrier: (state.closeBarriers || []).find((item) => item.taskGroupId === taskGroup.id) || null
+    });
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/agent-nodes") {
     const reader = accountFromRequest(req, state);
     if (!reader) return json(res, 401, {error: "auth_required"});
