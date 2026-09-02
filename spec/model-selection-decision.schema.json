@@ -16,6 +16,7 @@
     "roleSkillDigest",
     "selectionMode",
     "modelDecision",
+    "classifierBasis",
     "candidateRankings",
     "hardConstraintResults",
     "scoreBreakdown",
@@ -76,6 +77,33 @@
     },
     "splitRequired": {
       "type": "boolean"
+    },
+    "classifierBasis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "matchedSignals",
+        "limitation"
+      ],
+      "properties": {
+        "method": {
+          "type": "string",
+          "minLength": 1
+        },
+        "matchedSignals": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "limitation": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     },
     "maxModelTier": {
       "$ref": "#/$defs/modelTier"

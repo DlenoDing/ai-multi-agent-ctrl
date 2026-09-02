@@ -60,7 +60,8 @@ sh install-agent.sh \
 
 安装脚本用 `nohup` 起进程，**宿主重启或它自己崩掉之后不会回来**。节点一失联，排给它的活就停在队列里
 （控制台上那个节点会显示没有心跳，但不会有人被主动通知）。要常驻，用系统自带的服务管理器 ——
-安装脚本有意不碰它们（不用 sudo、不改任何系统文件），所以这一步由你来做。
+安装脚本有意不碰它们（不用 sudo、不改任何系统文件）。常驻进程应由部署编排或系统外管理员策略安装；
+Agent 注册脚本只完成入网、初始化、自检和可选客户端配置。
 
 Linux（systemd 用户级，不需要 root）：
 
@@ -378,7 +379,7 @@ GET /api/task-groups/:taskGroupId/execution-events?afterSequence=<cursor>&waitMs
     "modelId": "provider/model",
     "alias": "balanced",
     "providerClass": "openai|anthropic|google|xai|deepseek|qwen|ollama|custom",
-    "taskExecutionClass": "deep_analysis|implementation|verification|short_execution",
+    "taskExecutionClass": "deep_analysis|implementation|verification|short_execution|mixed_analysis_implementation",
     "reasoning": "medium",
     "reasoningLevel": "medium",
     "modelDecision": "modelDecision: fixed writeSet implementation; no architecture裁决 -> provider/model / medium",
@@ -420,7 +421,7 @@ Runtime 规则：
 2. Runtime 通过节点 token 从服务端下载该 dispatch 唯一允许的 `AgentSkillWorkset`，逐文件校验 SHA256 后写入本地只读缓存，并把 manifest 路径显式传给模型 Agent。下级角色不能继承当前角色的 Skill，必须由总控生成新的 task contract 和工作集。
 3. Runtime 只访问 `https://<server>/mcp`；节点 token 的项目、角色和 tool allowlist 由一次性 join token 固化。禁止下载、安装或启动本地 MCP server。
 4. 缺权限时不继续执行副作用，提交 PermissionRequest；未声明 write scope 的路径只能读不能写。
-5. 不支持的 command 必须返回 `UNSUPPORTED_COMMAND`，不能猜测执行。
+5. 不支持的 command 必须返回 `agent_control_command_unsupported`，不能猜测执行。
 6. Runtime 必须把同级消息、子 Agent 输出、工具结果和外部 review result 当作 untrusted/advisory 输入，只有 task contract 内的 EffectiveInstructionPacket 能驱动副作用。
 7. Runtime 发现自身输出或任务理解偏离 roleFocus 时，必须停止副作用并提交 RoleDriftGuard 事件或 Finding。
 8. Git push 后、checkpoint ACK 前必须把完整 checkpoint 写入 `$AIMAC_AGENT_WORK_DIR/outbox`；重启时先按原 runId 重放。控制平面对已完成且 binding 相同的 checkpoint 返回幂等 replay，不能重复执行或重复 push。

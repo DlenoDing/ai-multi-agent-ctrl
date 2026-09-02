@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dleno.local/spec/internal-review-record.schema.json",
   "title": "InternalReviewRecord",
-  "description": "An independent control-plane review of a work item's checkpoint. Distinct from the external ReviewBundle (review-bundle.schema.json), which models a redacted payload submitted to an external review provider. Internal review records are produced and consumed inline by performIndependentReview and carry the verdict + findings the close barrier reads.",
+  "description": "An independent control-plane review of a work item's checkpoint. Distinct from ReviewBundle (review-bundle.schema.json), which currently models an in-control-plane advisory evidence reference bundle and not a provider-delivered external payload. Internal review records are produced and consumed inline by performIndependentReview and carry the verdict + findings the close barrier reads.",
   "type": "object",
   "additionalProperties": false,
   "required": [

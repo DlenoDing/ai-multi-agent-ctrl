@@ -1104,6 +1104,7 @@ export function selectModel(state, request = {}, options = {}) {
     roleSkillDigest: roleSkill.contentDigest,
     taskExecutionClass: taskExecution.taskExecutionClass,
     splitRequired: taskExecution.splitRequired,
+    classifierBasis: taskExecution.classifierBasis,
     maxModelTier: modelCeiling.maxModelTier,
     maxReasoningLevel: modelCeiling.maxReasoningLevel,
     escalationAllowed: modelCeiling.escalationAllowed,
@@ -1216,20 +1217,23 @@ function classifyTaskExecution(workItem = {}, request = {}) {
   const implementation = /代码|开发|实现|修复|改造|构建|提交|push|docker|npm|shell|code|implement|build|fix|patch|commit/u.test(text);
   const verification = /测试|验证|自检|doctor|e2e|复测|test|verify|validation/u.test(text);
   const special = /安全|权限|高风险|生产|跨系统|核心故障|总控偏移|调度安全|监测偏移|security|permission|production|critical/u.test(text);
+  const architectureSubject = /状态机|事件溯源|消息队列|队列|数据库|schema|协议|契约|鉴权|权限模型|租户|多租户|分片|缓存|一致性|并发|高并发|高流量|横向扩展|调度策略|模型选择|mcp|agent gateway|runtime|orchestrator|state machine|event sourcing|message queue|database|protocol|contract|auth|tenant|cache|consistency|concurrency|scalability|scheduler|model selection/u.test(text);
+  const architectureAction = /换成|替换|选择|接入|迁移|重构|定义|制定|统一|改造|引入|拆分|合并|升级|扩展|select|choose|replace|migrate|refactor|define|standardize|introduce|split|merge|upgrade|scale/u.test(text);
+  const implicitArchitectureDecision = architectureSubject && architectureAction;
   let taskExecutionClass = "implementation";
-  if (analysis && !implementation) taskExecutionClass = "deep_analysis";
+  if ((analysis || implicitArchitectureDecision) && !implementation) taskExecutionClass = "deep_analysis";
   else if (verification && !implementation) taskExecutionClass = "verification";
-  else if (analysis && implementation) taskExecutionClass = "mixed_analysis_implementation";
+  else if ((analysis || implicitArchitectureDecision) && implementation) taskExecutionClass = "mixed_analysis_implementation";
   else if (/小任务|短任务|quick|minor/u.test(text)) taskExecutionClass = "short_execution";
-  // 这个判定决定了一个工作项会不会走人工闸门，而它本身只是几条字面匹配 —— 它判不出
-  //「把订单状态机换成事件溯源」「选择消息队列并接入」这类真正的方案决策（实测：均被判为普通实现，
-  // 不上闸门）。判据本身的局限必须留在记录里，否则"没上闸门"看起来像是"系统判断过、认为不必"，
-  // 而实际上是"系统没有能力判断"。
+  // 这个判定决定了一个工作项会不会走人工闸门。它仍然是本地启发式，不宣称理解完整语义；
+  // 但要覆盖隐含的架构/公共契约/高并发/多租户/调度类裁决，避免"换状态机/接队列/改权限模型"
+  // 这种没有明说"方案"的任务被当成普通实现直接下发。
   const classifierBasis = {
-    method: "keyword_match",
+    method: "keyword_match_with_architecture_signal_pair",
     matchedSignals: unique([...(analysis ? ["analysis"] : []), ...(implementation ? ["implementation"] : []),
-      ...(verification ? ["verification"] : []), ...(special ? ["special_escalation_signal"] : [])]),
-    limitation: "字面匹配：未出现分析/设计/方案类字样的架构与选型决策不会被识别为需要人工定稿"
+      ...(verification ? ["verification"] : []), ...(special ? ["special_escalation_signal"] : []),
+      ...(implicitArchitectureDecision ? ["implicit_architecture_decision"] : [])]),
+    limitation: "启发式判定：未命中架构对象+动作组合的隐含裁决仍可能需要后续 review/monitor 纠偏"
   };
   return {
     taskExecutionClass,
@@ -1240,7 +1244,8 @@ function classifyTaskExecution(workItem = {}, request = {}) {
       ...(analysis ? ["analysis"] : []),
       ...(implementation ? ["implementation"] : []),
       ...(verification ? ["verification"] : []),
-      ...(special ? ["special_escalation_signal"] : [])
+      ...(special ? ["special_escalation_signal"] : []),
+      ...(implicitArchitectureDecision ? ["implicit_architecture_decision"] : [])
     ])
   };
 }

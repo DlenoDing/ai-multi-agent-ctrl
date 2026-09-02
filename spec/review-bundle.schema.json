@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dleno.dev/ai-multi-agent-ctrl/spec/review-bundle.schema.json",
   "title": "ReviewBundle",
-  "description": "交付给外部评审方的证据包。它是非终态时会挡住关闭门的 no_pending_review_bundles，由 review_result_consume 终结 —— 也就是「外部评审还没回来」的可解阻塞。本规范此前描述的是一套更大的设计（reviewPlanId / reviewBatchId / scopeRoot / includedLocators / forbiddenPatterns / redaction / payloadDigest / providerPolicy / auditRef），而实现从未产出过那些字段 —— 规范没被拿去校验过任何真实记录，两边就一直各说各的。现按【实际产出】收窄。收窄的依据是：脱敏与投递策略这一层在当前实现里不存在（证据以引用形式留在控制面内，不外发内容），凭空要求这些字段只会让规范恒不成立；真外发时应连同实现一起补回，而不是先在规范里写着。",
+  "description": "控制面内登记的引用式 advisory review evidence bundle。它是非终态时会挡住关闭门的 no_pending_review_bundles，由 review_result_consume 终结 —— 也就是「旁路/外部评审结果尚未被本地采纳或驳回」的可解阻塞。当前实现只保存证据引用、checkpoint 引用和人工处置留痕，不外发证据内容，也不声称已经实现 provider 投递、外发 redaction、payloadDigest 或 provider grant。若将来接入真实外部评审发送通道，必须同步实现外发适配器、脱敏策略、payload digest、provider 授权与回执核验，再扩展本 schema；不能只在规范里预写字段。",
   "type": "object",
   "additionalProperties": false,
   "required": [

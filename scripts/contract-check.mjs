@@ -6284,6 +6284,11 @@ function verifyAgentGatewayContracts(output) {
   if (deepAnalysisDecision.taskExecutionClass !== "deep_analysis" || deepAnalysisDecision.escalationAllowed !== false || !deepAnalysisDecision.modelDecision?.startsWith("modelDecision:") || deepAnalysisDecision.modelDecision.length > 240) {
     output.push("Model selection did not create a bounded one-line integration-owner modelDecision");
 	  }
+  const implicitArchitectureDecision = selectModel(state, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", roleId: "orchestrator", workItem: {id: "work_implicit_architecture", title: "实现统一权限模型并接入消息队列", ownerRole: "orchestrator", requirements: ["fixed writeSet implement"]}}, {persist: false});
+  if (implicitArchitectureDecision.taskExecutionClass !== "mixed_analysis_implementation" ||
+      !implicitArchitectureDecision.classifierBasis?.matchedSignals?.includes("implicit_architecture_decision")) {
+    output.push("隐含架构/公共契约类任务没有触发模型分档分类：未明说'方案'的权限模型/队列接入会被当成普通实现派发");
+  }
   // 残缺/被写坏的能力档案（评分信号非数值）不得毒化整个排序：totalScore 必须始终有限。
   // rankModel 的 clamp 是 Math.max(0, Math.min(1, X))，而 Math.max(0, Math.min(1, NaN)) 是 NaN ——
   // 钳不住 NaN。totalScore 一旦 NaN 就流进 selectModel 的 `b.totalScore - a.totalScore` 比较器＝返回

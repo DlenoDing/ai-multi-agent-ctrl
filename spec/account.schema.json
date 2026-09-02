@@ -105,7 +105,8 @@
           ]
         },
         "mfaRequired": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Whether this account requires MFA. Current implementation is fail-closed: mfaRequired=true refuses session issuance with mfa_required_but_unavailable until a complete MFA enrollment/challenge flow is implemented."
         },
         "passwordSet": {
           "type": "boolean"

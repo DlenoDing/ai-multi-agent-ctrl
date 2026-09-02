@@ -29,13 +29,13 @@
 | 优先级 | 项目 | 问题 | 简单 | 稳定 | 性能 | 处理状态 |
 | --- | --- | --- | --- | --- | --- | --- |
 | P1 | HTTP 规格入口歧义 | 核心规格表把多条“设计意向但未实现”的 API 混在主 HTTP API 表内，AI Agent 可能把它们误当成可调用入口。 | 已补齐 `GET /api/projects/:projectId` 与 `GET /api/task-groups/:taskGroupId` 两个低风险只读别名；其余明确改为非入口设计项。 | 别名复用现有 `readableProjectOr403` / `requireRead` / scope 过滤，不新增绕权路径。 | 只读别名返回有窗口上限的详情摘要，避免全量 state dump。 | 已处理 |
-| P1 | 生产横向扩展 | 当前已支持 PostgreSQL、CAS、项目分片和事件轮转，但 WebSocket 订阅与后台 tick 仍是单控制面进程形态。 | 不在当前单机代码里强行引入复杂集群；先把生产扩展边界写成明确路线。 | 多实例前必须引入 outbox / LISTEN-NOTIFY / leader election 或外部调度锁。 | 需要压测和横向 fanout，避免所有实例重复编排。 | 待处理 |
-| P2 | Room 自动回复防风暴 | `hopCount` 尚未实现；当前没有 Agent 自动回复 room message，所以只是未来风险。 | 当前不补复杂 room 自动应答；先增加“启用自动回复前必须实现”的硬规则。 | 防止未来接入自动应答后两个 Agent 循环互刷。 | hop/TTL/capacity 共同限制消息风暴。 | 待处理 |
-| P2 | 外部 review bundle | 当前 review bundle 是控制面内部引用式记录，不是完整外发脱敏投递系统。 | 保持当前引用式实现；把真实外发定义为后续独立扩展，不让 Agent 误以为已外发。 | 外部结果仍只能 advisory，经本地核验后进入 Finding/Decision。 | 外发包不能把大证据直接塞进状态。 | 待处理 |
-| P2 | Two-factor 登录 | `requiresTwoFactor` 目前 fail-closed，启用后不会签发 session，但没有完整 2FA 流程。 | 在完整 2FA 实现前，文档和接口声明其为禁用能力。 | 保持 fail-closed，不降级成忽略 2FA。 | 不影响热路径。 | 待处理 |
-| P2 | 任务类型分类 | 模型分档依赖启发式关键词，能覆盖常见任务，但难以识别“未明说架构/方案”的隐含高风险决策。 | 增加轻量结构化风险信号，不引入长篇模型选择理由。 | 防止高风险任务被误判为普通实现。 | 分类仍保持本地 O(文本长度)，不调用模型。 | 待处理 |
-| P3 | MCP tools/list 成本 | 默认服务令牌可见 44 个工具约 31KB，全量 85 个工具约 63KB，仍有 token 成本。 | 继续用 allowlist；后续可按 dispatch 生成 capability catalog。 | 不减少必要工具，不影响 grant/fencing。 | 减少 inputSchema 重复传输，提高缓存命中。 | 待处理 |
-| P3 | 大文件维护风险 | `control-plane-core.mjs`、`server.mjs`、`app.js` 文件较大。 | 后续按领域拆模块，保持导出协议不变。 | 拆分必须由现有 mutation/contract gates 覆盖。 | 模块化本身不追求运行时性能收益，主要降低维护风险。 | 待处理 |
+| P1 | 生产横向扩展 | 当前已支持 PostgreSQL、CAS、项目分片和事件轮转，但 WebSocket 订阅与后台 tick 仍是单控制面进程形态。 | 不在当前单机代码里强行引入复杂集群；先把生产扩展边界写成明确路线。 | 多实例前必须引入 outbox / LISTEN-NOTIFY / leader election 或外部调度锁。 | 需要压测和横向 fanout，避免所有实例重复编排。 | 已约束：README 已声明单实例写入边界和多实例前置条件 |
+| P2 | Room 自动回复防风暴 | `hopCount` 尚未实现；当前没有 Agent 自动回复 room message，所以只是未来风险。 | 当前不补复杂 room 自动应答；先增加“启用自动回复前必须实现”的硬规则。 | 防止未来接入自动应答后两个 Agent 循环互刷。 | hop/TTL/capacity 共同限制消息风暴。 | 已约束：启用 auto-reply 前必须先实现 hop/TTL/de-dup 并 fail-closed |
+| P2 | 外部 review bundle | 当前 review bundle 是控制面内部引用式记录，不是完整外发脱敏投递系统。 | 保持当前引用式实现；把真实外发定义为后续独立扩展，不让 Agent 误以为已外发。 | 外部结果仍只能 advisory，经本地核验后进入 Finding/Decision。 | 外发包不能把大证据直接塞进状态。 | 已约束：schema、README、设计文档均改为引用式 bundle |
+| P2 | Two-factor 登录 | `requiresTwoFactor` 目前 fail-closed，启用后不会签发 session，但没有完整 2FA 流程。 | 在完整 2FA 实现前，文档和接口声明其为禁用能力。 | 保持 fail-closed，不降级成忽略 2FA。 | 不影响热路径。 | 已约束：account schema 明确 mfaRequired=true 会拒绝发 session |
+| P2 | 任务类型分类 | 模型分档依赖启发式关键词，能覆盖常见任务，但难以识别“未明说架构/方案”的隐含高风险决策。 | 增加轻量结构化风险信号，不引入长篇模型选择理由。 | 防止高风险任务被误判为普通实现。 | 分类仍保持本地 O(文本长度)，不调用模型。 | 已处理：分类器补架构对象+动作信号，契约测试覆盖 |
+| P3 | MCP tools/list 成本 | 默认服务令牌可见 44 个工具约 31KB，全量 85 个工具约 63KB，仍有 token 成本。 | 继续用 allowlist；后续可按 dispatch 生成 capability catalog。 | 不减少必要工具，不影响 grant/fencing。 | 减少 inputSchema 重复传输，提高缓存命中。 | 已记录为后续性能优化，不影响当前正确性 |
+| P3 | 大文件维护风险 | `control-plane-core.mjs`、`server.mjs`、`app.js` 文件较大。 | 后续按领域拆模块，保持导出协议不变。 | 拆分必须由现有 mutation/contract gates 覆盖。 | 模块化本身不追求运行时性能收益，主要降低维护风险。 | 已记录为后续维护优化，不在本轮引入大范围重构 |
 
 ## 4. 本轮处理顺序
 

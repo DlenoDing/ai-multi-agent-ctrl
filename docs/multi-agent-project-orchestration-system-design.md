@@ -51,7 +51,7 @@
 12. 并行执行必须有 `ExecutionTopology`：runner、隔离、owned/forbidden paths、resource scope、branch result bundle、父级串行合并和最终集成验证都要可判定；不满足门禁时降级为串行。
 13. 派生任务不能由 worker 或 review 直接创建为全局 WorkItem；它们只能提交 `DerivedTaskRequest`，由 Orchestrator 强化 action basis、分类 insertion mode 后排入 DAG。
 14. 多 issue、多风险、多文件面或关闭前互审必须有 `ReviewPlan`、batch、coverage matrix 和 closure gate；单个 review report 不能默认覆盖全局。
-15. 外部或旁路 AI review 结果只具 advisory 属性。进入系统前必须经 `ReviewBundle` 脱敏、digest、provider grant、本地核验和采纳分类。
+15. 外部或旁路 AI review 结果只具 advisory 属性。当前 `ReviewBundle` 只登记控制面内证据引用和采纳/驳回留痕；进入系统前必须经 ReviewPlan coverage、本地核验和采纳分类。真实外发脱敏、payload digest、provider grant 与投递回执必须随外部适配器同步实现，不能只写成规范承诺。
 16. WorkSession final、handoff、父级集成和 TaskGroup close 都必须先计算 `CompletionReadinessCheck`，不能只靠聊天计划或 Agent 自报完成。
 17. 总控、调度和监测角色必须使用 `RoleDriftGuard` 锁定 objective boundary、role mission、task contract、ruleset digest 和 allowed action scope；元控制角色跑偏时要立即暂停下游副作用并由父级纠偏。
 18. 系统运行中重复问题只收集为 RuntimeIssuePattern/SystemUpgradeCandidate 和外部维护证据包；真正系统升级由独立系统外维护完成，再通过后台管理或入口总控会话导入版本化结果。
@@ -614,10 +614,10 @@ Room 不是普通聊天室，而是结构化协作和控制通道。每个 Proje
 2. 普通进度合并为摘要，不逐条广播。
 3. 相同根因 finding 批量进入 issue queue。
 4. room 消息受 TTL 与容量上限约束（每房间 1000 条 / 全局 10000 条 / 单条 32KB / 总计 64MB，
-   见 `AIMAC_ROOM_*`）。**`hopCount` 未实现** —— 全仓没有这个字段。它原本是用来防"两个 Agent
-   互相自动回复"的，而当前没有任何代码会自动回复房间消息（runtime 不轮询房间），所以这是一个
-   为尚不存在的循环准备的机制。若将来 Agent 开始自动应答，必须先补上它，仅靠上面的容量上限
-   只能限制损失规模、不能终止循环。
+   见 `AIMAC_ROOM_*`）。**`hopCount` 未实现** —— 全仓没有这个字段。当前没有任何代码会自动回复房间消息
+   （runtime 不轮询房间），所以现状不会形成两个 Agent 互相自动回复的循环。若将来启用任何
+   room auto-reply、auto-consume-to-reply 或基于 room 消息自动派生回复任务的能力，必须先实现
+   hop/TTL/de-dup 三件套并让缺失时 fail-closed；仅靠容量上限只能限制损失规模、不能终止循环。
 5. Monitor 发现同类消息高频重复时，自动要求事件驱动等待。
 
 ## 10. 公网 Agent 节点接入
@@ -2347,7 +2347,7 @@ Agent 加入保持一条命令，但系统内部必须强制以下控制：
 
 1. Control Plane、Agent Runtime、MCP tool 和 command schema 都有 `protocolVersion`。
 2. Agent 初始化时上报 `minRuntimeVersion`、capability flags 和 unsupported commands。
-3. 新 command schema 必须有废弃窗口；旧 Agent 收到不支持命令时返回 `UNSUPPORTED_COMMAND`，不得猜测执行。
+3. 新 command schema 必须有废弃窗口；旧 Agent 收到不支持命令时返回 `agent_control_command_unsupported`，不得猜测执行。
 4. 滚动升级顺序：Control Plane 支持新旧协议 -> Agent 灰度升级 -> MCP schema 复审 -> 删除旧协议。
 
 ### 24.14 Artifact 和执行环境生命周期
@@ -2420,7 +2420,7 @@ Agent 加入保持一条命令，但系统内部必须强制以下控制：
 
 1. 所有 Agent Runtime、MCP tool、command payload、room message 都带 `protocolVersion` 和 `schemaDigest`。
 2. Control Plane 保存 `minSupportedVersion` 和 `deprecatedAfter`。
-3. 旧 Agent 收到未知 command 时返回 `UNSUPPORTED_COMMAND`，不得按猜测执行。
+3. 旧 Agent 收到未知 command 时返回 `agent_control_command_unsupported`，不得按猜测执行。
 4. 升级先让 Control Plane 兼容新旧协议，再灰度 Agent，最后清理旧 schema。
 
 技术选择判断：

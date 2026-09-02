@@ -28,7 +28,7 @@
 | `spec/execution-topology.schema.json` | Scheduler、Orchestrator、Agent Runtime | 校验并行拓扑、branch 隔离、owned path、result bundle 和父级串行合并 |
 | `spec/derived-task-request.schema.json` | Orchestrator、Scheduler、Reviewer Agent、Monitor Agent | 校验派生任务请求、插入模式、拓扑影响和审计证据 |
 | `spec/review-plan.schema.json` | Reviewer Agent、Orchestrator、QA Agent | 校验互审计划、batch、coverage matrix 和 closure gate |
-| `spec/review-bundle.schema.json` | Reviewer Agent、Security Agent、External Review Adapter | 校验 review bundle redaction、payload digest、provider grant 和本地核验 |
+| `spec/review-bundle.schema.json` | Reviewer Agent、Security Agent、External Review Adapter | 校验当前控制面内引用式 advisory review bundle；真实外发 redaction、payload digest、provider grant 与投递回执需随外部适配器另行实现 |
 | `spec/rule-source-resolution.schema.json` | Rule Steward、Orchestrator、Policy Engine | 校验 MGP/ai-skills/review 等来源是否可成为 active rule |
 | `spec/completion-readiness.schema.json` | Orchestrator、Monitor Agent、Agent Runtime | 校验 WorkSession/TaskGroup final 前所有未闭合对象和证据覆盖 |
 | `spec/runtime-issue-pattern.schema.json` | Monitor Agent、Rule Steward、Orchestrator | 校验运行期重复问题聚合、证据和收集限定 |
@@ -116,7 +116,7 @@ System instruction
 | effective instruction | source classification、nextActionDraftDigest、activeRuleRefs、nonActiveMaterialRefs、contextIntakeRefs、forbiddenActions |
 | role drift guard | objectiveBoundaryDigest、roleMissionDigest、taskContractDigest、allowed/forbidden action scope、driftScore、correctiveActions |
 | execution topology | branch boundaries、owned/forbidden paths、resource scopes、runner isolation、result bundle contract、parent serial merge |
-| review plan/bundle | review items、batches、coverage matrix、redaction、payload digest、advisory result、本地核验证据 |
+| review plan/bundle | review items、batches、coverage matrix、advisory result、本地核验证据；外发 redaction、payload digest、provider grant 是后续外部适配器扩展 |
 | rule source resolution | sourceScope、authorityLevel、sourceDigest、conflictCheck、activeRuleRefs、referenceOnlyRefs、excludedSourceRefs |
 | runtime issue collection | issue fingerprint、recurrenceCount、evidenceRefs、sampleRefs、collect-only policy、externalUpgradePackageRef |
 | runtime bootstrap | RuntimeBootstrapProfile、npm/Docker/Shell entrypoint、health check、admin seed、fileOutputPolicy |

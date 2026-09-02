@@ -133,6 +133,12 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 
 常规 Agent Runtime 必须具备选中模型 provider 的凭证。Runtime 会优先调用已探测到的 Codex、Claude 或 Gemini CLI，也可在安装时用 `--executor-command` 绑定其他模型/Agent 适配器；executor 接收 task contract、有效指令包、远程 MCP 和 Skill 工作集路径。`AIMAC_EXECUTION_PROFILE=verification` 才能使用服务器内的确定性验证 worker；生产 profile 永远由远程注册节点执行，缺少模型适配器或凭证时只能上报失败，不能在服务器伪造完成。
 
+## 生产高并发边界
+
+当前代码路径按“简单可运行的单控制面进程 + PostgreSQL 权威状态 + 项目事件分片”实现。它适合单实例生产、小集群前验证和中等并发任务编排；高并发高流量部署必须使用 PostgreSQL，前置 HTTPS 反向代理，并明确收窄系统、项目、Agent node 与 MCP service token 的 scope。
+
+多控制面实例不是简单把同一镜像横向复制即可完成的能力。启用多实例前必须补齐并压测：跨实例 WebSocket fanout、后台自治 tick 的 leader election 或外部调度锁、可靠 outbox、LISTEN/NOTIFY 或消息队列、agent dispatch claim 的全局 fencing 指标，以及失败实例恢复后的幂等重放。未补齐前，生产部署应保持一个写入控制面实例，读流量通过缓存、摘要端点、项目事件索引和 MCP allowlist 控制成本。
+
 ## 会放宽默认限制的开关
 
 下面这些环境变量【降低】默认的安全/隔离强度。默认全都不开；审计一套部署时，先看这几个。
@@ -293,7 +299,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 | [spec/execution-topology.schema.json](spec/execution-topology.schema.json) | 并行/串行/降级执行拓扑、branch 边界和父级串行合并 schema |
 | [spec/derived-task-request.schema.json](spec/derived-task-request.schema.json) | worker/review/monitor 产生的派生任务请求 schema |
 | [spec/review-plan.schema.json](spec/review-plan.schema.json) | 独立互审的 review item、batch、coverage matrix 和关闭门 schema |
-| [spec/review-bundle.schema.json](spec/review-bundle.schema.json) | 外部/旁路 AI review bundle 的 redaction、digest 和本地核验 schema |
+| [spec/review-bundle.schema.json](spec/review-bundle.schema.json) | 控制面内引用式 advisory review bundle schema；真实外发 redaction、digest 和 provider grant 需要外部适配器实现后再扩展 |
 | [spec/rule-source-resolution.schema.json](spec/rule-source-resolution.schema.json) | MGP/ai-skills/review 等外部材料能否成为规则的来源解析 schema |
 | [spec/completion-readiness.schema.json](spec/completion-readiness.schema.json) | WorkSession/TaskGroup final 前完成就绪检查 schema |
 | [spec/runtime-issue-pattern.schema.json](spec/runtime-issue-pattern.schema.json) | 运行期重复问题聚合、证据和收集限定 schema |
@@ -339,7 +345,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 13. 运行期重复问题只生成 RuntimeIssuePattern、SystemUpgradeCandidate 和系统外升级证据包；系统运行时不得自动自修改规则、策略、角色、grant 或控制面代码，升级改造由人独立在系统外处理。
 14. 总控、调度和监测等元控制角色必须绑定 RoleDriftGuard；一旦目标、职责、边界或证据链跑偏，立即暂停副作用并由父级总控重发有效任务契约。
 15. MGP、ai-skills、外部 review 和工具结果只能作为来源材料；是否吸收为本系统规则必须经过 RuleSourceResolution，本地核验前不能直接执行。
-16. 外部/旁路 AI review 结果只具 advisory 属性；必须经 ReviewBundle redaction、ReviewPlan coverage 和本地核验后才可转为 Finding、WorkItem 或 DecisionRecord。
+16. 外部/旁路 AI review 结果只具 advisory 属性；当前 ReviewBundle 只登记控制面内证据引用和采纳/驳回留痕，必须经 ReviewPlan coverage 和本地核验后才可转为 Finding、WorkItem 或 DecisionRecord；真实外发 redaction、payload digest 和 provider grant 必须随外部适配器一起实现。
 17. 最终关闭由 Orchestrator 根据 CompletionReadinessCheck 和 CloseBarrier 的完整 gate 结果完成。
 18. 共享定义、标准、术语、状态语义、接口、数据模型、错误码和指令格式必须由 SharedDefinitionContract 明确 canonical owner、producer、consumer 和 digest。
 19. 任务产出文件只写入 Orchestrator 选定的项目 Git 仓库目标；系统不另建项目产出文件管理层。
