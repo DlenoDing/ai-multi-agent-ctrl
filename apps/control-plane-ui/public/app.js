@@ -149,6 +149,20 @@ const PROJECT_MENU_TAIL = [
   {id: "proj-settings", label: "项目设置"}
 ];
 
+const SYSTEM_MENU = [
+  {id: "sys-overview", label: "系统概览"},
+  {id: "sys-orgs", label: "组织管理"},
+  {id: "sys-settings", label: "系统设置"},
+  {id: "sys-accounts", label: "账号与授权"}
+];
+
+const ORG_MENU = [
+  {id: "org-overview", label: "组织概览"},
+  {id: "org-members", label: "成员管理"},
+  {id: "org-agents", label: "AI 智能体"},
+  {id: "org-projects", label: "项目列表"}
+];
+
 // "现在轮到我做什么" —— 此前控制台没有任何地方回答这个问题：菜单是写死的、没有计数，
 // 唯一的待办数字在项目概览里且不可点击、只统计当前项目；而等人拍板的东西被拆在两个页面上，
 // 其中一个还叫"执行监控"，名字完全不暗示"这里有等你签字的东西"。
@@ -311,22 +325,8 @@ function pendingForMe() {
 }
 
 const MENUS = {
-  system: [
-    {id: "sys-overview", label: "系统概览"},
-    {id: "sys-orgs", label: "组织管理"},
-    {id: "sys-settings", label: "系统设置"},
-    {id: "sys-accounts", label: "账号与授权"},
-    {divider: "当前项目"},
-    ...PROJECT_MENU_TAIL
-  ],
-  org: [
-    {id: "org-overview", label: "组织概览"},
-    {id: "org-members", label: "成员管理"},
-    {id: "org-agents", label: "AI 智能体"},
-    {id: "org-projects", label: "项目管理"},
-    {divider: "项目视角"},
-    ...PROJECT_MENU_TAIL
-  ],
+  system: SYSTEM_MENU,
+  org: ORG_MENU,
   user: [...PROJECT_MENU_TAIL]
 };
 
@@ -338,7 +338,7 @@ const PAGE_META = {
   "org-overview": ["组织概览", "配额用量、活跃项目与任务组统计"],
   "org-members": ["成员管理", "创建成员、权限分配、停用与一次性登录令牌"],
   "org-agents": ["AI 智能体", "组织内智能体节点：运行状态、健康度、加入令牌与吊销"],
-  "org-projects": ["项目管理", "创建项目、基础配置与成员授权"],
+  "org-projects": ["项目列表", "创建项目、基础配置与成员授权"],
   "proj-overview": ["项目概览", "总进度、健康度、任务组平均进度与待人工确认数"],
   "tg": ["任务组", "事项清单、角色、配置继承与执行控制"],
   "review": ["人工审核", "集中处理执行过程中提交的人工确认请求"],
@@ -358,6 +358,52 @@ function defaultPageFor(perspective) {
   if (perspective === "system") return "sys-overview";
   if (perspective === "org") return "org-overview";
   return "proj-overview";
+}
+
+function primarySectionPageFor(perspective) {
+  if (perspective === "system") return "sys-overview";
+  if (perspective === "org") return "org-overview";
+  return "proj-overview";
+}
+
+function allowedMenuItemsFor(perspective) {
+  if (perspective === "system") return [...SYSTEM_MENU, ...PROJECT_MENU_TAIL];
+  if (perspective === "org") return [...ORG_MENU, ...PROJECT_MENU_TAIL];
+  return [...PROJECT_MENU_TAIL];
+}
+
+function managementSectionOf(pageId, perspective) {
+  if (PROJECT_PAGES.has(pageId)) return "project";
+  if (perspective === "system") return "system";
+  if (perspective === "org") return "org";
+  return "project";
+}
+
+function menuForCurrentSection(perspective, pageId) {
+  const section = managementSectionOf(pageId, perspective);
+  if (section === "project") return PROJECT_MENU_TAIL;
+  if (section === "org") return ORG_MENU;
+  return SYSTEM_MENU;
+}
+
+function sectionLabel(perspective, pageId) {
+  const section = managementSectionOf(pageId, perspective);
+  if (section === "project") return "项目管理";
+  if (section === "org") return "组织管理";
+  return "系统管理";
+}
+
+function sectionSwitchHtml(perspective, pageId) {
+  if (perspective === "user") return "";
+  const current = managementSectionOf(pageId, perspective);
+  const primaryLabel = perspective === "system" ? "系统管理" : "组织管理";
+  const primaryPage = primarySectionPageFor(perspective);
+  const item = (target, label, active) =>
+    `<button class="section-tab ${active ? "active" : ""}" data-section-target="${esc(target)}">${esc(label)}</button>`;
+  return `<div class="section-switch" aria-label="管理空间">`
+    + item(primaryPage, primaryLabel, current !== "project")
+    + item("proj-overview", "项目管理", current === "project")
+    + "</div>";
 }
 
 /* ---------------- 基础工具 ---------------- */
@@ -1849,7 +1895,7 @@ function render() {
   // 静默换成默认页，人会以为链接生效了、眼前这页就是他要的那页 —— 而系统明明知道不是。
   // "没点名要"（首次进入、page 为空）不在此列：那时默认页就是正确答案，不该打扰。
   const requestedPage = page;
-  if (!page || !MENUS[perspective].some((item) => item.id === page)) {
+  if (!page || !allowedMenuItemsFor(perspective).some((item) => item.id === page)) {
     page = defaultPageFor(perspective);
     if (requestedPage && requestedPage !== page) {
       const asked = PAGE_META[requestedPage]?.[0] || requestedPage;
@@ -1859,13 +1905,15 @@ function render() {
   const [title, subtitle] = PAGE_META[page] || ["管理后台", ""];
   // 菜单上直接带计数：否则"等你签字的东西"藏在一个叫"执行监控"的页面里，人根本不会去点。
   const menuTodoCounts = todoCountsByPage();
-  const menuHtml = MENUS[perspective].map((item) => item.divider
+  const visibleMenu = menuForCurrentSection(perspective, page);
+  const menuHtml = visibleMenu.map((item) => item.divider
     ? `<div class="nav-divider">${esc(item.divider)}</div>`
     : (() => {
         const todo = menuTodoCounts[item.id] || {count: 0, capped: false};
         return `<button class="nav-item ${item.id === page ? "active" : ""}" data-menu="${item.id}">${esc(item.label)}${todo.count ? `<span class="nav-badge">${todo.count}${todo.capped ? "+" : ""}</span>` : ""}</button>`;
       })()
   ).join("");
+  const switchHtml = sectionSwitchHtml(perspective, page);
 
   const showSwitcher = PROJECT_PAGES.has(page) && selectableProjects().length > 0;
   const switcherHtml = showSwitcher
@@ -1889,7 +1937,7 @@ function render() {
           <span class="brand-mark">智</span>
           <div>
             <strong>AI 多智能体管控台</strong>
-            <span>${esc(t(perspectiveOf(currentAccount) === "system" ? "system_admin" : currentAccount.accountType))}视角</span>
+            <span>${esc(sectionLabel(perspective, page))}</span>
           </div>
         </div>
         <nav class="nav" aria-label="管理菜单">${menuHtml}</nav>
@@ -1900,6 +1948,7 @@ function render() {
             <h1>${esc(title)}</h1>
             <p class="subtitle">${esc(subtitle)}</p>
           </div>
+          ${switchHtml}
           ${switcherHtml}
           <div class="topbar-actions">
             <span class="account-chip">${esc(currentAccount.displayName || currentAccount.email)} ${badge(currentAccount.accountType)}</span>
@@ -2378,7 +2427,7 @@ function renderSysAccounts() {
 // 与其让人填完再撞一个错误，不如当场说清第一步是什么。
 function noProjectYetNotice(what) {
   return `<div class="notice">还没有任何项目，而${what}必须落在具体项目上。`
-    + "先创建一个项目：组织管理员在「项目管理」页，系统管理员在「账号与授权」页。</div>";
+    + "先创建一个项目：组织管理员切到「组织管理」后打开项目列表，系统管理员切到「系统管理」后打开账号与授权。</div>";
 }
 
 // 归属为空的账号（历史上经 MCP 建的那批）服务端按「默认组织」处理，界面必须用同一个口径 ——
@@ -2678,7 +2727,7 @@ function renderOrgMembers() {
     panel("说明", `
       <div class="stack">
         <div class="record"><div class="record-title"><strong>一次性令牌</strong></div><div class="record-meta"><span>成员首次使用令牌登录后令牌即失效，可在顶栏“修改密码”设置个人密码。</span></div></div>
-        <div class="record"><div class="record-title"><strong>权限边界</strong></div><div class="record-meta"><span>成员权限不可包含系统级与组织级通配权限；项目、任务组细粒度授权可在「账号与授权」页与「项目管理」页补充。</span></div></div>
+        <div class="record"><div class="record-title"><strong>权限边界</strong></div><div class="record-meta"><span>成员权限不可包含系统级与组织级通配权限；项目、任务组细粒度授权可在系统管理的账号与授权、组织管理的项目列表里补充。</span></div></div>
       </div>
     `),
     panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows,
@@ -2799,9 +2848,9 @@ function renderOrgProjects() {
 function noVisibleProjectNotice() {
   const perspective = perspectiveOf(currentAccount);
   const next = perspective === "system"
-    ? "到「账号与授权」页用「创建项目（系统级）」新建一个，或把已有项目授权给某个账号。"
+    ? "切到「系统管理」，在账号与授权里用「创建项目（系统级）」新建一个，或把已有项目授权给某个账号。"
     : perspective === "org"
-      ? "到「项目管理」页创建项目，或把已有项目授权给成员。"
+      ? "切到「组织管理」，在项目列表里创建项目，或把已有项目授权给成员。"
       : "请联系组织管理员为你分配项目。";
   return `<div class="notice">当前账号暂无可见项目。${esc(next)}</div>`;
 }
@@ -2813,6 +2862,84 @@ function hasNoVisibleProject() {
 }
 
 /* ---------------- 成员：项目概览 ---------------- */
+
+function projectModuleCard({pageId, title, metric, detail, action, tone = "blue"}) {
+  return `
+    <button class="module-card tone-${esc(tone)}" data-menu="${esc(pageId)}">
+      <span class="module-title">${esc(title)}</span>
+      <strong>${esc(metric)}</strong>
+      <span class="module-detail">${esc(detail)}</span>
+      <span class="module-action">${esc(action || "进入")}</span>
+    </button>
+  `;
+}
+
+function projectHubHtml(project, groups, openGroups, eventsInScope, repoTargets) {
+  const percent = Math.max(0, Math.min(100, Number(project.progress?.percent || 0)));
+  const groupIds = new Set(groups.map((taskGroup) => taskGroup.id));
+  const blockedDispatches = (state.agentDispatches || []).filter((item) => groupIds.has(item.taskGroupId) && item.status === "blocked").length;
+  const activeDispatches = (state.agentDispatches || []).filter((item) => groupIds.has(item.taskGroupId) && ["queued", "running", "blocked"].includes(item.status)).length;
+  const directives = (state.humanDirectives || []).filter((item) => groupIds.has(item.taskGroupId) && ["queued", "acknowledged"].includes(item.status)).length;
+  const eventLatest = eventsInScope[0]?.createdAt ? sinceText(eventsInScope[0].createdAt) : "暂无事件";
+  return `
+    <section class="project-hub wide">
+      <div class="project-hub-main">
+        <div class="project-score" style="--score:${percent};"><strong>${percent}%</strong><span>总进度</span></div>
+        <div class="project-hub-text">
+          <div class="project-hub-title">${esc(project.name || project.id)}</div>
+          <div class="project-hub-meta">
+            <span>状态 ${badge(project.status)}</span>
+            <span>阶段 ${badge(project.progress?.phase)}</span>
+            <span>健康度 ${badge(project.progress?.health)}</span>
+            <span>更新 ${fmtTime(project.progress?.updatedAt)}</span>
+          </div>
+        </div>
+      </div>
+      <div class="module-grid">
+        ${projectModuleCard({
+          pageId: "tg",
+          title: "任务组",
+          metric: `${openGroups.length}/${groups.length}`,
+          detail: groups.length ? "管理目标、角色、工作项与执行控制" : "先创建任务组，再分配工作项",
+          action: "查看任务组",
+          tone: openGroups.length ? "blue" : "gray"
+        })}
+        ${projectModuleCard({
+          pageId: "review",
+          title: "人工审核",
+          metric: `${pendingConfirmCount}`,
+          detail: pendingConfirmCount ? "有确认项等待处理" : "当前没有待确认项",
+          action: "处理审核",
+          tone: pendingConfirmCount ? "orange" : "green"
+        })}
+        ${projectModuleCard({
+          pageId: "directives",
+          title: "人工指令",
+          metric: `${directives}`,
+          detail: directives ? "有指令等待消费或确认" : "可向总控下达结构化指令",
+          action: "下达指令",
+          tone: directives ? "orange" : "blue"
+        })}
+        ${projectModuleCard({
+          pageId: "monitor",
+          title: "执行监控",
+          metric: `${activeDispatches}`,
+          detail: blockedDispatches ? `${blockedDispatches} 个派发被挡` : `最近事件：${eventLatest}`,
+          action: "实时监控",
+          tone: blockedDispatches ? "red" : activeDispatches ? "blue" : "green"
+        })}
+        ${projectModuleCard({
+          pageId: "proj-settings",
+          title: "项目设置",
+          metric: `${repoTargets.length}`,
+          detail: "仓库、规则、默认角色与授权边界",
+          action: "配置项目",
+          tone: repoTargets.length ? "blue" : "gray"
+        })}
+      </div>
+    </section>
+  `;
+}
 
 function renderProjectOverview() {
   const project = currentProject();
@@ -2847,7 +2974,8 @@ function renderProjectOverview() {
       return stuck ? `${blocked} <span class="warn-text">· 派发被挡 ${stuck}</span>` : String(blocked);
     })(), c: "num"}
   ])).join("");
-  const repoRows = (state.repositoryOutputs || []).filter((target) => target.projectId === project.id).map((target) => row([
+  const repoTargets = (state.repositoryOutputs || []).filter((target) => target.projectId === project.id);
+  const repoRows = repoTargets.map((target) => row([
     esc(taskGroupNameOf(target.taskGroupId)),
     `<span class="mono">${esc(target.repositoryId)}</span>`,
     `<span class="mono">${esc(target.branch)}</span>`,
@@ -2874,6 +3002,7 @@ function renderProjectOverview() {
     // 提示复用同一个函数，措辞与那两页一致，人不必在不同页面上对同一件事建立两套理解。
     cellsWaitingWithNoAgentNotice(groups),
     wipCapacityNotice(groups),
+    projectHubHtml(project, groups, openGroups, eventsInScope, repoTargets),
     panel(`项目进度 · ${esc(project.name)}`, `
       <div class="stack">
         ${progressLine(project.progress?.percent)}
@@ -4617,18 +4746,17 @@ function renderMonitor() {
   // 账本限流那道门按"谁提到了这个集合名"找渲染点，直接点名会被它当成一处没设上限的渲染。
   const nothingRanYet = !eventsShown.length && !sessionsAll.length && !dispatchesAll.length
     && !lanesAll.length && !admissionsInScope.length && !nodes.length;
-  // 指路要指【这个人自己菜单里有的那一页】：签发加入令牌的面板，组织管理员在「AI 智能体」页，
-  // 系统管理员在「账号与授权」页，而普通成员两页都没有。原先一律写「AI 智能体」页 ——
-  // 而刚 npm run init 完、最可能看到这条横幅的恰恰是系统管理员，他菜单里根本没有那一页。
+  // 项目空间已经和系统/组织空间拆开，跨空间指路不能再写成"去某某页"：
+  // 人在当前左侧菜单里看不到那一项，会以为功能丢了。先点空间，再说面板名。
   const JOIN_TOKEN_ENTRY_BY_PERSPECTIVE = {
-    system: "「账号与授权」页的「智能体入网令牌」面板",
-    org: "「AI 智能体」页的「加入令牌管理」面板"
+    system: "先切到「系统管理」，打开账号与授权里的「智能体入网令牌」面板",
+    org: "先切到「组织管理」，打开 AI 智能体里的「加入令牌管理」面板"
   };
   const joinTokenWhere = JOIN_TOKEN_ENTRY_BY_PERSPECTIVE[perspectiveOf(currentAccount)];
   const nothingRanYetNotice = nothingRanYet
     ? `<div class="notice">这个项目还没有任何执行记录 —— 下面几张表是空的，这在刚装完时是正常的，`
       + `不是没取回来。要让它动起来：${joinTokenWhere
-        ? `先到${joinTokenWhere}点「签发一次性加入令牌」接一台节点，`
+        ? `${joinTokenWhere}，点「签发一次性加入令牌」接一台节点，`
         : "先让管理员接一台执行节点（签发加入令牌这件事你这个账号做不了），"}`
       + `再到「任务组」页把工作项推进到就绪。节点接上之后，这一页会实时显示会话、派发与执行事件。</div>`
     : "";
@@ -5461,6 +5589,19 @@ document.addEventListener("click", async (event) => {
   const mask = event.target.closest("[data-modal-mask]");
   if (mask && event.target === mask) {
     await requestCloseModal();
+    return;
+  }
+  const sectionButton = event.target.closest("[data-section-target]");
+  if (sectionButton) {
+    const nextPage = sectionButton.dataset.sectionTarget;
+    if (nextPage !== page && formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前页面有未保存的修改，确认离开？", danger: true, confirmText: "放弃并离开"}))) return;
+    page = nextPage;
+    sessionStorage.setItem("aimac.page", page);
+    lastError = "";
+    formTouched = false;
+    stopExecPolling();
+    await loadPage();
+    render();
     return;
   }
   const menuButton = event.target.closest("[data-menu]");

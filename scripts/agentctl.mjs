@@ -82,7 +82,7 @@ if (action === "nodes list") {
 
 const projectId = args.project || args["project-id"];
 if (!projectId) fail("发加入令牌必须指定项目", ["加 --project=<项目 id>（也可写 --project-id=）",
-  "项目 id 在控制台「项目管理」页每行的最前面，形如 prj_xxx"]);
+  "项目 id 在控制台「组织管理」的项目列表里，或项目空间的项目概览中查看，形如 prj_xxx"]);
 const result = await request("/api/agent-join-tokens", {
   method: "POST",
   token: sessionToken,

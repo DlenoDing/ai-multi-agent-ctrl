@@ -1321,8 +1321,8 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     /创建项目（系统级）/.test(asSystem) && !/请联系组织管理员/.test(asSystem),
     `系统管理员看到：${(asSystem.match(/当前账号暂无可见项目。[^ ]*/u) || ["（没有空态提示）"])[0]}`);
   const asOrgAdmin = renderFor("org_admin");
-  check("组织管理员看到的是「项目管理」页，而不是去找组织管理员（他自己就是）",
-    /项目管理/.test(asOrgAdmin) && !/请联系组织管理员/.test(asOrgAdmin),
+  check("组织管理员看到的是「项目列表」入口，而不是去找组织管理员（他自己就是）",
+    /项目列表/.test(asOrgAdmin) && !/请联系组织管理员/.test(asOrgAdmin),
     `组织管理员看到：${(asOrgAdmin.match(/当前账号暂无可见项目。[^ ]*/u) || ["（没有空态提示）"])[0]}`);
   const asMember = renderFor("user_account");
   check("普通成员确实该被告知去找组织管理员（这条保留，证明上面两条不是把提示删了了事）",
@@ -3737,7 +3737,7 @@ function runPendingTruncationCase() {
       `实得：${(emptyGrant.replace(/<[^>]+>/gu, " ").match(/还没有任何项目[^<]{0,40}/u) || ["（照旧摆出了表单）"])[0]}`);
     // 提示必须说清第一步在哪一页，否则人还是不知道往哪走。
     check("这条提示要指出该去哪一页创建项目",
-      /项目管理/u.test(emptyGrant) && /账号与授权/u.test(emptyGrant),
+      /项目列表/u.test(emptyGrant) && /账号与授权/u.test(emptyGrant),
       "提示没有点名创建项目的入口页");
     const withProjects = [{id: "p1", name: "探针项目", organizationId: "org_probe", status: "active"}];
     check("有项目时这两张表单必须还在（守卫不能把杠杆藏掉）",
