@@ -39,4 +39,10 @@
 
 ## 实施结果
 
-- 待实施。
+- 已新增 `menuItemHtml`，将侧栏菜单渲染为“标题 + 待办徽标 + 用途说明”的模块目录。
+- 菜单用途说明直接复用 `PAGE_META[pageId][1]`，与页面标题、副标题共用同一前端真相源，不新增第二套说明表。
+- 已新增 `.nav-item-main`、`.nav-item-title`、`.nav-item-desc` 样式；桌面端显示用途说明，移动端隐藏说明并保留原有横向导航。
+- 已补充 `console-behaviour-gate`：分别渲染系统管理、组织管理、项目管理三个空间，断言所有侧栏菜单说明来自 `PAGE_META`，并断言移动端样式隐藏说明。
+- 已完成本地真实浏览器走查：系统管理员视角显示 4 个系统菜单说明；项目成员视角显示 6 个项目菜单说明；组织管理员视角在隔离运行态显示 4 个组织菜单说明。
+- 已完成 390px 移动端走查：项目和组织菜单说明均隐藏，页面级无横向溢出。
+- 已通过 `node --check apps/control-plane-ui/public/app.js`、`node --check scripts/console-behaviour-check.mjs`、`git diff --check`、`npm run console-behaviour-gate`、`npm run mutation-anchors`。
