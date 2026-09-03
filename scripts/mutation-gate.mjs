@@ -2650,8 +2650,8 @@ const MUTATIONS = [
     name: "没有项目时不摆出必然失败的表单",
     file: APP,
     gate: "console",
-    from: '  if (!(state.projects || []).length) return noProjectYetNotice("智能体加入令牌");',
-    to: "",
+    from: "  if (!(state.projects || []).length) {",
+    to: "  if (false && !(state.projects || []).length) {",
     expect: "点了必然失败的加入令牌表单"
   },
   {

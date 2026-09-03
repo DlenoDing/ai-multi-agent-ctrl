@@ -2651,11 +2651,11 @@ function renderSysAccountsSummary() {
       ${summaryMetric("服务账号", serviceAccounts, "供 agent/runtime 服务身份使用")}
       ${summaryMetric("有效授权", activeGrants, "项目、任务组与系统资源授权")}
       ${summaryMetric("项目数", (state.projects || []).length, "可分配成员和 agent 的项目")}
-      ${summaryMetric("待用加入令牌", liveJoinTokenCount(), "尚未消费且未过期的 agent 入网票据")}
+      ${summaryMetric("待审加入令牌", liveJoinTokenCount(), "尚未消费且未过期的 agent 入网票据")}
       ${summaryMetric("agent 档案", agents.length, "可被总控激活的编排角色档案")}
       ${summaryMetric("启用档案", activeAgents, "当前可参与调度的档案")}
     </div>
-    <div class="small muted">先看总览确认系统账号、服务账号和跨项目授权规模；常规项目 Agent 注册请进入目标项目的“AI 智能体”页。</div>
+    <div class="small muted">先看总览确认系统账号、服务账号、跨项目授权和入网票据规模；常规项目 Agent 注册请进入目标项目的“AI 智能体”页。</div>
   `, {wide: true});
 }
 
@@ -2695,10 +2695,10 @@ function renderSysAccountsActionBoard() {
         tone: activeGrants ? "blue" : "gray"
       })}
       ${jumpModuleCard({
-        title: "跨项目入网令牌",
+        title: "入网令牌审计",
         metric: liveJoinTokenCount(),
-        detail: "系统管理员代签、审计或应急处理的注册票据",
-        panelTitle: "智能体入网令牌",
+        detail: "查看跨项目待用票据；常规注册到项目页签发",
+        panelTitle: "智能体入网审计",
         tone: liveJoinTokenCount() ? "orange" : "green"
       })}
       ${jumpModuleCard({
@@ -2716,7 +2716,7 @@ function renderSysAccountsActionBoard() {
         tone: assignableProjects().length ? "blue" : "gray"
       })}
     </div>
-    <div class="small muted">处理顺序：先核对账号与授权现状，再处理跨项目令牌或 agent 档案；常规项目接入从项目页发起。</div>
+    <div class="small muted">处理顺序：先核对账号与授权现状，再查看入网令牌审计和 agent 档案；常规项目接入从项目页发起。</div>
   `, {wide: true});
 }
 
@@ -2770,7 +2770,7 @@ function renderSysAccountsBoundaryGuide() {
         action: "看档案"
       })}
     </div>
-    <div class="small muted">职责边界：系统页负责账号、服务账号、全局授权审计、跨项目代签和 Agent 档案；项目页负责项目级节点、一次性 join token、注册脚本和远程 MCP 生效确认。</div>
+    <div class="small muted">职责边界：系统页负责账号、服务账号、全局授权审计、入网令牌审计和 Agent 档案；项目页负责项目级节点、一次性 join token、注册脚本和远程 MCP 生效确认。</div>
   `, {wide: true});
 }
 
@@ -2806,7 +2806,7 @@ function renderSysAccounts() {
     renderSysAccountsBoundaryGuide(),
     panel("账号列表", table(["账号", "邮箱", "类型", "状态", "角色"], accounts), {wide: true}),
     panel("访问授权列表", table(["主体", "资源", "角色", "状态", "权限", "操作"], grants), {wide: true}),
-    panel("智能体入网令牌", `<div class="notice">常规注册请进入目标项目的「项目管理」→「AI 智能体」→「注册 agent」。本面板保留给系统管理员跨项目代签、审计和应急处理。</div>${renderJoinTokenSection()}`, {wide: true}),
+    panel("智能体入网审计", renderJoinTokenSection({auditOnly: true, context: "system"}), {wide: true}),
     panel("编排智能体档案", table(["名称", "角色", "模型策略", "状态", "操作"], agents) + `
       <form class="form-grid" data-form="agent-create" style="margin-top:12px;">
         <div class="form-row-inline">
@@ -2951,6 +2951,10 @@ function renderJoinTokenSection(options = {}) {
     : joinTokenTargetProjects();
   const scopedTokens = (state.agentJoinTokens || [])
     .filter((token) => !scopedProjectId || token.projectId === scopedProjectId);
+  const auditContext = options.context === "system" ? "system" : "org";
+  const auditNotice = auditContext === "system"
+    ? "系统页只做跨项目令牌审计和撤销。常规注册请进入目标项目的「项目管理」→「AI 智能体」→「注册 agent」签发一次性令牌，并复制服务端安装脚本。"
+    : "组织页只做组织范围令牌审计和撤销。新增 agent 请先进入目标项目，再到「项目管理」→「AI 智能体」→「注册 agent」签发一次性令牌并复制服务端安装脚本。";
   const tokens = scopedTokens.slice(0, 20).map((token) => {
     // 令牌过期只在【兑换时】才被标 expired（没人兑换就永停在 issued）。列表若按原始 status 显示，
     // 一张已过期的令牌会显示成「已签发」还带「撤销」按钮 —— 人以为它还在等 agent 来接，实际兑换必被拒。
@@ -2967,7 +2971,11 @@ function renderJoinTokenSection(options = {}) {
       displayStatus === "issued" ? `<button class="danger-button" data-action="revoke-join-token" data-token-id="${esc(token.joinTokenId)}">撤销</button>` : "-"
     ]);
   }).join("");
-  if (!(state.projects || []).length) return noProjectYetNotice("智能体加入令牌");
+  if (!(state.projects || []).length) {
+    return auditOnly
+      ? `<div class="notice warn-notice">${auditNotice} 当前还没有任何项目，所以也没有可审计的 agent 入网令牌。</div>`
+      : noProjectYetNotice("智能体加入令牌");
+  }
   if (!scopedProjects.length) {
     return `<div class="notice warn-notice">${scopedProjectId
       ? "当前项目不可签发智能体加入令牌：项目可能已归档，或当前账号没有这个项目的管理权限。"
@@ -2977,7 +2985,7 @@ function renderJoinTokenSection(options = {}) {
   if (auditOnly) {
     return `
       <div class="stack">
-        <div class="notice">组织页只做组织范围令牌审计和撤销。新增 agent 请先进入目标项目，再到「项目管理」→「AI 智能体」→「注册 agent」签发一次性令牌并复制服务端安装脚本。</div>
+        <div class="notice">${auditNotice}</div>
         ${table(["令牌", "项目", "角色范围", "状态", {label: "已用次数", c: "num"}, {label: "过期时间", c: "nowrap"}, "操作"], tokens, {moreText: moreText(scopedTokens.length, 20, "agentJoinTokens")})}
       </div>
     `;
@@ -3640,7 +3648,7 @@ function renderOrgAgents() {
     renderOrgAgentsActionBoard(nodes),
     renderOrgAgentsBoundaryGuide(),
     panel("智能体节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "org-nodes")}${toggle}`}),
-    panel("加入令牌审计", renderJoinTokenSection({auditOnly: true}), {wide: true})
+    panel("加入令牌审计", renderJoinTokenSection({auditOnly: true, context: "org"}), {wide: true})
   ].join("");
 }
 

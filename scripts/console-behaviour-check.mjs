@@ -4109,13 +4109,20 @@ function runPendingTruncationCase() {
         && /data-jump-panel="账号列表"/u.test(accountHtml)
         && /data-jump-panel="访问授权列表"/u.test(accountHtml),
       "账号与授权页仍然是先给邀请/授权表单，系统管理员没先核对现有账号与授权就被推去操作");
-    check("账号与授权页必须把项目 Agent 注册入口和系统跨项目能力分开",
+    check("账号与授权页必须把项目 Agent 注册入口和系统令牌审计分开",
       /账号与授权职责边界/u.test(accountHtml)
         && /项目 Agent 注册/u.test(accountHtml)
         && /项目管理.+AI 智能体.+注册 agent/u.test(accountHtml)
-        && /跨项目代签、审计和应急处理/u.test(accountHtml)
+        && /智能体入网审计/u.test(accountHtml)
+        && /系统页只做跨项目令牌审计和撤销/u.test(accountHtml)
         && /data-menu="proj-agents"/u.test(accountHtml),
       "账号与授权页仍像普通 Agent 注册入口，没有明确提示常规注册应进入目标项目 AI 智能体页");
+    check("系统账号页不能承载常规 Agent 注册表单，项目页才保留注册脚本入口",
+      !/data-form="join-token"/u.test(accountHtml)
+        && /智能体入网审计/u.test(accountHtml)
+        && /data-menu="proj-agents"/u.test(accountHtml)
+        && !/组织页只做组织范围令牌审计/u.test(accountHtml),
+      "系统账号页仍渲染了 Agent 加入令牌签发表单，或复用了组织页审计提示");
     const taskGroupHtml = probe.renderTaskGroupsWith(overviewState, admin, "p1", null, {}).replace(/<!--[\s\S]*?-->/gu, "");
     check("任务组页先显示任务组总览，再显示创建表单",
       panelAt(taskGroupHtml, "任务组总览") >= 0
