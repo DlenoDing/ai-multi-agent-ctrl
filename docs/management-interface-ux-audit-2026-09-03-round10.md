@@ -37,4 +37,10 @@
 
 ## 实施结果
 
-- 待实施。
+- 已在 `apps/control-plane-ui/public/app.js` 新增“组织与配额操作看板”，放在“组织管理总览”之后、“组织列表”之前。
+- 看板复用现有 `jumpModuleCard`，不新增接口、不新增轮询、不新增依赖；所有指标均来自当前已加载组织列表。
+- 已补充 `scripts/console-behaviour-check.mjs` 行为门，覆盖系统组织页的面板顺序和看板跳转目标。
+- 已通过 `node --check apps/control-plane-ui/public/app.js`、`node --check scripts/console-behaviour-check.mjs`、`git diff --check`、`npm run -s console-behaviour-gate`、`npm run -s mutation-anchors`。
+- 真实浏览器桌面走查通过：系统组织页显示 5 个面板，顺序为“组织管理总览 → 组织与配额操作看板 → 组织列表 → 创建组织 → 说明”；看板 6 张卡片均有明确跳转目标；页面无横向溢出。
+- 真实浏览器交互走查通过：点击“组织列表”和“创建组织”卡片后，对应面板进入当前视口。
+- 真实浏览器 390px 窄屏走查通过：看板仍为 6 张可读卡片，页面级 `scrollWidth` 与视口宽度一致；组织表保持表格内部横向滚动，不撑开整页。
