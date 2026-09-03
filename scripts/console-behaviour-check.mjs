@@ -282,7 +282,7 @@ globalThis.__probe = {
   assertRuleFragmentLengths: (fragments) => assertRuleFragmentLengths(fragments),
   evidenceRefsHint: (event) => evidenceRefsHint(event),
   alternativeAxisGaps: (assessment) => alternativeAxisGaps(assessment),
-  renderReviewWith: (nextState, account) => { state = nextState; currentAccount = account || null; return renderReview(); },
+  renderReviewWith: (nextState, account, projectId) => { state = nextState; currentAccount = account || null; if (projectId !== undefined) currentProjectId = projectId; return renderReview(); },
   renderPendingPanelWith: (nextState, account) => { state = nextState; currentAccount = account; return renderPendingForMePanel(); },
   todoCountsWith: (nextState, account) => { state = nextState; currentAccount = account; return todoCountsByPage(); },
   moreTextWith: (nextState, total, shown, field) => { state = nextState; return moreText(total, shown, field); },
@@ -320,6 +320,7 @@ globalThis.__probe = {
   // 不给探针一个入口的话，凡是依赖它的那一格都只能在 0 上被验，而真实产品里它常常不是 0。
   setPendingConfirmCount: (count) => { pendingConfirmCount = Number(count) || 0; },
   renderTaskGroupsWith: (nextState, account, projectId, detailId, detail) => { state = nextState; currentAccount = account; currentProjectId = projectId; expandedTaskGroupId = detailId; if (detail !== undefined) tgDetail = detail; return renderTaskGroups(); },
+  renderDirectivesWith: (nextState, account, projectId, directives) => { state = nextState; currentAccount = account; currentProjectId = projectId; directiveList = directives || []; return renderDirectives(); },
   selectProjectWith: (nextState, account, projectId) => {
     state = nextState; currentAccount = account; currentProjectId = projectId;
     ensureProjectSelection();
@@ -3913,53 +3914,75 @@ function runPendingTruncationCase() {
       modelCapabilities: [{modelId: "gpt-5.5", providerClass: "openai", availability: "available", strengths: ["implementation"]}],
       roleSkillOverlays: [{overlayId: "ov_1", status: "active", roleSkillRef: "reviewer", projectId: "p1", patch: {}}],
       agentDispatches: [{dispatchId: "adp1", taskGroupId: "tg1", workItemId: "w1", status: "queued"}],
+      humanConfirmationRequests: [{requestId: "hcr1", taskGroupId: "tg1", workItemId: "w1", status: "pending",
+        decisionClass: "major", blocking: true, createdAt: "2026-08-12T00:00:00Z", question: {summary: "是否定稿方案"}, options: []}],
+      permissionRequests: [{requestId: "perm1", taskGroupId: "tg1", subjectId: "acct_a", permission: "task_group:review",
+        status: "pending_approval", createdAt: "2026-08-12T00:00:00Z"}],
+      approvalRequests: [{approvalId: "apr1", taskGroupId: "tg1", status: "requested", summary: "审批", createdAt: "2026-08-12T00:00:00Z"}],
+      findings: [{findingId: "find1", taskGroupId: "tg1", status: "open", summary: "发现", createdAt: "2026-08-12T00:00:00Z"}],
       workSessions: [{sessionId: "sess1", taskGroupId: "tg1", roleId: "reviewer", workItemId: "w1", placement: "new_session", status: "active"}],
       workerLanes: [{laneId: "lane1", taskGroupId: "tg1", roleId: "reviewer", laneFunction: "implementation", status: "busy", reuseGeneration: 1}],
       agentRuntimeNodes: [{nodeId: "node1", nodeName: "节点", status: "online", admission: "full", lastHeartbeatAt: "2099-01-01T00:00:00Z"}],
       closeBarriers: [{taskGroupId: "tg1", satisfied: false, blockingObjects: [{objectType: "WorkItem", gate: "all_work_items_terminal"}], computedAt: "2026-08-12T00:00:00Z"}],
       qualityGates: [], testResults: [], checkpoints: [], admissionDecisions: [], modelSelectionDecisions: [],
       sessionPlacementDecisions: [], agentControlCommands: [], executionTopologies: [], reviewPlans: [],
-      reviewBundles: [], ruleSourceResolutions: [], sharedDefinitions: [], findings: [], systemUpgradeCandidates: [],
+      reviewBundles: [], ruleSourceResolutions: [], sharedDefinitions: [], systemUpgradeCandidates: [],
       dlqEntries: [], truncatedCollections: []
     };
     const orgAdmin = {accountId: "acct_a", accountType: "org_admin", displayName: "组织管理员", email: "a@example.com", organizationId: "org_default",
-      roles: ["org_admin"], permissions: ["project:create", "project:grant", "member:invite", "agent:activate"]};
+      roles: ["org_admin"], permissions: ["project:create", "project:grant", "member:invite", "agent:activate", "task_group:control", "task_group:review"]};
+    const panelAt = (html, title) => html.indexOf(`<h2>${title}</h2>`);
     const accountHtml = probe.renderSysAccountsWith(overviewState, admin).replace(/<!--[\s\S]*?-->/gu, "");
     check("账号与授权页先显示总览，再显示邀请表单",
-      accountHtml.indexOf("账号与授权总览") >= 0
-        && accountHtml.indexOf("账号与授权总览") < accountHtml.indexOf("邀请账号"),
+      panelAt(accountHtml, "账号与授权总览") >= 0
+        && panelAt(accountHtml, "账号与授权总览") < panelAt(accountHtml, "邀请账号"),
       "账号与授权页首屏直接进入表单，普通管理员看不到账号、授权、项目和令牌规模");
     const taskGroupHtml = probe.renderTaskGroupsWith(overviewState, admin, "p1", null, {}).replace(/<!--[\s\S]*?-->/gu, "");
     check("任务组页先显示任务组总览，再显示创建表单",
-      taskGroupHtml.indexOf("任务组总览") >= 0
-        && taskGroupHtml.indexOf("任务组总览") < taskGroupHtml.indexOf("创建任务组"),
+      panelAt(taskGroupHtml, "任务组总览") >= 0
+        && panelAt(taskGroupHtml, "任务组总览") < panelAt(taskGroupHtml, "创建任务组"),
       "任务组页首屏直接进入创建表单，管理者得向下找才知道已有任务组状态");
     const monitorHtml = probe.renderMonitorWith(overviewState, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
     check("执行监控页先显示监控总览，再显示十三张明细表",
-      monitorHtml.indexOf("执行监控总览") >= 0
-        && monitorHtml.indexOf("执行监控总览") < monitorHtml.indexOf("实时事件流"),
+      panelAt(monitorHtml, "执行监控总览") >= 0
+        && panelAt(monitorHtml, "执行监控总览") < panelAt(monitorHtml, "实时事件流"),
       "执行监控页没有入口级状态地图，用户只能从长表里猜当前卡点");
     const sysSettingsHtml = probe.renderSysSettingsWith(overviewState, {sharedDefinitions: [{contractId: "def_1", definitionType: "api_contract", canonicalOwnerRole: "integration_owner", producerRole: "architect", status: "active"}]}).replace(/<!--[\s\S]*?-->/gu, "");
     check("系统设置页先显示总览，再显示运行参数",
-      sysSettingsHtml.indexOf("系统设置总览") >= 0
-        && sysSettingsHtml.indexOf("系统设置总览") < sysSettingsHtml.indexOf("运行参数（只读）"),
+      panelAt(sysSettingsHtml, "系统设置总览") >= 0
+        && panelAt(sysSettingsHtml, "系统设置总览") < panelAt(sysSettingsHtml, "运行参数（只读）"),
       "系统设置页首屏直接进入只读字段和长表，管理员无法先判断模型、技能、MCP 与共享定义状态");
     const membersHtml = probe.renderOrgMembersWith(overviewState, orgAdmin, [
       {...orgAdmin, status: "active"},
       {accountId: "acct_wait", accountType: "user_account", displayName: "待登录成员", email: "wait@example.com", status: "invited", roles: []}
     ]).replace(/<!--[\s\S]*?-->/gu, "");
     check("成员管理页先显示总览和列表，再显示创建表单",
-      membersHtml.indexOf("成员管理总览") >= 0
-        && membersHtml.indexOf("成员管理总览") < membersHtml.indexOf("成员列表")
-        && membersHtml.indexOf("成员列表") < membersHtml.indexOf("创建成员"),
+      panelAt(membersHtml, "成员管理总览") >= 0
+        && panelAt(membersHtml, "成员管理总览") < panelAt(membersHtml, "成员列表")
+        && panelAt(membersHtml, "成员列表") < panelAt(membersHtml, "创建成员"),
       "成员管理页首屏直接创建成员，组织管理员看不到现有成员与邀请状态就被推去填表");
     const agentsHtml = probe.renderOrgAgentsWith(overviewState, orgAdmin, [
       {nodeId: "node1", nodeName: "节点", status: "online", display: {health: "ok", currentDispatchIds: ["adp1"]}, lastHeartbeatAt: "2099-01-01T00:00:00Z"}
     ]).replace(/<!--[\s\S]*?-->/gu, "");
     check("AI 智能体页先显示运行总览，再显示节点列表",
-      agentsHtml.indexOf("智能体运行总览") >= 0
-        && agentsHtml.indexOf("智能体运行总览") < agentsHtml.indexOf("智能体节点"),
+      panelAt(agentsHtml, "智能体运行总览") >= 0
+        && panelAt(agentsHtml, "智能体运行总览") < panelAt(agentsHtml, "智能体节点"),
       "AI 智能体页没有先给在线率、忙碌节点和入网令牌概览，用户只能读整张节点表");
+    const reviewHtml = probe.renderReviewWith(overviewState, orgAdmin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
+    check("人工审核页先显示审核总览，再显示待办与明细",
+      panelAt(reviewHtml, "人工审核总览") >= 0
+        && panelAt(reviewHtml, "人工审核总览") < panelAt(reviewHtml, "待你处理")
+        && panelAt(reviewHtml, "待你处理") < panelAt(reviewHtml, "待人工确认"),
+      "人工审核页没有项目级风险地图，用户要读完整页才知道确认、授权、审批和发现项分布");
+    const directivesHtml = probe.renderDirectivesWith(overviewState, orgAdmin, "p1", [
+      {directiveId: "dir1", taskGroupId: "tg1", directiveType: "pause", instruction: "暂停", status: "applied", appliedActions: [{action: "task_group_pause"}], createdAt: "2026-08-12T00:00:00Z"},
+      {directiveId: "dir2", taskGroupId: "tg1", directiveType: "free_text", instruction: "补充说明", status: "rejected", rejectReason: "task_group_settled", createdAt: "2026-08-12T00:01:00Z"}
+    ]).replace(/<!--[\s\S]*?-->/gu, "");
+    check("人工指令页先显示总览和流水，再显示下达表单",
+      panelAt(directivesHtml, "人工指令总览") >= 0
+        && panelAt(directivesHtml, "人工指令总览") < panelAt(directivesHtml, "指令流水")
+        && panelAt(directivesHtml, "指令流水") < panelAt(directivesHtml, "下达人工指令"),
+      "人工指令页首屏直接给操作表单，用户看不到已有指令是否已执行或被拒就可能重复下达");
   }
 
   // 明细页的工作项来自专用端点，它现在也有上限（4000 单元时曾是约 1.1MB 载荷 + 4000 个 DOM 节点）。

@@ -4432,6 +4432,37 @@ function noRightOnThisGroup(taskGroupId, what) {
     + "这里只能看、不能动 —— 它在等这个组里有权的人处置。</div>";
 }
 
+function recentHumanFinalizations(taskGroupIds) {
+  const groups = taskGroupIds instanceof Set
+    ? (state.taskGroups || []).filter((taskGroup) => taskGroupIds.has(taskGroup.id))
+    : projectTaskGroups();
+  const inScope = (item) => !item.taskGroupId || groups.some((taskGroup) => taskGroup.id === item.taskGroupId);
+  const visibleProjectIds = new Set(groups.map((taskGroup) => taskGroup.projectId).filter(Boolean));
+  return [
+    ...(state.reviewPlans || []).filter(inScope).map((item) => ({kind: "评审计划",
+      id: item.reviewPlanId, taskGroupId: item.taskGroupId, status: item.status,
+      by: item.resolvedBy, why: item.resolutionJustification, at: item.updatedAt})),
+    ...(state.reviewBundles || []).filter(inScope).map((item) => ({kind: "评审包",
+      id: item.reviewBundleId, taskGroupId: item.taskGroupId, status: item.status,
+      by: item.resolvedBy, why: item.resolutionJustification, at: item.updatedAt})),
+    ...(state.systemUpgradeCandidates || []).filter(inScope).map((item) => ({kind: "升级候选",
+      id: item.candidateId, taskGroupId: item.taskGroupId, status: item.status,
+      by: item.resolvedBy, why: item.resolutionJustification, at: item.updatedAt})),
+    ...(state.ruleSourceResolutions || []).filter(inScope).map((item) => ({kind: "规则来源分流",
+      id: item.sourceRef || item.resolutionId, taskGroupId: item.taskGroupId, status: item.status,
+      by: item.settledBy, why: item.settlementJustification, at: item.updatedAt})),
+    ...(state.sharedDefinitions || []).filter((item) => inScope(item)
+      || (!item.taskGroupId && (!item.projectId || visibleProjectIds.has(item.projectId))))
+      .map((item) => ({kind: "共享定义契约", id: item.contractId, taskGroupId: item.taskGroupId,
+        status: item.status, by: item.resolvedBy, why: item.resolutionJustification, at: item.updatedAt})),
+    // 处置完的发现项要留得下「谁判的、判成了什么」。
+    ...(state.findings || []).filter(inScope).map((item) => ({kind: "评审发现",
+      id: item.findingId || item.id, taskGroupId: item.taskGroupId, status: item.status,
+      by: item.dispositionedBy, why: item.dispositionClass, at: item.updatedAt}))
+  ].filter((item) => item.by)
+    .sort((a, b) => String(b.at || "").localeCompare(String(a.at || ""))).slice(0, 10);
+}
+
 function renderPendingForMePanel() {
   const todo = pendingForMe();
   return panel("待你处理", `
@@ -4448,6 +4479,30 @@ function renderPendingForMePanel() {
                <div class="button-row"><button class="secondary-button" data-menu="${esc(bucket.page)}">前往处置</button></div>
              </div>`).join("")}
          </div>`}
+  `, {wide: true});
+}
+
+function renderReviewSummary({pending, pendingPermissions, pendingApprovals, openFindings, answered, finalizations}) {
+  const blockingConfirmations = pending.filter((request) => request.blocking).length;
+  const majorDecisions = pending.filter((request) => request.decisionClass === "major").length;
+  const affectedTaskGroups = new Set([
+    ...pending.map((item) => item.taskGroupId),
+    ...pendingPermissions.map((item) => item.taskGroupId),
+    ...pendingApprovals.map((item) => item.taskGroupId),
+    ...openFindings.map((item) => item.taskGroupId)
+  ].filter(Boolean)).size;
+  return panel("人工审核总览", `
+    <div class="metric-grid">
+      ${summaryMetric("待人工确认", pending.length, `${blockingConfirmations} 条阻塞执行`)}
+      ${summaryMetric("核心决策", majorDecisions, "必须真人主动定稿")}
+      ${summaryMetric("授权请求", pendingPermissions.length, "需要项目授权权限处理")}
+      ${summaryMetric("审批请求", pendingApprovals.length, "需要审核权限处理")}
+      ${summaryMetric("待处置发现", openFindings.length, "会影响关闭门禁")}
+      ${summaryMetric("涉及任务组", affectedTaskGroups, "当前项目内需要关注的范围")}
+      ${summaryMetric("已答历史", answered.length, "已定稿或已作废的确认")}
+      ${summaryMetric("最近定稿", finalizations.length, "真人收尾记录")}
+    </div>
+    <div class="small muted">查看顺序：先看“待你处理”，再处理“待人工确认”和“授权与处置”；历史结论在“已答历史”和“最近的人工定稿”里追溯。</div>
   `, {wide: true});
 }
 
@@ -4468,6 +4523,10 @@ function renderReview() {
   const allRequests = (state.humanConfirmationRequests || []).filter((request) => projectTaskGroupIds.has(request.taskGroupId)).slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   const pending = allRequests.filter((request) => request.status === "pending");
   const answered = allRequests.filter((request) => request.status !== "pending");
+  const pendingPermissions = (state.permissionRequests || []).filter((item) => projectTaskGroupIds.has(item.taskGroupId) && item.status === "pending_approval");
+  const pendingApprovals = (state.approvalRequests || []).filter((item) => projectTaskGroupIds.has(item.taskGroupId) && ["requested", "quorum_collecting"].includes(item.status));
+  const openFindings = (state.findings || []).filter((item) => projectTaskGroupIds.has(item.taskGroupId) && !["resolved", "closed", "dismissed", "wontfix"].includes(item.status));
+  const finalizations = recentHumanFinalizations(projectTaskGroupIds);
 
   const pendingHtml = pending.length ? pending.map((request) => `
     <div class="record">
@@ -4584,9 +4643,6 @@ function renderReview() {
     {v: fmtTime(request.decision?.decidedAt || request.updatedAt), c: "nowrap"}
   ])).join("");
 
-  const pendingPermissions = (state.permissionRequests || []).filter((item) => projectTaskGroupIds.has(item.taskGroupId) && item.status === "pending_approval");
-  const pendingApprovals = (state.approvalRequests || []).filter((item) => projectTaskGroupIds.has(item.taskGroupId) && ["requested", "quorum_collecting"].includes(item.status));
-  const openFindings = (state.findings || []).filter((item) => projectTaskGroupIds.has(item.taskGroupId) && !["resolved", "closed", "dismissed", "wontfix"].includes(item.status));
   const canGrant = hasPerm("project:grant");
   // blocked_external is omitted: the console can't collect the rootCauseOwner/recoveryRef the server
   // requires to keep it terminal, so it would always downgrade to a still-blocking class (use the
@@ -4640,6 +4696,7 @@ function renderReview() {
   const todoPanel = renderPendingForMePanel();
 
   return [
+    renderReviewSummary({pending, pendingPermissions, pendingApprovals, openFindings, answered, finalizations}),
     todoPanel,
     aiAnalysisStalledNotice(allRequests),
     panel("待人工确认", `
@@ -4664,6 +4721,28 @@ const DIRECTIVE_TYPES = [
   ["resolve_decision", "决策处置（重开 / 放弃）"],
   ["free_text", "自由指令"]
 ];
+
+function renderDirectiveSummary(directives, canControl) {
+  const projectGroupIds = new Set(projectTaskGroups().map((taskGroup) => taskGroup.id));
+  const pending = directives.filter((directive) => ["created", "queued", "pending", "accepted"].includes(directive.status)).length;
+  const applied = directives.filter((directive) => ["applied", "completed", "executed"].includes(directive.status)
+    || (directive.appliedActions || []).length).length;
+  const rejected = directives.filter((directive) => ["rejected", "failed"].includes(directive.status)
+    || directive.rejectReason).length;
+  const involvedGroups = new Set(directives.map((directive) => directive.taskGroupId).filter((id) => projectGroupIds.has(id))).size;
+  const controllableGroups = projectTaskGroups().filter((taskGroup) => hasGroupPerm(taskGroup.id, "task_group:control")).length;
+  return panel("人工指令总览", `
+    <div class="metric-grid">
+      ${summaryMetric("指令总数", directives.length, "当前项目范围内的人工指令")}
+      ${summaryMetric("待处理", pending, "等待编排周期消费或确认")}
+      ${summaryMetric("已执行", applied, "已产生结构化动作")}
+      ${summaryMetric("已拒绝", rejected, "需要查看拒绝原因")}
+      ${summaryMetric("涉及任务组", involvedGroups, "已有指令触达的任务组")}
+      ${summaryMetric("可控任务组", controllableGroups, canControl ? "你可下达控制指令的范围" : "当前账号只能查看")}
+    </div>
+    <div class="small muted">查看顺序：先看“指令流水”确认是否已提交或被拒，再决定是否下达新指令；指令会进入编排输入，不直接改总控会话。</div>
+  `, {wide: true});
+}
 
 function renderDirectives() {
   if (!projectTaskGroups().length) {
@@ -4706,13 +4785,14 @@ function renderDirectives() {
   ` : `<div class="notice warn-notice">当前账号无“任务组控制 / 人工指令”权限，仅可查看指令流水。</div>`;
 
   return [
+    renderDirectiveSummary(directiveList, canControl),
+    panel("指令流水", table([{label: "时间", c: "nowrap"}, "类型", {label: "指令内容", c: "text-clip"}, "状态", {label: "已执行动作", c: "text-clip"}, "拒绝原因"], directiveRows), {wide: true, headerSide: filterInput("按指令内容过滤…", "directives")}),
     panel("下达人工指令", `
       <div class="stack">
         <div class="notice">总控与调度会话不接受人工直接输入。所有人工操作通过本通道生成结构化指令，由编排周期作为决策输入消费并全程留审计。</div>
         ${formHtml}
       </div>
-    `, {wide: true}),
-    panel("指令流水", table([{label: "时间", c: "nowrap"}, "类型", {label: "指令内容", c: "text-clip"}, "状态", {label: "已执行动作", c: "text-clip"}, "拒绝原因"], directiveRows), {wide: true, headerSide: filterInput("按指令内容过滤…", "directives")})
+    `, {wide: true})
   ].join("");
 }
 
@@ -4941,36 +5021,7 @@ function renderMonitor() {
     && (!definition.projectId || visibleProjectIds.has(definition.projectId))).slice(0, 8);
   const openReviewBundles = (state.reviewBundles || []).filter((item) => inScope(item) && !["consumed", "rejected"].includes(item.status)).slice(0, 8);
   const openUpgradeCandidates = (state.systemUpgradeCandidates || []).filter((item) => inScope(item) && item.status === "candidate_created").slice(0, 8);
-  // 【人写下的定稿理由此前没有任何读取点】。五处人工收尾（评审计划/评审包/升级候选/共享定义/
-  // 规则来源分流）都要求真人填理由、都做了长度校验、都落了库 —— 而全仓一处都不读它：
-  // 收尾之后对象从上面这些"待处置"清单里消失，理由跟着一起消失。留痕是这几条杠杆存在的理由，
-  // 留了痕却没人看得见，等于没留。所以在同一屏上给出"最近的人工定稿"。
-  const finalizations = [
-    ...(state.reviewPlans || []).filter(inScope).map((item) => ({kind: "评审计划",
-      id: item.reviewPlanId, taskGroupId: item.taskGroupId, status: item.status,
-      by: item.resolvedBy, why: item.resolutionJustification, at: item.updatedAt})),
-    ...(state.reviewBundles || []).filter(inScope).map((item) => ({kind: "评审包",
-      id: item.reviewBundleId, taskGroupId: item.taskGroupId, status: item.status,
-      by: item.resolvedBy, why: item.resolutionJustification, at: item.updatedAt})),
-    ...(state.systemUpgradeCandidates || []).filter(inScope).map((item) => ({kind: "升级候选",
-      id: item.candidateId, taskGroupId: item.taskGroupId, status: item.status,
-      by: item.resolvedBy, why: item.resolutionJustification, at: item.updatedAt})),
-    ...(state.ruleSourceResolutions || []).filter(inScope).map((item) => ({kind: "规则来源分流",
-      id: item.sourceRef || item.resolutionId, taskGroupId: item.taskGroupId, status: item.status,
-      by: item.settledBy, why: item.settlementJustification, at: item.updatedAt})),
-    ...(state.sharedDefinitions || []).filter((item) => !item.projectId || visibleProjectIds.has(item.projectId))
-      .map((item) => ({kind: "共享定义契约", id: item.contractId, taskGroupId: item.taskGroupId,
-        status: item.status, by: item.resolvedBy, why: item.resolutionJustification, at: item.updatedAt})),
-    // 发现项处置完也从「待你处置」里消失，而 dispositionedBy 同样没有读取点：
-    // "这条发现是谁判的、判成了什么"事后无从查起。
-    ...(state.findings || []).filter(inScope).map((item) => ({kind: "评审发现",
-      id: item.findingId || item.id, taskGroupId: item.taskGroupId, status: item.status,
-      by: item.dispositionedBy, why: item.dispositionClass, at: item.updatedAt}))
-    // 抬头写着"这些收尾只能由真人做"，那就必须真有一个人在上面 —— 只有 why 没有 by 的
-    // （例如 AI 自己处置掉的发现项）列进来，这一屏就在说假话，而读的人正是照着它判断
-    // "当时是谁拍的板"。真实数据里第一行就是这样：定稿人一栏是个「-」。
-  ].filter((item) => item.by)
-    .sort((a, b) => String(b.at || "").localeCompare(String(a.at || ""))).slice(0, 10);
+  const finalizations = recentHumanFinalizations(new Set(groups.map((taskGroup) => taskGroup.id)));
 
   // 卡住的执行方案会永久挡住关闭门：分支报了 failed 之后拓扑照样进 integrating，merge 只认  // 卡住的执行方案会永久挡住关闭门：分支报了 failed 之后拓扑照样进 integrating，merge 只认
   // accepted、cancel 又只有人能做。后端一直有"人来取消"这条杠杆（契约检查专门断言过它必须存在），
