@@ -2661,7 +2661,7 @@ const MUTATIONS = [
     gate: "console",
     from: '  if (!(state.projects || []).length) return noProjectYetNotice("项目成员授权");',
     to: "  if (true) return noProjectYetNotice(\"项目成员授权\");",
-    expect: "被守卫吃掉了"
+    expect: "项目页必须保留注册表单"
   },
   {
     // 手机键盘默认首字母大写：严格比较＝人拿自己的邮箱登不进来，且只回一句统一的 401。
@@ -9441,8 +9441,8 @@ const MUTATIONS = [
     name: "不许用没加书名号的英文页名指路（「到 agent 页」实测 4 处）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyGuidanceNamesRealPages",
-    from: '  const projectAgentPage = "「项目管理」→「AI 智能体」";',
-    to: '  const projectAgentPage = "agent 页";',
+    from: '    + "装好后有项目 agent 管理权限的人可到「项目管理」→「AI 智能体」对该节点点「刷新自检」；"',
+    to: '    + "装好后有项目 agent 管理权限的人可到 agent 页对该节点点「刷新自检」；"',
     expect: "没加书名号"
   },
   {
@@ -9581,7 +9581,7 @@ const MUTATIONS = [
     check: "verifyFirstScreenPointsAtRealPlaces",
     from: "「项目管理」→「AI 智能体」→「注册 agent」",
     to: "「项目设置」→「智能体接入」",
-    expect: "界面上没有的位置"
+    expect: "仍指向旧入口"
   },
   {
     name: "首屏界面名提取脱节要自报空转（否则 0 个名字＝永远绿）",

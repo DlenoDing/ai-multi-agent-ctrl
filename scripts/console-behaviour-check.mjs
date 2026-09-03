@@ -2895,6 +2895,12 @@ function runNoVisibleProjectCase() {
         missing.length === 0,
         `它让人去「${missing.join("、")}」页，而这一屏的导航里没有这几页 —— `
           + "照着做的人会在自己的菜单里找一个不存在的入口");
+      if (who === "系统管理员") {
+        check("系统管理员：刚装完的指路要指向项目级智能体注册入口",
+          /项目管理」→「AI 智能体」→「注册 agent/.test(banner)
+            && !/项目设置」→「智能体接入/.test(banner),
+          `它让人去旧入口而这一屏的导航里没有这几页 —— 横幅是：${banner}`);
+      }
     }
   }
   // 方案卡住时，人在监控页读到的"卡在这几项"必须是中文。阻塞项是 kind:分支:尾码 三段式，
@@ -4600,12 +4606,12 @@ function runPendingTruncationCase() {
       testResults: [], checkpoints: [], admissionDecisions: [], modelSelectionDecisions: [],
       sessionPlacementDecisions: [], closeBarriers: [], agentExecutionEvents: [], truncatedCollections: []};
     const freshView = probe.renderMonitorWith(freshState, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
+    const freshBanner = freshView.slice(freshView.indexOf("还没有任何执行记录"), freshView.indexOf("还没有任何执行记录") + 260);
     check("一件执行记录都没有时，监控页要说清这是正常的以及下一步",
-      /还没有任何执行记录/.test(freshView)
-        && /AI 智能体/.test(freshView)
-        && /注册 agent/.test(freshView)
-        && !/项目设置」→「智能体接入/.test(freshView)
-        && /签发一次性加入令牌/.test(freshView),
+      /还没有任何执行记录/.test(freshBanner)
+        && /项目管理」→「AI 智能体」→「注册 agent/.test(freshBanner)
+        && !/项目设置」→「智能体接入/.test(freshBanner)
+        && /签发一次性加入令牌/.test(freshBanner),
       "十一张「暂无数据」并排，人分不清「还没开始跑」和「跑了但没取回来」");
     const busyState = structuredClone(freshState);
     busyState.workSessions = [{sessionId: "s1", taskGroupId: "tg1", status: "running"}];

@@ -52,7 +52,7 @@
 
 - `node --check apps/control-plane-ui/public/app.js`：通过。
 - `node --check scripts/console-behaviour-check.mjs`：通过。
-- `npm run console-behaviour-gate`：593 条断言全部通过。
+- `npm run console-behaviour-gate`：594 条断言全部通过。
 - `npm run mutation-anchors`：1362 条变异锚点都唯一匹配。
 - `npm run validate`：通过，覆盖 contract、auth placement、barrier liveness、console behaviour、human-only parity、system invariants、crash consistency、concurrent writer、idle tick。
 - `npm run docker:doctor`：通过，覆盖 Docker build/health、集中 MCP、安装脚本与 PostgreSQL 状态存储。
@@ -69,3 +69,24 @@
 - 外部互审本轮 diff，重点看项目/组织职责边界是否被文字引导破坏。
   - 外部互审发现组织概览“先接入节点”和离线节点“点刷新自检即可恢复”的误导，已修复并新增行为门。
   - 互审建议的定向命令已补跑：旧式出口扫描无运行源码命中；`verifyGuidanceNamesRealPages` 与 `verifyWipHintMatchesHowCapacityIsCounted` 均通过。
+
+## 最终复验补充
+
+完整 `mutation-gate` 第一次复跑时发现产品逻辑已稳定，但四个守卫登记存在旧预期或假绿风险：
+
+- “有项目时两个入口必须还在”的预期文案仍是旧失败串，已改为当前真实会报红的“项目页必须保留注册表单”。
+- 系统管理员刚装完监控页的空态指路只被泛化校验覆盖，已新增横幅级正向断言，必须指向「项目管理」→「AI 智能体」→「注册 agent」，且不得回退到旧的「项目设置」→「智能体接入」。
+- “到 agent 页”这种未加书名号的英文裸页名原变异没有打到用户可见文案，已改成直接变异真实阻塞出口文案。
+- `verifyGuidanceNamesRealPages` 现在单独统计「X」处/「X」按钮式控件指路，避免只剩“点「X」”时仍假绿。
+- `verifyFirstScreenPointsAtRealPlaces` 现在显式拒绝首屏旧入口「项目设置」→「智能体接入」，避免旧入口名字碰巧仍在其它页面而被误判为可用。
+
+最终补跑结果：
+
+- console 行为门：594 条断言全部通过。
+- mutation 锚点门：1362 条变异锚点都唯一匹配。
+- 指路合同定向核对：通过，46 处页/面板指路、27 处控件指路均核对真实界面。
+- 首屏指引合同定向核对：通过，首屏 6 个界面名均在控制台源码中存在。
+- 完整 mutation-gate：通过，1362 条守卫均已证明具备判别力。
+- 全量 validate：通过，覆盖规格、合同、鉴权位置、关闭门活性、console 行为、真人专属动作对等、系统不变式、崩溃一致性、并发写入和 idle tick。
+- Docker doctor 最终复跑：通过，覆盖 compose 配置/build/health、集中 MCP、安装脚本产物、PostgreSQL CAS、分片防篡改与掉线自动恢复。
+- 外部互审最终结论：未发现必须修改项；确认文档记录不会误导为正式运维命令，系统管理员刚装空态、组织管理员空态、控件指路合同和 mutation 登记均能覆盖本轮回流风险。

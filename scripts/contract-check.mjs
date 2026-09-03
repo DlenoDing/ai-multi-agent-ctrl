@@ -10380,11 +10380,13 @@ function verifyGuidanceNamesRealPages(output) {
   // 不是标签文字 —— 只扫标签等于把它们判成"界面上没有"。
   for (const match of app.matchAll(/\["[a-z_]+", "([^"]{2,32})"\]/gu)) labels.add(match[1]);
   let buttons = 0;
+  let suffixControls = 0;
   for (const file of files) {
     const text = readFileSync(join(root, file), "utf8").replace(/\/\/[^\n]*/gu, (line) => " ".repeat(line.length));
     // 指按钮/控件的三种说法：点「X」、「X」处、「X」按钮。
     // 只认"点「X」"会漏掉登录页那句"可在顶栏「设置密码」处设置个人密码"——它前面是"栏"不是"在"。
     for (const hit of text.matchAll(/(?:点[「“]([^」”]{2,16})[」”]|[「“]([^」”]{2,16})[」”](?:处|按钮))/gu)) {
+      if (hit[2]) suffixControls += 1;
       hit[1] = hit[1] ?? hit[2];
       if (hit[1].includes("${")) continue;
       // "在「X」页/面板" 说的是地方不是按钮，上一条已经按权威表核过了。
@@ -10410,6 +10412,9 @@ function verifyGuidanceNamesRealPages(output) {
     }
   }
   if (buttons < 19) output.push(`只找到 ${buttons} 处控件指路（应 ≥19，实测 19）—— 提取脱节或少认了一种说法，本条在空转`);
+  if (suffixControls < 1) {
+    output.push(`只找到 ${suffixControls} 处「X」处/按钮式控件指路（应 ≥1）—— 本条在空转`);
+  }
   if (labels.size < 30) output.push(`按钮文字只提出 ${labels.size} 个（应 ≥30）—— 权威表没提出来，本条在空转`);
   if (pointers < 20) {
     output.push(`只找到 ${pointers} 处指路（应 ≥20）—— 提取脱节或文件清单缩水了，本条在空转`);
@@ -10471,6 +10476,10 @@ function verifyFirstScreenPointsAtRealPlaces(output) {
     .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
   const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
   const names = [...new Set([...init.matchAll(/「([^」]{2,20})」/gu)].map((match) => match[1]))];
+  if (/「项目设置」→「智能体接入」/u.test(init)) {
+    output.push("首屏指引仍指向旧入口「项目设置」→「智能体接入」—— "
+      + "常规 agent 注册入口已经迁到「项目管理」→「AI 智能体」→「注册 agent」");
+  }
   if (names.length < 3) {
     output.push(`首屏指引里只找到 ${names.length} 个界面名（应至少 3）—— 提取脱节或指引被删了，本条在空转`);
     return;
