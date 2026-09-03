@@ -144,6 +144,31 @@ html, body {
   font-family: inherit;
 }
 
+.nav-item-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nav-item-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.nav-item-desc {
+  display: block;
+  margin-top: 4px;
+  color: rgba(174, 184, 204, 0.78);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.nav-item:hover .nav-item-desc,
+.nav-item.active .nav-item-desc { color: rgba(255, 255, 255, 0.78); }
+
 .nav-item:hover { background: rgba(255, 255, 255, 0.06); color: #fff; }
 .nav-item.active {
   background: var(--sidebar-bg-active);
@@ -639,6 +664,9 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
     padding: 8px 11px;
     border-radius: 8px;
   }
+  .nav-item-main { gap: 6px; }
+  .nav-item-title { overflow-wrap: normal; }
+  .nav-item-desc { display: none; }
   .nav-item.active { border-bottom: 3px solid var(--brand-accent); font-weight: 600; }
   .nav-divider {
     flex: 0 0 auto;

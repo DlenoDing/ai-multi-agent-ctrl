@@ -2042,6 +2042,50 @@ async function runErrorGuidanceCase() {
     `源已可用却仍在提示：${JSON.stringify(healthy.slice(0, 140))}`);
 }
 
+// 侧栏菜单此前只有短标题；系统/组织/项目空间虽然已经分开，普通中文用户仍要逐页点开，
+// 才知道「人工指令」「执行监控」「系统设置」「AI 智能体」各自管什么。
+// 菜单用途说明不能另写一份文案：页面标题、副标题和菜单说明都必须取 PAGE_META 这一处真相源。
+{
+  const meta = Object.fromEntries([...fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8")
+    .matchAll(/^\s*"([a-z][a-z0-9-]+)":\s*\["([^"]+)",\s*"([^"]+)"/gmu)]
+    .map((hit) => [hit[1], {title: hit[2], desc: hit[3]}]));
+  const navState = {
+    schemaVersion: "runtime-state/v1",
+    stateVersion: 1,
+    runtime: {status: "ok", services: [], mcp: {toolCount: 44}},
+    projects: [{id: "p1", name: "项目一", status: "active", organizationId: "org_default", progress: {percent: 0, phase: "draft", health: "ok"}}],
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active", usage: {members: 1, projects: 1, taskGroups: 0, agents: 0}, quotas: {maxMembers: 10, maxProjects: 10, maxTaskGroups: 20, maxAgents: 20}}],
+    accounts: [], accessGrants: [], agents: [], taskGroups: [], agentDispatches: [], workSessions: [],
+    closeBarriers: [], qualityGates: [], findings: [], humanConfirmationRequests: [], humanDirectives: [],
+    approvalRequests: [], permissionRequests: [], truncatedCollections: []
+  };
+  const renderedNav = (account, projectId, pageId) => {
+    const rootEl = el("div");
+    loadConsole(rootEl, {realI18n: true}).renderFullPageWith(navState, account, projectId, pageId);
+    return String(rootEl.innerHTML || "").replace(/<!--[\s\S]*?-->/gu, "");
+  };
+  const assertMenuDescriptions = (label, html, pageIds) => {
+    for (const pageId of pageIds) {
+      check(`${label}侧栏菜单要显示「${meta[pageId]?.title || pageId}」用途说明`,
+        html.includes(`<span class="nav-item-desc">${meta[pageId]?.desc}</span>`),
+        `菜单只有短标题或说明没有取自 PAGE_META：${pageId} / ${meta[pageId]?.desc}`);
+    }
+  };
+  const systemNav = renderedNav({accountId: "sys", email: "sys@local", displayName: "系统管理员",
+    accountType: "system_admin", roles: ["system_owner"], permissions: ["system:*"], organizationId: null}, null, "sys-overview");
+  assertMenuDescriptions("系统管理", systemNav, ["sys-overview", "sys-orgs", "sys-settings", "sys-accounts"]);
+  const orgNav = renderedNav({accountId: "org", email: "org@local", displayName: "组织管理员",
+    accountType: "org_admin", roles: ["org_admin"], permissions: ["org:*", "project:create", "member:invite", "agent:activate"], organizationId: "org_default"}, "p1", "org-overview");
+  assertMenuDescriptions("组织管理", orgNav, ["org-overview", "org-members", "org-agents", "org-projects"]);
+  const projectNav = renderedNav({accountId: "user", email: "user@local", displayName: "项目成员",
+    accountType: "user_account", roles: ["workspace_owner"], permissions: ["project:view", "project:update", "task_group:control", "task_group:review"], organizationId: "org_default"}, "p1", "proj-overview");
+  assertMenuDescriptions("项目管理", projectNav, ["proj-overview", "tg", "review", "directives", "monitor", "proj-settings"]);
+  const styles = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/styles.css"), "utf8");
+  check("移动端侧栏菜单隐藏用途说明，避免横向菜单被长文案撑开",
+    /@media \(max-width: 860px\)[\s\S]*\.nav-item-desc \{ display: none; \}/u.test(styles),
+    "桌面菜单说明已加，但移动端没有隐藏，390px 横向菜单会被长说明撑宽");
+}
+
 // 点「运行自治循环」拿到的回执此前被整个丢掉，一律弹"已触发编排循环"。
 // 而这一拍完全可能【跑了但什么都没推进】：技能源同步失败会让整轮提前返回，
 // changed 里只留一条 blocked_resource —— 人以为成功了，下次再点还是同样的结果。

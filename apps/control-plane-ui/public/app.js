@@ -406,6 +406,20 @@ function sectionSwitchHtml(perspective, pageId) {
     + "</div>";
 }
 
+function menuItemHtml(item, active, todo) {
+  const meta = PAGE_META[item.id] || [item.label, ""];
+  const description = meta[1] || "";
+  return `
+    <button class="nav-item ${active ? "active" : ""}" data-menu="${esc(item.id)}">
+      <span class="nav-item-main">
+        <span class="nav-item-title">${esc(item.label)}</span>
+        ${todo.count ? `<span class="nav-badge">${todo.count}${todo.capped ? "+" : ""}</span>` : ""}
+      </span>
+      ${description ? `<span class="nav-item-desc">${esc(description)}</span>` : ""}
+    </button>
+  `;
+}
+
 /* ---------------- 基础工具 ---------------- */
 
 function emptyState() {
@@ -1910,7 +1924,7 @@ function render() {
     ? `<div class="nav-divider">${esc(item.divider)}</div>`
     : (() => {
         const todo = menuTodoCounts[item.id] || {count: 0, capped: false};
-        return `<button class="nav-item ${item.id === page ? "active" : ""}" data-menu="${item.id}">${esc(item.label)}${todo.count ? `<span class="nav-badge">${todo.count}${todo.capped ? "+" : ""}</span>` : ""}</button>`;
+        return menuItemHtml(item, item.id === page, todo);
       })()
   ).join("");
   const switchHtml = sectionSwitchHtml(perspective, page);
