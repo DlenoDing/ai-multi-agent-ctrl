@@ -3864,9 +3864,9 @@ function runPendingTruncationCase() {
         usage: {members: 1, projects: projects.length, taskGroups: 0, agents: 0}}],
       projects, taskGroups: [], accounts: [], agentRuntimeNodes: [], agentJoinTokens: [],
       accessGrants: [], auditLog: [], truncatedCollections: []});
-    const renderOrg = (projects, pageId) => {
+    const renderOrg = (projects, pageId, selectedProjectId = "") => {
       const root = el("div");
-      loadConsole(root, {realI18n: true}).renderFullPageWith(orgState(projects), orgAdmin, "", pageId);
+      loadConsole(root, {realI18n: true}).renderFullPageWith(orgState(projects), orgAdmin, selectedProjectId, pageId);
       return String(root.innerHTML || "");
     };
     const emptyAgents = renderOrg([], "org-agents");
@@ -3882,10 +3882,16 @@ function runPendingTruncationCase() {
       /项目列表/u.test(emptyGrant) && /账号与授权/u.test(emptyGrant),
       "提示没有点名创建项目的入口页");
     const withProjects = [{id: "p1", name: "探针项目", organizationId: "org_probe", status: "active"}];
-    check("有项目时这两张表单必须还在（守卫不能把杠杆藏掉）",
-      /data-form="join-token"/u.test(renderOrg(withProjects, "org-agents"))
-        && /data-form="project-member"/u.test(renderOrg(withProjects, "org-projects")),
-      "有项目了却还在显示空态提示 —— 这两个入口被守卫吃掉了");
+    const orgAgentsWithProject = renderOrg(withProjects, "org-agents", "p1");
+    const projectAgentsWithProject = renderOrg(withProjects, "proj-agents", "p1");
+    check("有项目时组织页只做令牌审计，项目页保留智能体注册表单",
+      !/data-form="join-token"/u.test(orgAgentsWithProject)
+        && /加入令牌审计/u.test(orgAgentsWithProject)
+        && /data-menu="proj-agents"/u.test(orgAgentsWithProject)
+        && /data-form="join-token"/u.test(projectAgentsWithProject)
+        && /签发一次性加入令牌/u.test(projectAgentsWithProject)
+        && /data-form="project-member"/u.test(renderOrg(withProjects, "org-projects", "p1")),
+      "Agent 签发边界不清：组织页不该承载注册表单，项目页必须保留注册表单和脚本来源");
   }
 
   // 红点只能统计"这个人有权处置"的项。把别人负责的也算进来，那个数字就永远清不掉 ——
@@ -4235,12 +4241,14 @@ function runPendingTruncationCase() {
         && panelAt(agentsHtml, "智能体运行总览") < panelAt(agentsHtml, "智能体接入操作看板")
         && panelAt(agentsHtml, "智能体接入操作看板") < panelAt(agentsHtml, "智能体管理边界")
         && panelAt(agentsHtml, "智能体管理边界") < panelAt(agentsHtml, "智能体节点")
-        && panelAt(agentsHtml, "智能体节点") < panelAt(agentsHtml, "加入令牌管理"),
-      "AI 智能体页没有把在线率、异常节点、负载、接入令牌和组织/项目边界排成可点击操作看板");
-    check("AI 智能体操作看板要提供节点和加入令牌的跳转入口",
+        && panelAt(agentsHtml, "智能体节点") < panelAt(agentsHtml, "加入令牌审计"),
+      "AI 智能体页没有把在线率、异常节点、负载、令牌审计和组织/项目边界排成可点击操作看板");
+    check("AI 智能体操作看板要提供节点、令牌审计和项目注册跳转入口",
       /data-jump-panel="智能体节点"/u.test(agentsHtml)
-        && /data-jump-panel="加入令牌管理"/u.test(agentsHtml),
-      "智能体接入操作看板只显示指标，没有接上智能体节点和加入令牌管理面板的跳转");
+        && /data-jump-panel="加入令牌审计"/u.test(agentsHtml)
+        && /data-menu="proj-agents"/u.test(agentsHtml)
+        && !/data-form="join-token"/u.test(agentsHtml),
+      "智能体接入操作看板只显示指标，或仍把组织页当作常规 agent 注册入口");
     const projectAgentsState = {
       ...overviewState,
       taskGroups: [{id: "tg1", projectId: "p1", name: "执行组", status: "development", workItems: []}],

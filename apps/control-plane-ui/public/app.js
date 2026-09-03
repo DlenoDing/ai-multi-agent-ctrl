@@ -338,7 +338,7 @@ const PAGE_META = {
   "sys-accounts": ["账号与授权", "系统账号、访问授权、服务账号与跨项目授权边界"],
   "org-overview": ["组织概览", "配额用量、活跃项目与任务组统计"],
   "org-members": ["成员管理", "创建成员、权限分配、停用与一次性登录令牌"],
-  "org-agents": ["AI 智能体", "组织内智能体节点：运行状态、健康度、加入令牌与吊销"],
+  "org-agents": ["AI 智能体", "组织内智能体节点：运行状态、健康度、令牌审计与吊销"],
   "org-projects": ["项目列表", "创建项目、基础配置与成员授权"],
   "proj-overview": ["项目概览", "总进度、健康度、任务组平均进度与待人工确认数"],
   "tg": ["任务组", "事项清单、角色、配置继承与执行控制"],
@@ -2131,7 +2131,7 @@ function renderOrgManagementHub(org, projects, openTaskGroups) {
     ],
     modules: [
       {pageId: "org-members", title: "成员管理", metric: `${members.length}`, detail: "创建成员、重发邀请、停用或注销账号", action: "管理成员", tone: members.length ? "blue" : "gray"},
-      {pageId: "org-agents", title: "AI 智能体", metric: aliveNodes.length ? `${onlineNodes}/${aliveNodes.length}` : "0", detail: "节点状态、自检、加入令牌与吊销", action: "管理节点", tone: onlineNodes ? "green" : "orange"},
+      {pageId: "org-agents", title: "AI 智能体", metric: aliveNodes.length ? `${onlineNodes}/${aliveNodes.length}` : "0", detail: "节点状态、自检、令牌审计与吊销", action: "管理节点", tone: onlineNodes ? "green" : "orange"},
       {pageId: "org-projects", title: "项目列表", metric: `${activeProjects}/${projects.length}`, detail: "创建项目、归档项目、补充分配授权", action: "管理项目", tone: activeProjects ? "blue" : "gray"},
       {pageId: "proj-overview", title: "项目空间", metric: `${(state.taskGroups || []).length}`, detail: "进入当前项目的任务组、审核、指令和监控", action: "进入项目", tone: projects.length ? "blue" : "gray"}
     ]
@@ -2867,7 +2867,7 @@ function renderSysAccounts() {
 }
 
 // 一个项目都没有时，这两张表单的「项目」下拉是空的 —— 表单看着完整、点下去必然失败。
-// 实测全新组织的第一屏就是这样：加入令牌管理和项目成员授权都渲染成可提交的样子，0 个选项。
+// 回归背景：全新组织曾经把加入令牌和项目成员授权渲染成可提交表单，项目下拉却是 0 个选项。
 // 与其让人填完再撞一个错误，不如当场说清第一步是什么。
 function noProjectYetNotice(what) {
   return `<div class="notice">还没有任何项目，而${what}必须落在具体项目上。`
@@ -2945,6 +2945,7 @@ function renderProjectMemberForm() {
 
 function renderJoinTokenSection(options = {}) {
   const scopedProjectId = options.projectId || "";
+  const auditOnly = Boolean(options.auditOnly);
   const scopedProjects = scopedProjectId
     ? joinTokenTargetProjects().filter((project) => project.id === scopedProjectId)
     : joinTokenTargetProjects();
@@ -2972,6 +2973,14 @@ function renderJoinTokenSection(options = {}) {
       ? "当前项目不可签发智能体加入令牌：项目可能已归档，或当前账号没有这个项目的管理权限。"
       : "你能看到的项目里没有可签发智能体加入令牌的目标。"}`
       + "归档项目不能再接入新节点；需要继续执行时，请先创建或切换到一个未归档项目。</div>";
+  }
+  if (auditOnly) {
+    return `
+      <div class="stack">
+        <div class="notice">组织页只做组织范围令牌审计和撤销。新增 agent 请先进入目标项目，再到「项目管理」→「AI 智能体」→「注册 agent」签发一次性令牌并复制服务端安装脚本。</div>
+        ${table(["令牌", "项目", "角色范围", "状态", {label: "已用次数", c: "num"}, {label: "过期时间", c: "nowrap"}, "操作"], tokens, {moreText: moreText(scopedTokens.length, 20, "agentJoinTokens")})}
+      </div>
+    `;
   }
   const selectedProject = scopedProjects.find((project) => project.id === currentProjectId) || scopedProjects[0];
   const projectField = scopedProjectId
@@ -3436,24 +3445,32 @@ function renderOrgAgentsBoundaryGuide() {
         tone: "blue",
         action: "看节点"
       })}
-      ${jumpModuleCard({
+      ${projectModuleCard({
+        pageId: "proj-agents",
         title: "项目注册入口",
         metric: "项目",
-        detail: "接新机器时进入目标项目的 AI 智能体页注册",
-        panelTitle: "加入令牌管理",
+        detail: "进入当前项目 AI 智能体页签发一次性令牌",
         tone: "green",
+        action: "去项目注册"
+      })}
+      ${jumpModuleCard({
+        title: "令牌审计",
+        metric: "组织",
+        detail: "在这里查看组织范围加入令牌状态和撤销",
+        panelTitle: "加入令牌审计",
+        tone: "gray",
         action: "看令牌"
       })}
       ${jumpModuleCard({
         title: "服务集中运行",
         metric: "MCP",
         detail: "MCP 与技能同步在服务端，agent 端只跑轻量执行器",
-        panelTitle: "加入令牌管理",
+        panelTitle: "加入令牌审计",
         tone: "gray",
         action: "看说明"
       })}
     </div>
-    <div class="small muted">边界：组织页负责全组织节点状态、控制和吊销；项目页负责按项目签发一次性令牌、复制注册脚本和确认项目节点可用。</div>
+    <div class="small muted">边界：组织页负责全组织节点状态、控制、吊销和令牌审计；项目页负责按项目签发一次性令牌、复制注册脚本和确认项目节点可用。</div>
   `, {wide: true});
 }
 
@@ -3517,7 +3534,7 @@ function renderOrgAgentsSummary(nodes) {
       ${summaryMetric("待用加入令牌", stats.liveTokens, "可注册到本组织项目的票据")}
       ${summaryMetric("异常节点", stats.abnormalNodes, "离线、非健康或需排查的节点")}
     </div>
-    <div class="small muted">查看顺序：先看节点在线率和异常节点，再在“智能体节点”里暂停、恢复、关停或吊销；新增机器只通过“加入令牌管理”入网。</div>
+    <div class="small muted">查看顺序：先看节点在线率和异常节点，再在“智能体节点”里暂停、恢复、关停或吊销；新增机器从目标项目的“AI 智能体”页签发一次性令牌，本页只做组织范围令牌审计。</div>
   `, {wide: true});
 }
 
@@ -3561,20 +3578,20 @@ function renderOrgAgentsActionBoard(nodes) {
         title: "待用加入令牌",
         metric: `${stats.liveTokens}`,
         detail: "可注册到本组织项目的票据",
-        panelTitle: "加入令牌管理",
+        panelTitle: "加入令牌审计",
         tone: stats.liveTokens ? "blue" : "orange",
         action: "查看令牌"
       })}
-      ${jumpModuleCard({
-        title: "节点接入",
-        metric: "入口",
-        detail: "通过服务端签发脚本注册 agent",
-        panelTitle: "加入令牌管理",
+      ${projectModuleCard({
+        pageId: "proj-agents",
+        title: "项目接入入口",
+        metric: "项目",
+        detail: "常规接新 agent 到当前项目页签发脚本",
         tone: "blue",
-        action: "签发令牌"
+        action: "去项目注册"
       })}
     </div>
-    <div class="small muted">处理顺序：先核对在线率、异常和负载，再签发加入令牌接入新节点。</div>
+    <div class="small muted">处理顺序：先核对在线率、异常和负载，再进入目标项目签发加入令牌接入新节点；本页可查看或撤销待用令牌。</div>
   `, {wide: true});
 }
 
@@ -3603,7 +3620,7 @@ function renderOrgAgents() {
           </div>
         `).join("")}
       </div>
-    ` : `<div class="notice">当前组织暂无智能体节点，可先签发加入令牌。</div>`;
+    ` : `<div class="notice">当前组织暂无智能体节点。新增 agent 请进入目标项目的「AI 智能体」页签发一次性加入令牌。</div>`;
   } else {
     const nodeRows = nodes.map((node) => row([
       `<span class="hover-wrap"><strong>${esc(node.nodeName || node.nodeId)}</strong>${agentHoverPop(node)}</span><div class="small muted mono">${esc(node.nodeId)}</div>`,
@@ -3623,7 +3640,7 @@ function renderOrgAgents() {
     renderOrgAgentsActionBoard(nodes),
     renderOrgAgentsBoundaryGuide(),
     panel("智能体节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "org-nodes")}${toggle}`}),
-    panel("加入令牌管理", renderJoinTokenSection(), {wide: true})
+    panel("加入令牌审计", renderJoinTokenSection({auditOnly: true}), {wide: true})
   ].join("");
 }
 
