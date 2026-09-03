@@ -2201,6 +2201,62 @@ function renderSysOverview() {
 
 /* ---------------- 系统管理员：组织管理 ---------------- */
 
+function renderSysOrgsActionBoard({orgs, activeOrgs, suspendedOrgs, quotaPressure}) {
+  return panel("组织与配额操作看板", `
+    <div class="module-grid">
+      ${jumpModuleCard({
+        title: "启用组织",
+        metric: `${activeOrgs}`,
+        detail: activeOrgs ? "可继续创建项目、成员和智能体" : "当前没有启用中的组织",
+        panelTitle: "组织列表",
+        tone: activeOrgs ? "blue" : "orange",
+        action: "查看组织"
+      })}
+      ${jumpModuleCard({
+        title: "停用 / 异常",
+        metric: `${suspendedOrgs}`,
+        detail: suspendedOrgs ? "需要核对停用原因和恢复入口" : "当前没有停用或异常组织",
+        panelTitle: "组织列表",
+        tone: suspendedOrgs ? "red" : "green",
+        action: "定位风险"
+      })}
+      ${jumpModuleCard({
+        title: "配额压力",
+        metric: `${quotaPressure}`,
+        detail: quotaPressure ? "任一配额达到 80% 即计入" : "当前配额压力正常",
+        panelTitle: "组织列表",
+        tone: quotaPressure ? "orange" : "green",
+        action: "查看配额"
+      })}
+      ${jumpModuleCard({
+        title: "组织总数",
+        metric: `${orgs.length}`,
+        detail: "系统内全部组织资源边界",
+        panelTitle: "组织列表",
+        tone: orgs.length ? "blue" : "gray",
+        action: "查看列表"
+      })}
+      ${jumpModuleCard({
+        title: "创建组织",
+        metric: "入口",
+        detail: "创建组织并签发初始组织管理员",
+        panelTitle: "创建组织",
+        tone: "blue",
+        action: "创建"
+      })}
+      ${jumpModuleCard({
+        title: "治理说明",
+        metric: "3 层",
+        detail: "系统管理员、组织管理员、项目成员职责边界",
+        panelTitle: "说明",
+        tone: "gray",
+        action: "查看说明"
+      })}
+    </div>
+    <div class="small muted">处理顺序：先核对组织状态、配额压力和启停风险，再创建组织或调整配额。</div>
+  `, {wide: true});
+}
+
 function renderSysOrgs() {
   const activeOrgs = organizations.filter((org) => org.status === "active").length;
   const suspendedOrgs = organizations.filter((org) => org.status !== "active").length;
@@ -2239,6 +2295,7 @@ function renderSysOrgs() {
           <div class="small muted">任一配额使用达到 80% 即计入</div></div>
       </div>
     `, {wide: true}),
+    renderSysOrgsActionBoard({orgs: organizations, activeOrgs, suspendedOrgs, quotaPressure}),
     panel("组织列表", table(["组织", "状态", "成员", "项目", "任务组", "智能体", "创建时间", "操作"], orgRows,
       {emptyText: listEmptyText("组织列表")}), {wide: true, headerSide: filterInput("按组织名过滤…", "orgs")}),
     panel("创建组织", `

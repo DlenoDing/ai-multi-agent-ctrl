@@ -290,6 +290,7 @@ globalThis.__probe = {
   bootstrapScaleFrom: (overview) => bootstrapScaleFrom(overview),
   renderSysOverviewWith: (nextState, account, overviewData) => { state = nextState; currentAccount = account; systemOverview = overviewData; return renderSysOverview(); },
   renderSysSettingsWith: (nextState, instructions) => { state = nextState; if (instructions !== undefined) instructionState = instructions; return renderSysSettings(); },
+  renderSysOrgsWith: (nextState, account, orgList) => { state = nextState; currentAccount = account; organizations = orgList || []; return renderSysOrgs(); },
   renderSysAccountsWith: (nextState, account) => { state = nextState; currentAccount = account; return renderSysAccounts(); },
   renderOrgMembersWith: (nextState, account, members) => { state = nextState; currentAccount = account; orgMembers = members || []; return renderOrgMembers(); },
   renderOrgAgentsWith: (nextState, account, nodes) => { state = nextState; currentAccount = account; orgAgentNodes = nodes || []; return renderOrgAgents(); },
@@ -3948,6 +3949,19 @@ function runPendingTruncationCase() {
     const orgAdmin = {accountId: "acct_a", accountType: "org_admin", displayName: "组织管理员", email: "a@example.com", organizationId: "org_default",
       roles: ["org_admin"], permissions: ["project:create", "project:grant", "member:invite", "agent:activate", "task_group:control", "task_group:review"]};
     const panelAt = (html, title) => html.indexOf(`<h2>${title}</h2>`);
+    const sysOrgsHtml = probe.renderSysOrgsWith(overviewState, admin, overviewState.organizations).replace(/<!--[\s\S]*?-->/gu, "");
+    check("系统组织页先显示总览和操作看板，再显示列表、创建表单和说明",
+      panelAt(sysOrgsHtml, "组织管理总览") >= 0
+        && panelAt(sysOrgsHtml, "组织管理总览") < panelAt(sysOrgsHtml, "组织与配额操作看板")
+        && panelAt(sysOrgsHtml, "组织与配额操作看板") < panelAt(sysOrgsHtml, "组织列表")
+        && panelAt(sysOrgsHtml, "组织列表") < panelAt(sysOrgsHtml, "创建组织")
+        && panelAt(sysOrgsHtml, "创建组织") < panelAt(sysOrgsHtml, "说明"),
+      "系统组织页仍然缺少总览后的操作入口，系统管理员要先读长表和表单才知道从哪里处理");
+    check("系统组织操作看板要提供组织列表、创建组织和说明的跳转入口",
+      /data-jump-panel="组织列表"/u.test(sysOrgsHtml)
+        && /data-jump-panel="创建组织"/u.test(sysOrgsHtml)
+        && /data-jump-panel="说明"/u.test(sysOrgsHtml),
+      "组织与配额操作看板只显示指标，没有接上组织列表、创建组织和说明面板的跳转");
     const accountHtml = probe.renderSysAccountsWith(overviewState, admin).replace(/<!--[\s\S]*?-->/gu, "");
     check("账号与授权页先显示总览，再显示邀请表单",
       panelAt(accountHtml, "账号与授权总览") >= 0
