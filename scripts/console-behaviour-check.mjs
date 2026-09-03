@@ -294,6 +294,7 @@ globalThis.__probe = {
   renderSysAccountsWith: (nextState, account) => { state = nextState; currentAccount = account; return renderSysAccounts(); },
   renderOrgMembersWith: (nextState, account, members) => { state = nextState; currentAccount = account; orgMembers = members || []; return renderOrgMembers(); },
   renderOrgAgentsWith: (nextState, account, nodes) => { state = nextState; currentAccount = account; orgAgentNodes = nodes || []; return renderOrgAgents(); },
+  renderProjectAgentsWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; return renderProjectAgents(); },
   blockerGuide: (type) => blockerGuide(type),
   renderMonitorWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; return renderMonitor(); },
   setAuth: (token, account) => { authToken = token; currentAccount = account; },
@@ -1278,16 +1279,16 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
       settingsPanelAt("项目设置总览") >= 0
         && settingsPanelAt("项目设置总览") < settingsPanelAt("项目设置操作看板")
         && settingsPanelAt("项目设置操作看板") < settingsPanelAt("项目基础配置")
-        && settingsPanelAt("项目基础配置") < settingsPanelAt("智能体接入")
-        && settingsPanelAt("智能体接入") < settingsPanelAt("系统规则")
+        && settingsPanelAt("项目基础配置") < settingsPanelAt("AI 智能体")
+        && settingsPanelAt("AI 智能体") < settingsPanelAt("系统规则")
         && settingsPanelAt("系统规则") < settingsPanelAt("业务规则"),
-      "项目设置页仍然把长表单直接推到前面，用户要向下找才知道 agent 入网和规则在哪里");
+      "项目设置页仍然把长表单直接推到前面，用户要向下找才知道仓库、规则和 agent 管理在哪里");
     check("项目设置操作看板要提供能直接跳到各配置模块的入口",
       /data-jump-panel="项目基础配置"/u.test(settingsHtml)
-        && /data-jump-panel="智能体接入"/u.test(settingsHtml)
+        && /data-menu="proj-agents"/u.test(settingsHtml)
         && /data-jump-panel="系统规则"/u.test(settingsHtml)
         && /data-jump-panel="业务规则"/u.test(settingsHtml),
-      "项目设置看板只显示指标，没有接上基础配置、智能体接入和规则面板的跳转");
+      "项目设置看板只显示指标，没有接上基础配置、AI 智能体页面和规则面板的跳转");
     check("没配仓库时要说清空着会怎样（而不是只剩一个「添加仓库」按钮）",
       /还没有配置仓库/.test(settingsText) && /落不了地|没有产出目标/.test(settingsText),
       "人分不清「这个项目没配」和「配置没加载出来」，也不知道空着会卡在哪一步");
@@ -2079,7 +2080,7 @@ async function runErrorGuidanceCase() {
   assertMenuDescriptions("组织管理", orgNav, ["org-overview", "org-members", "org-agents", "org-projects"]);
   const projectNav = renderedNav({accountId: "user", email: "user@local", displayName: "项目成员",
     accountType: "user_account", roles: ["workspace_owner"], permissions: ["project:view", "project:update", "task_group:control", "task_group:review"], organizationId: "org_default"}, "p1", "proj-overview");
-  assertMenuDescriptions("项目管理", projectNav, ["proj-overview", "tg", "review", "directives", "monitor", "proj-settings"]);
+  assertMenuDescriptions("项目管理", projectNav, ["proj-overview", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"]);
   const styles = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/styles.css"), "utf8");
   check("侧栏空间名要有明确 brand-section 类，不许再靠 .brand span 误伤图形标识",
     /<span class="brand-section">/u.test(systemNav)
@@ -3605,9 +3606,9 @@ function runNoVisibleProjectCase() {
       /没有开自治周期/u.test(off),
       "自治关着，界面还在说「会按固定周期自动跑编排」—— 人会一直等下去");
   }
-  const pages = ["proj-overview", "tg", "review", "directives", "monitor", "proj-settings"];
+  const pages = ["proj-overview", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"];
   const silent = pages.filter((pageId) => !/当前账号暂无可见项目/u.test(renderAs(member, baseState([], []), pageId)));
-  check("一个项目都没有时，六个项目页都要说清是【没有项目】而不是项目空着",
+  check("一个项目都没有时，七个项目页都要说清是【没有项目】而不是项目空着",
     silent.length === 0,
     `这些页没说：${silent.join("、")} —— 说"当前项目暂无任务组"会让人去找是哪个项目空着`);
   check("这句话要按视角给出下一步（成员去找组织管理员，自己建不了项目）",
@@ -4095,6 +4096,34 @@ function runPendingTruncationCase() {
       /data-jump-panel="智能体节点"/u.test(agentsHtml)
         && /data-jump-panel="加入令牌管理"/u.test(agentsHtml),
       "智能体接入操作看板只显示指标，没有接上智能体节点和加入令牌管理面板的跳转");
+    const projectAgentsState = {
+      ...overviewState,
+      taskGroups: [{id: "tg1", projectId: "p1", name: "执行组", status: "development", workItems: []}],
+      agentRuntimeNodes: [{nodeId: "node_p1", nodeName: "项目节点", status: "online", admission: "full",
+        projectIds: ["p1"], display: {health: "ok", currentDispatchIds: ["adp1"], region: "ap-east"}}],
+      agentJoinTokens: [{joinTokenId: "join_1", projectId: "p1", allowedRoles: ["agent-runtime"],
+        status: "issued", useCount: 0, maxUses: 1, expiresAt: "2099-01-01T00:00:00Z"}],
+      agentDispatches: [{dispatchId: "adp1", taskGroupId: "tg1", status: "running"}]
+    };
+    const projectAgentHtml = probe.renderProjectAgentsWith(projectAgentsState, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
+    check("项目 AI 智能体页要先显示总览和操作看板，再显示节点与注册入口",
+      panelAt(projectAgentHtml, "项目智能体总览") >= 0
+        && panelAt(projectAgentHtml, "项目智能体总览") < panelAt(projectAgentHtml, "项目智能体操作看板")
+        && panelAt(projectAgentHtml, "项目智能体操作看板") < panelAt(projectAgentHtml, "项目智能体节点")
+        && panelAt(projectAgentHtml, "项目智能体节点") < panelAt(projectAgentHtml, "注册 agent"),
+      "项目级智能体入口仍可能藏在项目设置里，项目负责人不能直接按项目查看节点和注册脚本");
+    check("项目 AI 智能体页要提供注册脚本来源和节点控制入口",
+      /签发一次性加入令牌/u.test(projectAgentHtml)
+        && /注册脚本/u.test(projectAgentHtml)
+        && /项目节点/u.test(projectAgentHtml)
+        && /data-jump-panel="注册 agent"/u.test(projectAgentHtml),
+      "项目智能体页没有把「先签发令牌、再拿服务端注册脚本」这条操作链路放到首屏");
+    const projectOverviewRoot = el("div");
+    loadConsole(projectOverviewRoot, {realI18n: true}).renderFullPageWith(projectAgentsState, admin, "p1", "proj-overview");
+    const overviewHtml = String(projectOverviewRoot.innerHTML || "").replace(/<!--[\s\S]*?-->/gu, "");
+    check("项目概览要有 AI 智能体模块卡片，不能只靠项目设置里的隐藏入口",
+      /data-menu="proj-agents"/u.test(overviewHtml) && /AI 智能体/u.test(overviewHtml) && /注册 agent|管理节点/u.test(overviewHtml),
+      "项目概览缺少通往项目智能体管理的一跳入口，用户看到无在线 agent 时仍要自己猜去哪里注册");
     const orgProjectsRoot = el("div");
     loadConsole(orgProjectsRoot, {realI18n: true}).renderFullPageWith(overviewState, orgAdmin, "p1", "org-projects");
     const orgProjectsHtml = String(orgProjectsRoot.innerHTML || "").replace(/<!--[\s\S]*?-->/gu, "");
@@ -5625,7 +5654,7 @@ await runCodedApiErrorCase();
   const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
   const loadAt = appSource.indexOf("async function loadPage()");
   const loadBody = loadAt < 0 ? "" : appSource.slice(loadAt, appSource.indexOf("\nasync function loadTaskGroupDetail", loadAt));
-  const projectScopedPages = new Set(["proj-overview", "tg", "review", "directives", "monitor", "proj-settings"]);
+  const projectScopedPages = new Set(["proj-overview", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"]);
   const calls = [];
   let currentPage = null;
   for (const line of loadBody.split("\n")) {
@@ -6760,7 +6789,7 @@ await runCodedApiErrorCase();
   }, {accountId: "acct_system_owner", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"}, "prj_control_plane"]);
   const scanned = [];
   const pages = ["sys-overview", "sys-orgs", "sys-settings", "sys-accounts", "org-overview", "org-members",
-    "org-agents", "org-projects", "proj-overview", "tg", "review", "directives", "monitor", "proj-settings"];
+    "org-agents", "org-projects", "proj-overview", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"];
   for (const [label, state, account, projectId] of i18nScanStates) {
     scanned.push(...scanState(label, state, account, projectId, pages));
   }

@@ -138,7 +138,7 @@ let execTimer = null;
 
 /* ---------------- 视角与菜单 ---------------- */
 
-const PROJECT_PAGES = new Set(["proj-overview", "tg", "review", "directives", "monitor", "proj-settings"]);
+const PROJECT_PAGES = new Set(["proj-overview", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"]);
 
 const PROJECT_MENU_TAIL = [
   {id: "proj-overview", label: "项目概览"},
@@ -146,6 +146,7 @@ const PROJECT_MENU_TAIL = [
   {id: "review", label: "人工审核"},
   {id: "directives", label: "人工指令"},
   {id: "monitor", label: "执行监控"},
+  {id: "proj-agents", label: "AI 智能体"},
   {id: "proj-settings", label: "项目设置"}
 ];
 
@@ -344,7 +345,8 @@ const PAGE_META = {
   "review": ["人工审核", "集中处理执行过程中提交的人工确认请求"],
   "directives": ["人工指令", "通过独立通道向系统下达结构化指令"],
   "monitor": ["执行监控", "会话、派发、控制通道与实时执行事件流"],
-  "proj-settings": ["项目设置", "仓库与凭证引用、基线数据、智能体接入、规则与默认角色"]
+  "proj-agents": ["AI 智能体", "当前项目的 agent 节点、加入令牌、注册脚本与运行控制"],
+  "proj-settings": ["项目设置", "仓库与凭证引用、基线数据、规则与默认角色"]
 };
 
 function perspectiveOf(account) {
@@ -1600,6 +1602,18 @@ async function loadPage() {
       };
       ensureProjectSelection();
       ensureExecScope();
+    } else if (page === "proj-agents") {
+      const [tasksState, runtimeState] = await Promise.all([
+        fetchState("tasks", {projectId: currentProjectId}),
+        fetchState("runtime", {projectId: currentProjectId})
+      ]);
+      state = {
+        ...tasksState,
+        agentRuntimeNodes: runtimeState.agentRuntimeNodes || [],
+        agentJoinTokens: runtimeState.agentJoinTokens || [],
+        agentDispatches: runtimeState.agentDispatches || tasksState.agentDispatches || []
+      };
+      ensureProjectSelection();
     } else if (page === "proj-settings") {
       state = await fetchState("tasks", {projectId: currentProjectId});
       ensureProjectSelection();
@@ -2030,6 +2044,7 @@ function renderContent() {
   else if (page === "review") body = renderReview();
   else if (page === "directives") body = renderDirectives();
   else if (page === "monitor") body = renderMonitor();
+  else if (page === "proj-agents") body = renderProjectAgents();
   else if (page === "proj-settings") body = renderProjectSettings();
   return body;
 }
@@ -3181,6 +3196,24 @@ function orgAgentStats(nodes) {
   return {aliveNodes, onlineNodes, busyNodes, runningDispatches, abnormalNodes, liveTokens};
 }
 
+function projectAgentNodes(projectId = currentProjectId) {
+  if (!projectId) return [];
+  return (state.agentRuntimeNodes || []).filter((node) => (node.projectIds || []).includes(projectId));
+}
+
+function projectAgentStats(projectId = currentProjectId, nodes = projectAgentNodes(projectId)) {
+  const aliveNodes = nodes.filter((node) => node.status !== "revoked");
+  const onlineNodes = aliveNodes.filter((node) => node.status === "online").length;
+  const busyNodes = aliveNodes.filter((node) => Number((node.display?.currentDispatchIds || []).length) > 0).length;
+  const groupIds = new Set((state.taskGroups || []).filter((taskGroup) => taskGroup.projectId === projectId).map((taskGroup) => taskGroup.id));
+  const runningDispatches = (state.agentDispatches || []).filter((dispatch) =>
+    groupIds.has(dispatch.taskGroupId) && ["queued", "running", "blocked"].includes(dispatch.status)).length;
+  const abnormalNodes = aliveNodes.filter((node) =>
+    node.status !== "online" || !["ok", "healthy", "normal", undefined, ""].includes(node.display?.health)).length;
+  const liveTokens = liveJoinTokenCount(projectId);
+  return {aliveNodes, onlineNodes, busyNodes, runningDispatches, abnormalNodes, liveTokens};
+}
+
 function renderOrgAgentsSummary(nodes) {
   const stats = orgAgentStats(nodes);
   return panel("智能体运行总览", `
@@ -3298,6 +3331,96 @@ function renderOrgAgents() {
     renderOrgAgentsActionBoard(nodes),
     panel("智能体节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "org-nodes")}${toggle}`}),
     panel("加入令牌管理", renderJoinTokenSection(), {wide: true})
+  ].join("");
+}
+
+/* ---------------- 成员：项目智能体 ---------------- */
+
+function renderProjectAgentsSummary(project, nodes) {
+  const stats = projectAgentStats(project.id, nodes);
+  return panel("项目智能体总览", `
+    <div class="metric-grid">
+      ${summaryMetric("项目节点", stats.aliveNodes.length, "绑定当前项目且未吊销的 agent 节点")}
+      ${summaryMetric("在线节点", `${stats.onlineNodes}/${stats.aliveNodes.length}`, "可接收当前项目派发")}
+      ${summaryMetric("忙碌节点", stats.busyNodes, "正在承载任务的节点")}
+      ${summaryMetric("当前任务", stats.runningDispatches, "当前项目排队、运行或被挡的派发")}
+      ${summaryMetric("待用加入令牌", stats.liveTokens, "可注册到当前项目的一次性票据")}
+      ${summaryMetric("异常节点", stats.abnormalNodes, "离线、非健康或需排查的节点")}
+    </div>
+    <div class="small muted">查看顺序：先看在线率、异常节点和待用令牌；新机器只通过本页“注册 agent”签发一次性加入令牌，脚本由服务端生成。</div>
+  `, {wide: true});
+}
+
+function renderProjectAgentsActionBoard(project, nodes) {
+  const stats = projectAgentStats(project.id, nodes);
+  return panel("项目智能体操作看板", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "注册新 agent",
+        metric: stats.liveTokens ? `${stats.liveTokens}` : "签发",
+        detail: stats.liveTokens ? "已有待用令牌，可继续复制注册脚本" : "生成一次性令牌和服务端安装脚本",
+        panelTitle: "注册 agent",
+        tone: stats.liveTokens ? "blue" : "orange",
+        action: "签发令牌"
+      })}
+      ${jumpModuleCard({
+        title: "项目节点",
+        metric: `${stats.onlineNodes}/${stats.aliveNodes.length}`,
+        detail: stats.aliveNodes.length ? "查看当前项目可用节点" : "当前项目还没有节点",
+        panelTitle: "项目智能体节点",
+        tone: stats.onlineNodes ? "green" : stats.aliveNodes.length ? "orange" : "gray",
+        action: "查看节点"
+      })}
+      ${jumpModuleCard({
+        title: "异常节点",
+        metric: `${stats.abnormalNodes}`,
+        detail: stats.abnormalNodes ? "需要排查或吊销" : "当前项目没有异常节点",
+        panelTitle: "项目智能体节点",
+        tone: stats.abnormalNodes ? "red" : "green",
+        action: "定位异常"
+      })}
+      ${projectModuleCard({
+        pageId: "monitor",
+        title: "运行任务",
+        metric: `${stats.runningDispatches}`,
+        detail: stats.runningDispatches ? "查看派发和实时事件" : "当前没有运行中的派发",
+        tone: stats.runningDispatches ? "blue" : "green",
+        action: "看监控"
+      })}
+    </div>
+    <div class="small muted">注册脚本不是固定命令：必须先在本页签发绑定当前项目的一次性令牌，弹窗会给出直接安装和带完整性校验的安装命令。</div>
+  `, {wide: true});
+}
+
+function renderProjectAgents() {
+  const project = currentProject();
+  if (!project) return panel("AI 智能体", noVisibleProjectNotice(), {wide: true});
+  const nodes = projectAgentNodes(project.id);
+  const canControlNodes = hasPerm("agent:activate");
+  const nodeRows = nodes.map((node) => {
+    const timedOut = heartbeatTimedOut(node);
+    return row([
+      `<span class="hover-wrap"><strong>${esc(node.nodeName || node.nodeId)}</strong>${agentHoverPop(node)}</span><div class="small muted mono">${esc(node.nodeId)}</div>`,
+      `${timedOut
+        ? `${badge("heartbeat_timeout")}<div class="small warn-text">项目页提示：上次状态仍为「${esc(t(node.status) || node.status)}」，但心跳已超过判死阈值</div>`
+        : badge(node.status)}${claimMissHint(node)}${selfCheckFailureHint(node)}`,
+      badge(node.admission),
+      esc(node.display?.region || "-"),
+      badge(node.display?.health),
+      {v: String((node.display?.currentDispatchIds || []).length), c: "num"},
+      {v: `${fmtTime(node.lastHeartbeatAt)}${heartbeatStaleHint(node)}`, c: "nowrap"},
+      canControlNodes ? agentActions(node) : "-"
+    ]);
+  }).join("");
+  const nodeNotice = nodes.length
+    ? `<div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>`
+    : `<div class="notice warn-notice">当前项目还没有任何 agent 节点。要让任务实际执行，请在下面“注册 agent”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 agent 主机执行。</div>`;
+  return [
+    renderProjectAgentsSummary(project, nodes),
+    renderProjectAgentsActionBoard(project, nodes),
+    panel("项目智能体节点", `<div class="stack">${nodeNotice}${table(["名称", "运行状态", "准入", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"], nodeRows, {emptyText: "当前项目暂无智能体节点"})}</div>`,
+      {wide: true, headerSide: filterInput("按节点名、地区过滤…", "project-nodes")}),
+    panel("注册 agent", renderJoinTokenSection({projectId: project.id, context: "project"}), {wide: true})
   ].join("");
 }
 
@@ -3442,6 +3565,7 @@ function projectHubHtml(project, groups, openGroups, eventsInScope, repoTargets)
   const activeDispatches = (state.agentDispatches || []).filter((item) => groupIds.has(item.taskGroupId) && ["queued", "running", "blocked"].includes(item.status)).length;
   const directives = (state.humanDirectives || []).filter((item) => groupIds.has(item.taskGroupId) && ["queued", "acknowledged"].includes(item.status)).length;
   const eventLatest = eventsInScope[0]?.createdAt ? sinceText(eventsInScope[0].createdAt) : "暂无事件";
+  const agentStats = projectAgentStats(project.id);
   return `
     <section class="project-hub wide">
       <div class="project-hub-main">
@@ -3490,10 +3614,20 @@ function projectHubHtml(project, groups, openGroups, eventsInScope, repoTargets)
           tone: blockedDispatches ? "red" : activeDispatches ? "blue" : "green"
         })}
         ${projectModuleCard({
+          pageId: "proj-agents",
+          title: "AI 智能体",
+          metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : `${agentStats.liveTokens}`,
+          detail: agentStats.aliveNodes.length
+            ? "项目节点、加入令牌、注册脚本与控制操作"
+            : "还没有项目节点，先签发令牌注册 agent",
+          action: agentStats.aliveNodes.length ? "管理节点" : "注册 agent",
+          tone: agentStats.onlineNodes ? "green" : agentStats.aliveNodes.length ? "orange" : "red"
+        })}
+        ${projectModuleCard({
           pageId: "proj-settings",
           title: "项目设置",
           metric: `${repoTargets.length}`,
-          detail: "仓库、规则、默认角色、授权边界与智能体接入",
+          detail: "仓库、规则、默认角色与授权边界",
           action: "配置项目",
           tone: repoTargets.length ? "blue" : "gray"
         })}
@@ -5989,22 +6123,23 @@ function renderProjectSettingsSummary(project, repos, baselineData, defaultRoles
   const businessRuleCount = rulesLoaded ? (resolved.businessRules || []).length : "—";
   const archivedText = project.status === "archived"
     ? "项目已归档，设置只读"
-    : "项目设置影响后续派发、入网和产出落地";
+    : "项目设置影响后续派发和产出落地；Agent 接入在独立页面管理";
   return panel("项目设置总览", `
     <div class="metric-grid">
       ${summaryMetric("仓库", repos.length, "代码与文档产出的 Git 落点")}
       ${summaryMetric("基线", baselineData.length, "agent 可引用的现状材料")}
       ${summaryMetric("默认角色", defaultRoles.length, "任务组未指定时的角色回退")}
-      ${summaryMetric("待用加入令牌", liveJoinTokenCount(project.id), "可注册到本项目的 agent 票据")}
+      ${summaryMetric("待用加入令牌", liveJoinTokenCount(project.id), "在 AI 智能体页签发和使用")}
       ${summaryMetric("系统规则", systemRuleCount, "项目层生效的系统规则")}
       ${summaryMetric("业务规则", businessRuleCount, "项目层生效的业务规则")}
     </div>
-    <div class="small muted">${esc(archivedText)}；agent 注册入口在本页“智能体接入”。</div>
+    <div class="small muted">${esc(archivedText)}。</div>
   `, {wide: true});
 }
 
 function renderProjectSettingsActionBoard(project, repos, baselineData, defaultRoles, resolved, rulesLoaded) {
   const liveTokens = liveJoinTokenCount(project.id);
+  const agentStats = projectAgentStats(project.id);
   const systemRuleCount = rulesLoaded ? (resolved.systemRules || []).length : "—";
   const businessRuleCount = rulesLoaded ? (resolved.businessRules || []).length : "—";
   const ruleTone = rulesLoaded ? "blue" : "orange";
@@ -6034,13 +6169,13 @@ function renderProjectSettingsActionBoard(project, repos, baselineData, defaultR
         tone: defaultRoles.length ? "blue" : "gray",
         action: "管理角色"
       })}
-      ${jumpModuleCard({
+      ${projectModuleCard({
+        pageId: "proj-agents",
         title: "智能体入网",
-        metric: `${liveTokens}`,
-        detail: liveTokens ? "有待用的一次性 agent 加入令牌" : "需要新节点时在这里签发令牌",
-        panelTitle: "智能体接入",
-        tone: liveTokens ? "green" : "blue",
-        action: "签发令牌"
+        metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : `${liveTokens}`,
+        detail: liveTokens ? "有待用的一次性 agent 加入令牌" : "需要新节点时进入独立页面签发",
+        tone: agentStats.onlineNodes ? "green" : liveTokens ? "blue" : "orange",
+        action: "去接入页"
       })}
       ${jumpModuleCard({
         title: "系统规则",
@@ -6059,7 +6194,7 @@ function renderProjectSettingsActionBoard(project, repos, baselineData, defaultR
         action: "查看规则"
       })}
     </div>
-    <div class="small muted">处理顺序：先确认产出仓库和 agent 入网，再核对默认角色与规则；看板只使用本页已加载数据，不额外请求接口。</div>
+    <div class="small muted">处理顺序：本页先确认产出仓库、默认角色与规则；Agent 节点和注册脚本到「AI 智能体」页处理。看板只使用本页已加载数据，不额外请求接口。</div>
   `, {wide: true});
 }
 
@@ -6082,6 +6217,7 @@ function renderProjectSettings() {
       + "成员授权也发不进去了。要继续这条线，请另建一个项目。</div>"
     : "";
   const readOnlyNotice = canEdit ? "" : `<div class="notice warn-notice">当前账号无“项目授权管理”权限，项目配置为只读。</div>`;
+  const agentStats = projectAgentStats(project.id);
 
   // 三块配置为空时，页面原先只剩一个"添加 X"按钮 —— 人分不清"这个项目没配"
   // 和"配置没加载出来"，也不知道空着会怎样。空要自己说话，并说清后果。
@@ -6126,7 +6262,19 @@ function renderProjectSettings() {
         <button class="primary-button" type="submit" ${editDisabled}>保存项目配置</button>
       </form>
     `, {wide: true}),
-    panel("智能体接入", renderJoinTokenSection({projectId: project.id, context: "project"}), {wide: true}),
+    panel("AI 智能体", `
+      <div class="module-grid action-grid">
+        ${projectModuleCard({
+          pageId: "proj-agents",
+          title: "进入智能体管理",
+          metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : `${agentStats.liveTokens}`,
+          detail: "查看项目节点、签发加入令牌、复制注册脚本、下发节点控制",
+          action: "打开 AI 智能体",
+          tone: agentStats.onlineNodes ? "green" : "orange"
+        })}
+      </div>
+      <div class="small muted">这里不再承载注册表单，避免仓库/规则配置与运行节点管理混在一起。</div>
+    `, {wide: true}),
     !rulesLoaded
       ? panel("规则配置", projConfigStatus === "failed"
         ? `<div class="notice warn-notice">暂时无法读取项目规则配置（配置接口这一次没取到：${esc(projConfigError || "原因未记下")}），已隐藏规则编辑器以避免误保存清空规则。请点击右上角刷新重试。</div>`
