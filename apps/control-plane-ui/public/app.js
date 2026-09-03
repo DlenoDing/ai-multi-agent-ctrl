@@ -3774,6 +3774,74 @@ function projectHubHtml(project, groups, openGroups, eventsInScope, repoTargets)
   `;
 }
 
+function renderProjectOperationPath(project, groups, openGroups, eventsInScope, repoTargets) {
+  const groupIds = new Set(groups.map((taskGroup) => taskGroup.id));
+  const agentStats = projectAgentStats(project.id);
+  const activeDispatches = (state.agentDispatches || [])
+    .filter((item) => groupIds.has(item.taskGroupId) && ["queued", "running", "blocked"].includes(item.status)).length;
+  const blockedDispatches = (state.agentDispatches || [])
+    .filter((item) => groupIds.has(item.taskGroupId) && item.status === "blocked").length;
+  const todo = pendingForMe();
+  const directives = (state.humanDirectives || [])
+    .filter((item) => groupIds.has(item.taskGroupId) && ["queued", "acknowledged"].includes(item.status)).length;
+  const ruleCount = (project.config?.systemRules || []).length + (project.config?.businessRules || []).length;
+  return panel("项目操作路径", `
+    <div class="module-grid action-grid">
+      ${projectModuleCard({
+        pageId: "proj-agents",
+        title: "1 执行准备",
+        metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : `${repoTargets.length}`,
+        detail: agentStats.aliveNodes.length
+          ? "先确认 Agent 在线、准入和远程 MCP 生效"
+          : "没有项目节点时先注册 agent，再核对仓库落点",
+        tone: agentStats.onlineNodes ? "green" : "orange",
+        action: "检查 Agent"
+      })}
+      ${projectModuleCard({
+        pageId: "tg",
+        title: "2 任务组织",
+        metric: `${openGroups.length}/${groups.length}`,
+        detail: "管理任务组、目标、角色、工作项和统一语言",
+        tone: openGroups.length ? "blue" : "orange",
+        action: "看任务组"
+      })}
+      ${projectModuleCard({
+        pageId: "monitor",
+        title: "3 实时监控",
+        metric: `${activeDispatches}`,
+        detail: blockedDispatches ? `${blockedDispatches} 个派发被挡，先定位卡点` : "查看派发、会话、节点、事件和关闭门",
+        tone: blockedDispatches ? "red" : activeDispatches ? "blue" : "green",
+        action: "看监控"
+      })}
+      ${projectModuleCard({
+        pageId: "review",
+        title: "4 人工介入",
+        metric: `${todo.total}`,
+        detail: todo.total ? "先处理定稿、授权、审批和发现项" : "暂无等待你处理的审核项",
+        tone: todo.total ? "orange" : "green",
+        action: "看审核"
+      })}
+      ${projectModuleCard({
+        pageId: "directives",
+        title: "5 控制补充",
+        metric: `${directives}`,
+        detail: directives ? "有指令等待消费或确认" : "需要改变执行方向时向总控下达结构化指令",
+        tone: directives ? "orange" : "blue",
+        action: "下指令"
+      })}
+      ${projectModuleCard({
+        pageId: "proj-settings",
+        title: "6 配置调整",
+        metric: `${repoTargets.length}/${ruleCount}`,
+        detail: "维护仓库、基线、默认角色、系统规则和业务规则",
+        tone: repoTargets.length ? "blue" : "orange",
+        action: "改设置"
+      })}
+    </div>
+    <div class="small muted">推荐顺序：先确认执行准备，再组织任务；运行中主要看执行监控，只有需要定稿、授权或改方向时才进入人工审核和人工指令；配置类调整统一回到项目设置。</div>
+  `, {wide: true});
+}
+
 function renderProjectOverview() {
   const project = currentProject();
   if (!project) {
@@ -3836,6 +3904,7 @@ function renderProjectOverview() {
     cellsWaitingWithNoAgentNotice(groups),
     wipCapacityNotice(groups),
     projectHubHtml(project, groups, openGroups, eventsInScope, repoTargets),
+    renderProjectOperationPath(project, groups, openGroups, eventsInScope, repoTargets),
     panel(`项目进度 · ${esc(project.name)}`, `
       <div class="stack">
         ${progressLine(project.progress?.percent)}

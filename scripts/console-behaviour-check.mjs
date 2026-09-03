@@ -4147,6 +4147,23 @@ function runPendingTruncationCase() {
     check("项目概览要有 AI 智能体模块卡片，不能只靠项目设置里的隐藏入口",
       /data-menu="proj-agents"/u.test(overviewHtml) && /AI 智能体/u.test(overviewHtml) && /注册 agent|管理节点/u.test(overviewHtml),
       "项目概览缺少通往项目智能体管理的一跳入口，用户看到无在线 agent 时仍要自己猜去哪里注册");
+    check("项目概览要先给普通用户一条跨模块操作路径",
+      overviewHtml.indexOf("project-hub wide") >= 0
+        && panelAt(overviewHtml, "项目操作路径") > overviewHtml.indexOf("project-hub wide")
+        && panelAt(overviewHtml, "项目操作路径") < panelAt(overviewHtml, "关键指标")
+        && /1 执行准备/u.test(overviewHtml)
+        && /2 任务组织/u.test(overviewHtml)
+        && /3 实时监控/u.test(overviewHtml)
+        && /4 人工介入/u.test(overviewHtml)
+        && /5 控制补充/u.test(overviewHtml)
+        && /6 配置调整/u.test(overviewHtml)
+        && /data-menu="tg"/u.test(overviewHtml)
+        && /data-menu="monitor"/u.test(overviewHtml)
+        && /data-menu="review"/u.test(overviewHtml)
+        && /data-menu="directives"/u.test(overviewHtml)
+        && /data-menu="proj-agents"/u.test(overviewHtml)
+        && /data-menu="proj-settings"/u.test(overviewHtml),
+      "项目概览仍是模块卡片和指标堆叠，没有按执行准备、任务组织、监控、人工介入和配置调整给出操作路径");
     const orgProjectsRoot = el("div");
     loadConsole(orgProjectsRoot, {realI18n: true}).renderFullPageWith(overviewState, orgAdmin, "p1", "org-projects");
     const orgProjectsHtml = String(orgProjectsRoot.innerHTML || "").replace(/<!--[\s\S]*?-->/gu, "");
