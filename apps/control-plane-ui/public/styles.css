@@ -91,8 +91,8 @@ html, body {
 .app-shell { display: flex; min-height: 100vh; }
 
 .sidebar {
-  width: 224px;
-  flex: 0 0 224px;
+  width: 264px;
+  flex: 0 0 264px;
   background: var(--sidebar-bg);
   color: var(--sidebar-text);
   display: flex;
@@ -489,7 +489,7 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 /* 用于正文里需要人停下来看一眼的短句（如"没有任何一方考察过替代路径"）。 */
 .warn-text { color: var(--orange); }
 /* 菜单上的待办计数：等人拍板的东西藏在别的页面里时，人不会主动去点那一页。 */
-.nav-badge { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 9px;
+.nav-badge { display: inline-block; flex: 0 0 auto; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 9px;
   background: var(--red); color: #fff; font-size: 11px; line-height: 18px; text-align: center; vertical-align: middle; }
 
 .command-box {

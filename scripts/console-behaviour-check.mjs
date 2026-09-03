@@ -2091,6 +2091,17 @@ async function runErrorGuidanceCase() {
   check("移动端只隐藏空间说明，不隐藏品牌图形标识",
     /@media \(max-width: 860px\)[\s\S]*\.brand \.brand-section \{ display: none; \}/u.test(styles),
     "移动端隐藏规则仍可能把 .brand-mark 一起藏掉，首屏会失去系统识别锚点");
+  const sidebarWidth = Number(/\.sidebar \{[\s\S]*?\bwidth:\s*(\d+)px/u.exec(styles)?.[1] || 0);
+  const sidebarBasis = Number(/\.sidebar \{[\s\S]*?\bflex:\s*0\s+0\s+(\d+)px/u.exec(styles)?.[1] || 0);
+  check("桌面侧栏要给中文用途说明足够宽度，width 与 flex-basis 必须一致",
+    sidebarWidth >= 256 && sidebarWidth === sidebarBasis,
+    `侧栏宽度 ${sidebarWidth}px / flex-basis ${sidebarBasis}px：菜单说明会过度换行或布局声明不一致`);
+  check("移动端侧栏仍要覆盖为 100%，不能把桌面宽度带到窄屏",
+    /@media \(max-width: 860px\)[\s\S]*\.sidebar \{ width: 100%; flex: none;/u.test(styles),
+    "桌面侧栏加宽后，移动端没有明确改回 100%，390px 首屏可能被固定宽度撑开");
+  check("菜单待办徽标不可收缩，长标题或未来新增入口不能把数字压扁",
+    /\.nav-badge \{[^}]*flex:\s*0\s+0\s+auto/u.test(styles),
+    "待办徽标没有 flex: 0 0 auto，标题行空间紧张时计数可能被压缩");
 }
 
 // 点「运行自治循环」拿到的回执此前被整个丢掉，一律弹"已触发编排循环"。
