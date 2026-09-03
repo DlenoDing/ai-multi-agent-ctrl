@@ -1951,7 +1951,7 @@ function render() {
           <span class="brand-mark">智</span>
           <div>
             <strong>AI 多智能体管控台</strong>
-            <span>${esc(sectionLabel(perspective, page))}</span>
+            <span class="brand-section">${esc(sectionLabel(perspective, page))}</span>
           </div>
         </div>
         <nav class="nav" aria-label="管理菜单">${menuHtml}</nav>

@@ -2081,9 +2081,16 @@ async function runErrorGuidanceCase() {
     accountType: "user_account", roles: ["workspace_owner"], permissions: ["project:view", "project:update", "task_group:control", "task_group:review"], organizationId: "org_default"}, "p1", "proj-overview");
   assertMenuDescriptions("项目管理", projectNav, ["proj-overview", "tg", "review", "directives", "monitor", "proj-settings"]);
   const styles = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/styles.css"), "utf8");
+  check("侧栏空间名要有明确 brand-section 类，不许再靠 .brand span 误伤图形标识",
+    /<span class="brand-section">/u.test(systemNav)
+      && !/\.brand span\b/u.test(styles),
+    "品牌区仍在用 .brand span 这类宽选择器：它会把左上角「智」标识当成说明文字一起改样式或隐藏");
   check("移动端侧栏菜单隐藏用途说明，避免横向菜单被长文案撑开",
     /@media \(max-width: 860px\)[\s\S]*\.nav-item-desc \{ display: none; \}/u.test(styles),
     "桌面菜单说明已加，但移动端没有隐藏，390px 横向菜单会被长说明撑宽");
+  check("移动端只隐藏空间说明，不隐藏品牌图形标识",
+    /@media \(max-width: 860px\)[\s\S]*\.brand \.brand-section \{ display: none; \}/u.test(styles),
+    "移动端隐藏规则仍可能把 .brand-mark 一起藏掉，首屏会失去系统识别锚点");
 }
 
 // 点「运行自治循环」拿到的回执此前被整个丢掉，一律弹"已触发编排循环"。

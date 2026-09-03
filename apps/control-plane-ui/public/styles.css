@@ -126,7 +126,7 @@ html, body {
 }
 
 .brand strong { color: #fff; display: block; font-size: 14px; line-height: 1.3; }
-.brand span { display: block; font-size: 11px; color: var(--sidebar-text); }
+.brand .brand-section { display: block; font-size: 11px; color: var(--sidebar-text); }
 
 .nav { padding: 10px 0 24px; display: flex; flex-direction: column; }
 
@@ -647,7 +647,7 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   .sidebar { width: 100%; flex: none; height: auto; position: static; overflow: hidden; }
   .brand { padding: 10px 14px; }
   .brand-mark { width: 30px; height: 30px; font-size: 14px; border-radius: 8px; }
-  .brand span { display: none; }
+  .brand .brand-section { display: none; }
   .nav {
     flex-direction: row;
     flex-wrap: nowrap;
