@@ -4654,6 +4654,12 @@ function ruleSourceBadge(source) {
   return customBadge("默认", "gray");
 }
 
+function ruleContentPreview(content = "") {
+  const normalized = String(content || "").replace(/\s+/gu, " ").trim();
+  if (!normalized) return "暂无正文，展开后填写规则内容";
+  return normalized.length > 180 ? `${normalized.slice(0, 180)}…` : normalized;
+}
+
 function ruleRow(rule, layer, readOnly = false) {
   const source = String(rule.source || "");
   const isDefault = source.split("+").includes("default");
@@ -4662,7 +4668,7 @@ function ruleRow(rule, layer, readOnly = false) {
   const canDelete = owned && !isDefault && !readOnly; // 本层新增（非默认）规则可删除
   const ro = readOnly ? "readonly" : "";
   return `
-    <div class="rule-row ${enabled ? "" : "disabled"}"
+    <details class="rule-row ${enabled ? "" : "disabled"}"
       data-rule-row
       data-rule-id="${esc(rule.ruleId || "")}"
       data-rule-category="${esc(rule.category || "")}"
@@ -4670,6 +4676,15 @@ function ruleRow(rule, layer, readOnly = false) {
       data-orig-enabled="${enabled ? "1" : "0"}"
       data-orig-content="${esc(rule.content || "")}"
       data-orig-title="${esc(rule.title || "")}">
+      <summary class="rule-summary">
+        <span class="rule-summary-main">
+          <strong>${esc(rule.title || rule.ruleId || "未命名规则")}</strong>
+          ${ruleSourceBadge(source)}
+          ${enabled ? customBadge("已启用", "green") : customBadge("已停用", "gray")}
+          ${owned ? customBadge("本层覆盖", "orange") : customBadge("继承", "gray")}
+        </span>
+        <span class="rule-content-view">${esc(ruleContentPreview(rule.content || ""))}</span>
+      </summary>
       <div class="rule-head">
         <input class="rule-title-input" name="ruleTitle" value="${esc(rule.title || "")}" ${(isDefault || readOnly) ? "readonly" : ""} placeholder="规则标题">
         ${ruleSourceBadge(source)}
@@ -4677,13 +4692,17 @@ function ruleRow(rule, layer, readOnly = false) {
         ${canDelete ? `<button type="button" class="danger-button" data-action="rule-del">删除</button>` : ""}
       </div>
       <textarea name="ruleContent" ${ro} placeholder="规则内容（可改写默认内容）">${esc(rule.content || "")}</textarea>
-    </div>
+    </details>
   `;
 }
 
 function ruleRowNew(category) {
   return `
-    <div class="rule-row" data-rule-row data-rule-category="${esc(category)}" data-rule-source="" data-orig-enabled="1" data-orig-content="" data-orig-title="">
+    <details class="rule-row" open data-rule-row data-rule-category="${esc(category)}" data-rule-source="" data-orig-enabled="1" data-orig-content="" data-orig-title="">
+      <summary class="rule-summary">
+        <span class="rule-summary-main"><strong>新增${category === "system" ? "系统" : "业务"}规则</strong>${customBadge("本层新增", "orange")}${customBadge("已启用", "green")}</span>
+        <span class="rule-content-view">先填写标题和正文，保存后成为本层规则。</span>
+      </summary>
       <div class="rule-head">
         <input class="rule-id-input" name="ruleId" maxlength="128" placeholder="规则 ID（可留空自动生成）">
         <input class="rule-title-input" name="ruleTitle" placeholder="规则标题">
@@ -4691,7 +4710,7 @@ function ruleRowNew(category) {
         <button type="button" class="danger-button" data-action="rule-del">删除</button>
       </div>
       <textarea name="ruleContent" placeholder="规则内容"></textarea>
-    </div>
+    </details>
   `;
 }
 
@@ -7693,8 +7712,7 @@ document.addEventListener("click", async (event) => {
     if (action === "rule-add") {
       const container = document.querySelector(`[data-cfg-list='${target.dataset.target}']`);
       if (!container) return;
-      const placeholder = container.querySelector(".small.muted");
-      if (placeholder) placeholder.remove();
+      container.querySelectorAll(".small.muted, .small.warn-text").forEach((placeholder) => placeholder.remove());
       container.insertAdjacentHTML("beforeend", ruleRowNew(target.dataset.category));
       formTouched = true;
       return;
