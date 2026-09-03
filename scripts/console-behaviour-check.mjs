@@ -4256,6 +4256,12 @@ function runPendingTruncationCase() {
         && /data-menu="proj-agents"/u.test(agentsHtml)
         && !/data-form="join-token"/u.test(agentsHtml),
       "智能体接入操作看板只显示指标，或仍把组织页当作常规 agent 注册入口");
+    check("组织 AI 智能体节点操作要提供刷新自检入口",
+      /data-command="refresh_profile"/u.test(agentsHtml) && /刷新自检/u.test(agentsHtml),
+      "阻塞处置提示会要求到组织 AI 智能体页刷新自检，但节点行没有这个按钮");
+    check("组织 AI 智能体危险按钮不能粘连成一段",
+      !/吊销立即切断/u.test(agentsHtml),
+      "节点控制区把两个危险按钮粘成「吊销立即切断」，普通用户会读不清这是两个动作");
     const projectAgentsState = {
       ...overviewState,
       taskGroups: [{id: "tg1", projectId: "p1", name: "执行组", status: "development", workItems: []}],
@@ -4279,6 +4285,7 @@ function runPendingTruncationCase() {
         && /Agent 注册流程/u.test(projectAgentHtml)
         && /远程 MCP/u.test(projectAgentHtml)
         && /项目节点/u.test(projectAgentHtml)
+        && /data-command="refresh_profile"/u.test(projectAgentHtml)
         && /data-jump-panel="注册 agent"/u.test(projectAgentHtml),
       "项目智能体页没有把「先签发令牌、再拿服务端注册脚本」这条操作链路放到首屏");
     check("项目 AI 智能体页要说明加入令牌命令只显示一次且不能从列表还原",
@@ -4298,8 +4305,12 @@ function runPendingTruncationCase() {
         && /当前任务数：1/u.test(projectAgentCardsHtml)
         && /最近心跳：/u.test(projectAgentCardsHtml)
         && /data-action="agent-control"/u.test(projectAgentCardsHtml)
+        && /data-command="refresh_profile"/u.test(projectAgentCardsHtml)
         && /data-action="revoke-agent-node"/u.test(projectAgentCardsHtml),
       "项目智能体卡片视图没有承载关键管理字段或节点控制按钮");
+    check("项目 AI 智能体节点危险按钮不能粘连成一段",
+      !/吊销立即切断/u.test(projectAgentHtml) && !/吊销立即切断/u.test(projectAgentCardsHtml),
+      "项目节点操作区把「吊销」和「立即切断」粘在一起，危险操作边界不清晰");
     const projectOverviewRoot = el("div");
     loadConsole(projectOverviewRoot, {realI18n: true}).renderFullPageWith(projectAgentsState, admin, "p1", "proj-overview");
     const overviewHtml = String(projectOverviewRoot.innerHTML || "").replace(/<!--[\s\S]*?-->/gu, "");

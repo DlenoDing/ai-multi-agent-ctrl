@@ -9521,8 +9521,8 @@ const MUTATIONS = [
     name: "产品报文不得指路到界面上没有的页（实测「运行时」页 10 处）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyGuidanceNamesRealPages",
-    from: "装好后切到「组织管理」，打开 AI 智能体，对该节点点「刷新」（重新采集自检）确认它认出来了",
-    to: "装好后到「运行时」页对该节点点「刷新」确认它认出来了",
+    from: "装好后有项目 agent 管理权限的人可到「项目管理」→「AI 智能体」对该节点点「刷新自检」；\"\n    + \"没有项目控制权时，让组织管理员到「组织管理」→「AI 智能体」点「刷新自检」确认它认出来了",
+    to: "装好后到「运行时」页对该节点点「刷新自检」；\"\n    + \"没有项目控制权时，让组织管理员到「运行时」页点「刷新自检」确认它认出来了",
     expect: "界面上没有这个"
   },
   {
@@ -11624,7 +11624,7 @@ const MUTATIONS = [
     file: "apps/agent-runtime/runtime.mjs",
     gate: "contract",
     check: "verifyAgentctlUnknownCommandListsCommands",
-    from: "    throw new Error(`这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <入网令牌文件>，令牌由控制面管理员在「AI 智能体」页签发`);",
+    from: "    throw new Error(`这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <入网令牌文件>，令牌由项目管理员在目标项目「项目管理」→「AI 智能体」→「注册 agent」签发`);",
     to: "    throw new Error(`agent is not initialized: ${configPath}`);",
     expect: "没注册的节点跑 status，报文没说「还没注册」"
   },

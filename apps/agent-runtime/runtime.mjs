@@ -13,7 +13,7 @@ const RUNTIME_VERSION = "0.3.0";
 const runtimeFilePath = fileURLToPath(import.meta.url);
 const args = parseArgs(process.argv.slice(2));
 const command = args._[0] || "run";
-const JOIN_TOKEN_ORIGIN = "入网令牌由控制面管理员在「AI 智能体」页签发，保存成文件后用 --join-token-file 指过来";
+const JOIN_TOKEN_ORIGIN = "入网令牌由项目管理员在目标项目「项目管理」→「AI 智能体」→「注册 agent」签发，保存成文件后用 --join-token-file 指过来";
 // 认不出的命令要把可用的命令列出来：装机的人打错一个词（agentctl start）时，原先只看到
 // "unknown command: start"，既不知道有哪几个命令、也不知道旋钮在哪儿查。
 const USAGE = [
@@ -95,10 +95,10 @@ function explainAgentFailure(error) {
   const status = error?.status;
   const detail = String(error?.message || error || "").slice(0, 200);
   const known = {
-    join_token_invalid: "这张入网票不对（或已经不在服务端了）—— 找控制面管理员在「AI 智能体」页重新签发一张",
-    join_token_expired: "这张入网票已经过期 —— 找控制面管理员重新签发",
-    join_token_consumed: "这张入网票已经被用过了（一次性）—— 换机器要重新签发一张；同一台机器重跑安装命令不用重签（会拿回同一个节点）",
-    join_token_not_active: "这张入网票已被吊销 —— 找控制面管理员确认后重新签发",
+    join_token_invalid: "这张入网票不对（或已经不在服务端了）—— 找项目管理员进入目标项目「项目管理」→「AI 智能体」→「注册 agent」重新签发一张",
+    join_token_expired: "这张入网票已经过期 —— 找项目管理员进入目标项目「项目管理」→「AI 智能体」→「注册 agent」重新签发",
+    join_token_consumed: "这张入网票已经被用过了（一次性）—— 换机器要在目标项目重新签发一张；同一台机器重跑安装命令不用重签（会拿回同一个节点）",
+    join_token_not_active: "这张入网票已被吊销 —— 找项目管理员确认后在目标项目重新签发",
     join_token_must_be_one_time: "这张票不是一次性票，服务端拒绝用它注册 —— 重新签发",
     join_token_node_name_mismatch: "节点名与签发这张票时指定的不一致 —— 用 --node-name 改成票上那个名字",
     join_token_role_scope_mismatch: "要的角色超出了这张票允许的范围 —— 报文里的 allowedRoles 是可选集，用 --roles 改到它之内",
@@ -2253,7 +2253,7 @@ function loadConfig() {
   // 还没注册就跑 status / self-check / run，是新节点最先撞到的一句话：要说清"没注册"和下一步该跑什么，
   // 而不是一句英文加一个路径（路径留着，那是这台机器上自己的文件）。
   if (!existsSync(configPath)) {
-    throw new Error(`这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <入网令牌文件>，令牌由控制面管理员在「AI 智能体」页签发`);
+    throw new Error(`这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <入网令牌文件>，令牌由项目管理员在目标项目「项目管理」→「AI 智能体」→「注册 agent」签发`);
   }
   const text = readFileSync(configPath, "utf8");
   try {

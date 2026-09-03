@@ -3376,11 +3376,12 @@ function agentHoverPop(node) {
 function agentActions(node) {
   if (node.status === "revoked") return "-";
   return [
+    `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="refresh_profile" title="让节点重新探测模型执行器、远程 MCP、文件系统和 Git 能力">刷新自检</button>`,
     `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="pause_dispatch">暂停</button>`,
     `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="resume_dispatch">恢复</button>`,
     `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="shutdown">关停</button>`,
-    `<button class="danger-button" data-action="revoke-agent-node" data-node-id="${esc(node.nodeId)}">吊销</button>`
-    + `<button class="danger-button" data-action="force-revoke-agent-node" data-node-id="${esc(node.nodeId)}" title="不等节点确认，当场作废其凭据">立即切断</button>`
+    `<button class="danger-button" data-action="revoke-agent-node" data-node-id="${esc(node.nodeId)}">吊销</button>`,
+    `<button class="danger-button" data-action="force-revoke-agent-node" data-node-id="${esc(node.nodeId)}" title="不等节点确认，当场作废其凭据">立即切断</button>`
   ].join(" ");
 }
 
@@ -5033,7 +5034,8 @@ const STUCK_EXIT_HINT = {
   credential_required: "在承接它的 agent 节点上配置所需的凭据环境变量",
   agent_runtime_executor_required: "该节点上没有模型执行器：到那台机器上装 codex / claude / gemini / ollama 任一个"
     + "（节点会自动探测这四个命令），或用 --executor-command 指定自定义执行器后重新加入；"
-    + "装好后切到「组织管理」，打开 AI 智能体，对该节点点「刷新」（重新采集自检）确认它认出来了",
+    + "装好后有项目 agent 管理权限的人可到「项目管理」→「AI 智能体」对该节点点「刷新自检」；"
+    + "没有项目控制权时，让组织管理员到「组织管理」→「AI 智能体」点「刷新自检」确认它认出来了",
   // 下面三条是【节点拒绝了人的控制指令且重试已用尽】。它们不会自己好，而且最要紧的一点是：
   // 控制面这边已经停了，那台机器上的 agent 可能还在跑 —— 出口是绕开节点配合的强制吊销。
   control_pause_rejected_by_node: "节点拒绝了暂停且重试已用尽：让组织管理员切到「组织管理」，打开 AI 智能体，对该节点点「立即切断」，再确认它确实停了",
@@ -6207,7 +6209,7 @@ function renderMonitor() {
     // 心跳时间戳原先只是一个时间：人得自己算它有多旧，而"节点其实已经死了"正是最该一眼看出来的。
     {v: `${fmtTime(node.lastHeartbeatAt)}${heartbeatStaleHint(node)}`, c: "nowrap"},
     node.status !== "revoked" && canControlNodes ? [
-      `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="refresh_profile">刷新</button>`,
+      `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="refresh_profile" title="让节点重新探测模型执行器、远程 MCP、文件系统和 Git 能力">刷新自检</button>`,
       `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="pause_dispatch">暂停</button>`,
       `<button class="danger-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="cancel_dispatch">取消</button>`
     ].join(" ") : "-"
@@ -7926,7 +7928,7 @@ document.addEventListener("click", async (event) => {
         body: JSON.stringify({commandType: command, dispatchId: dispatchId || undefined})
       });
       await loadPage();
-      toast.success({pause_dispatch: "已暂停派发", resume_dispatch: "已恢复派发", cancel_dispatch: "已取消派发", refresh_profile: "已刷新节点档案", shutdown: "已关停节点"}[command] || "已下发控制指令");
+      toast.success({pause_dispatch: "已暂停派发", resume_dispatch: "已恢复派发", cancel_dispatch: "已取消派发", refresh_profile: "已下发刷新自检：节点 ACK 后会回写最新能力", shutdown: "已关停节点"}[command] || "已下发控制指令");
       return;
     }
     if (action === "close-task-group") {

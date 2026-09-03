@@ -250,7 +250,7 @@ const AGENT_RUNTIME_CLI_THROWS = new Set([
   "入网令牌文件是空的：",
   "agent self-check failed: ${check.missingChecks.join(\",\")}",
   // 只给在这台机器上敲命令的人看：没注册就没有控制面可报，说清"还没注册"和下一步跑什么。
-  "这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <入网令牌文件>，令牌由控制面管理员在「AI 智能体」页签发",
+  "这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <入网令牌文件>，令牌由项目管理员在目标项目「项目管理」→「AI 智能体」→「注册 agent」签发",
   "agent config is not valid JSON: ${configPath}（开头：${jsonHead(text)}）—— 重新跑一次安装命令即可重建",
   "public Agent Gateway requires HTTPS; set AIMAC_AGENT_ALLOW_INSECURE_HTTP=true only for isolated"
 ]);
