@@ -6377,6 +6377,22 @@ await runCodedApiErrorCase();
   // 生成的 id 也会被 t() 碰到（末段带数字），它们本来就没有中文，不算漏译。
   const looksGenerated = (value) => /\d/u.test(String(value).split("_").pop() || "");
   const misses = new Map();
+  {
+    const runtimeHealthKeys = ["gateway", "filesystem", "git", "remote_mcp"];
+    const directI18nContext = vm.createContext({
+      window: {},
+      console: {log: () => {}, error: () => {}, warn: (message) => {
+        const hit = /未映射的枚举值：(.+)$/u.exec(String(message));
+        if (hit) misses.set(hit[1], new Set(["直接运行时健康标签"]));
+      }}
+    });
+    vm.runInContext(i18nSource, directI18nContext, {filename: "i18n-zh.js"});
+    const directI18n = directI18nContext.window.AIMAC_I18N;
+    check("运行时健康检查标签要有中文映射，浏览器控制台不能再报未映射枚举",
+      directI18n && runtimeHealthKeys.every((key) => directI18n.t(key) !== key)
+        && runtimeHealthKeys.every((key) => !misses.has(key)),
+      "运行时健康检查标签漏译：gateway / filesystem / git / remote_mcp 会在真实浏览器里产生 warn");
+  }
   // 一份状态建一次上下文、在里面把所有页面渲一遍：每页都新建的话，app.js 要被重新解析上百次。
 // 技能源那张表此前不显示仓库地址：人看不出这个源钉的到底是什么，而"钉住哪一份"正是它存在的理由。
 {
