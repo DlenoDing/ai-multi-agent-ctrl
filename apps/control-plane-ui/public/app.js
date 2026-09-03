@@ -3106,6 +3106,63 @@ function renderOrgAgents() {
 
 /* ---------------- 组织管理员：项目管理 ---------------- */
 
+function renderOrgProjectsActionBoard({projects, activeProjects, archivedProjects, unhealthyProjects, memberLinks}) {
+  const assignableCount = assignableProjects().length;
+  return panel("项目管理操作看板", `
+    <div class="module-grid">
+      ${jumpModuleCard({
+        title: "在用项目",
+        metric: `${activeProjects.length}`,
+        detail: activeProjects.length ? "可继续创建任务组和接入 agent" : "当前没有可继续推进的项目",
+        panelTitle: "项目列表",
+        tone: activeProjects.length ? "blue" : "orange",
+        action: "查看项目"
+      })}
+      ${jumpModuleCard({
+        title: "健康异常",
+        metric: `${unhealthyProjects}`,
+        detail: unhealthyProjects ? "先进入项目列表定位异常项目" : "当前项目健康状态正常",
+        panelTitle: "项目列表",
+        tone: unhealthyProjects ? "red" : "green",
+        action: "定位异常"
+      })}
+      ${jumpModuleCard({
+        title: "已归档",
+        metric: `${archivedProjects}`,
+        detail: archivedProjects ? "历史保留，不能再创建新工作" : "暂无归档项目",
+        panelTitle: "项目列表",
+        tone: archivedProjects ? "gray" : "green",
+        action: "查看归档"
+      })}
+      ${jumpModuleCard({
+        title: "成员授权",
+        metric: `${memberLinks}`,
+        detail: memberLinks ? "项目成员与角色授权覆盖情况" : "还没有项目成员授权",
+        panelTitle: "项目列表",
+        tone: memberLinks ? "blue" : "orange",
+        action: "核对授权"
+      })}
+      ${jumpModuleCard({
+        title: "创建项目",
+        metric: `${projects.length}`,
+        detail: "在组织配额内创建新项目",
+        panelTitle: "创建项目",
+        tone: "blue",
+        action: "创建"
+      })}
+      ${jumpModuleCard({
+        title: "补成员授权",
+        metric: `${assignableCount}`,
+        detail: assignableCount ? "把用户加入项目并指定角色" : "没有可授权的在用项目",
+        panelTitle: "项目成员授权",
+        tone: assignableCount ? "blue" : "gray",
+        action: "授权"
+      })}
+    </div>
+    <div class="small muted">处理顺序：先核对项目状态、健康度和成员覆盖，再创建项目、归档项目或补成员授权。</div>
+  `, {wide: true});
+}
+
 function renderOrgProjects() {
   const projects = state.projects || [];
   const activeProjects = projects.filter((project) => project.status !== "archived");
@@ -3135,6 +3192,7 @@ function renderOrgProjects() {
         <div class="metric"><span>健康异常</span><strong>${unhealthyProjects}</strong></div>
       </div>
     `, {wide: true}),
+    renderOrgProjectsActionBoard({projects, activeProjects, archivedProjects, unhealthyProjects, memberLinks}),
     panel("项目列表", table(["项目", "状态", "进度", "阶段", "健康度", "成员", "操作"], projectRows), {wide: true}),
     panel("创建项目", `
       <form class="form-grid" data-form="org-project-create">

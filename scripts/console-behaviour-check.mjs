@@ -4007,6 +4007,21 @@ function runPendingTruncationCase() {
       panelAt(agentsHtml, "智能体运行总览") >= 0
         && panelAt(agentsHtml, "智能体运行总览") < panelAt(agentsHtml, "智能体节点"),
       "AI 智能体页没有先给在线率、忙碌节点和入网令牌概览，用户只能读整张节点表");
+    const orgProjectsRoot = el("div");
+    loadConsole(orgProjectsRoot, {realI18n: true}).renderFullPageWith(overviewState, orgAdmin, "p1", "org-projects");
+    const orgProjectsHtml = String(orgProjectsRoot.innerHTML || "").replace(/<!--[\s\S]*?-->/gu, "");
+    check("组织项目页先显示总览和操作看板，再显示列表与新增授权表单",
+      panelAt(orgProjectsHtml, "项目管理总览") >= 0
+        && panelAt(orgProjectsHtml, "项目管理总览") < panelAt(orgProjectsHtml, "项目管理操作看板")
+        && panelAt(orgProjectsHtml, "项目管理操作看板") < panelAt(orgProjectsHtml, "项目列表")
+        && panelAt(orgProjectsHtml, "项目列表") < panelAt(orgProjectsHtml, "创建项目")
+        && panelAt(orgProjectsHtml, "创建项目") < panelAt(orgProjectsHtml, "项目成员授权"),
+      "组织项目页仍然缺少总览后的操作入口，组织管理员要先读长表和表单才知道从哪里处理");
+    check("组织项目操作看板要提供项目列表、创建项目和成员授权的跳转入口",
+      /data-jump-panel="项目列表"/u.test(orgProjectsHtml)
+        && /data-jump-panel="创建项目"/u.test(orgProjectsHtml)
+        && /data-jump-panel="项目成员授权"/u.test(orgProjectsHtml),
+      "项目管理操作看板只显示指标，没有接上列表、创建项目和成员授权面板的跳转");
     const reviewHtml = probe.renderReviewWith(overviewState, orgAdmin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
     check("人工审核页先显示审核总览，再显示待办与明细",
       panelAt(reviewHtml, "人工审核总览") >= 0
