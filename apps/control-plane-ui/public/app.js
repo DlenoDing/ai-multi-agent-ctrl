@@ -142,11 +142,11 @@ const PROJECT_PAGES = new Set(["proj-overview", "tg", "review", "directives", "m
 
 const PROJECT_MENU_TAIL = [
   {id: "proj-overview", label: "项目概览"},
+  {id: "proj-agents", label: "AI 智能体"},
   {id: "tg", label: "任务组"},
+  {id: "monitor", label: "执行监控"},
   {id: "review", label: "人工审核"},
   {id: "directives", label: "人工指令"},
-  {id: "monitor", label: "执行监控"},
-  {id: "proj-agents", label: "AI 智能体"},
   {id: "proj-settings", label: "项目设置"}
 ];
 

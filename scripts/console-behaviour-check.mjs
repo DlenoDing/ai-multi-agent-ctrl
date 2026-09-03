@@ -2094,7 +2094,12 @@ async function runErrorGuidanceCase() {
   assertMenuDescriptions("组织管理", orgNav, ["org-overview", "org-members", "org-agents", "org-projects"]);
   const projectNav = renderedNav({accountId: "user", email: "user@local", displayName: "项目成员",
     accountType: "user_account", roles: ["workspace_owner"], permissions: ["project:view", "project:update", "task_group:control", "task_group:review"], organizationId: "org_default"}, "p1", "proj-overview");
-  assertMenuDescriptions("项目管理", projectNav, ["proj-overview", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"]);
+  const projectMenuOrder = ["proj-overview", "proj-agents", "tg", "monitor", "review", "directives", "proj-settings"];
+  assertMenuDescriptions("项目管理", projectNav, projectMenuOrder);
+  check("项目管理侧栏顺序要贴合执行路径",
+    projectMenuOrder.every((pageId, index) => index === 0
+      || projectNav.indexOf(`data-menu="${pageId}"`) > projectNav.indexOf(`data-menu="${projectMenuOrder[index - 1]}"`)),
+    "项目菜单顺序没有按概览、Agent 准备、任务组织、实时监控、人工介入、控制补充、配置调整排列");
   const styles = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/styles.css"), "utf8");
   check("侧栏空间名要有明确 brand-section 类，不许再靠 .brand span 误伤图形标识",
     /<span class="brand-section">/u.test(systemNav)

@@ -41,3 +41,7 @@
 - 已补充 `console-behaviour-gate` 断言：项目 AI 智能体页必须说明安装命令和明文 join token 只显示一次，且列表不能还原明文。
 - 已再次完成静态语法检查：`node --check apps/control-plane-ui/public/app.js`、`node --check scripts/console-behaviour-check.mjs`。
 - 已再次完成界面行为门：`console-behaviour-gate` 通过，566 条断言全部通过。
+- 已调整项目管理侧栏顺序为“项目概览 → AI 智能体 → 任务组 → 执行监控 → 人工审核 → 人工指令 → 项目设置”，与项目概览“项目操作路径”的执行主线一致。
+- 已补充 `console-behaviour-gate` 断言：项目管理侧栏必须按执行路径排列，避免后续把 Agent 准备和执行监控重新放回末端。
+- 已再次完成静态语法检查：`node --check apps/control-plane-ui/public/app.js`、`node --check scripts/console-behaviour-check.mjs`。
+- 已再次完成界面行为门：`console-behaviour-gate` 通过，567 条断言全部通过。
