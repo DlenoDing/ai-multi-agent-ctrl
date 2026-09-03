@@ -4295,7 +4295,8 @@ function renderTaskGroupDetail(taskGroup) {
   }
   const progressData = tgDetail.progress || {};
   const analysis = progressData.taskAnalysis;
-  const analysisHtml = analysis && (analysis.items || []).length
+  const analysisCount = (analysis?.items || []).length;
+  const analysisHtml = analysis && analysisCount
     ? `<div class="tree">${(analysis.items || []).map((item) => `
         <div class="tree-item">
           <div class="tree-head">${customBadge(kindLabel(item.kind), "gray")} <strong>${esc(item.title)}</strong> ${badge(item.status)} <em class="small muted">${item.progress ?? 0}%</em></div>
@@ -4315,7 +4316,8 @@ function renderTaskGroupDetail(taskGroup) {
 
   // 只读进度接口那份：视图里的任务组【不再带整份 roles】（列表只用 roleCount）。
   // 留着 `|| taskGroup.roles` 那截兜底会骗人 —— 它永远是 undefined，看代码的人以为还有第二个来源。
-  const roles = (progressData.roles || []).map((role) => `
+  const rolesData = progressData.roles || [];
+  const roles = rolesData.map((role) => `
     <div class="record">
       <div class="record-title">
         <strong>${esc(t(role.roleId))}</strong><span class="mono small muted">${esc(role.roleId)}</span>
@@ -4435,7 +4437,8 @@ function renderTaskGroupDetail(taskGroup) {
   // 界面给出的是与事实相反的结论。把关闭门的判定接进来，并说清下一步该去哪。
   const groupBarrier = (state.closeBarriers || []).find((item) => item.taskGroupId === taskGroup.id);
   const barrierBlockers = groupBarrier && !groupBarrier.satisfied ? (groupBarrier.blockingObjects || []) : [];
-  const advisoryBlockers = (progressData.blockers || taskGroup.blockers || []).map((blocker) => `
+  const advisoryBlockerItems = progressData.blockers || taskGroup.blockers || [];
+  const advisoryBlockers = advisoryBlockerItems.map((blocker) => `
     <div class="record"><div class="record-title">${badge(blocker.severity || "attention")} <span>${esc(blocker.summary)}</span></div></div>
   `).join("") + (Number(taskGroup.blockersDroppedCount || 0) > 0
     // 提示有上限，超出的会被丢掉。悄悄丢等于让人以为问题只有屏幕上这几个。
@@ -4505,9 +4508,23 @@ function renderTaskGroupDetail(taskGroup) {
             `;
           }).join("")}
         </div>`;
+  const workItemCount = Number(progressData.workItemCount ?? taskGroup.workItemCount ?? (progressData.workItems || taskGroup.workItems || []).length);
+  const blockerCount = barrierBlockers.length + advisoryBlockerItems.length + Number(taskGroup.blockersDroppedCount || 0);
+  const roomCount = Array.isArray(roomMessages) ? roomMessages.length : null;
+  const detailPathHtml = renderTaskGroupDetailPath({
+    analysisCount,
+    roleCount: rolesData.length,
+    configLabel: config ? (config.configSource === "customized" ? "自定义" : "继承") : "未加载",
+    canControl,
+    workItemCount: Number.isFinite(workItemCount) ? workItemCount : 0,
+    hasAdmission: Boolean(guard),
+    blockerCount,
+    roomCount
+  });
 
   return `
     <div class="stack" style="margin-top:8px;">
+      ${detailPathHtml}
       ${sectionBlock("事项清单", analysisHtml)}
       ${sectionBlock("角色列表", `<div class="stack">${roles}</div>`)}
       ${sectionBlock("配置（继承 / 自定义）", configHtml)}
@@ -4526,6 +4543,80 @@ function renderTaskGroupDetail(taskGroup) {
   `;
 }
 
+function renderTaskGroupDetailPath(summary) {
+  const roomMetric = summary.roomCount === null ? "不可见" : String(summary.roomCount || 0);
+  const cards = [
+    jumpModuleCard({
+      title: "1 事项清单",
+      metric: String(summary.analysisCount || 0),
+      detail: "目标拆解、执行树和当前进度",
+      panelTitle: "事项清单",
+      tone: summary.analysisCount ? "blue" : "orange",
+      action: "查看"
+    }),
+    jumpModuleCard({
+      title: "2 角色列表",
+      metric: String(summary.roleCount || 0),
+      detail: "本任务组实际参与的 skill 角色",
+      panelTitle: "角色列表",
+      tone: summary.roleCount ? "blue" : "orange",
+      action: "查看"
+    }),
+    jumpModuleCard({
+      title: "3 配置",
+      metric: summary.configLabel || "未加载",
+      detail: "继承关系、规则覆盖和默认角色",
+      panelTitle: "配置（继承 / 自定义）",
+      tone: summary.configLabel === "自定义" ? "orange" : "green",
+      action: "查看"
+    }),
+    jumpModuleCard({
+      title: "4 执行控制",
+      metric: summary.canControl ? "可控" : "只读",
+      detail: "暂停、恢复、评审和统一语言策略",
+      panelTitle: "执行控制",
+      tone: summary.canControl ? "blue" : "gray",
+      action: "查看"
+    }),
+    jumpModuleCard({
+      title: "5 工作项",
+      metric: String(summary.workItemCount || 0),
+      detail: "执行单元、模型、派发和实时事件入口",
+      panelTitle: "工作项",
+      tone: summary.workItemCount ? "blue" : "orange",
+      action: "查看"
+    }),
+    jumpModuleCard({
+      title: "6 准入与阻断",
+      metric: summary.hasAdmission ? "已计算" : "待编排",
+      detail: "可执行、等待、真实阻断和整体阻断规则",
+      panelTitle: "准入与阻断分类",
+      tone: summary.hasAdmission ? "green" : "orange",
+      action: "查看"
+    }),
+    jumpModuleCard({
+      title: "7 阻塞",
+      metric: String(summary.blockerCount || 0),
+      detail: "关闭门禁、提示阻塞和下一步处置",
+      panelTitle: "阻塞",
+      tone: summary.blockerCount ? "red" : "green",
+      action: "查看"
+    }),
+    jumpModuleCard({
+      title: "8 协作记录",
+      metric: roomMetric,
+      detail: "agent 房间消息和过程追溯",
+      panelTitle: "协作记录（agent 之间的房间消息）",
+      tone: summary.roomCount === null ? "orange" : "blue",
+      action: "查看"
+    })
+  ].join("");
+  return sectionBlock("任务组详情阅读路径", `
+    <div class="module-grid action-grid">${cards}</div>
+    <div class="small muted">建议按 1 到 8 查看：先确认拆解和执行单元，再看配置、控制、阻塞和协作过程；需要操作时直接点对应卡片跳到小节。</div>
+  `);
+}
+
 // 决策类下拉：默认必须是"尚未选择"。
 // 这些下拉的第一项恰好都是后果最重的那一个（"已解决""关闭""采纳为本项目规则""激活为全局规范"），
 // 而 select 默认选中第一项 —— 于是一个人点开表单直接提交，拿到的就是最重的处置，而他并没有做过
@@ -4542,7 +4633,7 @@ function decisionSelect(name, options, placeholder = "请选择处置方式…",
 }
 
 function sectionBlock(title, body) {
-  return `<div class="record" style="background:#fff;"><div class="record-title"><strong>${esc(title)}</strong></div><div style="margin-top:8px;">${body}</div></div>`;
+  return `<div class="record" data-section-title="${esc(title)}" style="background:#fff;"><div class="record-title"><strong>${esc(title)}</strong></div><div style="margin-top:8px;">${body}</div></div>`;
 }
 
 
@@ -7166,8 +7257,14 @@ document.addEventListener("click", async (event) => {
     const targetHeader = [...document.querySelectorAll(".panel-header h2")]
       .find((header) => header.textContent.trim() === title);
     const targetPanel = targetHeader?.closest(".panel");
-    if (targetPanel) {
-      targetPanel.scrollIntoView({behavior: "smooth", block: "start"});
+    const targetSection = targetPanel ? null : [...document.querySelectorAll("[data-section-title]")]
+      .find((section) => {
+        const sectionTitle = section.dataset.sectionTitle || "";
+        return sectionTitle === title || (title && sectionTitle.startsWith(title));
+      });
+    const targetBlock = targetPanel || targetSection;
+    if (targetBlock) {
+      targetBlock.scrollIntoView({behavior: "smooth", block: "start"});
       return;
     }
     toast.info(`当前没有「${title}」明细，可能是这一类记录还没有产生`);

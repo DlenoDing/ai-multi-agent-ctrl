@@ -4079,6 +4079,44 @@ function runPendingTruncationCase() {
         && panelAt(taskGroupHtml, "任务组处置看板") < panelAt(taskGroupHtml, "创建任务组")
         && /data-action="tg-detail"/u.test(taskGroupHtml),
       "任务组页没有把需要先处理的任务组排成可点击看板，用户仍要逐个读大面板");
+    const detailTaskGroup = {...overviewState.taskGroups[0], languagePolicy: {languageTag: "zh-CN"}};
+    const detailState = {...overviewState, taskGroups: [detailTaskGroup]};
+    const taskGroupDetailHtml = probe.renderTaskGroupsWith(detailState, admin, "p1", detailTaskGroup.id, {
+      taskGroupId: detailTaskGroup.id,
+      progress: {
+        taskAnalysis: {items: [{kind: "task", title: "拆解", status: "running", progress: 40}]},
+        roles: [{roleId: "agent-runtime", status: "active", addedBy: "auto"}],
+        workItems: [{id: "wi1", title: "实现单元", status: "assigned", ownerRole: "agent-runtime", progress: 20}],
+        workItemCount: 1,
+        blockers: [{severity: "attention", summary: "等待自检"}]
+      },
+      config: {configSource: "customized", systemRules: [], businessRules: [], defaultRoles: [], repositories: [], baselineData: []},
+      roomMessages: [{sequence: 1, senderRef: "agent_node:node1", createdAt: "2026-08-12T00:00:00Z", payload: {text: "执行中"}}]
+    }).replace(/<!--[\s\S]*?-->/gu, "");
+    check("任务组展开详情要先给阅读路径，再进入长明细",
+      taskGroupDetailHtml.indexOf("任务组详情阅读路径") >= 0
+        && taskGroupDetailHtml.indexOf("任务组详情阅读路径") < taskGroupDetailHtml.indexOf('data-section-title="事项清单"'),
+      "任务组详情仍然一展开就堆事项、角色、配置、工作项，缺少普通用户能先扫读的详情路径");
+    check("任务组详情阅读路径要覆盖八个关键小节并能跳转",
+      /data-jump-panel="事项清单"/u.test(taskGroupDetailHtml)
+        && /data-jump-panel="角色列表"/u.test(taskGroupDetailHtml)
+        && /data-jump-panel="配置（继承 \/ 自定义）"/u.test(taskGroupDetailHtml)
+        && /data-jump-panel="执行控制"/u.test(taskGroupDetailHtml)
+        && /data-jump-panel="工作项"/u.test(taskGroupDetailHtml)
+        && /data-jump-panel="准入与阻断分类"/u.test(taskGroupDetailHtml)
+        && /data-jump-panel="阻塞"/u.test(taskGroupDetailHtml)
+        && /data-jump-panel="协作记录（agent 之间的房间消息）"/u.test(taskGroupDetailHtml),
+      "任务组详情阅读路径没有覆盖事项、角色、配置、控制、工作项、准入阻断、阻塞和协作记录");
+    check("任务组详情小节要输出稳定锚点，供卡片跳转定位",
+      /data-section-title="事项清单"/u.test(taskGroupDetailHtml)
+        && /data-section-title="角色列表"/u.test(taskGroupDetailHtml)
+        && /data-section-title="执行控制"/u.test(taskGroupDetailHtml)
+        && /data-section-title="工作项"/u.test(taskGroupDetailHtml),
+      "任务组详情的小节没有稳定锚点，卡片只能跳顶层 panel，不能跳展开详情里的具体位置");
+    check("详情跳转处理器要支持 data-section-title 小节和动态标题前缀",
+      /querySelectorAll\("\[data-section-title\]"\)/u.test(probe.handlerSource("click"))
+        && /sectionTitle\.startsWith\(title\)/u.test(probe.handlerSource("click")),
+      "点击处理器只会找顶层 panel，任务组详情里的卡片无法跳到动态工作项等小节");
     const monitorHtml = probe.renderMonitorWith(overviewState, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
     check("执行监控页先显示监控总览，再显示十三张明细表",
       panelAt(monitorHtml, "执行监控总览") >= 0
@@ -4263,6 +4301,10 @@ function runPendingTruncationCase() {
     check("明细页的小节标题要带上真实总数",
       /工作项（共 4000 个，当前展示 300 个）/.test(detailHtml),
       "工作项被截断到 300 条，小节标题却没说共有多少 —— 人一眼看到的就是那个假数字");
+    check("截断后的工作项动态标题也要作为小节锚点",
+      /data-section-title="工作项（共 4000 个，当前展示 300 个）"/.test(detailHtml)
+        && /data-jump-panel="工作项"/.test(detailHtml),
+      "工作项标题带真实总数后没有稳定小节锚点，详情路径卡片会找不到这一节");
     check("提示里要写清只加载了前多少个",
       /只加载了前 300 个/.test(detailHtml),
       "截断了却没说只加载了一部分 —— 人会以为只有这些");
