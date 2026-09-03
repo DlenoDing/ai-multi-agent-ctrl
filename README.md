@@ -135,7 +135,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 
 ## 模型选择与精确钉模型
 
-默认是**按能力自动选型**：控制面对模型能力注册表按角色技能、任务性质（深度分析/实现/验证等）、模型天花板打分，选出合格的最高分模型，并留一条 `ModelSelectionDecision` 审计。系统内置约 19 个 provider 的默认模型（OpenAI、Anthropic、Google、xAI、Meta、Mistral、DeepSeek、通义千问、月之暗面、智谱、百度文心、腾讯混元、OpenRouter、Azure OpenAI、AWS Bedrock、Google Vertex AI、Ollama、vLLM、自定义），可在管理界面「系统管理」→「系统设置」→「模型能力注册」查看，或读 `/api/model-registry`；也可通过模型注册端点新增/覆盖模型（含 `custom` 类接入自有模型）。
+默认是**按能力自动选型**：控制面对模型能力注册表按角色技能、任务性质（深度分析/实现/验证等）、模型天花板打分，选出合格的最高分模型，并留一条 `ModelSelectionDecision` 审计。系统内置约 19 个 provider 的默认模型（OpenAI、Anthropic、Google、xAI、Meta、Mistral、DeepSeek、通义千问、月之暗面、智谱、百度文心、腾讯混元、OpenRouter、Azure OpenAI、AWS Bedrock、Google Vertex AI、Ollama、vLLM、自定义），可在管理界面「系统管理」→「系统设置」查看“模型能力注册”，或读 `/api/model-registry`；也可通过模型注册端点新增/覆盖模型（含 `custom` 类接入自有模型）。
 
 需要**精确指定某个模型**时用 `pinnedModelId`（取值可以是注册表里的 modelId、providerId 或别名，如 `anthropic:claude-sonnet-4-5`），三条入口：
 

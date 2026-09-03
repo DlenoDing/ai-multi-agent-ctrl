@@ -3866,7 +3866,7 @@ function runPendingTruncationCase() {
     check("提示要说清已注册几个、以及该去哪儿看",
       /已注册 2 个/.test(offlineView)
         && (/智能体接入/.test(offlineView) || /AI 智能体/.test(offlineView))
-        && /切到「项目管理」|切到「组织管理」|联系项目管理员|联系组织管理员/u.test(offlineView),
+        && /「项目管理」|「组织管理」|联系项目管理员|联系组织管理员/u.test(offlineView),
       "只说没有在线节点，不说是一台都没装还是装了都挂了，人不知道下一步做什么");
 
     const withNode = structuredClone(base);
@@ -3886,6 +3886,50 @@ function runPendingTruncationCase() {
     check("只统计当前项目范围内的活",
       !/没有任何在线的 agent 节点/.test(probe.renderMonitorWith(otherProject, admin, "p1")),
       "拿别的项目的派发在这个项目上报警 —— 这一页整体以当前项目为抬头");
+  }
+
+  // 普通中文管理者打开高密度页面时，应该先看到状态总览，再看到表单和长表。
+  // 否则首屏就是一组操作杆，人还没判断当前规模、风险和下一步，就被推去填表。
+  {
+    const overviewState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1,
+      runtime: {accountRoles: ["viewer"], knownPermissions: ["project:view"], grantRoleTemplates: {project: ["viewer"]}},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", progress: 40,
+        languagePolicy: {languageTag: "zh-CN"}, workItemCount: 2,
+        workItems: [{id: "w1", title: "工作项", status: "assigned"}]}],
+      accounts: [
+        {accountId: "acct_a", displayName: "甲", email: "a@example.com", accountType: "system_admin", status: "active", roles: ["system-owner"]},
+        {accountId: "acct_svc", displayName: "服务", email: "svc@example.com", accountType: "service_account", status: "active", roles: ["runtime-service"]}
+      ],
+      accessGrants: [{grantId: "g1", subjectRef: {subjectId: "acct_a"}, resource: {type: "system", id: "system"}, role: "system-owner", status: "active", permissions: ["system:*"]}],
+      agents: [{id: "agent_1", name: "档案", role: "reviewer", model: "auto_best", status: "active"}],
+      agentJoinTokens: [{joinTokenId: "join_1", projectId: "p1", status: "issued", expiresAt: "2099-01-01T00:00:00Z"}],
+      agentDispatches: [{dispatchId: "adp1", taskGroupId: "tg1", workItemId: "w1", status: "queued"}],
+      workSessions: [{sessionId: "sess1", taskGroupId: "tg1", roleId: "reviewer", workItemId: "w1", placement: "new_session", status: "active"}],
+      workerLanes: [{laneId: "lane1", taskGroupId: "tg1", roleId: "reviewer", laneFunction: "implementation", status: "busy", reuseGeneration: 1}],
+      agentRuntimeNodes: [{nodeId: "node1", nodeName: "节点", status: "online", admission: "full", lastHeartbeatAt: "2099-01-01T00:00:00Z"}],
+      closeBarriers: [{taskGroupId: "tg1", satisfied: false, blockingObjects: [{objectType: "WorkItem", gate: "all_work_items_terminal"}], computedAt: "2026-08-12T00:00:00Z"}],
+      qualityGates: [], testResults: [], checkpoints: [], admissionDecisions: [], modelSelectionDecisions: [],
+      sessionPlacementDecisions: [], agentControlCommands: [], executionTopologies: [], reviewPlans: [],
+      reviewBundles: [], ruleSourceResolutions: [], sharedDefinitions: [], findings: [], systemUpgradeCandidates: [],
+      dlqEntries: [], truncatedCollections: []
+    };
+    const accountHtml = probe.renderSysAccountsWith(overviewState, admin).replace(/<!--[\s\S]*?-->/gu, "");
+    check("账号与授权页先显示总览，再显示邀请表单",
+      accountHtml.indexOf("账号与授权总览") >= 0
+        && accountHtml.indexOf("账号与授权总览") < accountHtml.indexOf("邀请账号"),
+      "账号与授权页首屏直接进入表单，普通管理员看不到账号、授权、项目和令牌规模");
+    const taskGroupHtml = probe.renderTaskGroupsWith(overviewState, admin, "p1", null, {}).replace(/<!--[\s\S]*?-->/gu, "");
+    check("任务组页先显示任务组总览，再显示创建表单",
+      taskGroupHtml.indexOf("任务组总览") >= 0
+        && taskGroupHtml.indexOf("任务组总览") < taskGroupHtml.indexOf("创建任务组"),
+      "任务组页首屏直接进入创建表单，管理者得向下找才知道已有任务组状态");
+    const monitorHtml = probe.renderMonitorWith(overviewState, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
+    check("执行监控页先显示监控总览，再显示十三张明细表",
+      monitorHtml.indexOf("执行监控总览") >= 0
+        && monitorHtml.indexOf("执行监控总览") < monitorHtml.indexOf("实时事件流"),
+      "执行监控页没有入口级状态地图，用户只能从长表里猜当前卡点");
   }
 
   // 明细页的工作项来自专用端点，它现在也有上限（4000 单元时曾是约 1.1MB 载荷 + 4000 个 DOM 节点）。

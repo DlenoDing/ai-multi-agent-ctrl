@@ -2431,6 +2431,33 @@ function retiredNote(account) {
     + `${account.retiredReason ? ` · ${esc(explainCoded(account.retiredReason))}` : ""}</div>`;
 }
 
+function summaryMetric(label, value, hint) {
+  return `<div class="metric"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(hint)}</small></div>`;
+}
+
+function renderSysAccountsSummary() {
+  const accounts = state.accounts || [];
+  const grants = state.accessGrants || [];
+  const agents = state.agents || [];
+  const activeAccounts = accounts.filter((account) => !["retired", "suspended", "disabled"].includes(account.status)).length;
+  const serviceAccounts = accounts.filter((account) => account.accountType === "service_account" && account.status !== "retired").length;
+  const activeGrants = grants.filter((grant) => grant.status === "active").length;
+  const activeAgents = agents.filter((agent) => agent.status === "active").length;
+  return panel("账号与授权总览", `
+    <div class="metric-grid">
+      ${summaryMetric("账号总数", accounts.length, "系统账号、组织成员和服务账号")}
+      ${summaryMetric("启用账号", activeAccounts, "可登录或可被授权的账号")}
+      ${summaryMetric("服务账号", serviceAccounts, "供 agent/runtime 服务身份使用")}
+      ${summaryMetric("有效授权", activeGrants, "项目、任务组与系统资源授权")}
+      ${summaryMetric("项目数", (state.projects || []).length, "可分配成员和 agent 的项目")}
+      ${summaryMetric("待用加入令牌", liveJoinTokenCount(), "尚未消费且未过期的 agent 入网票据")}
+      ${summaryMetric("agent 档案", agents.length, "可被总控激活的编排角色档案")}
+      ${summaryMetric("启用档案", activeAgents, "当前可参与调度的档案")}
+    </div>
+    <div class="small muted">先看总览确认规模和入口，再在下面创建账号、补授权、建项目或签发加入令牌。</div>
+  `, {wide: true});
+}
+
 function renderSysAccounts() {
   const accounts = (state.accounts || []).map((account) => row([
     esc(account.displayName),
@@ -2458,6 +2485,7 @@ function renderSysAccounts() {
   ])).join("");
 
   return [
+    renderSysAccountsSummary(),
     panel("邀请账号", `
       <form class="form-grid" data-form="account-invite">
         <div class="form-row"><label>显示名</label><input name="displayName" required></div>
@@ -3257,6 +3285,38 @@ function languageSelectOptions(selected) {
   return options.map(([value, label]) => `<option value="${esc(value)}" ${value === selected ? "selected" : ""}>${esc(label)} · ${esc(value)}</option>`).join("");
 }
 
+function renderTaskGroupsSummary(groups) {
+  const activeGroups = groups.filter((taskGroup) => !["closed", "cancelled", "archived", "superseded"].includes(taskGroup.status));
+  const avgProgress = groups.length
+    ? Math.round(groups.reduce((sum, taskGroup) => sum + Number(taskGroup.progress || 0), 0) / groups.length)
+    : 0;
+  const workItemCount = groups.reduce((sum, taskGroup) =>
+    sum + Number(taskGroup.workItemCount ?? (taskGroup.workItems || []).length), 0);
+  const blockedCount = groups.reduce((sum, taskGroup) => sum
+    + Number((taskGroup.blockers || []).length)
+    + (taskGroup.workItems || []).filter((workItem) =>
+      Boolean(workItem.blockedReason) || ["blocked", "needs_decision"].includes(workItem.status)).length, 0);
+  const languages = new Map();
+  for (const taskGroup of groups) {
+    const label = languageLabel(taskGroup.languagePolicy);
+    languages.set(label, (languages.get(label) || 0) + 1);
+  }
+  const languageText = groups.length
+    ? [...languages].map(([label, count]) => `${label} ${count}`).join("、")
+    : "暂无任务组";
+  return panel("任务组总览", `
+    <div class="metric-grid">
+      ${summaryMetric("任务组", groups.length, "当前项目下的任务组总数")}
+      ${summaryMetric("进行中", activeGroups.length, "未关闭、未取消的任务组")}
+      ${summaryMetric("平均进度", `${avgProgress}%`, "按任务组进度平均")}
+      ${summaryMetric("工作项", workItemCount, "任务组内拆分出的执行单元")}
+      ${summaryMetric("受阻提示", blockedCount, "需要查看或处置的阻塞信号")}
+      ${summaryMetric("统一语言", languages.size || 0, "任务组级协作语言种类")}
+    </div>
+    <div class="small muted">语言分布：${esc(languageText)}。先看下面的任务组卡片，再决定是否创建新任务组或追加工作项。</div>
+  `, {wide: true});
+}
+
 function renderTaskGroups() {
   const groups = projectTaskGroups();
   const canControl = hasPerm("task_group:control");
@@ -3373,7 +3433,8 @@ function renderTaskGroups() {
   }).join("");
 
   if (hasNoVisibleProject()) return panel("任务组", noVisibleProjectNotice(), {wide: true});
-  return cellsWaitingWithNoAgentNotice(groups) + wipCapacityNotice(groups) + createPanels.join("") + (groupPanels || panel("任务组", `<div class="notice">当前项目暂无任务组。</div>`, {wide: true}));
+  return cellsWaitingWithNoAgentNotice(groups) + wipCapacityNotice(groups) + renderTaskGroupsSummary(groups)
+    + createPanels.join("") + (groupPanels || panel("任务组", `<div class="notice">当前项目暂无任务组。</div>`, {wide: true}));
 }
 
 function renderTaskGroupDetail(taskGroup) {
@@ -4585,6 +4646,26 @@ function renderDirectives() {
 
 /* ---------------- 成员：执行监控 ---------------- */
 
+function renderMonitorSummary({eventsShown, sessionsAll, dispatchesAll, lanesAll, nodes, barriersInScope}) {
+  const activeSessions = sessionsAll.filter((session) =>
+    !["completed", "failed", "cancelled", "recycled", "closed"].includes(session.status)).length;
+  const activeDispatches = dispatchesAll.filter((dispatch) => !terminalDispatchStatuses.has(dispatch.status)).length;
+  const onlineNodes = nodes.filter((node) => node.status === "online").length;
+  const blockedBarriers = barriersInScope.filter((barrier) => !barrier.satisfied).length;
+  const blockingObjects = barriersInScope.reduce((sum, barrier) => sum + Number((barrier.blockingObjects || []).length), 0);
+  return panel("执行监控总览", `
+    <div class="metric-grid">
+      ${summaryMetric("实时事件", eventsShown.length, "当前监听范围内的执行事件")}
+      ${summaryMetric("活跃会话", activeSessions, "仍在运行、等待或受阻的工作会话")}
+      ${summaryMetric("待执行派发", activeDispatches, "排队、已领走或执行中的派发")}
+      ${summaryMetric("执行载体", lanesAll.length, "可复用 worker lane")}
+      ${summaryMetric("在线节点", `${onlineNodes}/${nodes.length}`, "可承接任务的 agent 节点")}
+      ${summaryMetric("关闭阻塞", blockingObjects, `${blockedBarriers} 个任务组仍未满足关闭门`)}
+    </div>
+    <div class="small muted">查看顺序：先看“实时事件流”，再看“智能体派发”和“工作会话”；需要收尾时看“关闭门禁”和“阻塞项人工处置”。</div>
+  `, {wide: true});
+}
+
 function renderMonitor() {
   // 一个项目都没有时，这一页原先摆出十一张"暂无数据"的空表和一个空的监听范围下拉 ——
   // 屏幕上全是表头，没有一句话说明为什么什么都没有、下一步该做什么。
@@ -4918,6 +4999,7 @@ function renderMonitor() {
     nothingRanYetNotice,
     orchestratorStalledNotice(),
     fleetOfflineNotice(),
+    renderMonitorSummary({eventsShown, sessionsAll, dispatchesAll, lanesAll, nodes: state.agentRuntimeNodes || [], barriersInScope}),
     canOrchestrate ? panel("自治控制", `
       <div class="button-row">
         <button class="primary-button" data-action="orchestrator-run">运行自治循环</button>
@@ -5141,15 +5223,11 @@ function cfgRoleRow(role = {}, readOnly = false) {
   `;
 }
 
-function liveJoinTokenCount(projectId) {
+function liveJoinTokenCount(projectId = "") {
   return (state.agentJoinTokens || []).filter((token) =>
-    token.projectId === projectId
+    (!projectId || token.projectId === projectId)
     && token.status === "issued"
     && (!token.expiresAt || new Date(token.expiresAt).getTime() > serverNow())).length;
-}
-
-function projectSettingMetric(label, value, hint) {
-  return `<div class="metric"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(hint)}</small></div>`;
 }
 
 function renderProjectSettingsSummary(project, repos, baselineData, defaultRoles, resolved, rulesLoaded) {
@@ -5160,12 +5238,12 @@ function renderProjectSettingsSummary(project, repos, baselineData, defaultRoles
     : "项目设置影响后续派发、入网和产出落地";
   return panel("项目设置总览", `
     <div class="metric-grid">
-      ${projectSettingMetric("仓库", repos.length, "代码与文档产出的 Git 落点")}
-      ${projectSettingMetric("基线", baselineData.length, "agent 可引用的现状材料")}
-      ${projectSettingMetric("默认角色", defaultRoles.length, "任务组未指定时的角色回退")}
-      ${projectSettingMetric("待用加入令牌", liveJoinTokenCount(project.id), "可注册到本项目的 agent 票据")}
-      ${projectSettingMetric("系统规则", systemRuleCount, "项目层生效的系统规则")}
-      ${projectSettingMetric("业务规则", businessRuleCount, "项目层生效的业务规则")}
+      ${summaryMetric("仓库", repos.length, "代码与文档产出的 Git 落点")}
+      ${summaryMetric("基线", baselineData.length, "agent 可引用的现状材料")}
+      ${summaryMetric("默认角色", defaultRoles.length, "任务组未指定时的角色回退")}
+      ${summaryMetric("待用加入令牌", liveJoinTokenCount(project.id), "可注册到本项目的 agent 票据")}
+      ${summaryMetric("系统规则", systemRuleCount, "项目层生效的系统规则")}
+      ${summaryMetric("业务规则", businessRuleCount, "项目层生效的业务规则")}
     </div>
     <div class="small muted">${esc(archivedText)}；agent 注册入口在本页“智能体接入”。</div>
   `, {wide: true});
