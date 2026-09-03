@@ -294,7 +294,11 @@ globalThis.__probe = {
   renderSysAccountsWith: (nextState, account) => { state = nextState; currentAccount = account; return renderSysAccounts(); },
   renderOrgMembersWith: (nextState, account, members) => { state = nextState; currentAccount = account; orgMembers = members || []; return renderOrgMembers(); },
   renderOrgAgentsWith: (nextState, account, nodes) => { state = nextState; currentAccount = account; orgAgentNodes = nodes || []; return renderOrgAgents(); },
-  renderProjectAgentsWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; return renderProjectAgents(); },
+  renderProjectAgentsWith: (nextState, account, projectId, viewMode) => {
+    state = nextState; currentAccount = account; currentProjectId = projectId;
+    if (viewMode) agentViewMode = viewMode;
+    return renderProjectAgents();
+  },
   blockerGuide: (type) => blockerGuide(type),
   renderMonitorWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; return renderMonitor(); },
   setAuth: (token, account) => { authToken = token; currentAccount = account; },
@@ -4141,6 +4145,20 @@ function runPendingTruncationCase() {
         && /项目节点/u.test(projectAgentHtml)
         && /data-jump-panel="注册 agent"/u.test(projectAgentHtml),
       "项目智能体页没有把「先签发令牌、再拿服务端注册脚本」这条操作链路放到首屏");
+    check("项目 AI 智能体页要提供列表和卡片两种节点管理视图",
+      /data-action="agent-view-mode" data-mode="table"/u.test(projectAgentHtml)
+        && /data-action="agent-view-mode" data-mode="cards"/u.test(projectAgentHtml),
+      "项目智能体页只有长表，普通用户不能用卡片方式快速扫读节点状态");
+    const projectAgentCardsHtml = probe.renderProjectAgentsWith(projectAgentsState, admin, "p1", "cards").replace(/<!--[\s\S]*?-->/gu, "");
+    check("项目 AI 智能体卡片视图要显示准入、健康、任务、心跳和节点控制操作",
+      /class="agent-card"/u.test(projectAgentCardsHtml)
+        && /准入：/u.test(projectAgentCardsHtml)
+        && /健康度：/u.test(projectAgentCardsHtml)
+        && /当前任务数：1/u.test(projectAgentCardsHtml)
+        && /最近心跳：/u.test(projectAgentCardsHtml)
+        && /data-action="agent-control"/u.test(projectAgentCardsHtml)
+        && /data-action="revoke-agent-node"/u.test(projectAgentCardsHtml),
+      "项目智能体卡片视图没有承载关键管理字段或节点控制按钮");
     const projectOverviewRoot = el("div");
     loadConsole(projectOverviewRoot, {realI18n: true}).renderFullPageWith(projectAgentsState, admin, "p1", "proj-overview");
     const overviewHtml = String(projectOverviewRoot.innerHTML || "").replace(/<!--[\s\S]*?-->/gu, "");

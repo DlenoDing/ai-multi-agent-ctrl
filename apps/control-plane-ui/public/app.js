@@ -3269,6 +3269,31 @@ function projectAgentStats(projectId = currentProjectId, nodes = projectAgentNod
   return {aliveNodes, onlineNodes, busyNodes, runningDispatches, abnormalNodes, liveTokens};
 }
 
+function projectAgentCards(nodes, canControlNodes) {
+  return nodes.length ? `
+    <div class="agent-cards">
+      ${nodes.map((node) => {
+        const timedOut = heartbeatTimedOut(node);
+        return `
+          <div class="agent-card">
+            <h3><span class="hover-wrap">${esc(node.nodeName || node.nodeId)}${agentHoverPop(node)}</span>${timedOut ? badge("heartbeat_timeout") : badge(node.status)}</h3>
+            <div class="agent-meta">
+              <span>准入：${badge(node.admission)}</span>
+              <span>健康度：${badge(node.display?.health)}</span>
+              <span>地区：${esc(node.display?.region || "-")}</span>
+              <span>当前任务数：${(node.display?.currentDispatchIds || []).length}</span>
+              <span>最近心跳：${fmtTime(node.lastHeartbeatAt)}</span>
+            </div>
+            ${timedOut ? `<div class="small warn-text">上次状态仍为「${esc(t(node.status) || node.status)}」，但心跳已超过判死阈值。</div>` : ""}
+            ${claimMissHint(node)}${selfCheckFailureHint(node)}${heartbeatStaleHint(node)}
+            <div class="button-row" style="margin-top:10px;">${canControlNodes ? agentActions(node) : `<span class="small muted">当前账号无节点控制权限</span>`}</div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  ` : `<div class="notice warn-notice">当前项目还没有任何 agent 节点。要让任务实际执行，请在下面“注册 agent”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 agent 主机执行。</div>`;
+}
+
 function renderOrgAgentsBoundaryGuide() {
   return panel("智能体管理边界", `
     <div class="module-grid action-grid">
@@ -3534,6 +3559,12 @@ function renderProjectAgents() {
   if (!project) return panel("AI 智能体", noVisibleProjectNotice(), {wide: true});
   const nodes = projectAgentNodes(project.id);
   const canControlNodes = hasPerm("agent:activate");
+  const toggle = `
+    <div class="button-row">
+      <button class="${agentViewMode === "table" ? "primary-button" : "secondary-button"}" data-action="agent-view-mode" data-mode="table">列表视图</button>
+      <button class="${agentViewMode === "cards" ? "primary-button" : "secondary-button"}" data-action="agent-view-mode" data-mode="cards">卡片视图</button>
+    </div>
+  `;
   const nodeRows = nodes.map((node) => {
     const timedOut = heartbeatTimedOut(node);
     return row([
@@ -3552,12 +3583,15 @@ function renderProjectAgents() {
   const nodeNotice = nodes.length
     ? `<div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>`
     : `<div class="notice warn-notice">当前项目还没有任何 agent 节点。要让任务实际执行，请在下面“注册 agent”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 agent 主机执行。</div>`;
+  const bodyHtml = agentViewMode === "cards"
+    ? projectAgentCards(nodes, canControlNodes)
+    : table(["名称", "运行状态", "准入", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"], nodeRows, {emptyText: "当前项目暂无智能体节点"});
   return [
     renderProjectAgentsSummary(project, nodes),
     renderProjectAgentsActionBoard(project, nodes),
     renderProjectAgentRegistrationFlow(project, nodes),
-    panel("项目智能体节点", `<div class="stack">${nodeNotice}${table(["名称", "运行状态", "准入", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"], nodeRows, {emptyText: "当前项目暂无智能体节点"})}</div>`,
-      {wide: true, headerSide: filterInput("按节点名、地区过滤…", "project-nodes")}),
+    panel("项目智能体节点", `<div class="stack">${nodeNotice}${bodyHtml}</div>`,
+      {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "project-nodes")}${toggle}`}),
     panel("注册 agent", renderJoinTokenSection({projectId: project.id, context: "project"}), {wide: true})
   ].join("");
 }
