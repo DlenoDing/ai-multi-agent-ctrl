@@ -4037,11 +4037,18 @@ function runPendingTruncationCase() {
         && /data-jump-panel="项目成员授权"/u.test(orgProjectsHtml),
       "项目管理操作看板只显示指标，没有接上列表、创建项目和成员授权面板的跳转");
     const reviewHtml = probe.renderReviewWith(overviewState, orgAdmin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
-    check("人工审核页先显示审核总览，再显示待办与明细",
+    check("人工审核页先显示审核总览和处置看板，再显示待办与明细",
       panelAt(reviewHtml, "人工审核总览") >= 0
-        && panelAt(reviewHtml, "人工审核总览") < panelAt(reviewHtml, "待你处理")
+        && panelAt(reviewHtml, "人工审核总览") < panelAt(reviewHtml, "人工审核处置看板")
+        && panelAt(reviewHtml, "人工审核处置看板") < panelAt(reviewHtml, "待你处理")
         && panelAt(reviewHtml, "待你处理") < panelAt(reviewHtml, "待人工确认"),
-      "人工审核页没有项目级风险地图，用户要读完整页才知道确认、授权、审批和发现项分布");
+      "人工审核页没有把确认、授权、审批、发现项和历史追溯排成可点击处置看板");
+    check("人工审核处置看板要提供待办、确认、授权处置和历史的跳转入口",
+      /data-jump-panel="待你处理"/u.test(reviewHtml)
+        && /data-jump-panel="待人工确认"/u.test(reviewHtml)
+        && /data-jump-panel="授权与处置"/u.test(reviewHtml)
+        && /data-jump-panel="已答历史"/u.test(reviewHtml),
+      "人工审核处置看板只显示指标，没有接上待你处理、待人工确认、授权与处置和已答历史面板的跳转");
     const directivesHtml = probe.renderDirectivesWith(overviewState, orgAdmin, "p1", [
       {directiveId: "dir1", taskGroupId: "tg1", directiveType: "pause", instruction: "暂停", status: "applied", appliedActions: [{action: "task_group_pause"}], createdAt: "2026-08-12T00:00:00Z"},
       {directiveId: "dir2", taskGroupId: "tg1", directiveType: "free_text", instruction: "补充说明", status: "rejected", rejectReason: "task_group_settled", createdAt: "2026-08-12T00:01:00Z"}

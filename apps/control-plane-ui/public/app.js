@@ -4737,7 +4737,7 @@ function renderPendingForMePanel() {
   `, {wide: true});
 }
 
-function renderReviewSummary({pending, pendingPermissions, pendingApprovals, openFindings, answered, finalizations}) {
+function reviewStats({pending, pendingPermissions, pendingApprovals, openFindings}) {
   const blockingConfirmations = pending.filter((request) => request.blocking).length;
   const majorDecisions = pending.filter((request) => request.decisionClass === "major").length;
   const affectedTaskGroups = new Set([
@@ -4746,18 +4746,81 @@ function renderReviewSummary({pending, pendingPermissions, pendingApprovals, ope
     ...pendingApprovals.map((item) => item.taskGroupId),
     ...openFindings.map((item) => item.taskGroupId)
   ].filter(Boolean)).size;
+  return {blockingConfirmations, majorDecisions, affectedTaskGroups};
+}
+
+function renderReviewSummary({pending, pendingPermissions, pendingApprovals, openFindings, answered, finalizations}) {
+  const stats = reviewStats({pending, pendingPermissions, pendingApprovals, openFindings});
   return panel("人工审核总览", `
     <div class="metric-grid">
-      ${summaryMetric("待人工确认", pending.length, `${blockingConfirmations} 条阻塞执行`)}
-      ${summaryMetric("核心决策", majorDecisions, "必须真人主动定稿")}
+      ${summaryMetric("待人工确认", pending.length, `${stats.blockingConfirmations} 条阻塞执行`)}
+      ${summaryMetric("核心决策", stats.majorDecisions, "必须真人主动定稿")}
       ${summaryMetric("授权请求", pendingPermissions.length, "需要项目授权权限处理")}
       ${summaryMetric("审批请求", pendingApprovals.length, "需要审核权限处理")}
       ${summaryMetric("待处置发现", openFindings.length, "会影响关闭门禁")}
-      ${summaryMetric("涉及任务组", affectedTaskGroups, "当前项目内需要关注的范围")}
+      ${summaryMetric("涉及任务组", stats.affectedTaskGroups, "当前项目内需要关注的范围")}
       ${summaryMetric("已答历史", answered.length, "已定稿或已作废的确认")}
       ${summaryMetric("最近定稿", finalizations.length, "真人收尾记录")}
     </div>
     <div class="small muted">查看顺序：先看“待你处理”，再处理“待人工确认”和“授权与处置”；历史结论在“已答历史”和“最近的人工定稿”里追溯。</div>
+  `, {wide: true});
+}
+
+function renderReviewActionBoard({pending, pendingPermissions, pendingApprovals, openFindings, answered, finalizations}) {
+  const stats = reviewStats({pending, pendingPermissions, pendingApprovals, openFindings});
+  const todo = pendingForMe();
+  return panel("人工审核处置看板", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "待你处理",
+        metric: todo.known ? `${todo.total}${todo.partial ? "+" : ""}` : "未知",
+        detail: todo.known ? "跨可见项目的个人处置入口" : "待办数据未完整加载",
+        panelTitle: "待你处理",
+        tone: todo.known && todo.total ? "red" : "green",
+        action: "查看待办"
+      })}
+      ${jumpModuleCard({
+        title: "待人工确认",
+        metric: `${pending.length}`,
+        detail: `${stats.blockingConfirmations} 条阻塞执行`,
+        panelTitle: "待人工确认",
+        tone: stats.blockingConfirmations ? "red" : pending.length ? "orange" : "green",
+        action: "处理确认"
+      })}
+      ${jumpModuleCard({
+        title: "核心决策",
+        metric: `${stats.majorDecisions}`,
+        detail: "必须真人主动定稿",
+        panelTitle: "待人工确认",
+        tone: stats.majorDecisions ? "red" : "green",
+        action: "定稿"
+      })}
+      ${jumpModuleCard({
+        title: "授权与审批",
+        metric: `${pendingPermissions.length + pendingApprovals.length}`,
+        detail: `授权 ${pendingPermissions.length} / 审批 ${pendingApprovals.length}`,
+        panelTitle: "授权与处置",
+        tone: pendingPermissions.length + pendingApprovals.length ? "orange" : "green",
+        action: "处理授权"
+      })}
+      ${jumpModuleCard({
+        title: "待处置发现",
+        metric: `${openFindings.length}`,
+        detail: "发现项会影响关闭门禁",
+        panelTitle: "授权与处置",
+        tone: openFindings.length ? "orange" : "green",
+        action: "处置发现"
+      })}
+      ${jumpModuleCard({
+        title: "历史追溯",
+        metric: `${answered.length + finalizations.length}`,
+        detail: "已答确认和最近真人收尾记录",
+        panelTitle: "已答历史",
+        tone: answered.length + finalizations.length ? "blue" : "gray",
+        action: "查看历史"
+      })}
+    </div>
+    <div class="small muted">处理顺序：先处理待你处理和阻塞确认，再处理授权 / 审批 / 发现项，最后查看历史追溯。</div>
   `, {wide: true});
 }
 
@@ -4952,6 +5015,7 @@ function renderReview() {
 
   return [
     renderReviewSummary({pending, pendingPermissions, pendingApprovals, openFindings, answered, finalizations}),
+    renderReviewActionBoard({pending, pendingPermissions, pendingApprovals, openFindings, answered, finalizations}),
     todoPanel,
     aiAnalysisStalledNotice(allRequests),
     panel("待人工确认", `
