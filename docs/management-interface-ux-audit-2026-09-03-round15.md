@@ -37,4 +37,9 @@
 
 ## 实施结果
 
-- 待实施。
+- 已给侧栏空间说明增加 `brand-section` 类名，明确区分品牌图形标识与空间说明文字。
+- 已将 `.brand span` 改为 `.brand .brand-section`，避免说明文字样式覆盖左上角“智”标识。
+- 已将移动端隐藏规则改为 `.brand .brand-section { display: none; }`，移动端只隐藏空间说明，不隐藏品牌图形标识。
+- 已补充 `console-behaviour-gate`：断言 DOM 输出 `brand-section`，断言 CSS 不再使用 `.brand span` 宽选择器，并断言移动端只隐藏空间说明。
+- 已完成本地真实浏览器走查：系统管理员桌面视角显示“智”图形标识和“系统管理”；项目成员桌面视角显示“智”图形标识和“项目管理”；390px 移动端“智”仍显示、空间说明隐藏、无页面级横向溢出。
+- 已通过 `node --check apps/control-plane-ui/public/app.js`、`node --check scripts/console-behaviour-check.mjs`、`git diff --check`、`npm run console-behaviour-gate`、`npm run mutation-anchors`。
