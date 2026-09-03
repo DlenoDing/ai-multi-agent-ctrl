@@ -37,4 +37,11 @@
 
 ## 实施结果
 
-- 待实施。
+- 已在 `apps/control-plane-ui/public/app.js` 新增“人工指令操作看板”，放在“人工指令总览”之后、“指令流水”之前。
+- 已抽出 `directiveStats`，让总览和操作看板共用同一套统计口径，避免待处理、已拒绝、已执行、涉及任务组和可控任务组数字不一致。
+- 看板复用现有 `jumpModuleCard`，不新增接口、不新增轮询、不新增依赖；所有指标均来自当前项目已加载指令列表和任务组。
+- 已补充 `scripts/console-behaviour-check.mjs` 行为门，覆盖人工指令页的面板顺序和看板跳转目标。
+- 已通过 `node --check apps/control-plane-ui/public/app.js`、`node --check scripts/console-behaviour-check.mjs`、`git diff --check`、`npm run console-behaviour-gate`、`npm run mutation-anchors`。
+- 真实浏览器桌面走查通过：人工指令页显示 4 个面板，顺序为“人工指令总览 → 人工指令操作看板 → 指令流水 → 下达人工指令”；看板 6 张卡片均有明确跳转目标；页面无横向溢出。
+- 真实浏览器交互走查通过：点击“指令流水”和“下达人工指令”卡片后，对应面板进入当前视口。
+- 真实浏览器 390px 窄屏走查通过：看板仍为 6 张可读卡片，页面级 `scrollWidth` 与视口宽度一致；导航区域局部横向滚动不撑开整页。
