@@ -57,3 +57,19 @@
 - `node --check apps/control-plane-ui/server.mjs`：通过。
 - `node --check scripts/console-behaviour-check.mjs`：通过。
 - `npm run console-behaviour-gate`：通过，580 条断言全部通过。
+
+## 完整验证与浏览器走查
+
+- `npm run validate`：通过。
+- `npm run docker:doctor`：通过，覆盖 compose、镜像构建、健康检查、集中式 MCP、安装产物和 PostgreSQL 状态存储。
+- 内置浏览器桌面走查：
+  - 项目设置页显示“角色 Skill 定制”跳转卡片、主体面板和项目级创建表单。
+  - 任务组详情显示“本任务组角色 Skill 定制”、项目级继承说明和任务组级创建表单。
+  - 浏览器控制台无 error/warn，桌面宽度无横向溢出。
+- 内置浏览器移动端 390px 走查：
+  - 项目设置页和任务组详情新增表单均可见。
+  - 页面 `scrollWidth` 与 `clientWidth` 一致，无横向溢出。
+
+## 本轮复审结论
+
+新增入口没有改变 AI-native 执行边界：MCP 服务仍集中运行在控制面服务器，Agent 端仍只通过一次性 join token 注册、自检、领任务、持续回送事件和执行结果。角色 Skill 定制由服务端写入 overlay，并在后续任务契约与 Skill 工作集构建时同步给对应 Agent。当前剩余可优化项更多是“批量编辑 overlay、退役 overlay 的二次治理入口”，后端目前没有单独 retire API；为避免绕过既有权限和状态机，本轮不新增临时删除路径。
