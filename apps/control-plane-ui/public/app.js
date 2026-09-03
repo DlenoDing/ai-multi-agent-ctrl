@@ -2380,6 +2380,72 @@ function renderSysSettingsSummary(runtime, metrics) {
   `, {wide: true});
 }
 
+function renderSysSettingsActionBoard(runtime, metrics) {
+  const modelCapabilities = state.modelCapabilities || [];
+  const skillSources = state.skillSources || [];
+  const roleSkillCount = state.roleSkillCountBySource || {};
+  const usableSkillSources = skillSources.filter((source) => source.status !== "retired"
+    && Number(roleSkillCount[source.sourceId] || 0) > 0).length;
+  const unavailableModels = modelCapabilities.filter((profile) =>
+    ["unavailable", "disabled", "retired"].includes(profile.availability)).length;
+  const activeOverlays = (state.roleSkillOverlays || []).filter((item) => item.status === "active").length;
+  const sharedDefinitions = instructionState?.sharedDefinitions || [];
+  const envelopeCount = (metrics.envelopes || []).length;
+  return panel("系统设置操作看板", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "运行参数",
+        metric: t(runtime.status),
+        detail: "运行档案、自治周期、状态机和 MCP 工具数",
+        panelTitle: "运行参数（只读）",
+        tone: runtime.status === "active" || runtime.status === "initialized" ? "green" : "orange",
+        action: "看参数"
+      })}
+      ${jumpModuleCard({
+        title: "技能源",
+        metric: `${usableSkillSources}/${skillSources.length}`,
+        detail: usableSkillSources ? "可用角色 skill 来源" : "优先同步或排查 stale 来源",
+        panelTitle: "技能源",
+        tone: usableSkillSources ? "blue" : "orange",
+        action: "看同步"
+      })}
+      ${jumpModuleCard({
+        title: "模型能力",
+        metric: `${modelCapabilities.length}`,
+        detail: unavailableModels ? `${unavailableModels} 个不可用或退役` : "供应商、能力和上下文窗口",
+        panelTitle: "模型能力注册（只读）",
+        tone: unavailableModels ? "orange" : "blue",
+        action: "看模型"
+      })}
+      ${jumpModuleCard({
+        title: "角色叠加",
+        metric: `${activeOverlays}`,
+        detail: "项目/任务组级 role skill 定制，只读追踪",
+        panelTitle: "角色技能叠加（改动 agent 能力，只读）",
+        tone: activeOverlays ? "orange" : "gray",
+        action: "看叠加"
+      })}
+      ${jumpModuleCard({
+        title: "指令压缩",
+        metric: `${envelopeCount}`,
+        detail: "稳定前缀、增量消息和缓存命中目标",
+        panelTitle: "指令压缩指标",
+        tone: envelopeCount ? "blue" : "gray",
+        action: "看指标"
+      })}
+      ${jumpModuleCard({
+        title: "共享定义",
+        metric: `${sharedDefinitions.length}`,
+        detail: "公共语义、契约归属和生产角色",
+        panelTitle: "共享定义归属",
+        tone: sharedDefinitions.length ? "blue" : "gray",
+        action: "看归属"
+      })}
+    </div>
+    <div class="small muted">系统设置只做全局能力查看和治理，不签发项目 agent 脚本；项目级注册仍在「项目管理」→「AI 智能体」→「注册 agent」。</div>
+  `, {wide: true});
+}
+
 function renderSysSettings() {
   const runtime = state.runtime || {};
   const models = (state.modelCapabilities || []).slice(0, 40).map((profile) => row([
@@ -2423,6 +2489,7 @@ function renderSysSettings() {
 
   return [
     renderSysSettingsSummary(runtime, metrics),
+    renderSysSettingsActionBoard(runtime, metrics),
     panel("运行参数（只读）", `
       <dl class="kv-list">
         <dt>运行档案</dt><dd class="mono">${esc(runtime.profileId || "-")}</dd>

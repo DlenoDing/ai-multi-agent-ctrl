@@ -4164,6 +4164,18 @@ function runPendingTruncationCase() {
       panelAt(sysSettingsHtml, "系统设置总览") >= 0
         && panelAt(sysSettingsHtml, "系统设置总览") < panelAt(sysSettingsHtml, "运行参数（只读）"),
       "系统设置页首屏直接进入只读字段和长表，管理员无法先判断模型、技能、MCP 与共享定义状态");
+    check("系统设置页要先给全局能力操作看板，再显示长表",
+      panelAt(sysSettingsHtml, "系统设置总览") >= 0
+        && panelAt(sysSettingsHtml, "系统设置总览") < panelAt(sysSettingsHtml, "系统设置操作看板")
+        && panelAt(sysSettingsHtml, "系统设置操作看板") < panelAt(sysSettingsHtml, "运行参数（只读）")
+        && /data-jump-panel="运行参数（只读）"/u.test(sysSettingsHtml)
+        && /data-jump-panel="技能源"/u.test(sysSettingsHtml)
+        && /data-jump-panel="模型能力注册（只读）"/u.test(sysSettingsHtml)
+        && /data-jump-panel="角色技能叠加（改动 agent 能力，只读）"/u.test(sysSettingsHtml)
+        && /data-jump-panel="指令压缩指标"/u.test(sysSettingsHtml)
+        && /data-jump-panel="共享定义归属"/u.test(sysSettingsHtml)
+        && /项目管理.+AI 智能体.+注册 agent/u.test(sysSettingsHtml),
+      "系统设置页只有总览没有操作入口，管理员仍要向下读运行参数、技能源、模型和共享定义长表");
     const membersHtml = probe.renderOrgMembersWith(overviewState, orgAdmin, [
       {...orgAdmin, status: "active"},
       {accountId: "acct_wait", accountType: "user_account", displayName: "待登录成员", email: "wait@example.com", status: "invited", roles: []}
