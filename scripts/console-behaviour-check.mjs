@@ -2449,7 +2449,7 @@ function runReviewAxisCase() {
       ],
       accessGrants: [], mcpGrants: [], auditLog: [], agents: [], agentJoinTokens: []
     }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"});
-    const memberSection = String(mixedHtml).split("项目成员授权")[1] || "";
+    const memberSection = String(mixedHtml).split("<h2>项目成员授权</h2>")[1] || "";
     check("「项目成员授权」的项目下拉里不许出现已归档的项目（后端会拒）",
       /在用项目/u.test(memberSection) && !/老项目/u.test(memberSection),
       memberSection.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 120) || "（这一块没渲染出来）");
@@ -2460,7 +2460,7 @@ function runReviewAxisCase() {
       accessGrants: [], mcpGrants: [], auditLog: [], agents: [], agentJoinTokens: []
     }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"});
     check("全部项目都已归档时要说清是「都归档了」，而不是渲染一个空下拉或「还没有项目」",
-      /全部已归档/u.test(String(allArchivedHtml).split("项目成员授权")[1] || ""),
+      /全部已归档/u.test(String(allArchivedHtml).split("<h2>项目成员授权</h2>")[1] || ""),
       "人分不清这个组织没有项目、还是有但都归档了 —— 这两件事的下一步不同");
   }
 
@@ -3937,6 +3937,16 @@ function runPendingTruncationCase() {
       panelAt(accountHtml, "账号与授权总览") >= 0
         && panelAt(accountHtml, "账号与授权总览") < panelAt(accountHtml, "邀请账号"),
       "账号与授权页首屏直接进入表单，普通管理员看不到账号、授权、项目和令牌规模");
+    check("账号与授权页先显示操作看板和现状列表，再显示新增表单",
+      panelAt(accountHtml, "账号与授权操作看板") >= 0
+        && panelAt(accountHtml, "账号与授权总览") < panelAt(accountHtml, "账号与授权操作看板")
+        && panelAt(accountHtml, "账号与授权操作看板") < panelAt(accountHtml, "账号列表")
+        && panelAt(accountHtml, "账号列表") < panelAt(accountHtml, "访问授权列表")
+        && panelAt(accountHtml, "访问授权列表") < panelAt(accountHtml, "邀请账号")
+        && panelAt(accountHtml, "邀请账号") < panelAt(accountHtml, "新增访问授权")
+        && /data-jump-panel="账号列表"/u.test(accountHtml)
+        && /data-jump-panel="访问授权列表"/u.test(accountHtml),
+      "账号与授权页仍然是先给邀请/授权表单，系统管理员没先核对现有账号与授权就被推去操作");
     const taskGroupHtml = probe.renderTaskGroupsWith(overviewState, admin, "p1", null, {}).replace(/<!--[\s\S]*?-->/gu, "");
     check("任务组页先显示任务组总览，再显示创建表单",
       panelAt(taskGroupHtml, "任务组总览") >= 0

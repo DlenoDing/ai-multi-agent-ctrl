@@ -2461,6 +2461,17 @@ function summaryMetric(label, value, hint) {
   return `<div class="metric"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(hint)}</small></div>`;
 }
 
+function jumpModuleCard({title, metric, detail, panelTitle, tone = "blue", action = "查看明细"}) {
+  return `
+    <button class="module-card tone-${esc(tone)}" data-jump-panel="${esc(panelTitle)}">
+      <span class="module-title">${esc(title)}</span>
+      <strong>${esc(metric)}</strong>
+      <span class="module-detail">${esc(detail)}</span>
+      <span class="module-action">${esc(action)}</span>
+    </button>
+  `;
+}
+
 function renderSysAccountsSummary() {
   const accounts = state.accounts || [];
   const grants = state.accessGrants || [];
@@ -2481,6 +2492,67 @@ function renderSysAccountsSummary() {
       ${summaryMetric("启用档案", activeAgents, "当前可参与调度的档案")}
     </div>
     <div class="small muted">先看总览确认规模和入口，再在下面创建账号、补授权、建项目或签发加入令牌。</div>
+  `, {wide: true});
+}
+
+function renderSysAccountsActionBoard() {
+  const accounts = state.accounts || [];
+  const grants = state.accessGrants || [];
+  const agents = state.agents || [];
+  const invited = accounts.filter((account) => account.status === "invited" || account.invitationWithdrawn).length;
+  const activeAccounts = accounts.filter((account) => !["retired", "suspended", "disabled"].includes(account.status)).length;
+  const systemAdmins = accounts.filter((account) => account.accountType === "system_admin" && account.status !== "retired").length;
+  const serviceAccounts = accounts.filter((account) => account.accountType === "service_account" && account.status !== "retired").length;
+  const activeGrants = grants.filter((grant) => grant.status === "active").length;
+  const revokedGrants = grants.filter((grant) => grant.status !== "active").length;
+  const activeAgents = agents.filter((agent) => agent.status === "active").length;
+  const projects = state.projects || [];
+  return panel("账号与授权操作看板", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "待接受邀请",
+        metric: invited,
+        detail: invited ? "先确认是否需要重发或撤回邀请" : "当前没有等待首次登录的账号",
+        panelTitle: "账号列表",
+        tone: invited ? "orange" : "green"
+      })}
+      ${jumpModuleCard({
+        title: "启用账号",
+        metric: activeAccounts,
+        detail: `其中系统管理员 ${systemAdmins} 个，服务账号 ${serviceAccounts} 个`,
+        panelTitle: "账号列表",
+        tone: activeAccounts ? "blue" : "gray"
+      })}
+      ${jumpModuleCard({
+        title: "有效授权",
+        metric: activeGrants,
+        detail: revokedGrants ? `另有 ${revokedGrants} 条已撤销或失效` : "项目、任务组与系统资源授权",
+        panelTitle: "访问授权列表",
+        tone: activeGrants ? "blue" : "gray"
+      })}
+      ${jumpModuleCard({
+        title: "入网令牌",
+        metric: liveJoinTokenCount(),
+        detail: "尚未消费且未过期的 agent 注册票据",
+        panelTitle: "智能体入网令牌",
+        tone: liveJoinTokenCount() ? "orange" : "green"
+      })}
+      ${jumpModuleCard({
+        title: "agent 档案",
+        metric: `${activeAgents}/${agents.length}`,
+        detail: "总控可激活的编排角色档案",
+        panelTitle: "编排智能体档案",
+        tone: activeAgents ? "blue" : "gray"
+      })}
+      ${jumpModuleCard({
+        title: "可授权项目",
+        metric: assignableProjects().length,
+        detail: projects.length ? "先核对项目归属，再补成员授权" : "还没有项目，需先创建项目",
+        panelTitle: "项目成员授权",
+        tone: assignableProjects().length ? "blue" : "gray"
+      })}
+    </div>
+    <div class="small muted">处理顺序：先核对账号与授权现状，再签发令牌或启停 agent 档案；最后才新增账号、授权或项目。</div>
   `, {wide: true});
 }
 
@@ -2512,6 +2584,23 @@ function renderSysAccounts() {
 
   return [
     renderSysAccountsSummary(),
+    renderSysAccountsActionBoard(),
+    panel("账号列表", table(["账号", "邮箱", "类型", "状态", "角色"], accounts), {wide: true}),
+    panel("访问授权列表", table(["主体", "资源", "角色", "状态", "权限", "操作"], grants), {wide: true}),
+    panel("智能体入网令牌", renderJoinTokenSection(), {wide: true}),
+    panel("编排智能体档案", table(["名称", "角色", "模型策略", "状态", "操作"], agents) + `
+      <form class="form-grid" data-form="agent-create" style="margin-top:12px;">
+        <div class="form-row-inline">
+          <div class="form-row"><label>名称</label><input name="name" required></div>
+          <div class="form-row"><label>角色（只认已登记的执行角色）</label><input name="role" value="reviewer" required list="agent-role-options">
+            <datalist id="agent-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
+          <div class="form-row"><label>模型策略</label>
+            <select name="model"><option value="auto_best">自动最优</option><option value="auto_fast">自动快速</option><option value="cost_aware">成本优先</option></select>
+          </div>
+        </div>
+        <button class="primary-button" type="submit">创建档案</button>
+      </form>
+    `, {wide: true}),
     panel("邀请账号", `
       <form class="form-grid" data-form="account-invite">
         <div class="form-row"><label>显示名</label><input name="displayName" required></div>
@@ -2554,23 +2643,7 @@ function renderSysAccounts() {
         <button class="primary-button" type="submit">创建项目</button>
       </form>
     `),
-    panel("项目成员授权", renderProjectMemberForm()),
-    panel("智能体入网令牌", renderJoinTokenSection(), {wide: true}),
-    panel("账号列表", table(["账号", "邮箱", "类型", "状态", "角色"], accounts), {wide: true}),
-    panel("访问授权列表", table(["主体", "资源", "角色", "状态", "权限", "操作"], grants), {wide: true}),
-    panel("编排智能体档案", table(["名称", "角色", "模型策略", "状态", "操作"], agents) + `
-      <form class="form-grid" data-form="agent-create" style="margin-top:12px;">
-        <div class="form-row-inline">
-          <div class="form-row"><label>名称</label><input name="name" required></div>
-          <div class="form-row"><label>角色（只认已登记的执行角色）</label><input name="role" value="reviewer" required list="agent-role-options">
-            <datalist id="agent-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
-          <div class="form-row"><label>模型策略</label>
-            <select name="model"><option value="auto_best">自动最优</option><option value="auto_fast">自动快速</option><option value="cost_aware">成本优先</option></select>
-          </div>
-        </div>
-        <button class="primary-button" type="submit">创建档案</button>
-      </form>
-    `, {wide: true})
+    panel("项目成员授权", renderProjectMemberForm())
   ].join("");
 }
 
@@ -4886,14 +4959,7 @@ function renderMonitorSummary({eventsShown, sessionsAll, dispatchesAll, lanesAll
 }
 
 function monitorActionCard({title, metric, detail, panelTitle, tone = "blue"}) {
-  return `
-    <button class="module-card tone-${esc(tone)}" data-jump-panel="${esc(panelTitle)}">
-      <span class="module-title">${esc(title)}</span>
-      <strong>${esc(metric)}</strong>
-      <span class="module-detail">${esc(detail)}</span>
-      <span class="module-action">查看明细</span>
-    </button>
-  `;
+  return jumpModuleCard({title, metric, detail, panelTitle, tone});
 }
 
 function renderMonitorActionBoard({
