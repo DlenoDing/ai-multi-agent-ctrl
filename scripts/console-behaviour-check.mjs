@@ -1278,11 +1278,21 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     check("项目设置页先显示总览和操作看板，再进入基础配置与规则明细",
       settingsPanelAt("项目设置总览") >= 0
         && settingsPanelAt("项目设置总览") < settingsPanelAt("项目设置操作看板")
-        && settingsPanelAt("项目设置操作看板") < settingsPanelAt("项目基础配置")
+        && settingsPanelAt("项目设置操作看板") < settingsPanelAt("项目设置职责分区")
+        && settingsPanelAt("项目设置职责分区") < settingsPanelAt("项目基础配置")
         && settingsPanelAt("项目基础配置") < settingsPanelAt("AI 智能体")
         && settingsPanelAt("AI 智能体") < settingsPanelAt("系统规则")
         && settingsPanelAt("系统规则") < settingsPanelAt("业务规则"),
       "项目设置页仍然把长表单直接推到前面，用户要向下找才知道仓库、规则和 agent 管理在哪里");
+    check("项目设置页必须先说明配置、规则和 Agent 接入的职责分区",
+      /项目设置职责分区/u.test(settingsHtml)
+        && /产出与基线/u.test(settingsHtml)
+        && /角色回退/u.test(settingsHtml)
+        && /执行规则/u.test(settingsHtml)
+        && /Agent 接入/u.test(settingsHtml)
+        && /Agent 节点和注册脚本不在本页处理/u.test(settingsHtml)
+        && /一次性 join token.+安装脚本.+远程 MCP/u.test(settingsHtml),
+      "项目设置页仍把配置、规则和 Agent 接入混成一个长页面，没有先给普通用户职责分区");
     check("项目设置操作看板要提供能直接跳到各配置模块的入口",
       /data-jump-panel="项目基础配置"/u.test(settingsHtml)
         && /data-menu="proj-agents"/u.test(settingsHtml)

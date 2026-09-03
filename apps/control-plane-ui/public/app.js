@@ -6336,6 +6336,49 @@ function renderProjectSettingsActionBoard(project, repos, baselineData, defaultR
   `, {wide: true});
 }
 
+function renderProjectSettingsBoundaryGuide(project, repos, baselineData, defaultRoles, resolved, rulesLoaded) {
+  const systemRuleCount = rulesLoaded ? (resolved.systemRules || []).length : "—";
+  const businessRuleCount = rulesLoaded ? (resolved.businessRules || []).length : "—";
+  const agentStats = projectAgentStats(project.id);
+  return panel("项目设置职责分区", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "产出与基线",
+        metric: `${repos.length}/${baselineData.length}`,
+        detail: "仓库、凭证引用和基线材料在“项目基础配置”维护",
+        panelTitle: "项目基础配置",
+        tone: repos.length ? "blue" : "red",
+        action: "看配置"
+      })}
+      ${jumpModuleCard({
+        title: "角色回退",
+        metric: defaultRoles.length,
+        detail: "任务组未指定角色时使用项目默认角色或系统内置角色",
+        panelTitle: "项目基础配置",
+        tone: defaultRoles.length ? "blue" : "gray",
+        action: "看角色"
+      })}
+      ${jumpModuleCard({
+        title: "执行规则",
+        metric: `${systemRuleCount}/${businessRuleCount}`,
+        detail: "系统规则管安全和流程边界，业务规则管项目约束",
+        panelTitle: rulesLoaded ? "系统规则" : "规则配置",
+        tone: rulesLoaded ? "blue" : "orange",
+        action: "看规则"
+      })}
+      ${projectModuleCard({
+        pageId: "proj-agents",
+        title: "Agent 接入",
+        metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : "项目页",
+        detail: "Agent 节点和注册脚本不在本页处理，进入 AI 智能体页",
+        tone: agentStats.onlineNodes ? "green" : "orange",
+        action: "去注册"
+      })}
+    </div>
+    <div class="small muted">职责分区：项目设置只维护会影响派发和产出落地的配置；运行节点、一次性 join token、安装脚本、远程 MCP 生效确认统一进入「AI 智能体」页。</div>
+  `, {wide: true});
+}
+
 function renderProjectSettings() {
   const project = currentProject();
   if (!project) return panel("项目设置", noVisibleProjectNotice(), {wide: true});
@@ -6378,6 +6421,7 @@ function renderProjectSettings() {
   return [
     renderProjectSettingsSummary(project, repos, baselineData, defaultRoles, resolved, rulesLoaded),
     renderProjectSettingsActionBoard(project, repos, baselineData, defaultRoles, resolved, rulesLoaded),
+    renderProjectSettingsBoundaryGuide(project, repos, baselineData, defaultRoles, resolved, rulesLoaded),
     panel("项目基础配置", `
       <div class="notice">当前项目：${esc(project.name || project.id)}。这里配置 agent 产出的仓库落点、可引用基线和任务组默认角色。</div>
       ${archivedNotice}
