@@ -557,11 +557,11 @@ if (process.env.AIMAC_RENDER_REAL) {
   // 实测这条假线索骗过我一次：系统管理员的「组织列表」显示暂无数据，而真实状态里有组织。
   // 办法：走真实 loadPage，state 类请求喂真状态；其余接口【不编数据】（编出来的是假故障），
   // 而是记下来、在那一页下面明说"这里的空白是勘察桩答不了，不是产品的空"。
-  // 页面清单要与 app.js 里【登记过的那 14 页】对齐。原先这里只列了 8 页 + 上面两页 ——
+  // 页面清单要与 app.js 里【登记过的那 15 页】对齐。原先这里只列了 8 页 + 上面两页 ——
   // 组织管理员那四页（概览/项目/成员/智能体）从来没有被读过一次，而"没读过"与"读过没问题"
   // 在这份输出上长得一模一样。下面那条自证会把漏掉的页点名。
   const SURVEY_PAGES = ["proj-overview", "review", "directives", "sys-orgs", "sys-accounts",
-    "sys-settings", "sys-overview", "proj-settings",
+    "sys-settings", "sys-overview", "proj-agents", "proj-settings",
     "org-overview", "org-projects", "org-members", "org-agents"];
   {
     const registered = [...fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8").matchAll(/^\s*"([a-z][a-z0-9-]+)":\s*\["/gmu)].map((hit) => hit[1]);

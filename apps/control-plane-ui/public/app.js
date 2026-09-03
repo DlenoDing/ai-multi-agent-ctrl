@@ -1611,7 +1611,7 @@ async function loadPage() {
         ...tasksState,
         agentRuntimeNodes: runtimeState.agentRuntimeNodes || [],
         agentJoinTokens: runtimeState.agentJoinTokens || [],
-        agentDispatches: runtimeState.agentDispatches || tasksState.agentDispatches || []
+        agentDispatches: runtimeState.agentDispatches || []
       };
       ensureProjectSelection();
     } else if (page === "proj-settings") {
