@@ -335,7 +335,7 @@ const PAGE_META = {
   "sys-overview": ["系统概览", "服务器信息、资源占用、能耗估算、存储体量与运行指标"],
   "sys-orgs": ["组织管理", "组织列表、配额与用量、创建组织并签发初始组织管理员账号"],
   "sys-settings": ["系统设置", "运行参数只读展示、模型能力注册、技能源与指令协议"],
-  "sys-accounts": ["账号与授权", "账号邀请、访问授权、项目归属与智能体入网令牌"],
+  "sys-accounts": ["账号与授权", "系统账号、访问授权、服务账号与跨项目授权边界"],
   "org-overview": ["组织概览", "配额用量、活跃项目与任务组统计"],
   "org-members": ["成员管理", "创建成员、权限分配、停用与一次性登录令牌"],
   "org-agents": ["AI 智能体", "组织内智能体节点：运行状态、健康度、加入令牌与吊销"],
@@ -2577,7 +2577,7 @@ function renderSysAccountsSummary() {
       ${summaryMetric("agent 档案", agents.length, "可被总控激活的编排角色档案")}
       ${summaryMetric("启用档案", activeAgents, "当前可参与调度的档案")}
     </div>
-    <div class="small muted">先看总览确认规模和入口，再在下面创建账号、补授权、建项目或签发加入令牌。</div>
+    <div class="small muted">先看总览确认系统账号、服务账号和跨项目授权规模；常规项目 Agent 注册请进入目标项目的“AI 智能体”页。</div>
   `, {wide: true});
 }
 
@@ -2617,9 +2617,9 @@ function renderSysAccountsActionBoard() {
         tone: activeGrants ? "blue" : "gray"
       })}
       ${jumpModuleCard({
-        title: "入网令牌",
+        title: "跨项目入网令牌",
         metric: liveJoinTokenCount(),
-        detail: "尚未消费且未过期的 agent 注册票据",
+        detail: "系统管理员代签、审计或应急处理的注册票据",
         panelTitle: "智能体入网令牌",
         tone: liveJoinTokenCount() ? "orange" : "green"
       })}
@@ -2638,7 +2638,61 @@ function renderSysAccountsActionBoard() {
         tone: assignableProjects().length ? "blue" : "gray"
       })}
     </div>
-    <div class="small muted">处理顺序：先核对账号与授权现状，再签发令牌或启停 agent 档案；最后才新增账号、授权或项目。</div>
+    <div class="small muted">处理顺序：先核对账号与授权现状，再处理跨项目令牌或 agent 档案；常规项目接入从项目页发起。</div>
+  `, {wide: true});
+}
+
+function renderSysAccountsBoundaryGuide() {
+  const accounts = state.accounts || [];
+  const grants = state.accessGrants || [];
+  const agents = state.agents || [];
+  const serviceAccounts = accounts.filter((account) => account.accountType === "service_account" && account.status !== "retired").length;
+  const activeGrants = grants.filter((grant) => grant.status === "active").length;
+  const activeAgents = agents.filter((agent) => agent.status === "active").length;
+  const selectedProject = currentProject();
+  return panel("账号与授权职责边界", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "系统账号",
+        metric: accounts.length,
+        detail: `登录身份、系统管理员和服务账号；服务账号 ${serviceAccounts} 个`,
+        panelTitle: "账号列表",
+        tone: accounts.length ? "blue" : "gray",
+        action: "看账号"
+      })}
+      ${jumpModuleCard({
+        title: "授权审计",
+        metric: activeGrants,
+        detail: "项目、任务组与系统资源授权在这里审计和撤销",
+        panelTitle: "访问授权列表",
+        tone: activeGrants ? "blue" : "gray",
+        action: "看授权"
+      })}
+      ${selectedProject ? projectModuleCard({
+        pageId: "proj-agents",
+        title: "项目 Agent 注册",
+        metric: "项目页",
+        detail: "常规接新 agent 到目标项目的 AI 智能体页签发",
+        tone: "green",
+        action: "去注册"
+      }) : jumpModuleCard({
+        title: "项目 Agent 注册",
+        metric: "先选项目",
+        detail: "常规接新 agent 到目标项目的 AI 智能体页签发",
+        panelTitle: "创建项目（系统级）",
+        tone: "orange",
+        action: "建项目"
+      })}
+      ${jumpModuleCard({
+        title: "Agent 档案",
+        metric: `${activeAgents}/${agents.length}`,
+        detail: "这里只维护总控可激活的角色档案，不替代项目注册",
+        panelTitle: "编排智能体档案",
+        tone: activeAgents ? "blue" : "gray",
+        action: "看档案"
+      })}
+    </div>
+    <div class="small muted">职责边界：系统页负责账号、服务账号、全局授权审计、跨项目代签和 Agent 档案；项目页负责项目级节点、一次性 join token、注册脚本和远程 MCP 生效确认。</div>
   `, {wide: true});
 }
 
@@ -2671,9 +2725,10 @@ function renderSysAccounts() {
   return [
     renderSysAccountsSummary(),
     renderSysAccountsActionBoard(),
+    renderSysAccountsBoundaryGuide(),
     panel("账号列表", table(["账号", "邮箱", "类型", "状态", "角色"], accounts), {wide: true}),
     panel("访问授权列表", table(["主体", "资源", "角色", "状态", "权限", "操作"], grants), {wide: true}),
-    panel("智能体入网令牌", renderJoinTokenSection(), {wide: true}),
+    panel("智能体入网令牌", `<div class="notice">常规注册请进入目标项目的「项目管理」→「AI 智能体」→「注册 agent」。本面板保留给系统管理员跨项目代签、审计和应急处理。</div>${renderJoinTokenSection()}`, {wide: true}),
     panel("编排智能体档案", table(["名称", "角色", "模型策略", "状态", "操作"], agents) + `
       <form class="form-grid" data-form="agent-create" style="margin-top:12px;">
         <div class="form-row-inline">

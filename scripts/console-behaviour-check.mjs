@@ -4034,13 +4034,21 @@ function runPendingTruncationCase() {
     check("账号与授权页先显示操作看板和现状列表，再显示新增表单",
       panelAt(accountHtml, "账号与授权操作看板") >= 0
         && panelAt(accountHtml, "账号与授权总览") < panelAt(accountHtml, "账号与授权操作看板")
-        && panelAt(accountHtml, "账号与授权操作看板") < panelAt(accountHtml, "账号列表")
+        && panelAt(accountHtml, "账号与授权操作看板") < panelAt(accountHtml, "账号与授权职责边界")
+        && panelAt(accountHtml, "账号与授权职责边界") < panelAt(accountHtml, "账号列表")
         && panelAt(accountHtml, "账号列表") < panelAt(accountHtml, "访问授权列表")
         && panelAt(accountHtml, "访问授权列表") < panelAt(accountHtml, "邀请账号")
         && panelAt(accountHtml, "邀请账号") < panelAt(accountHtml, "新增访问授权")
         && /data-jump-panel="账号列表"/u.test(accountHtml)
         && /data-jump-panel="访问授权列表"/u.test(accountHtml),
       "账号与授权页仍然是先给邀请/授权表单，系统管理员没先核对现有账号与授权就被推去操作");
+    check("账号与授权页必须把项目 Agent 注册入口和系统跨项目能力分开",
+      /账号与授权职责边界/u.test(accountHtml)
+        && /项目 Agent 注册/u.test(accountHtml)
+        && /项目管理.+AI 智能体.+注册 agent/u.test(accountHtml)
+        && /跨项目代签、审计和应急处理/u.test(accountHtml)
+        && /data-menu="proj-agents"/u.test(accountHtml),
+      "账号与授权页仍像普通 Agent 注册入口，没有明确提示常规注册应进入目标项目 AI 智能体页");
     const taskGroupHtml = probe.renderTaskGroupsWith(overviewState, admin, "p1", null, {}).replace(/<!--[\s\S]*?-->/gu, "");
     check("任务组页先显示任务组总览，再显示创建表单",
       panelAt(taskGroupHtml, "任务组总览") >= 0
