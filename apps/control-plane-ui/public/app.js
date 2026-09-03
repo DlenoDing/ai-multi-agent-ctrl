@@ -3389,6 +3389,72 @@ function renderTaskGroupsSummary(groups) {
   `, {wide: true});
 }
 
+function renderTaskGroupAttentionBoard(groups) {
+  if (!groups.length) {
+    return panel("任务组处置看板", `<div class="notice">当前项目暂无任务组。先创建任务组，系统才会开始拆分工作项、分配角色并调度 agent。</div>`, {wide: true});
+  }
+  const fleet = (state || {}).fleet || {};
+  const noOnlineAgent = Number(fleet.online || 0) <= 0;
+  const waitingStatuses = new Set(["assigned", "in_progress", "checkpoint_submitted"]);
+  const groupFacts = groups.map((taskGroup) => {
+    const groupId = taskGroup.id;
+    const barrier = (state.closeBarriers || []).find((item) => item.taskGroupId === groupId);
+    const barrierBlocks = barrier && !barrier.satisfied ? (barrier.blockingObjects || []).length : 0;
+    const blockedDispatches = (state.agentDispatches || [])
+      .filter((item) => item.taskGroupId === groupId && item.status === "blocked").length;
+    const activeDispatches = (state.agentDispatches || [])
+      .filter((item) => item.taskGroupId === groupId && !terminalDispatchStatuses.has(item.status)).length;
+    const blockedWorkItems = (taskGroup.workItems || [])
+      .filter((item) => Boolean(item.blockedReason) || ["blocked", "needs_decision"].includes(item.status)).length;
+    const waitingWithoutAgent = noOnlineAgent && (taskGroup.workItems || [])
+      .filter((item) => waitingStatuses.has(item.status)).length;
+    const pendingHuman = [
+      ...(state.humanConfirmationRequests || []).filter((item) => item.taskGroupId === groupId && item.status === "pending"),
+      ...(state.permissionRequests || []).filter((item) => item.taskGroupId === groupId && item.status === "pending_approval"),
+      ...(state.approvalRequests || []).filter((item) => item.taskGroupId === groupId && ["requested", "quorum_collecting"].includes(item.status)),
+      ...(state.findings || []).filter((item) => item.taskGroupId === groupId && !["resolved", "closed", "dismissed", "wontfix"].includes(item.status))
+    ].length;
+    const isSettled = ["closed", "aborted", "cancelled", "archived", "superseded"].includes(taskGroup.status);
+    const score = barrierBlocks * 5 + blockedDispatches * 4 + pendingHuman * 3 + waitingWithoutAgent * 3 + blockedWorkItems * 2 + activeDispatches;
+    const label = score
+      ? "需处理"
+      : isSettled
+        ? "已收口"
+        : activeDispatches
+          ? "运行中"
+          : "待启动";
+    const tone = score ? "red" : isSettled ? "gray" : activeDispatches ? "blue" : "green";
+    const details = [
+      barrierBlocks ? `关闭门 ${barrierBlocks}` : "",
+      blockedDispatches ? `派发被挡 ${blockedDispatches}` : "",
+      pendingHuman ? `人工待办 ${pendingHuman}` : "",
+      blockedWorkItems ? `工作项受阻 ${blockedWorkItems}` : "",
+      waitingWithoutAgent ? `无在线 agent ${waitingWithoutAgent}` : "",
+      activeDispatches && !score ? `活跃派发 ${activeDispatches}` : "",
+      `进度 ${Number(taskGroup.progress || 0)}%`,
+      `语言 ${languageLabel(taskGroup.languagePolicy)}`
+    ].filter(Boolean);
+    return {taskGroup, score, label, tone, details};
+  }).sort((left, right) =>
+    right.score - left.score
+    || String(right.taskGroup.updatedAt || "").localeCompare(String(left.taskGroup.updatedAt || ""))
+    || String(left.taskGroup.name || left.taskGroup.id).localeCompare(String(right.taskGroup.name || right.taskGroup.id)));
+  const displayed = groupFacts.slice(0, 8);
+  return panel("任务组处置看板", `
+    <div class="module-grid action-grid">
+      ${displayed.map(({taskGroup, label, tone, details}) => `
+        <button class="module-card tone-${esc(tone)}" data-action="tg-detail" data-task="${esc(taskGroup.id)}">
+          <span class="module-title">${esc(taskGroup.name || taskGroup.id)}</span>
+          <strong>${esc(label)}</strong>
+          <span class="module-detail">${esc(details.slice(0, 5).join(" · "))}</span>
+          <span class="module-action">展开任务组</span>
+        </button>
+      `).join("")}
+    </div>
+    <div class="small muted">按“关闭门阻塞、派发阻塞、人工待办、工作项阻塞、无在线 agent”排序；只展示最需要先看的前 ${displayed.length} 个任务组。</div>
+  `, {wide: true});
+}
+
 function renderTaskGroups() {
   const groups = projectTaskGroups();
   const canControl = hasPerm("task_group:control");
@@ -3506,7 +3572,8 @@ function renderTaskGroups() {
 
   if (hasNoVisibleProject()) return panel("任务组", noVisibleProjectNotice(), {wide: true});
   return cellsWaitingWithNoAgentNotice(groups) + wipCapacityNotice(groups) + renderTaskGroupsSummary(groups)
-    + createPanels.join("") + (groupPanels || panel("任务组", `<div class="notice">当前项目暂无任务组。</div>`, {wide: true}));
+    + renderTaskGroupAttentionBoard(groups) + createPanels.join("")
+    + (groupPanels || panel("任务组", `<div class="notice">当前项目暂无任务组。</div>`, {wide: true}));
 }
 
 function renderTaskGroupDetail(taskGroup) {
@@ -4818,6 +4885,102 @@ function renderMonitorSummary({eventsShown, sessionsAll, dispatchesAll, lanesAll
   `, {wide: true});
 }
 
+function monitorActionCard({title, metric, detail, panelTitle, tone = "blue"}) {
+  return `
+    <button class="module-card tone-${esc(tone)}" data-jump-panel="${esc(panelTitle)}">
+      <span class="module-title">${esc(title)}</span>
+      <strong>${esc(metric)}</strong>
+      <span class="module-detail">${esc(detail)}</span>
+      <span class="module-action">查看明细</span>
+    </button>
+  `;
+}
+
+function renderMonitorActionBoard({
+  dispatchesAll,
+  sessionsAll,
+  nodes,
+  barriersInScope,
+  stuckTopologies,
+  downgradableTopologies,
+  failingTests,
+  waivableGates,
+  openReviewPlans,
+  openReviewBundles,
+  openRuleSources,
+  openUpgradeCandidates,
+  blockingDefinitions
+}) {
+  const blockedDispatches = dispatchesAll.filter((dispatch) => dispatch.status === "blocked").length;
+  const blockedSessions = sessionsAll.filter((session) => !SESSION_SETTLED_STATUSES.includes(session.status)
+    && Boolean(session.blockedReason)).length;
+  const barrierObjects = barriersInScope.reduce((sum, barrier) =>
+    sum + (barrier.satisfied ? 0 : Number((barrier.blockingObjects || []).length)), 0);
+  const topologyIssues = stuckTopologies.length + downgradableTopologies.length;
+  const reviewClosures = openReviewPlans.length + openReviewBundles.length + openRuleSources.length
+    + openUpgradeCandidates.length + blockingDefinitions.length;
+  const qualityIssues = failingTests.length + waivableGates.length;
+  const abnormalNodes = nodes.filter((node) => node.status !== "online" || heartbeatTimedOut(node)
+    || node.runtimeOutdated || (node.selfCheckMissing || []).length
+    || !["ok", "healthy", "normal", undefined, ""].includes(node.display?.health)).length;
+  const orchestrator = state.runtime?.autonomousOrchestrator || {};
+  const orchestratorIssues = Number(orchestrator.consecutiveErrors || 0);
+  const cards = [
+    monitorActionCard({
+      title: "派发 / 会话",
+      metric: `${blockedDispatches + blockedSessions}`,
+      detail: blockedDispatches || blockedSessions
+        ? `${blockedDispatches} 个派发被挡，${blockedSessions} 个会话等处置`
+        : "当前没有被挡住的派发或会话",
+      panelTitle: blockedDispatches ? "智能体派发" : "工作会话",
+      tone: blockedDispatches || blockedSessions ? "red" : "green"
+    }),
+    monitorActionCard({
+      title: "关闭门禁",
+      metric: `${barrierObjects}`,
+      detail: barrierObjects ? "任务组收尾前必须清掉这些阻塞对象" : "当前关闭门禁没有阻塞对象",
+      panelTitle: "关闭门禁",
+      tone: barrierObjects ? "red" : "green"
+    }),
+    monitorActionCard({
+      title: "执行方案",
+      metric: `${topologyIssues + reviewClosures}`,
+      detail: topologyIssues
+        ? `${topologyIssues} 个方案需要终止或降级`
+        : reviewClosures
+          ? `${reviewClosures} 个评审/规则/定义收尾项`
+          : "当前没有待人工收尾的执行方案",
+      panelTitle: "阻塞项人工处置",
+      tone: topologyIssues || reviewClosures ? "orange" : "green"
+    }),
+    monitorActionCard({
+      title: "质量 / 测试",
+      metric: `${qualityIssues}`,
+      detail: failingTests.length ? `${failingTests.length} 个测试失败，可能挡住关闭门` : "当前没有待豁免或失败的质量项",
+      panelTitle: "质量门禁 / 测试证据",
+      tone: qualityIssues ? "orange" : "green"
+    }),
+    monitorActionCard({
+      title: "节点",
+      metric: `${abnormalNodes}/${nodes.length}`,
+      detail: abnormalNodes ? "存在离线、心跳过旧、自检缺项或运行时过旧节点" : "可见节点当前正常",
+      panelTitle: "运行时节点",
+      tone: abnormalNodes ? "orange" : "green"
+    }),
+    monitorActionCard({
+      title: "自治周期",
+      metric: `${orchestratorIssues}`,
+      detail: orchestratorIssues ? "自治周期连续失败，需要先看控制面原因" : "自治周期没有连续失败记录",
+      panelTitle: "自治控制",
+      tone: orchestratorIssues ? "red" : "blue"
+    })
+  ];
+  return panel("监控处置看板", `
+    <div class="module-grid action-grid">${cards.join("")}</div>
+    <div class="small muted">先点红色或橙色卡片看明细；绿色表示当前没有需要人立即处理的同类问题。看板只聚合当前项目范围内已加载的数据。</div>
+  `, {wide: true});
+}
+
 function renderMonitor() {
   // 一个项目都没有时，这一页原先摆出十一张"暂无数据"的空表和一个空的监听范围下拉 ——
   // 屏幕上全是表头，没有一句话说明为什么什么都没有、下一步该做什么。
@@ -5123,6 +5286,21 @@ function renderMonitor() {
     orchestratorStalledNotice(),
     fleetOfflineNotice(),
     renderMonitorSummary({eventsShown, sessionsAll, dispatchesAll, lanesAll, nodes: state.agentRuntimeNodes || [], barriersInScope}),
+    renderMonitorActionBoard({
+      dispatchesAll,
+      sessionsAll,
+      nodes: state.agentRuntimeNodes || [],
+      barriersInScope,
+      stuckTopologies,
+      downgradableTopologies,
+      failingTests,
+      waivableGates,
+      openReviewPlans,
+      openReviewBundles,
+      openRuleSources,
+      openUpgradeCandidates,
+      blockingDefinitions
+    }),
     canOrchestrate ? panel("自治控制", `
       <div class="button-row">
         <button class="primary-button" data-action="orchestrator-run">运行自治循环</button>
@@ -6027,6 +6205,19 @@ document.addEventListener("click", async (event) => {
       }
       return;
     }
+  }
+  const jumpButton = event.target.closest("[data-jump-panel]");
+  if (jumpButton) {
+    const title = jumpButton.dataset.jumpPanel || "";
+    const targetHeader = [...document.querySelectorAll(".panel-header h2")]
+      .find((header) => header.textContent.trim() === title);
+    const targetPanel = targetHeader?.closest(".panel");
+    if (targetPanel) {
+      targetPanel.scrollIntoView({behavior: "smooth", block: "start"});
+      return;
+    }
+    toast.info(`当前没有「${title}」明细，可能是这一类记录还没有产生`);
+    return;
   }
   const target = event.target.closest("[data-action]");
   if (!target) return;

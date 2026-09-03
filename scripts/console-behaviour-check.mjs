@@ -3847,7 +3847,7 @@ function runPendingTruncationCase() {
       runtime: {autonomousOrchestrator: {enabled: true, intervalMs: 60000, consecutiveErrors: 0, lastTickResult: "ran", lastTickAt: "2026-08-12T00:00:00Z"}},
       projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
       taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", workItems: []}],
-      agentDispatches: [{dispatchId: "adp1", taskGroupId: "tg1", workItemId: "w1", status: "queued"}],
+      agentDispatches: [{dispatchId: "adp1", taskGroupId: "tg1", workItemId: "w1", status: "blocked", blockedReason: "awaiting_human_confirmation"}],
       workSessions: [], workerLanes: [], agentRuntimeNodes: [], qualityGates: [],
       testResults: [], checkpoints: [], admissionDecisions: [], modelSelectionDecisions: [],
       sessionPlacementDecisions: [], closeBarriers: [], truncatedCollections: [],
@@ -3942,11 +3942,24 @@ function runPendingTruncationCase() {
       panelAt(taskGroupHtml, "任务组总览") >= 0
         && panelAt(taskGroupHtml, "任务组总览") < panelAt(taskGroupHtml, "创建任务组"),
       "任务组页首屏直接进入创建表单，管理者得向下找才知道已有任务组状态");
+    check("任务组页先显示处置看板，再显示创建表单",
+      panelAt(taskGroupHtml, "任务组处置看板") >= 0
+        && panelAt(taskGroupHtml, "任务组总览") < panelAt(taskGroupHtml, "任务组处置看板")
+        && panelAt(taskGroupHtml, "任务组处置看板") < panelAt(taskGroupHtml, "创建任务组")
+        && /data-action="tg-detail"/u.test(taskGroupHtml),
+      "任务组页没有把需要先处理的任务组排成可点击看板，用户仍要逐个读大面板");
     const monitorHtml = probe.renderMonitorWith(overviewState, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
     check("执行监控页先显示监控总览，再显示十三张明细表",
       panelAt(monitorHtml, "执行监控总览") >= 0
         && panelAt(monitorHtml, "执行监控总览") < panelAt(monitorHtml, "实时事件流"),
       "执行监控页没有入口级状态地图，用户只能从长表里猜当前卡点");
+    check("执行监控页先显示处置看板，再显示实时事件流",
+      panelAt(monitorHtml, "监控处置看板") >= 0
+        && panelAt(monitorHtml, "执行监控总览") < panelAt(monitorHtml, "监控处置看板")
+        && panelAt(monitorHtml, "监控处置看板") < panelAt(monitorHtml, "实时事件流")
+        && /data-jump-panel="(智能体派发|工作会话)"/u.test(monitorHtml)
+        && /data-jump-panel="关闭门禁"/u.test(monitorHtml),
+      "执行监控页没有把派发、关闭门、节点、质量门等问题汇成可跳转的处置看板");
     const sysSettingsHtml = probe.renderSysSettingsWith(overviewState, {sharedDefinitions: [{contractId: "def_1", definitionType: "api_contract", canonicalOwnerRole: "integration_owner", producerRole: "architect", status: "active"}]}).replace(/<!--[\s\S]*?-->/gu, "");
     check("系统设置页先显示总览，再显示运行参数",
       panelAt(sysSettingsHtml, "系统设置总览") >= 0

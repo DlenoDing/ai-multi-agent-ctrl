@@ -317,6 +317,7 @@ html, body {
 }
 
 .space-hub .module-grid { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.action-grid { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
 
 .module-card {
   appearance: none;
@@ -710,6 +711,7 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   }
   .project-score strong { font-size: 18px; }
   .module-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .module-card { min-height: 112px; padding: 10px; }
   .content { padding: 14px 12px 32px; gap: 12px; }
   .panel-header, .panel-body { padding-left: 12px; padding-right: 12px; }
