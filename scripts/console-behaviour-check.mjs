@@ -1246,7 +1246,8 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     await settingsProbe.loadWithFetch(seed, {accountId: "u1", email: "a@b.c", accountType: "system_admin",
       displayName: "管理员", organizationId: "org_default", permissions: ["system:*"]},
       proj.id, "proj-settings", settingsFetch);
-    const settingsText = String(settingsRoot.innerHTML || "").replace(/<[^>]+>/gu, " ");
+    const settingsHtml = String(settingsRoot.innerHTML || "");
+    const settingsText = settingsHtml.replace(/<[^>]+>/gu, " ");
     // 接线断裂的那一半：effectiveProjectConfig 早就把两处仓库登记并成一份了（它的注释写的就是
     // 这个缺陷），而设置页读的是【状态里的原始 project.config】—— 修好的口径根本到不了屏幕上。
     // 上面那条断言只验了那个函数，验不到这一段接线；真实运行态渲染出来一看，
@@ -1271,6 +1272,21 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     }
     check("项目设置页真的渲染出来了（不是空壳）",
       settingsText.includes("仓库与凭证引用"), settingsText.slice(0, 120));
+    const settingsPanelAt = (title) => settingsHtml.indexOf(`<h2>${title}</h2>`);
+    check("项目设置页先显示总览和操作看板，再进入基础配置与规则明细",
+      settingsPanelAt("项目设置总览") >= 0
+        && settingsPanelAt("项目设置总览") < settingsPanelAt("项目设置操作看板")
+        && settingsPanelAt("项目设置操作看板") < settingsPanelAt("项目基础配置")
+        && settingsPanelAt("项目基础配置") < settingsPanelAt("智能体接入")
+        && settingsPanelAt("智能体接入") < settingsPanelAt("系统规则")
+        && settingsPanelAt("系统规则") < settingsPanelAt("业务规则"),
+      "项目设置页仍然把长表单直接推到前面，用户要向下找才知道 agent 入网和规则在哪里");
+    check("项目设置操作看板要提供能直接跳到各配置模块的入口",
+      /data-jump-panel="项目基础配置"/u.test(settingsHtml)
+        && /data-jump-panel="智能体接入"/u.test(settingsHtml)
+        && /data-jump-panel="系统规则"/u.test(settingsHtml)
+        && /data-jump-panel="业务规则"/u.test(settingsHtml),
+      "项目设置看板只显示指标，没有接上基础配置、智能体接入和规则面板的跳转");
     check("没配仓库时要说清空着会怎样（而不是只剩一个「添加仓库」按钮）",
       /还没有配置仓库/.test(settingsText) && /落不了地|没有产出目标/.test(settingsText),
       "人分不清「这个项目没配」和「配置没加载出来」，也不知道空着会卡在哪一步");

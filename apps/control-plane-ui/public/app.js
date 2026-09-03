@@ -5621,6 +5621,66 @@ function renderProjectSettingsSummary(project, repos, baselineData, defaultRoles
   `, {wide: true});
 }
 
+function renderProjectSettingsActionBoard(project, repos, baselineData, defaultRoles, resolved, rulesLoaded) {
+  const liveTokens = liveJoinTokenCount(project.id);
+  const systemRuleCount = rulesLoaded ? (resolved.systemRules || []).length : "—";
+  const businessRuleCount = rulesLoaded ? (resolved.businessRules || []).length : "—";
+  const ruleTone = rulesLoaded ? "blue" : "orange";
+  return panel("项目设置操作看板", `
+    <div class="module-grid">
+      ${jumpModuleCard({
+        title: "产出仓库",
+        metric: `${repos.length}`,
+        detail: repos.length ? "代码、文档和检查点的 Git 落点" : "未配置时产出无法落地",
+        panelTitle: "项目基础配置",
+        tone: repos.length ? "blue" : "red",
+        action: "配置仓库"
+      })}
+      ${jumpModuleCard({
+        title: "基线数据",
+        metric: `${baselineData.length}`,
+        detail: baselineData.length ? "agent 可引用的现状材料" : "可选；空着不阻塞执行",
+        panelTitle: "项目基础配置",
+        tone: baselineData.length ? "blue" : "gray",
+        action: "管理基线"
+      })}
+      ${jumpModuleCard({
+        title: "默认角色",
+        metric: `${defaultRoles.length}`,
+        detail: defaultRoles.length ? "任务组未指定时的角色回退" : "空着时回退到系统内置角色",
+        panelTitle: "项目基础配置",
+        tone: defaultRoles.length ? "blue" : "gray",
+        action: "管理角色"
+      })}
+      ${jumpModuleCard({
+        title: "智能体入网",
+        metric: `${liveTokens}`,
+        detail: liveTokens ? "有待用的一次性 agent 加入令牌" : "需要新节点时在这里签发令牌",
+        panelTitle: "智能体接入",
+        tone: liveTokens ? "green" : "blue",
+        action: "签发令牌"
+      })}
+      ${jumpModuleCard({
+        title: "系统规则",
+        metric: `${systemRuleCount}`,
+        detail: rulesLoaded ? "项目层可停用或改写默认系统规则" : "规则配置未就绪或本次读取失败",
+        panelTitle: rulesLoaded ? "系统规则" : "规则配置",
+        tone: ruleTone,
+        action: "查看规则"
+      })}
+      ${jumpModuleCard({
+        title: "业务规则",
+        metric: `${businessRuleCount}`,
+        detail: rulesLoaded ? "项目自己的业务约束，可被任务组覆盖" : "规则配置未就绪或本次读取失败",
+        panelTitle: rulesLoaded ? "业务规则" : "规则配置",
+        tone: ruleTone,
+        action: "查看规则"
+      })}
+    </div>
+    <div class="small muted">处理顺序：先确认产出仓库和 agent 入网，再核对默认角色与规则；看板只使用本页已加载数据，不额外请求接口。</div>
+  `, {wide: true});
+}
+
 function renderProjectSettings() {
   const project = currentProject();
   if (!project) return panel("项目设置", noVisibleProjectNotice(), {wide: true});
@@ -5661,7 +5721,9 @@ function renderProjectSettings() {
 
   return [
     renderProjectSettingsSummary(project, repos, baselineData, defaultRoles, resolved, rulesLoaded),
-    panel(`项目设置 · ${esc(project.name)}`, `
+    renderProjectSettingsActionBoard(project, repos, baselineData, defaultRoles, resolved, rulesLoaded),
+    panel("项目基础配置", `
+      <div class="notice">当前项目：${esc(project.name || project.id)}。这里配置 agent 产出的仓库落点、可引用基线和任务组默认角色。</div>
       ${archivedNotice}
       ${readOnlyNotice}
       <form class="form-grid" data-form="project-config" data-project="${esc(project.id)}">
