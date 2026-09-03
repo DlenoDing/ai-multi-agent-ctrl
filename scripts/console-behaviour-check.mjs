@@ -293,6 +293,10 @@ globalThis.__probe = {
   renderSysSettingsWith: (nextState, instructions) => { state = nextState; if (instructions !== undefined) instructionState = instructions; return renderSysSettings(); },
   renderSysOrgsWith: (nextState, account, orgList) => { state = nextState; currentAccount = account; organizations = orgList || []; return renderSysOrgs(); },
   renderSysAccountsWith: (nextState, account) => { state = nextState; currentAccount = account; return renderSysAccounts(); },
+  renderOrgOverviewWith: (nextState, account, members, nodes) => {
+    state = nextState; currentAccount = account; orgMembers = members || []; orgAgentNodes = nodes || [];
+    return renderOrgOverview();
+  },
   renderOrgMembersWith: (nextState, account, members) => { state = nextState; currentAccount = account; orgMembers = members || []; return renderOrgMembers(); },
   renderOrgAgentsWith: (nextState, account, nodes) => { state = nextState; currentAccount = account; orgAgentNodes = nodes || []; return renderOrgAgents(); },
   renderProjectAgentsWith: (nextState, account, projectId, viewMode) => {
@@ -4304,6 +4308,11 @@ function runPendingTruncationCase() {
         && /data-menu="proj-agents"/u.test(overviewHtml)
         && /data-menu="proj-settings"/u.test(overviewHtml),
       "项目概览仍是模块卡片和指标堆叠，没有按执行准备、任务组织、监控、人工介入和配置调整给出操作路径");
+    check("项目概览配置调整路径要包含角色 Skill 定制",
+      /6 配置调整/u.test(overviewHtml)
+        && /角色 Skill 定制/u.test(overviewHtml)
+        && /仓库、角色 Skill、规则等配置类调整统一回到项目设置/u.test(overviewHtml),
+      "角色 Skill 定制已经是项目/任务组级配置，但项目概览仍没有把它纳入配置调整路径");
     const orgProjectsRoot = el("div");
     loadConsole(orgProjectsRoot, {realI18n: true}).renderFullPageWith(overviewState, orgAdmin, "p1", "org-projects");
     const orgProjectsHtml = String(orgProjectsRoot.innerHTML || "").replace(/<!--[\s\S]*?-->/gu, "");
@@ -4319,6 +4328,39 @@ function runPendingTruncationCase() {
         && /data-jump-panel="创建项目"/u.test(orgProjectsHtml)
         && /data-jump-panel="项目成员授权"/u.test(orgProjectsHtml),
       "项目管理操作看板只显示指标，没有接上列表、创建项目和成员授权面板的跳转");
+    const orgOverviewHtml = probe.renderOrgOverviewWith(overviewState, orgAdmin, [
+      {...orgAdmin, status: "active"},
+      {accountId: "acct_wait", accountType: "user_account", displayName: "待登录成员", email: "wait@example.com", status: "invited", roles: []}
+    ], overviewState.agentRuntimeNodes).replace(/<!--[\s\S]*?-->/gu, "");
+    const orgHubAt = orgOverviewHtml.indexOf("project-hub-title\">组织管理总览 · 默认组织");
+    check("组织概览要先显示组织操作路径，再显示配额、统计和项目一览",
+      orgHubAt >= 0
+        && orgHubAt < panelAt(orgOverviewHtml, "组织操作路径")
+        && panelAt(orgOverviewHtml, "组织操作路径") < panelAt(orgOverviewHtml, "配额用量 · 默认组织")
+        && panelAt(orgOverviewHtml, "配额用量 · 默认组织") < panelAt(orgOverviewHtml, "组织运行统计")
+        && panelAt(orgOverviewHtml, "组织运行统计") < panelAt(orgOverviewHtml, "项目一览"),
+      "组织概览仍像只读报表，组织管理员看完指标后不知道该先管成员、节点、项目还是进入项目执行");
+    check("组织概览操作路径要覆盖成员、Agent、项目和项目执行四个入口",
+      /1 成员与权限/u.test(orgOverviewHtml)
+        && /2 Agent 节点/u.test(orgOverviewHtml)
+        && /3 项目与授权/u.test(orgOverviewHtml)
+        && /4 项目执行/u.test(orgOverviewHtml)
+        && /data-menu="org-members"/u.test(orgOverviewHtml)
+        && /data-menu="org-agents"/u.test(orgOverviewHtml)
+        && /data-menu="org-projects"/u.test(orgOverviewHtml)
+        && /data-menu="proj-overview"/u.test(orgOverviewHtml),
+      "组织概览缺少按中文管理顺序组织的图形化入口，用户仍要从左侧菜单猜下一步");
+    check("组织概览项目表要有进入项目和项目授权按钮",
+      /data-action="open-project-page" data-project="p1" data-menu="proj-overview"/u.test(orgOverviewHtml)
+        && /data-action="open-project-page" data-project="p1" data-menu="org-projects"/u.test(orgOverviewHtml)
+        && /进入项目/u.test(orgOverviewHtml)
+        && /项目授权/u.test(orgOverviewHtml),
+      "组织概览的项目一览仍然只能看不能操作，多项目时用户无法从表格直接进入目标项目或授权");
+    check("组织概览的项目按钮处理器必须先切 currentProjectId 再跳页",
+      /open-project-page/u.test(probe.handlerSource("click"))
+        && /currentProjectId = targetProjectId/u.test(probe.handlerSource("click"))
+        && /sessionStorage\.setItem\("aimac\.projectId", currentProjectId\)/u.test(probe.handlerSource("click")),
+      "组织概览项目表按钮只跳页面、不切项目，多项目时会打开上一个项目");
     const reviewHtml = probe.renderReviewWith(overviewState, orgAdmin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
     check("人工审核页先显示审核总览和处置看板，再显示待办与明细",
       panelAt(reviewHtml, "人工审核总览") >= 0

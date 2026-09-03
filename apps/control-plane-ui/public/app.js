@@ -3021,6 +3021,11 @@ function renderOrgOverview() {
     || (state.organizations || [])[0] || null;
   const projects = state.projects || [];
   const openTaskGroups = (state.taskGroups || []).filter((taskGroup) => !["closed", "aborted"].includes(taskGroup.status));
+  const activeProjects = projects.filter((project) => project.status !== "archived");
+  const memberCount = (orgMembers || []).filter((account) => account.accountType !== "service_account"
+    && !["retired", "disabled"].includes(account.status)).length;
+  const aliveNodes = (orgAgentNodes || []).filter((node) => node.status !== "revoked");
+  const onlineNodes = aliveNodes.filter((node) => node.status === "online").length;
   const quotaPanel = org
     ? panel(`配额用量 · ${esc(org.name)}`, `
         <div class="stack">
@@ -3042,11 +3047,53 @@ function renderOrgOverview() {
     badge(project.status),
     progressLine(project.progress?.percent),
     badge(project.progress?.phase),
-    badge(project.progress?.health)
+    badge(project.progress?.health),
+    `<div class="button-row">
+      <button class="secondary-button" data-action="open-project-page" data-project="${esc(project.id)}" data-menu="proj-overview">进入项目</button>
+      <button class="secondary-button" data-action="open-project-page" data-project="${esc(project.id)}" data-menu="org-projects">项目授权</button>
+    </div>`
   ])).join("");
+  const actionPath = panel("组织操作路径", `
+    <div class="module-grid action-grid">
+      ${projectModuleCard({
+        pageId: "org-members",
+        title: "1 成员与权限",
+        metric: `${memberCount}`,
+        detail: "先确认谁能管理项目、授权和任务组",
+        action: "管理成员",
+        tone: memberCount ? "blue" : "orange"
+      })}
+      ${projectModuleCard({
+        pageId: "org-agents",
+        title: "2 Agent 节点",
+        metric: aliveNodes.length ? `${onlineNodes}/${aliveNodes.length}` : "无节点",
+        detail: aliveNodes.length ? "查看在线率、自检、加入令牌和吊销" : "需要执行任务前先接入节点",
+        action: "管理节点",
+        tone: onlineNodes ? "green" : "orange"
+      })}
+      ${projectModuleCard({
+        pageId: "org-projects",
+        title: "3 项目与授权",
+        metric: `${activeProjects.length}/${projects.length}`,
+        detail: "创建项目、归档项目、给成员分配项目权限",
+        action: "管理项目",
+        tone: activeProjects.length ? "blue" : "gray"
+      })}
+      ${projectModuleCard({
+        pageId: "proj-overview",
+        title: "4 项目执行",
+        metric: `${openTaskGroups.length}`,
+        detail: "进入当前项目处理任务组、监控、审核和指令",
+        action: "进入项目",
+        tone: projects.length ? "blue" : "gray"
+      })}
+    </div>
+    <div class="small muted">推荐顺序：先把成员权限和 Agent 节点准备好，再创建项目并授权；进入项目空间后由总控自动拆分、派发和监控任务。</div>
+  `, {wide: true});
 
   return [
     renderOrgManagementHub(org, projects, openTaskGroups),
+    actionPath,
     quotaPanel,
     panel("组织运行统计", `
       <div class="metric-grid">
@@ -3067,7 +3114,7 @@ function renderOrgOverview() {
         <div class="metric"><span>受阻项</span><strong>${(state.taskGroups || []).flatMap((taskGroup) => taskGroup.blockers || []).length}</strong></div>
       </div>
     `),
-    panel("项目一览", table(["项目", "状态", "进度", "阶段", "健康度"], projectRows), {wide: true})
+    panel("项目一览", table(["项目", "状态", "进度", "阶段", "健康度", "操作"], projectRows), {wide: true})
   ].join("");
 }
 
@@ -3951,12 +3998,12 @@ function renderProjectOperationPath(project, groups, openGroups, eventsInScope, 
         pageId: "proj-settings",
         title: "6 配置调整",
         metric: `${repoTargets.length}/${ruleCount}`,
-        detail: "维护仓库、基线、默认角色、系统规则和业务规则",
+        detail: "维护仓库、基线、默认角色、角色 Skill 定制和规则",
         tone: repoTargets.length ? "blue" : "orange",
         action: "改设置"
       })}
     </div>
-    <div class="small muted">推荐顺序：先确认执行准备，再组织任务；运行中主要看执行监控，只有需要定稿、授权或改方向时才进入人工审核和人工指令；配置类调整统一回到项目设置。</div>
+    <div class="small muted">推荐顺序：先确认执行准备，再组织任务；运行中主要看执行监控，只有需要定稿、授权或改方向时才进入人工审核和人工指令；仓库、角色 Skill、规则等配置类调整统一回到项目设置。</div>
   `, {wide: true});
 }
 
@@ -7545,6 +7592,23 @@ document.addEventListener("click", async (event) => {
           <button class="primary-button" type="submit">保存新密码</button>
         </form>
       `);
+      return;
+    }
+    if (action === "open-project-page") {
+      const targetProjectId = target.dataset.project || "";
+      const targetPage = target.dataset.menu || "proj-overview";
+      if (targetProjectId && targetProjectId !== currentProjectId && formTouched
+        && !(await confirmDialog({title: "放弃未保存的修改", message: "切换项目将丢失当前页面未保存的修改，确认切换？", danger: true, confirmText: "放弃并切换"}))) return;
+      if (targetProjectId) {
+        currentProjectId = targetProjectId;
+        sessionStorage.setItem("aimac.projectId", currentProjectId);
+      }
+      page = targetPage;
+      sessionStorage.setItem("aimac.page", page);
+      lastError = "";
+      formTouched = false;
+      stopExecPolling();
+      await loadPage();
       return;
     }
     if (action === "open-audit-archive") {
