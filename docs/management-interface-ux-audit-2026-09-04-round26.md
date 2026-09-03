@@ -44,6 +44,10 @@
 4. 项目概览“配置调整”说明已补上角色 Skill 定制，和项目设置页新增能力保持一致。
 5. `console-behaviour-gate` 已增加组织概览顺序、入口覆盖、项目表动作和项目切换处理器断言。
 
+## 二次推演修正
+
+按钮事件路径复验发现：项目表按钮如果同时带 `data-action` 和 `data-menu`，会先被通用菜单点击处理器截走，导致 `open-project-page` 不能先切换 `currentProjectId`。已将按钮目标页字段改为 `data-target-menu`，点击只进入 `open-project-page` 分支，再由该分支完成“切项目 → 跳页 → 加载”的完整流程。
+
 ## 快速验证
 
 - `node --check apps/control-plane-ui/public/app.js`：通过。

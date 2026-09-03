@@ -4351,8 +4351,8 @@ function runPendingTruncationCase() {
         && /data-menu="proj-overview"/u.test(orgOverviewHtml),
       "组织概览缺少按中文管理顺序组织的图形化入口，用户仍要从左侧菜单猜下一步");
     check("组织概览项目表要有进入项目和项目授权按钮",
-      /data-action="open-project-page" data-project="p1" data-menu="proj-overview"/u.test(orgOverviewHtml)
-        && /data-action="open-project-page" data-project="p1" data-menu="org-projects"/u.test(orgOverviewHtml)
+      /data-action="open-project-page" data-project="p1" data-target-menu="proj-overview"/u.test(orgOverviewHtml)
+        && /data-action="open-project-page" data-project="p1" data-target-menu="org-projects"/u.test(orgOverviewHtml)
         && /进入项目/u.test(orgOverviewHtml)
         && /项目授权/u.test(orgOverviewHtml),
       "组织概览的项目一览仍然只能看不能操作，多项目时用户无法从表格直接进入目标项目或授权");

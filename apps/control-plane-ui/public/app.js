@@ -3049,8 +3049,8 @@ function renderOrgOverview() {
     badge(project.progress?.phase),
     badge(project.progress?.health),
     `<div class="button-row">
-      <button class="secondary-button" data-action="open-project-page" data-project="${esc(project.id)}" data-menu="proj-overview">进入项目</button>
-      <button class="secondary-button" data-action="open-project-page" data-project="${esc(project.id)}" data-menu="org-projects">项目授权</button>
+      <button class="secondary-button" data-action="open-project-page" data-project="${esc(project.id)}" data-target-menu="proj-overview">进入项目</button>
+      <button class="secondary-button" data-action="open-project-page" data-project="${esc(project.id)}" data-target-menu="org-projects">项目授权</button>
     </div>`
   ])).join("");
   const actionPath = panel("组织操作路径", `
@@ -7596,7 +7596,7 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "open-project-page") {
       const targetProjectId = target.dataset.project || "";
-      const targetPage = target.dataset.menu || "proj-overview";
+      const targetPage = target.dataset.targetMenu || "proj-overview";
       if (targetProjectId && targetProjectId !== currentProjectId && formTouched
         && !(await confirmDialog({title: "放弃未保存的修改", message: "切换项目将丢失当前页面未保存的修改，确认切换？", danger: true, confirmText: "放弃并切换"}))) return;
       if (targetProjectId) {
