@@ -344,7 +344,7 @@ const PAGE_META = {
   "review": ["人工审核", "集中处理执行过程中提交的人工确认请求"],
   "directives": ["人工指令", "通过独立通道向系统下达结构化指令"],
   "monitor": ["执行监控", "会话、派发、控制通道与实时执行事件流"],
-  "proj-settings": ["项目设置", "仓库与凭证引用、基线数据、业务规则与默认角色"]
+  "proj-settings": ["项目设置", "仓库与凭证引用、基线数据、智能体接入、规则与默认角色"]
 };
 
 function perspectiveOf(account) {
@@ -2042,10 +2042,13 @@ function healthScore(part, total) {
   return Math.round((Math.max(0, Number(part || 0)) / denominator) * 100);
 }
 
+function isServiceHealthy(service) {
+  return TONE_GREEN.has(String(service?.health || ""));
+}
+
 function renderSystemManagementHub(overview) {
   const services = state.runtime?.services || [];
-  const healthyServices = services.filter((service) =>
-    TONE_GREEN.has(String(service.health || "")) && TONE_GREEN.has(String(service.status || ""))).length;
+  const healthyServices = services.filter(isServiceHealthy).length;
   const orgCount = overview?.runtime?.organizations ?? (organizations.length || (state.organizations || []).length);
   const projectCount = overview?.runtime?.projects ?? (state.projects || []).length;
   const activeAccounts = (state.accounts || []).filter((account) => !["retired", "suspended", "disabled"].includes(account.status)).length;
@@ -2522,7 +2525,7 @@ function renderSysAccounts() {
 // 与其让人填完再撞一个错误，不如当场说清第一步是什么。
 function noProjectYetNotice(what) {
   return `<div class="notice">还没有任何项目，而${what}必须落在具体项目上。`
-    + "先创建一个项目：组织管理员切到「组织管理」后打开项目列表，系统管理员切到「系统管理」后打开账号与授权。</div>";
+    + "先创建一个项目：组织管理员切到「组织管理」→「项目列表」创建项目，系统管理员切到「系统管理」→「账号与授权」创建或授权项目。</div>";
 }
 
 // 归属为空的账号（历史上经 MCP 建的那批）服务端按「默认组织」处理，界面必须用同一个口径 ——
@@ -2843,7 +2846,7 @@ function renderOrgMembers() {
     panel("说明", `
       <div class="stack">
         <div class="record"><div class="record-title"><strong>一次性令牌</strong></div><div class="record-meta"><span>成员首次使用令牌登录后令牌即失效，可在顶栏“修改密码”设置个人密码。</span></div></div>
-        <div class="record"><div class="record-title"><strong>权限边界</strong></div><div class="record-meta"><span>成员权限不可包含系统级与组织级通配权限；项目、任务组细粒度授权可在系统管理的账号与授权、组织管理的项目列表里补充。</span></div></div>
+        <div class="record"><div class="record-title"><strong>权限边界</strong></div><div class="record-meta"><span>成员权限不可包含系统级与组织级通配权限；项目、任务组细粒度授权可在「系统管理」→「账号与授权」或「组织管理」→「项目列表」补充。</span></div></div>
       </div>
     `),
     panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows,
@@ -2978,9 +2981,9 @@ function renderOrgProjects() {
 function noVisibleProjectNotice() {
   const perspective = perspectiveOf(currentAccount);
   const next = perspective === "system"
-    ? "切到「系统管理」，在账号与授权里用「创建项目（系统级）」新建一个，或把已有项目授权给某个账号。"
+    ? "切到「系统管理」→「账号与授权」，用「创建项目（系统级）」新建一个，或把已有项目授权给某个账号。"
     : perspective === "org"
-      ? "切到「组织管理」，在项目列表里创建项目，或把已有项目授权给成员。"
+      ? "切到「组织管理」→「项目列表」创建项目，或把已有项目授权给成员。"
       : "请联系组织管理员为你分配项目。";
   return `<div class="notice">当前账号暂无可见项目。${esc(next)}</div>`;
 }
@@ -3910,8 +3913,8 @@ function stuckExitNotice(dispatches, sessions) {
 const WORK_ITEM_EXIT_HINT = {
   needs_decision: "编排不会再自动推进它：到「人工指令」页用「决策处置（重开 / 放弃）」处置。",
   blocked_dependency: "无需操作：它依赖的工作项通过验收后，下一轮编排会自动放行。",
-  model_selection_rejected: "没有可运行的模型满足它的硬性约束：让系统管理员到「系统设置」页核对模型能力注册，或放宽该工作项的模型约束。",
-  blocked_resource: "它等待的资源尚未就绪：让系统管理员到「系统设置」页核对模型与技能源状态。",
+  model_selection_rejected: "没有可运行的模型满足它的硬性约束：让系统管理员到「系统管理」→「系统设置」核对模型能力注册，或放宽该工作项的模型约束。",
+  blocked_resource: "它等待的资源尚未就绪：让系统管理员到「系统管理」→「系统设置」核对模型与技能源状态。",
   credential_required: "执行需要智能体运行时凭据：在承接它的 agent 节点上配置所需的凭据环境变量后重试。",
   permission_required: "需要先获得授权：到「人工审核」页批准对应的权限申请。",
   execution_failed_repeatedly: "同一个工作项连续多次执行失败，系统已停止自动重派（否则会一直空烧模型额度）：到「人工指令」页用「决策处置（重开 / 放弃）」处置，重开前先看阻塞提示里最近一次的失败原因。"
@@ -4016,9 +4019,9 @@ function agentNodeManagementPath({needSelfCheck = false, needMoreCapacity = fals
     return `切到「组织管理」，打开 AI 智能体，${action}${suffix ? `；${suffix}` : ""}`;
   }
   if (perspective === "system") {
-    return `切到「项目管理」，打开项目设置里的「智能体接入」面板签发当前项目的加入令牌；已有节点离线或自检异常时，让对应组织管理员在 AI 智能体里${action}${suffix ? `；${suffix}` : ""}`;
+    return `到「项目管理」→「项目设置」→「智能体接入」签发当前项目的加入令牌；已有节点离线或自检异常时，让对应组织管理员在「组织管理」→「AI 智能体」${action}${suffix ? `；${suffix}` : ""}`;
   }
-  return `联系项目管理员到「项目设置」里的「智能体接入」面板签发当前项目的加入令牌；已有节点异常时，由组织管理员在 AI 智能体里${action}${suffix ? `；${suffix}` : ""}`;
+  return `联系项目管理员到「项目管理」→「项目设置」→「智能体接入」签发当前项目的加入令牌；已有节点异常时，由组织管理员在「组织管理」→「AI 智能体」${action}${suffix ? `；${suffix}` : ""}`;
 }
 
 // 派发排着队、会话挂着 active，但一个能干活的 agent 都没有 —— 这时控制台看上去一片繁忙，
@@ -4899,8 +4902,8 @@ function renderMonitor() {
   // 项目空间已经和系统/组织空间拆开，跨空间指路不能再写成"去某某页"：
   // 人在当前左侧菜单里看不到那一项，会以为功能丢了。先点空间，再说面板名。
   const JOIN_TOKEN_ENTRY_BY_PERSPECTIVE = {
-    system: "先切到「项目管理」，打开项目设置里的「智能体接入」面板",
-    org: "先切到「项目管理」，打开项目设置里的「智能体接入」面板；也可以在「组织管理」的 AI 智能体里统一管理节点"
+    system: "先打开「项目管理」→「项目设置」→「智能体接入」",
+    org: "先打开「项目管理」→「项目设置」→「智能体接入」；也可以在「组织管理」→「AI 智能体」统一管理节点"
   };
   const joinTokenWhere = JOIN_TOKEN_ENTRY_BY_PERSPECTIVE[perspectiveOf(currentAccount)];
   const nothingRanYetNotice = nothingRanYet
@@ -5138,6 +5141,36 @@ function cfgRoleRow(role = {}, readOnly = false) {
   `;
 }
 
+function liveJoinTokenCount(projectId) {
+  return (state.agentJoinTokens || []).filter((token) =>
+    token.projectId === projectId
+    && token.status === "issued"
+    && (!token.expiresAt || new Date(token.expiresAt).getTime() > serverNow())).length;
+}
+
+function projectSettingMetric(label, value, hint) {
+  return `<div class="metric"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(hint)}</small></div>`;
+}
+
+function renderProjectSettingsSummary(project, repos, baselineData, defaultRoles, resolved, rulesLoaded) {
+  const systemRuleCount = rulesLoaded ? (resolved.systemRules || []).length : "—";
+  const businessRuleCount = rulesLoaded ? (resolved.businessRules || []).length : "—";
+  const archivedText = project.status === "archived"
+    ? "项目已归档，设置只读"
+    : "项目设置影响后续派发、入网和产出落地";
+  return panel("项目设置总览", `
+    <div class="metric-grid">
+      ${projectSettingMetric("仓库", repos.length, "代码与文档产出的 Git 落点")}
+      ${projectSettingMetric("基线", baselineData.length, "agent 可引用的现状材料")}
+      ${projectSettingMetric("默认角色", defaultRoles.length, "任务组未指定时的角色回退")}
+      ${projectSettingMetric("待用加入令牌", liveJoinTokenCount(project.id), "可注册到本项目的 agent 票据")}
+      ${projectSettingMetric("系统规则", systemRuleCount, "项目层生效的系统规则")}
+      ${projectSettingMetric("业务规则", businessRuleCount, "项目层生效的业务规则")}
+    </div>
+    <div class="small muted">${esc(archivedText)}；agent 注册入口在本页“智能体接入”。</div>
+  `, {wide: true});
+}
+
 function renderProjectSettings() {
   const project = currentProject();
   if (!project) return panel("项目设置", noVisibleProjectNotice(), {wide: true});
@@ -5177,6 +5210,7 @@ function renderProjectSettings() {
   const defaultRoles = Array.isArray(cfgSource.defaultRoles) ? cfgSource.defaultRoles : [];
 
   return [
+    renderProjectSettingsSummary(project, repos, baselineData, defaultRoles, resolved, rulesLoaded),
     panel(`项目设置 · ${esc(project.name)}`, `
       ${archivedNotice}
       ${readOnlyNotice}

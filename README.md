@@ -101,7 +101,7 @@ https://control.example.com/mcp
 
 MCP 请求必须携带节点 token、系统管理员 session 或服务 token；Agent 节点只能看到并调用 join token 所授予的工具，服务 token 默认只绑定 `prj_control_plane`，生产环境用 `AIMAC_MCP_SERVICE_PROJECT_IDS` 明确配置可见项目。生产 MCP 不提供服务端代执行 Agent 任务的工具，任务必须由已注册节点从 Agent Gateway claim。
 
-Agent 加入必须在管理界面完成：系统管理员或有项目 `agent:activate` 权限的账号登录后，进入对应项目的“Agent 入网授权”，生成绑定该项目、角色范围、MCP allowlist、有效期和一次使用次数的 join token。界面返回直接执行命令和 SHA256 校验版命令，典型形式如下：
+Agent 加入必须在管理界面完成：系统管理员或有项目 `agent:activate` 权限的账号登录后，进入「项目管理」→「项目设置」→「智能体接入」，生成绑定该项目、角色范围、MCP allowlist、有效期和一次使用次数的 join token。界面返回直接执行命令和 SHA256 校验版命令，典型形式如下：
 
 ```bash
 curl -fsSL https://control.example.com/install-agent.sh | sh -s -- \
@@ -135,7 +135,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 
 ## 模型选择与精确钉模型
 
-默认是**按能力自动选型**：控制面对模型能力注册表按角色技能、任务性质（深度分析/实现/验证等）、模型天花板打分，选出合格的最高分模型，并留一条 `ModelSelectionDecision` 审计。系统内置约 19 个 provider 的默认模型（OpenAI、Anthropic、Google、xAI、Meta、Mistral、DeepSeek、通义千问、月之暗面、智谱、百度文心、腾讯混元、OpenRouter、Azure OpenAI、AWS Bedrock、Google Vertex AI、Ollama、vLLM、自定义），可在管理界面「系统设置 → 模型能力注册」查看，或读 `/api/model-registry`；也可通过模型注册端点新增/覆盖模型（含 `custom` 类接入自有模型）。
+默认是**按能力自动选型**：控制面对模型能力注册表按角色技能、任务性质（深度分析/实现/验证等）、模型天花板打分，选出合格的最高分模型，并留一条 `ModelSelectionDecision` 审计。系统内置约 19 个 provider 的默认模型（OpenAI、Anthropic、Google、xAI、Meta、Mistral、DeepSeek、通义千问、月之暗面、智谱、百度文心、腾讯混元、OpenRouter、Azure OpenAI、AWS Bedrock、Google Vertex AI、Ollama、vLLM、自定义），可在管理界面「系统管理」→「系统设置」→「模型能力注册」查看，或读 `/api/model-registry`；也可通过模型注册端点新增/覆盖模型（含 `custom` 类接入自有模型）。
 
 需要**精确指定某个模型**时用 `pinnedModelId`（取值可以是注册表里的 modelId、providerId 或别名，如 `anthropic:claude-sonnet-4-5`），三条入口：
 

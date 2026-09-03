@@ -267,6 +267,7 @@ html, body {
 }
 .metric span { display: block; font-size: 13px; color: var(--text-sub); }
 .metric strong { display: block; font-size: 20px; margin-top: 2px; }
+.metric small { display: block; margin-top: 4px; color: var(--text-sub); line-height: 1.45; }
 
 .project-hub {
   background: var(--card-bg);

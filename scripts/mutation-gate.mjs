@@ -4156,7 +4156,7 @@ const MUTATIONS = [
     name: "阻塞卡片上的人工出口被抹掉要报红（本门原先认的页名根本不存在）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "它等待的资源尚未就绪：让系统管理员到「系统设置」页核对模型与技能源状态。",
+    from: "它等待的资源尚未就绪：让系统管理员到「系统管理」→「系统设置」核对模型与技能源状态。",
     to: "它等待的资源尚未就绪。",
     expect: "阻塞状态出口"
   },
@@ -6052,7 +6052,7 @@ const MUTATIONS = [
     name: "刚装完的指路要指这个账号点得到的那一页",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '    system: "先切到「项目管理」，打开项目设置里的「智能体接入」面板",',
+    from: '    system: "先打开「项目管理」→「项目设置」→「智能体接入」",',
     to: '    system: "「AI 智能体」页的「加入令牌管理」面板",',
     expect: "而这一屏的导航里没有这几页"
   },

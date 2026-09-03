@@ -4803,7 +4803,7 @@ const OWNER_ROLES_NOT_OFFERED_IN_CONSOLE = {
   "decision-center": "控制面自身的决策中枢，不是人指派给工作项的执行角色",
   "scheduler": "控制面自身的调度组件",
   "work-session": "会话这个概念本身，不是执行角色",
-  "rule-steward": "规则治理由「系统设置」页的规则源与叠加来做，不走工作项派活",
+  "rule-steward": "规则治理由「系统管理」→「系统设置」的规则源与叠加来做，不走工作项派活",
   "command-bus": "控制面内部服务",
   "permission-gateway": "控制面内部服务",
   "policy-engine": "控制面内部服务",
@@ -5118,7 +5118,7 @@ await runCodedApiErrorCase();
     /没有任何在线的 agent 节点/.test(stalled),
     "进度条不会再动，而这一页一个字都不说 —— 人会一直等，并且会以为是 agent 在慢慢做");
   check("要说清它们不会有进展、以及去哪儿看",
-    /不会有任何进展/.test(stalled) && /智能体接入/.test(stalled) && /切到「项目管理」|联系项目管理员/u.test(stalled),
+    /不会有任何进展/.test(stalled) && /智能体接入/.test(stalled) && /「项目管理」|联系项目管理员/u.test(stalled),
     "只说没节点，不说这对他意味着什么、下一步做什么");
   check("有在线 agent 时不挂这条提示",
     !/没有任何在线的 agent 节点/.test(probe.renderTaskGroupsWith(withCells("assigned", {online: 1, total: 2}), account, "p1", null, {})),
@@ -5657,7 +5657,7 @@ await runCodedApiErrorCase();
     // 都指向它）—— 门和被测代码共用了同一个漂掉的名字，于是"指向不存在的页"被当成合法出口。
     // 这里只要求卡片指到【某个】页，那个页名是不是真的，由 contract-check 的
     // verifyGuidanceNamesRealPages 按 PAGE_META 全量核对。
-    const hasExit = /人工指令|人工审核|「[^」]{2,16}」页|agent 节点/.test(card);
+    const hasExit = /人工指令|人工审核|「[^」]{2,16}」页|「[^」]{2,16}」→「[^」]{2,16}」|agent 节点/.test(card);
     const saysSelfClearing = /自动放行|无需操作/.test(card);
     if (NO_PRODUCER[status]) continue;
     if (!hasExit && !saysSelfClearing) {
