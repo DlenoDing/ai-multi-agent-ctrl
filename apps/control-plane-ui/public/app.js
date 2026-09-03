@@ -4316,8 +4316,8 @@ function renderTaskGroupDetail(taskGroup) {
 
   // 只读进度接口那份：视图里的任务组【不再带整份 roles】（列表只用 roleCount）。
   // 留着 `|| taskGroup.roles` 那截兜底会骗人 —— 它永远是 undefined，看代码的人以为还有第二个来源。
-  const rolesData = progressData.roles || [];
-  const roles = rolesData.map((role) => `
+  const roleCount = (progressData.roles || []).length;
+  const roles = (progressData.roles || []).map((role) => `
     <div class="record">
       <div class="record-title">
         <strong>${esc(t(role.roleId))}</strong><span class="mono small muted">${esc(role.roleId)}</span>
@@ -4513,7 +4513,7 @@ function renderTaskGroupDetail(taskGroup) {
   const roomCount = Array.isArray(roomMessages) ? roomMessages.length : null;
   const detailPathHtml = renderTaskGroupDetailPath({
     analysisCount,
-    roleCount: rolesData.length,
+    roleCount,
     configLabel: config ? (config.configSource === "customized" ? "自定义" : "继承") : "未加载",
     canControl,
     workItemCount: Number.isFinite(workItemCount) ? workItemCount : 0,

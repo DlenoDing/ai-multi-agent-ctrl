@@ -32,4 +32,6 @@
 - 已让 `sectionBlock` 输出 `data-section-title`，并让 `data-jump-panel` 点击处理器支持顶层 panel 与详情小节双目标定位。
 - 已对动态标题做前缀定位，工作项标题包含真实总数和截断说明时，仍可从“工作项”卡片跳入。
 - 已补充控制台行为门：验证详情路径位置、八个跳转入口、小节锚点、动态工作项标题和点击处理器的小节支持。
-- 验证结果：`node --check apps/control-plane-ui/public/app.js` 通过；`node --check scripts/console-behaviour-check.mjs` 通过；`npm run -s console-behaviour-gate` 通过，572 条断言全部通过。
+- 已用本地服务和内置浏览器完成真实交互走查：登录后确认项目 AI 智能体页分为总览、操作看板、注册流程、节点列表、注册 agent；任务组页分为总览、处置看板、创建任务组、创建工作项、任务组列表；展开任务组后阅读路径位于详情顶部，点击“工作项”可滚动到对应小节；系统管理空间只显示系统概览、组织管理、系统设置、账号与授权，没有混入项目管理菜单。
+- 验证结果：`node --check apps/control-plane-ui/public/app.js` 通过；`node --check scripts/console-behaviour-check.mjs` 通过；`npm run console-behaviour-gate` 通过，572 条断言全部通过。
+- 全量验证结果：`npm run validate` 通过；`npm run docker:doctor` 通过，已验证 Docker compose 配置、构建、健康检查、中央 MCP、安装脚本产物和 PostgreSQL 状态存储。
