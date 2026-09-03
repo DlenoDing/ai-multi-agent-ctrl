@@ -9579,8 +9579,8 @@ const MUTATIONS = [
     name: "首屏指引不得点名界面上没有的页（我第一版就写错了这句）",
     file: "scripts/init-control-plane.mjs",
     check: "verifyFirstScreenPointsAtRealPlaces",
-    from: "「账号与授权」页 → 在「智能体入网令牌」面板",
-    to: "「智能体」页 → 在「一次性入网」面板",
+    from: "「项目管理」→「AI 智能体」→「注册 agent」",
+    to: "「项目设置」→「智能体接入」",
     expect: "界面上没有的位置"
   },
   {

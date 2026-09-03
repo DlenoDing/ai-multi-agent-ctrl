@@ -2094,7 +2094,7 @@ function renderSystemManagementHub(overview) {
     ],
     modules: [
       {pageId: "sys-orgs", title: "组织与配额", metric: `${orgCount}`, detail: "创建组织、调整配额、启停组织", action: "管理组织", tone: "blue"},
-      {pageId: "sys-accounts", title: "账号与授权", metric: `${activeAccounts}`, detail: "系统账号、访问授权与后台代签令牌", action: "管理授权", tone: "blue"},
+      {pageId: "sys-accounts", title: "账号与授权", metric: `${activeAccounts}`, detail: "系统账号、访问授权与服务账号边界", action: "管理授权", tone: "blue"},
       {pageId: "sys-settings", title: "模型与技能源", metric: `${mcpToolCount}`, detail: "模型能力、技能源同步、指令压缩指标", action: "查看设置", tone: "blue"},
       {pageId: "proj-overview", title: "项目空间", metric: `${projectCount}`, detail: "进入当前项目的任务组、审核、指令和监控", action: "进入项目", tone: projectCount ? "blue" : "gray"}
     ]
