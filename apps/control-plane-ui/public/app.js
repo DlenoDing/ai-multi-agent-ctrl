@@ -2973,22 +2973,84 @@ function permissionCheckboxes(selected = ["project:view", "task_group:read"]) {
   `;
 }
 
-function renderOrgMembersSummary(members) {
+function memberStats(members) {
   const activeMembers = members.filter((account) => account.status === "active").length;
   const invitedMembers = members.filter((account) => account.status === "invited" || account.invitationWithdrawn).length;
   const suspendedMembers = members.filter((account) => ["suspended", "disabled"].includes(account.status)).length;
   const retiredMembers = members.filter((account) => account.status === "retired").length;
+  return {activeMembers, invitedMembers, suspendedMembers, retiredMembers, assignableProjects: assignableProjects().length};
+}
+
+function renderOrgMembersSummary(members) {
+  const stats = memberStats(members);
   const self = members.find((account) => account.accountId === currentAccount?.accountId);
   return panel("成员管理总览", `
     <div class="metric-grid">
       ${summaryMetric("成员总数", members.length, "不含 service_account")}
-      ${summaryMetric("启用成员", activeMembers, "可登录并参与项目管理")}
-      ${summaryMetric("待接受邀请", invitedMembers, "需要重发或等待首次登录")}
-      ${summaryMetric("已停用", suspendedMembers, "暂时不能登录")}
-      ${summaryMetric("已注销", retiredMembers, "终态，不可恢复")}
-      ${summaryMetric("可授权项目", assignableProjects().length, "可作为默认项目或授权目标")}
+      ${summaryMetric("启用成员", stats.activeMembers, "可登录并参与项目管理")}
+      ${summaryMetric("待接受邀请", stats.invitedMembers, "需要重发或等待首次登录")}
+      ${summaryMetric("已停用", stats.suspendedMembers, "暂时不能登录")}
+      ${summaryMetric("已注销", stats.retiredMembers, "终态，不可恢复")}
+      ${summaryMetric("可授权项目", stats.assignableProjects, "可作为默认项目或授权目标")}
     </div>
     <div class="small muted">当前登录：${esc(self?.displayName || currentAccount?.displayName || "-")}。先查看“成员列表”的状态和风险，再创建新成员或调整权限。</div>
+  `, {wide: true});
+}
+
+function renderOrgMembersActionBoard(members) {
+  const stats = memberStats(members);
+  return panel("成员管理操作看板", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "待接受邀请",
+        metric: `${stats.invitedMembers}`,
+        detail: stats.invitedMembers ? "需要重发或等待首次登录" : "当前没有待接受邀请",
+        panelTitle: "成员列表",
+        tone: stats.invitedMembers ? "orange" : "green",
+        action: "查看邀请"
+      })}
+      ${jumpModuleCard({
+        title: "启用成员",
+        metric: `${stats.activeMembers}`,
+        detail: "可登录并参与项目管理",
+        panelTitle: "成员列表",
+        tone: stats.activeMembers ? "blue" : "gray",
+        action: "查看成员"
+      })}
+      ${jumpModuleCard({
+        title: "已停用",
+        metric: `${stats.suspendedMembers}`,
+        detail: stats.suspendedMembers ? "暂时不能登录，需要核对原因" : "当前没有停用成员",
+        panelTitle: "成员列表",
+        tone: stats.suspendedMembers ? "orange" : "green",
+        action: "查看状态"
+      })}
+      ${jumpModuleCard({
+        title: "已注销",
+        metric: `${stats.retiredMembers}`,
+        detail: "终态，不可恢复",
+        panelTitle: "成员列表",
+        tone: stats.retiredMembers ? "gray" : "green",
+        action: "查看历史"
+      })}
+      ${jumpModuleCard({
+        title: "可授权项目",
+        metric: `${stats.assignableProjects}`,
+        detail: "可作为默认项目或授权目标",
+        panelTitle: "说明",
+        tone: stats.assignableProjects ? "blue" : "orange",
+        action: "查看边界"
+      })}
+      ${jumpModuleCard({
+        title: "创建成员",
+        metric: "入口",
+        detail: "签发一次性登录令牌",
+        panelTitle: "创建成员",
+        tone: "blue",
+        action: "创建"
+      })}
+    </div>
+    <div class="small muted">处理顺序：先核对邀请、停用和注销状态，再创建成员或调整权限。</div>
   `, {wide: true});
 }
 
@@ -3030,6 +3092,7 @@ function renderOrgMembers() {
 
   return [
     renderOrgMembersSummary(members),
+    renderOrgMembersActionBoard(members),
     panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows,
       {emptyText: listEmptyText("成员列表")}), {wide: true, headerSide: filterInput("按姓名、邮箱过滤…", "members")}),
     panel("创建成员", `
@@ -3089,7 +3152,7 @@ function agentActions(node) {
   ].join(" ");
 }
 
-function renderOrgAgentsSummary(nodes) {
+function orgAgentStats(nodes) {
   const aliveNodes = nodes.filter((node) => node.status !== "revoked");
   const onlineNodes = aliveNodes.filter((node) => node.status === "online").length;
   const busyNodes = aliveNodes.filter((node) => Number((node.display?.currentDispatchIds || []).length) > 0).length;
@@ -3101,16 +3164,78 @@ function renderOrgAgentsSummary(nodes) {
     projectIds.has(token.projectId)
     && token.status === "issued"
     && (!token.expiresAt || new Date(token.expiresAt).getTime() > serverNow())).length;
+  return {aliveNodes, onlineNodes, busyNodes, runningDispatches, abnormalNodes, liveTokens};
+}
+
+function renderOrgAgentsSummary(nodes) {
+  const stats = orgAgentStats(nodes);
   return panel("智能体运行总览", `
     <div class="metric-grid">
-      ${summaryMetric("节点总数", aliveNodes.length, "已接入且未吊销的 agent 节点")}
-      ${summaryMetric("在线节点", `${onlineNodes}/${aliveNodes.length}`, "可接收控制面派发")}
-      ${summaryMetric("忙碌节点", busyNodes, "当前正在承载任务")}
-      ${summaryMetric("当前任务", runningDispatches, "节点正在执行的派发数量")}
-      ${summaryMetric("待用加入令牌", liveTokens, "可注册到本组织项目的票据")}
-      ${summaryMetric("异常节点", abnormalNodes, "离线、非健康或需排查的节点")}
+      ${summaryMetric("节点总数", stats.aliveNodes.length, "已接入且未吊销的 agent 节点")}
+      ${summaryMetric("在线节点", `${stats.onlineNodes}/${stats.aliveNodes.length}`, "可接收控制面派发")}
+      ${summaryMetric("忙碌节点", stats.busyNodes, "当前正在承载任务")}
+      ${summaryMetric("当前任务", stats.runningDispatches, "节点正在执行的派发数量")}
+      ${summaryMetric("待用加入令牌", stats.liveTokens, "可注册到本组织项目的票据")}
+      ${summaryMetric("异常节点", stats.abnormalNodes, "离线、非健康或需排查的节点")}
     </div>
     <div class="small muted">查看顺序：先看节点在线率和异常节点，再在“智能体节点”里暂停、恢复、关停或吊销；新增机器只通过“加入令牌管理”入网。</div>
+  `, {wide: true});
+}
+
+function renderOrgAgentsActionBoard(nodes) {
+  const stats = orgAgentStats(nodes);
+  return panel("智能体接入操作看板", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "在线节点",
+        metric: `${stats.onlineNodes}/${stats.aliveNodes.length}`,
+        detail: "可接收控制面派发",
+        panelTitle: "智能体节点",
+        tone: stats.onlineNodes ? "green" : "orange",
+        action: "查看节点"
+      })}
+      ${jumpModuleCard({
+        title: "异常节点",
+        metric: `${stats.abnormalNodes}`,
+        detail: stats.abnormalNodes ? "离线、非健康或需排查" : "当前没有异常节点",
+        panelTitle: "智能体节点",
+        tone: stats.abnormalNodes ? "red" : "green",
+        action: "定位异常"
+      })}
+      ${jumpModuleCard({
+        title: "忙碌节点",
+        metric: `${stats.busyNodes}`,
+        detail: "当前正在承载任务",
+        panelTitle: "智能体节点",
+        tone: stats.busyNodes ? "blue" : "gray",
+        action: "查看负载"
+      })}
+      ${jumpModuleCard({
+        title: "当前任务",
+        metric: `${stats.runningDispatches}`,
+        detail: "节点正在执行的派发数量",
+        panelTitle: "智能体节点",
+        tone: stats.runningDispatches ? "blue" : "green",
+        action: "查看任务"
+      })}
+      ${jumpModuleCard({
+        title: "待用加入令牌",
+        metric: `${stats.liveTokens}`,
+        detail: "可注册到本组织项目的票据",
+        panelTitle: "加入令牌管理",
+        tone: stats.liveTokens ? "blue" : "orange",
+        action: "查看令牌"
+      })}
+      ${jumpModuleCard({
+        title: "节点接入",
+        metric: "入口",
+        detail: "通过服务端签发脚本注册 agent",
+        panelTitle: "加入令牌管理",
+        tone: "blue",
+        action: "签发令牌"
+      })}
+    </div>
+    <div class="small muted">处理顺序：先核对在线率、异常和负载，再签发加入令牌接入新节点。</div>
   `, {wide: true});
 }
 
@@ -3156,6 +3281,7 @@ function renderOrgAgents() {
 
   return [
     renderOrgAgentsSummary(nodes),
+    renderOrgAgentsActionBoard(nodes),
     panel("智能体节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "org-nodes")}${toggle}`}),
     panel("加入令牌管理", renderJoinTokenSection(), {wide: true})
   ].join("");

@@ -4011,16 +4011,28 @@ function runPendingTruncationCase() {
     ]).replace(/<!--[\s\S]*?-->/gu, "");
     check("成员管理页先显示总览和列表，再显示创建表单",
       panelAt(membersHtml, "成员管理总览") >= 0
-        && panelAt(membersHtml, "成员管理总览") < panelAt(membersHtml, "成员列表")
+        && panelAt(membersHtml, "成员管理总览") < panelAt(membersHtml, "成员管理操作看板")
+        && panelAt(membersHtml, "成员管理操作看板") < panelAt(membersHtml, "成员列表")
         && panelAt(membersHtml, "成员列表") < panelAt(membersHtml, "创建成员"),
-      "成员管理页首屏直接创建成员，组织管理员看不到现有成员与邀请状态就被推去填表");
+      "成员管理页没有把邀请、停用、注销、授权边界和创建入口排成可点击操作看板");
+    check("成员管理操作看板要提供成员列表、创建成员和说明的跳转入口",
+      /data-jump-panel="成员列表"/u.test(membersHtml)
+        && /data-jump-panel="创建成员"/u.test(membersHtml)
+        && /data-jump-panel="说明"/u.test(membersHtml),
+      "成员管理操作看板只显示指标，没有接上成员列表、创建成员和说明面板的跳转");
     const agentsHtml = probe.renderOrgAgentsWith(overviewState, orgAdmin, [
       {nodeId: "node1", nodeName: "节点", status: "online", display: {health: "ok", currentDispatchIds: ["adp1"]}, lastHeartbeatAt: "2099-01-01T00:00:00Z"}
     ]).replace(/<!--[\s\S]*?-->/gu, "");
-    check("AI 智能体页先显示运行总览，再显示节点列表",
+    check("AI 智能体页先显示运行总览和接入看板，再显示节点列表",
       panelAt(agentsHtml, "智能体运行总览") >= 0
-        && panelAt(agentsHtml, "智能体运行总览") < panelAt(agentsHtml, "智能体节点"),
-      "AI 智能体页没有先给在线率、忙碌节点和入网令牌概览，用户只能读整张节点表");
+        && panelAt(agentsHtml, "智能体运行总览") < panelAt(agentsHtml, "智能体接入操作看板")
+        && panelAt(agentsHtml, "智能体接入操作看板") < panelAt(agentsHtml, "智能体节点")
+        && panelAt(agentsHtml, "智能体节点") < panelAt(agentsHtml, "加入令牌管理"),
+      "AI 智能体页没有把在线率、异常节点、负载和接入令牌排成可点击操作看板");
+    check("AI 智能体操作看板要提供节点和加入令牌的跳转入口",
+      /data-jump-panel="智能体节点"/u.test(agentsHtml)
+        && /data-jump-panel="加入令牌管理"/u.test(agentsHtml),
+      "智能体接入操作看板只显示指标，没有接上智能体节点和加入令牌管理面板的跳转");
     const orgProjectsRoot = el("div");
     loadConsole(orgProjectsRoot, {realI18n: true}).renderFullPageWith(overviewState, orgAdmin, "p1", "org-projects");
     const orgProjectsHtml = String(orgProjectsRoot.innerHTML || "").replace(/<!--[\s\S]*?-->/gu, "");
