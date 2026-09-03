@@ -4923,6 +4923,11 @@ function renderMonitorActionBoard({
   const abnormalNodes = nodes.filter((node) => node.status !== "online" || heartbeatTimedOut(node)
     || node.runtimeOutdated || (node.selfCheckMissing || []).length
     || !["ok", "healthy", "normal", undefined, ""].includes(node.display?.health)).length;
+  const nodeMetric = nodes.length ? `${abnormalNodes}/${nodes.length}` : "0";
+  const nodeDetail = nodes.length
+    ? (abnormalNodes ? "存在离线、心跳过旧、自检缺项或运行时过旧节点" : "可见节点当前正常")
+    : "当前项目没有可见运行时节点；需要执行时先接入 agent";
+  const nodeTone = nodes.length ? (abnormalNodes ? "orange" : "green") : "gray";
   const orchestrator = state.runtime?.autonomousOrchestrator || {};
   const orchestratorIssues = Number(orchestrator.consecutiveErrors || 0);
   const cards = [
@@ -4962,10 +4967,10 @@ function renderMonitorActionBoard({
     }),
     monitorActionCard({
       title: "节点",
-      metric: `${abnormalNodes}/${nodes.length}`,
-      detail: abnormalNodes ? "存在离线、心跳过旧、自检缺项或运行时过旧节点" : "可见节点当前正常",
+      metric: nodeMetric,
+      detail: nodeDetail,
       panelTitle: "运行时节点",
-      tone: abnormalNodes ? "orange" : "green"
+      tone: nodeTone
     }),
     monitorActionCard({
       title: "自治周期",
