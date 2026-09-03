@@ -7670,8 +7670,8 @@ const MUTATIONS = [
     name: "在制品提示要说清额度按什么算",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyWipHintMatchesHowCapacityIsCounted",
-    from: "    + `\u60f3\u8ba9\u5b83\u8dd1\u5f97\u66f4\u5bbd\uff0c${esc(agentNodeManagementPath({needMoreCapacity: true}))}\uff1b\u989d\u5ea6\u6309\u3010\u5728\u7ebf\u4e14\u5df2\u901a\u8fc7\u81ea\u68c0\u3011\u7684\u8282\u70b9\u6570\u4e0a\u8c03\uff0c`",
-    to: "    + `\u60f3\u8ba9\u5b83\u8dd1\u5f97\u66f4\u5bbd\uff0c${esc(agentNodeManagementPath({needMoreCapacity: true}))}\uff1b\u6bcf\u591a\u4e00\u53f0\u5728\u7ebf\u8282\u70b9\uff0c\u989d\u5ea6\u81ea\u52a8\u4e0a\u8c03\u3002`",
+    from: "    + `\u60f3\u8ba9\u5b83\u8dd1\u5f97\u66f4\u5bbd\uff0c${esc(agentNodeManagementPath({needMoreCapacity: true, registeredNodeCount: Number(((state || {}).fleet || {}).total || 0)}))}\uff1b\u989d\u5ea6\u6309\u3010\u5728\u7ebf\u4e14\u5df2\u901a\u8fc7\u81ea\u68c0\u3011\u7684\u8282\u70b9\u6570\u4e0a\u8c03\uff0c`",
+    to: "    + `\u60f3\u8ba9\u5b83\u8dd1\u5f97\u66f4\u5bbd\uff0c${esc(agentNodeManagementPath({needMoreCapacity: true, registeredNodeCount: Number(((state || {}).fleet || {}).total || 0)}))}\uff1b\u6bcf\u591a\u4e00\u53f0\u5728\u7ebf\u8282\u70b9\uff0c\u989d\u5ea6\u81ea\u52a8\u4e0a\u8c03\u3002`",
     expect: "而提示只说「在线节点」"
   },
   {
@@ -9441,8 +9441,8 @@ const MUTATIONS = [
     name: "不许用没加书名号的英文页名指路（「到 agent 页」实测 4 处）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyGuidanceNamesRealPages",
-    from: '    return `切到「组织管理」，打开 AI 智能体，${action}${suffix ? `；${suffix}` : ""}`;',
-    to: '    return `到 agent 页，${action}${suffix ? `；${suffix}` : ""}`;',
+    from: '  const projectAgentPage = "「项目管理」→「AI 智能体」";',
+    to: '  const projectAgentPage = "agent 页";',
     expect: "没加书名号"
   },
   {

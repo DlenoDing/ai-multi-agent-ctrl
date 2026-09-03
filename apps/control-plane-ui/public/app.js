@@ -3084,7 +3084,7 @@ function renderOrgOverview() {
         pageId: "org-agents",
         title: "2 Agent 节点",
         metric: aliveNodes.length ? `${onlineNodes}/${aliveNodes.length}` : "无节点",
-        detail: aliveNodes.length ? "查看在线率、自检、加入令牌和吊销" : "需要执行任务前先接入节点",
+        detail: aliveNodes.length ? "查看在线率、自检、加入令牌和吊销" : "新增 agent 先进入目标项目注册",
         action: "管理节点",
         tone: onlineNodes ? "green" : "orange"
       })}
@@ -3762,7 +3762,7 @@ function renderOrgProjectsActionBoard({projects, activeProjects, archivedProject
       ${jumpModuleCard({
         title: "在用项目",
         metric: `${activeProjects.length}`,
-        detail: activeProjects.length ? "可继续创建任务组和接入 agent" : "当前没有可继续推进的项目",
+        detail: activeProjects.length ? "可继续创建任务组，并在项目 AI 智能体页注册 agent" : "当前没有可继续推进的项目",
         panelTitle: "项目列表",
         tone: activeProjects.length ? "blue" : "orange",
         action: "查看项目"
@@ -5179,25 +5179,30 @@ function orchestratorHealthText(status) {
   return status.lastTickAt ? `（上一拍 ${esc(t(status.lastTickResult) || status.lastTickResult || "ran")}）` : "";
 }
 
-function agentNodeManagementPath({needSelfCheck = false, needMoreCapacity = false, waitForAi = false} = {}) {
-  const action = needMoreCapacity
-    ? "接入更多已通过自检的节点"
-    : needSelfCheck
-      ? "确认节点状态与自检结果"
-      : waitForAi
-        ? "恢复可用节点"
-        : "接入或恢复节点";
+function agentNodeManagementPath({needMoreCapacity = false, registeredNodeCount = 0} = {}) {
   const suffix = needMoreCapacity
     ? "刚接上的节点处于“受限”、自检有缺项的处于“只读”，这两种都不加额度"
     : "";
-  const perspective = perspectiveOf(currentAccount);
-  if (perspective === "org") {
-    return `切到「组织管理」，打开 AI 智能体，${action}${suffix ? `；${suffix}` : ""}`;
+  const hasRegisteredNodes = Number(registeredNodeCount || 0) > 0;
+  const canManageProjectAgents = hasPerm("agent:activate");
+  const projectAgentPage = "「项目管理」→「AI 智能体」";
+  const orgAgentPage = "「组织管理」→「AI 智能体」";
+  const registerPath = `${projectAgentPage}→「注册 agent」`;
+  const registerAction = needMoreCapacity
+    ? `${registerPath}接入更多已通过自检的节点`
+    : `${registerPath}签发当前项目的加入令牌`;
+  const directRegister = `到${registerAction}`;
+  const askRegister = `联系有项目 agent 管理权限的人到${registerAction}`;
+  const directRefresh = `已有节点离线时先恢复目标 agent 主机/进程心跳；执行器或能力修好后，在${projectAgentPage}对节点点「刷新自检」`;
+  const askRefresh = `已有节点离线时先联系节点负责人恢复目标 agent 主机/进程心跳；执行器或能力修好后，联系有项目 agent 管理权限的人在${projectAgentPage}点「刷新自检」`;
+  const governance = `需要跨项目治理、吊销或立即切断时，再由组织管理员到${orgAgentPage}处理`;
+  if (needMoreCapacity) {
+    return `${canManageProjectAgents ? directRegister : askRegister}；${canManageProjectAgents ? directRefresh : askRefresh}；${governance}${suffix ? `；${suffix}` : ""}`;
   }
-  if (perspective === "system") {
-    return `到「项目管理」→「AI 智能体」→「注册 agent」签发当前项目的加入令牌；已有节点离线或自检异常时，让对应组织管理员在「组织管理」→「AI 智能体」${action}${suffix ? `；${suffix}` : ""}`;
+  if (hasRegisteredNodes) {
+    return `${canManageProjectAgents ? directRefresh : askRefresh}；${governance}`;
   }
-  return `联系项目管理员到「项目管理」→「AI 智能体」→「注册 agent」签发当前项目的加入令牌；已有节点异常时，由组织管理员在「组织管理」→「AI 智能体」${action}${suffix ? `；${suffix}` : ""}`;
+  return `${canManageProjectAgents ? directRegister : askRegister}；agent 上线后回到${projectAgentPage}的「项目智能体节点」确认在线`;
 }
 
 // 派发排着队、会话挂着 active，但一个能干活的 agent 都没有 —— 这时控制台看上去一片繁忙，
@@ -5216,7 +5221,7 @@ function fleetOfflineNotice() {
   return `<div class="notice warn-notice">这个项目有 ${esc(waiting)} 个派发在排队或执行中，`
     + `但【没有任何在线的 agent 节点】${total ? `（已注册 ${esc(total)} 个，此刻都不在线或已降级）` : "（一个都还没注册）"}：`
     + `这些活现在不会有任何进展，界面上的"执行中"只是挂着。`
-    + `${esc(agentNodeManagementPath({needSelfCheck: true}))}${total ? "，把降级的那台修好或重启" : "，按安装指引接入一台"}。</div>`;
+    + `${esc(agentNodeManagementPath({registeredNodeCount: total}))}。</div>`;
 }
 
 // 人把方案「交回 AI 再分析」之后，卡片会停在 awaitingAiAnalysis 等着 agent 来回答。
@@ -5236,7 +5241,7 @@ function cellsWaitingWithNoAgentNotice(groups) {
   const total = Number(fleet.total || 0);
   return `<div class="notice warn-notice">这个项目有 ${esc(waiting)} 个单元已经交给执行方，`
     + `而当前【没有任何在线的 agent 节点】${total ? `（已注册 ${esc(total)} 个，此刻都不在线或已降级）` : "（一个都还没注册）"}：`
-    + `它们不会有任何进展，进度条也不会再动。${esc(agentNodeManagementPath())}${total ? "，把降级的那台修好或重启" : "，按安装指引接入一台"}。</div>`;
+    + `它们不会有任何进展，进度条也不会再动。${esc(agentNodeManagementPath({registeredNodeCount: total}))}。</div>`;
 }
 
 // 在制品额度用满时的出口。这条与"没有在线 agent"那条是两回事，不能合并：
@@ -5266,7 +5271,7 @@ function wipCapacityNotice(groups) {
     // 额度按【在线且准入为 full】的节点数算（wipCapacityForProject）。只说"在线"会让人白等：
     // 刚注册的节点是 limited、自检有缺项的是 read_only，两者都在线、都不加额度、也领不到活。
     // 人接上一台看额度没动，会以为系统坏了或自己接错了。
-    + `想让它跑得更宽，${esc(agentNodeManagementPath({needMoreCapacity: true}))}；额度按【在线且已通过自检】的节点数上调，`
+    + `想让它跑得更宽，${esc(agentNodeManagementPath({needMoreCapacity: true, registeredNodeCount: Number(((state || {}).fleet || {}).total || 0)}))}；额度按【在线且已通过自检】的节点数上调，`
     + `在该节点管理入口看它的「准入」列，缺项也列在那里。</div>`;
 }
 
@@ -5278,7 +5283,7 @@ function aiAnalysisStalledNotice(requests) {
   const total = Number(fleet.total || 0);
   return `<div class="notice warn-notice">有 ${esc(waiting)} 张卡片在等 AI 再分析，`
     + `而当前【没有任何在线的 agent 节点】${total ? `（已注册 ${esc(total)} 个，此刻都不在线或已降级）` : "（一个都还没注册）"}：`
-    + `这个等待不会有结果。要么${esc(agentNodeManagementPath({waitForAi: true}))}，要么直接在这里定稿或打回 —— 不必等它回话。</div>`;
+    + `这个等待不会有结果。要么${esc(agentNodeManagementPath({registeredNodeCount: total}))}，要么直接在这里定稿或打回 —— 不必等它回话。</div>`;
 }
 
 // 连续失败就不只是"参数里的一行小字"了：它意味着此刻没有任何东西在推进，
@@ -6022,7 +6027,7 @@ function renderMonitorActionBoard({
   const nodeMetric = nodes.length ? `${abnormalNodes}/${nodes.length}` : "0";
   const nodeDetail = nodes.length
     ? (abnormalNodes ? "存在离线、心跳过旧、自检缺项或运行时过旧节点" : "可见节点当前正常")
-    : "当前项目没有可见运行时节点；需要执行时先接入 agent";
+    : "当前项目没有可见运行时节点；需要执行时先到 AI 智能体页注册 agent";
   const nodeTone = nodes.length ? (abnormalNodes ? "orange" : "green") : "gray";
   const orchestrator = state.runtime?.autonomousOrchestrator || {};
   const orchestratorIssues = Number(orchestrator.consecutiveErrors || 0);
@@ -6377,8 +6382,8 @@ function renderMonitor() {
   const nothingRanYetNotice = nothingRanYet
     ? `<div class="notice">这个项目还没有任何执行记录 —— 下面几张表是空的，这在刚装完时是正常的，`
       + `不是没取回来。要让它动起来：${joinTokenWhere
-        ? `${joinTokenWhere}，点「签发一次性加入令牌」接一台节点，`
-        : "先让管理员接一台执行节点（签发加入令牌这件事你这个账号做不了），"}`
+        ? `${joinTokenWhere}，点「签发一次性加入令牌」并在 agent 主机运行安装命令注册一台节点，`
+        : "先让管理员签发加入令牌，并在 agent 主机运行安装命令注册一台节点（签发加入令牌这件事你这个账号做不了），"}`
       + `再到「任务组」页把工作项推进到就绪。节点接上之后，这一页会实时显示会话、派发与执行事件。</div>`
     : "";
 

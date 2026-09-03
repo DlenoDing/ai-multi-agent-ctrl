@@ -4014,9 +4014,21 @@ function runPendingTruncationCase() {
     check("提示要说清已注册几个、以及该去哪儿看",
       /已注册 2 个/.test(offlineView)
         && /AI 智能体/.test(offlineView)
+        && /刷新自检/.test(offlineView)
+        && /恢复目标 agent 主机\/进程心跳/.test(offlineView)
         && !/项目设置」→「智能体接入/.test(offlineView)
+        && !/接入或恢复节点/.test(offlineView)
         && /「项目管理」|「组织管理」|联系项目管理员|联系组织管理员/u.test(offlineView),
       "只说没有在线节点，不说是一台都没装还是装了都挂了，人不知道下一步做什么");
+
+    const noRegistered = structuredClone(base);
+    noRegistered.fleet = {online: 0, total: 0};
+    const noRegisteredView = probe.renderMonitorWith(noRegistered, admin, "p1");
+    check("一个 agent 都没注册时，监控页出口要直接指向项目注册脚本",
+      /注册 agent/.test(noRegisteredView)
+        && /加入令牌/.test(noRegisteredView)
+        && !/接入或恢复节点/.test(noRegisteredView),
+      "没有注册节点时还说恢复节点，项目负责人不知道安装脚本从哪里来");
 
     const withNode = structuredClone(base);
     withNode.fleet = {online: 1, total: 2};
@@ -4376,6 +4388,14 @@ function runPendingTruncationCase() {
         && /data-menu="org-projects"/u.test(orgOverviewHtml)
         && /data-menu="proj-overview"/u.test(orgOverviewHtml),
       "组织概览缺少按中文管理顺序组织的图形化入口，用户仍要从左侧菜单猜下一步");
+    const orgOverviewWithoutNodes = probe.renderOrgOverviewWith(overviewState, orgAdmin, [
+      {...orgAdmin, status: "active"}
+    ], []).replace(/<!--[\s\S]*?-->/gu, "");
+    check("组织概览无节点时不能把常规注册说成组织页接入",
+      /新增 agent 先进入目标项目注册/u.test(orgOverviewWithoutNodes)
+        && !/需要执行任务前先接入节点/u.test(orgOverviewWithoutNodes)
+        && !/先接入 agent/u.test(orgOverviewWithoutNodes),
+      "组织概览把新增 agent 写成组织页接入，用户会在组织页找不到项目注册脚本");
     check("组织概览项目表要有进入项目和项目授权按钮",
       /data-action="open-project-page" data-project="p1" data-target-menu="proj-overview"/u.test(orgOverviewHtml)
         && /data-action="open-project-page" data-project="p1" data-target-menu="org-projects"/u.test(orgOverviewHtml)
@@ -5656,9 +5676,18 @@ await runCodedApiErrorCase();
   check("要说清它们不会有进展、以及去哪儿看",
     /不会有任何进展/.test(stalled)
       && /AI 智能体/.test(stalled)
+      && /刷新自检/.test(stalled)
+      && /恢复目标 agent 主机\/进程心跳/.test(stalled)
       && !/项目设置」→「智能体接入/.test(stalled)
+      && !/接入或恢复节点/.test(stalled)
       && /「项目管理」|联系项目管理员/u.test(stalled),
     "只说没节点，不说这对他意味着什么、下一步做什么");
+  const neverRegistered = probe.renderTaskGroupsWith(withCells("assigned", {online: 0, total: 0}), account, "p1", null, {});
+  check("一个 agent 都没注册时，任务组页出口要直接指向项目注册脚本",
+    /注册 agent/.test(neverRegistered)
+      && /加入令牌/.test(neverRegistered)
+      && !/接入或恢复节点/.test(neverRegistered),
+    "单元已交出去但项目没有节点时还说恢复节点，项目负责人不知道先去哪儿拿脚本");
   check("有在线 agent 时不挂这条提示",
     !/没有任何在线的 agent 节点/.test(probe.renderTaskGroupsWith(withCells("assigned", {online: 1, total: 2}), account, "p1", null, {})),
     "有节点在线还提示 —— 常亮的告警等于没有告警");
@@ -5717,7 +5746,12 @@ await runCodedApiErrorCase();
     /在制品已经达到上限/.test(wipFull) && /8/.test(wipFull),
     "后端按额度把单元判成 resource_queued，界面却什么都不说 —— 人只看到单元不动，无从判断是背压还是坏了");
   check("要说清这是背压、会自己恢复，以及想更宽怎么做",
-    /不需要你动手/.test(wipFull) && /AI 智能体/.test(wipFull) && /准入/u.test(wipFull),
+    /不需要你动手/.test(wipFull)
+      && /AI 智能体/.test(wipFull)
+      && /注册 agent/.test(wipFull)
+      && /刷新自检/.test(wipFull)
+      && /准入/u.test(wipFull)
+      && !/接入或恢复节点/.test(wipFull),
     "只说达到上限，不说会不会自己好、也不说怎么调宽 —— 人会去找一个并不存在的故障");
   check("额度没用满时不挂这条提示",
     !/在制品已经达到上限/.test(probe.renderTaskGroupsWith(withWip({inFlight: 3, capacity: 8}, {online: 2, total: 2}), account, "p1", null, {})),
@@ -5800,7 +5834,10 @@ await runCodedApiErrorCase();
     /没有任何在线的 agent 节点/.test(stalled),
     "卡片停在'等待 AI 再分析'，而没有任何 agent 能回答 —— 人会一直等下去");
   check("要给出不必干等的出路",
-    /直接在这里定稿或打回/.test(stalled),
+    /直接在这里定稿或打回/.test(stalled)
+      && /刷新自检/.test(stalled)
+      && /恢复目标 agent 主机\/进程心跳/.test(stalled)
+      && !/接入或恢复节点/.test(stalled),
     "只说没人回答，不说人现在能做什么 —— 等于把他留在原地");
 
   const online = baseState();
