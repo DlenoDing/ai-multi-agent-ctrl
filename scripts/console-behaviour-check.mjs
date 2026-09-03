@@ -300,6 +300,12 @@ globalThis.__probe = {
     if (viewMode) agentViewMode = viewMode;
     return renderProjectAgents();
   },
+  renderProjectSettingsWith: (nextState, account, projectId, config) => {
+    state = nextState; currentAccount = account; currentProjectId = projectId;
+    projConfig = config || {repositories: [], baselineData: [], defaultRoles: [], systemRules: [], businessRules: []};
+    projConfigStatus = "loaded"; projConfigVersion = "probe-config";
+    return renderProjectSettings();
+  },
   blockerGuide: (type) => blockerGuide(type),
   renderMonitorWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; return renderMonitor(); },
   setAuth: (token, account) => { authToken = token; currentAccount = account; },
@@ -4040,9 +4046,11 @@ function runPendingTruncationCase() {
       agents: [{id: "agent_1", name: "档案", role: "reviewer", model: "auto_best", status: "active"}],
       agentJoinTokens: [{joinTokenId: "join_1", projectId: "p1", status: "issued", expiresAt: "2099-01-01T00:00:00Z"}],
       skillSources: [{sourceId: "src_1", status: "active", repositoryUrl: "https://example.test/skills.git"}],
+      roleSkillIndex: [{roleSkillId: "reviewer", name: "评审员", category: "review", sourceId: "src_1"}],
       roleSkillCountBySource: {src_1: 3},
       modelCapabilities: [{modelId: "gpt-5.5", providerClass: "openai", availability: "available", strengths: ["implementation"]}],
-      roleSkillOverlays: [{overlayId: "ov_1", status: "active", roleSkillRef: "reviewer", projectId: "p1", patch: {}}],
+      roleSkillOverlays: [{overlayId: "ov_1", status: "active", roleSkillRef: "reviewer", projectId: "p1",
+        patch: {allowedCapabilityAdds: ["repo_read"], forbiddenCapabilityAdds: ["schema_change"]}, createdAt: "2026-08-12T00:00:00Z"}],
       agentDispatches: [{dispatchId: "adp1", taskGroupId: "tg1", workItemId: "w1", status: "queued"}],
       humanConfirmationRequests: [{requestId: "hcr1", taskGroupId: "tg1", workItemId: "w1", status: "pending",
         decisionClass: "major", blocking: true, createdAt: "2026-08-12T00:00:00Z", question: {summary: "是否定稿方案"}, options: []}],
@@ -4143,6 +4151,30 @@ function runPendingTruncationCase() {
         && /data-section-title="执行控制"/u.test(taskGroupDetailHtml)
         && /data-section-title="工作项"/u.test(taskGroupDetailHtml),
       "任务组详情的小节没有稳定锚点，卡片只能跳顶层 panel，不能跳展开详情里的具体位置");
+    const projectSettingsHtml = probe.renderProjectSettingsWith(overviewState, admin, "p1", {
+      repositories: [{id: "repo", url: "git@example.test/repo.git", defaultBranch: "main"}],
+      baselineData: [], defaultRoles: [], systemRules: [], businessRules: []
+    }).replace(/<!--[\s\S]*?-->/gu, "");
+    check("项目设置页必须提供角色 Skill 定制入口和创建表单",
+      /项目设置总览/u.test(projectSettingsHtml)
+        && /角色定制/u.test(projectSettingsHtml)
+        && /data-jump-panel="角色 Skill 定制"/u.test(projectSettingsHtml)
+        && /data-form="role-skill-overlay" data-scope="project"/u.test(projectSettingsHtml)
+        && /reviewer/u.test(projectSettingsHtml)
+        && /禁掉 schema_change/u.test(projectSettingsHtml),
+      "角色 Skill 叠加仍然只能在系统设置只读追踪或 API 里处理，项目管理员没有图形化入口");
+    check("任务组详情必须提供本组角色 Skill 定制入口和任务组级提交表单",
+      /本任务组角色 Skill 定制/u.test(taskGroupDetailHtml)
+        && /项目级继承/u.test(taskGroupDetailHtml)
+        && /data-form="role-skill-overlay" data-scope="task_group"/u.test(taskGroupDetailHtml)
+        && /下一次派发时由服务端同步到 agent/u.test(taskGroupDetailHtml),
+      "任务组特殊角色能力要求仍没有图形化入口，用户只能改规则或离开界面构造 API");
+    check("角色 Skill 定制提交处理必须调用既有 overlay 接口并写入 patch",
+      /\/api\/role-skill-overlays/u.test(probe.handlerSource("submit"))
+        && /allowedCapabilityAdds/u.test(probe.handlerSource("submit"))
+        && /forbiddenCapabilityAdds/u.test(probe.handlerSource("submit"))
+        && /modelRequirementPatchRef/u.test(probe.handlerSource("submit")),
+      "角色 Skill 定制表单没有接到后端已有 overlay 写入路径，界面只是空壳");
     check("详情跳转处理器要支持 data-section-title 小节和动态标题前缀",
       /querySelectorAll\("\[data-section-title\]"\)/u.test(probe.handlerSource("click"))
         && /sectionTitle\.startsWith\(title\)/u.test(probe.handlerSource("click")),

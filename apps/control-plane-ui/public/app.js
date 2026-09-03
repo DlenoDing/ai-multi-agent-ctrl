@@ -436,6 +436,7 @@ function emptyState() {
     modelSelectionPolicies: [],
     modelSelectionDecisions: [],
     skillSources: [],
+    roleSkillIndex: [],
     roleSkillCountBySource: {},
     roleSkillOverlays: [],
     sessionPlacementDecisions: [],
@@ -1564,13 +1565,16 @@ async function loadPage() {
     } else if (page === "tg") {
       // 建工作项表单里的「指定模型」下拉要读 modelCapabilities，而 tasks 视图不含它。
       // 用轻量的 /api/model-registry（只回模型清单，不是整份 runtime 视图）并回补 —— 取不到就只显示「自动」，不挡建工作项。
-      const [tasksState, modelRegistry] = await Promise.all([
+      const [tasksState, modelRegistry, skillRegistry] = await Promise.all([
         fetchState("tasks", {projectId: currentProjectId}),
-        api("/api/model-registry").catch(() => ({modelCapabilities: []}))
+        api("/api/model-registry").catch(() => ({modelCapabilities: []})),
+        api("/api/skill-registry").catch(() => ({roleSkillIndex: [], roleSkillOverlays: []}))
       ]);
       state = {
         ...tasksState,
-        modelCapabilities: modelRegistry.modelCapabilities || []
+        modelCapabilities: modelRegistry.modelCapabilities || [],
+        roleSkillIndex: skillRegistry.roleSkillIndex || [],
+        roleSkillOverlays: skillRegistry.roleSkillOverlays || []
       };
       ensureProjectSelection();
       if (expandedTaskGroupId) await loadTaskGroupDetail(expandedTaskGroupId);
@@ -1615,7 +1619,15 @@ async function loadPage() {
       };
       ensureProjectSelection();
     } else if (page === "proj-settings") {
-      state = await fetchState("tasks", {projectId: currentProjectId});
+      const [tasksState, skillRegistry] = await Promise.all([
+        fetchState("tasks", {projectId: currentProjectId}),
+        api("/api/skill-registry").catch(() => ({roleSkillIndex: [], roleSkillOverlays: []}))
+      ]);
+      state = {
+        ...tasksState,
+        roleSkillIndex: skillRegistry.roleSkillIndex || [],
+        roleSkillOverlays: skillRegistry.roleSkillOverlays || []
+      };
       ensureProjectSelection();
       if (currentProjectId) {
         projConfigStatus = "unloaded";
@@ -2420,7 +2432,7 @@ function renderSysSettingsActionBoard(runtime, metrics) {
       ${jumpModuleCard({
         title: "角色叠加",
         metric: `${activeOverlays}`,
-        detail: "项目/任务组级 role skill 定制，只读追踪",
+        detail: "项目/任务组级 role skill 定制追踪",
         panelTitle: "角色技能叠加（改动 agent 能力，只读）",
         tone: activeOverlays ? "orange" : "gray",
         action: "看叠加"
@@ -2535,9 +2547,8 @@ function renderSysSettings() {
           : "而系统内置技能也是 0 个：现在没有任何角色技能可用，agent 只拿得到通用角色规则。";
         return `<div class="notice warn-notice">${esc(why)}，${esc(fallback)}</div>`;
       })()),
-    // 角色技能叠加会【改掉 agent 实际拥有的能力】（含 forbiddenCapabilityAdds），它是真人专属动作，
-    // 数据也一直下发到这一页 —— 却从没有被渲染过：人看不到某个项目/任务组的角色规则被谁改过、改成了什么。
-    // 创建仍走 API（补丁结构复杂，不值得为它在这里造一个编辑器），但"存在且生效"这件事必须看得见。
+    // 角色技能叠加会【改掉 agent 实际拥有的能力】（含 forbiddenCapabilityAdds）。系统设置只做全局追踪；
+    // 真正创建入口在项目设置和任务组详情，避免全局页误把定制打到错误项目。
     panel("角色技能叠加（改动 agent 能力，只读）", (() => {
       const overlays = (state.roleSkillOverlays || []).filter((item) => item.status === "active");
       const rows = overlays.slice(0, 20).map((overlay) => row([
@@ -2550,7 +2561,7 @@ function renderSysSettings() {
         {v: fmtTime(overlay.createdAt), c: "nowrap"}
       ])).join("");
       return `${overlays.length
-        ? `<div class="notice">下面这些叠加正在改动 agent 实际拥有的能力。它们由人经 API 创建，控制台只读。</div>`
+        ? `<div class="notice">下面这些叠加正在改动 agent 实际拥有的能力。系统设置只做全局追踪；创建请到目标项目的「项目设置」或任务组详情。</div>`
         : ""}${table(["被改的角色技能", "作用范围", "改了什么", {label: "创建时间", c: "nowrap"}], rows,
         {emptyText: "没有生效中的叠加：agent 用的就是技能源里的原始角色规则", moreText: moreText(overlays.length, 20, "roleSkillOverlays")})}`;
     })(), {wide: true}),
@@ -4408,6 +4419,11 @@ function renderTaskGroupDetail(taskGroup) {
         ${config.configSource === "customized" && canControl ? `<button class="danger-button" data-action="tg-config-reset" data-task="${esc(taskGroup.id)}">重置为继承项目</button>` : ""}
       </div>
       ${canControl ? "" : `<div class="notice warn-notice">当前账号无“任务组控制”权限，配置为只读。</div>`}
+      ${sectionBlock("本任务组角色 Skill 定制", `
+        <div class="notice">这里只处理本任务组的特殊角色能力要求。项目级定制会显示为“项目级继承”，任务组级定制会优先生效；下一次派发时由服务端同步到 agent。</div>
+        ${roleSkillOverlayTable(taskGroupRoleSkillOverlays(taskGroup.id, taskGroup.projectId), {showScope: true})}
+        ${roleSkillOverlayForm({scope: "task_group", projectId: taskGroup.projectId, taskGroupId: taskGroup.id, readOnly: !canControl})}
+      `)}
       ${sectionBlock("系统规则（默认 / 项目 / 任务组）", ruleEditorForm({
         rules: config.systemRules || [],
         listId: "tg-system-rules",
@@ -6535,6 +6551,81 @@ function cfgRoleRow(role = {}, readOnly = false) {
   `;
 }
 
+function splitHumanList(value) {
+  return String(value || "").split(/[,\n，、]/u).map((item) => item.trim()).filter(Boolean);
+}
+
+function roleSkillChoiceList(id = "role-skill-options") {
+  const skills = state.roleSkillIndex || [];
+  if (!skills.length) return `<datalist id="${esc(id)}"></datalist>`;
+  return `<datalist id="${esc(id)}">${skills.slice(0, 500).map((skill) => `
+    <option value="${esc(skill.roleSkillId)}">${esc([skill.name, skill.category, skill.sourceId].filter(Boolean).join(" · "))}</option>
+  `).join("")}</datalist>`;
+}
+
+function roleSkillOverlaySummary(overlay) {
+  const patch = overlay.patch || {};
+  return [
+    (patch.allowedCapabilityAdds || []).length ? `放开 ${(patch.allowedCapabilityAdds || []).join("、")}` : "",
+    (patch.forbiddenCapabilityAdds || []).length ? `禁掉 ${(patch.forbiddenCapabilityAdds || []).join("、")}` : "",
+    patch.instructionRef && patch.instructionRef !== "overlay:empty" ? `附加说明 ${patch.instructionRef}` : "",
+    patch.modelRequirementPatchRef && patch.modelRequirementPatchRef !== "overlay:model:none" ? `模型要求 ${patch.modelRequirementPatchRef}` : ""
+  ].filter(Boolean).join("；") || "保留默认补丁";
+}
+
+function projectRoleSkillOverlays(projectId) {
+  return (state.roleSkillOverlays || []).filter((overlay) =>
+    overlay.status === "active" && overlay.projectId === projectId);
+}
+
+function taskGroupRoleSkillOverlays(taskGroupId, projectId) {
+  return (state.roleSkillOverlays || []).filter((overlay) =>
+    overlay.status === "active"
+    && (overlay.taskGroupId === taskGroupId || (!overlay.taskGroupId && overlay.projectId === projectId)));
+}
+
+function roleSkillOverlayTable(overlays, {showScope = false} = {}) {
+  return table([
+    "角色 Skill",
+    ...(showScope ? ["作用范围"] : []),
+    "定制内容",
+    {label: "创建时间", c: "nowrap"}
+  ], overlays.slice(0, 12).map((overlay) => row([
+    `<span class="mono">${esc(overlay.roleSkillRef || "-")}</span>`,
+    ...(showScope ? [esc(overlay.taskGroupId ? `任务组 ${taskGroupNameOf(overlay.taskGroupId)}` : "项目级继承")] : []),
+    {v: esc(roleSkillOverlaySummary(overlay)), c: "text-clip"},
+    {v: fmtTime(overlay.createdAt), c: "nowrap"}
+  ])).join(""), {emptyText: "暂无生效中的角色 Skill 定制。", moreText: moreText(overlays.length, 12, "roleSkillOverlays")});
+}
+
+function roleSkillOverlayForm({scope, projectId, taskGroupId, readOnly = false}) {
+  const disabled = readOnly ? "disabled" : "";
+  const formAttrs = [
+    `data-form="role-skill-overlay"`,
+    `data-scope="${esc(scope)}"`,
+    `data-project="${esc(projectId || "")}"`,
+    taskGroupId ? `data-task="${esc(taskGroupId)}"` : ""
+  ].filter(Boolean).join(" ");
+  return `
+    <form class="form-grid" ${formAttrs}>
+      ${roleSkillChoiceList(scope === "task_group" ? "tg-role-skill-options" : "project-role-skill-options")}
+      <div class="form-row"><label>选择要定制的角色 Skill</label>
+        <input name="roleSkillRef" list="${scope === "task_group" ? "tg-role-skill-options" : "project-role-skill-options"}" placeholder="输入或选择 roleSkillId" ${disabled}>
+      </div>
+      <div class="form-grid two">
+        <div class="form-row"><label>追加允许的能力</label><input name="allowedCapabilityAdds" placeholder="例如 repo_write,playwright_check" ${disabled}></div>
+        <div class="form-row"><label>追加禁止的能力</label><input name="forbiddenCapabilityAdds" placeholder="例如 schema_change,public_api_change" ${disabled}></div>
+      </div>
+      <div class="form-grid two">
+        <div class="form-row"><label>附加说明引用</label><input name="instructionRef" placeholder="overlay:empty 或 git:docs/..." value="overlay:empty" ${disabled}></div>
+        <div class="form-row"><label>模型要求补丁引用</label><input name="modelRequirementPatchRef" placeholder="overlay:model:none 或 git:docs/..." value="overlay:model:none" ${disabled}></div>
+      </div>
+      <div class="form-row"><label>决策记录引用</label><input name="decisionRecordRef" placeholder="可选；例如 decision:task-special-role" ${disabled}></div>
+      <button class="primary-button" type="submit" ${disabled}>创建角色 Skill 定制</button>
+    </form>
+  `;
+}
+
 function liveJoinTokenCount(projectId = "") {
   return (state.agentJoinTokens || []).filter((token) =>
     (!projectId || token.projectId === projectId)
@@ -6545,6 +6636,7 @@ function liveJoinTokenCount(projectId = "") {
 function renderProjectSettingsSummary(project, repos, baselineData, defaultRoles, resolved, rulesLoaded) {
   const systemRuleCount = rulesLoaded ? (resolved.systemRules || []).length : "—";
   const businessRuleCount = rulesLoaded ? (resolved.businessRules || []).length : "—";
+  const roleOverlayCount = projectRoleSkillOverlays(project.id).length;
   const archivedText = project.status === "archived"
     ? "项目已归档，设置只读"
     : "项目设置影响后续派发和产出落地；Agent 接入在独立页面管理";
@@ -6554,6 +6646,7 @@ function renderProjectSettingsSummary(project, repos, baselineData, defaultRoles
       ${summaryMetric("基线", baselineData.length, "agent 可引用的现状材料")}
       ${summaryMetric("默认角色", defaultRoles.length, "任务组未指定时的角色回退")}
       ${summaryMetric("待用加入令牌", liveJoinTokenCount(project.id), "在 AI 智能体页签发和使用")}
+      ${summaryMetric("角色定制", roleOverlayCount, "项目/任务组级 Skill 覆盖")}
       ${summaryMetric("系统规则", systemRuleCount, "项目层生效的系统规则")}
       ${summaryMetric("业务规则", businessRuleCount, "项目层生效的业务规则")}
     </div>
@@ -6566,6 +6659,7 @@ function renderProjectSettingsActionBoard(project, repos, baselineData, defaultR
   const agentStats = projectAgentStats(project.id);
   const systemRuleCount = rulesLoaded ? (resolved.systemRules || []).length : "—";
   const businessRuleCount = rulesLoaded ? (resolved.businessRules || []).length : "—";
+  const roleOverlayCount = projectRoleSkillOverlays(project.id).length;
   const ruleTone = rulesLoaded ? "blue" : "orange";
   return panel("项目设置操作看板", `
     <div class="module-grid">
@@ -6602,6 +6696,14 @@ function renderProjectSettingsActionBoard(project, repos, baselineData, defaultR
         action: "去接入页"
       })}
       ${jumpModuleCard({
+        title: "角色 Skill 定制",
+        metric: `${roleOverlayCount}`,
+        detail: roleOverlayCount ? "已有项目或任务组级角色定制" : "特殊角色要求在这里配置",
+        panelTitle: "角色 Skill 定制",
+        tone: roleOverlayCount ? "orange" : "gray",
+        action: "配置定制"
+      })}
+      ${jumpModuleCard({
         title: "系统规则",
         metric: `${systemRuleCount}`,
         detail: rulesLoaded ? "项目层可停用或改写默认系统规则" : "规则配置未就绪或本次读取失败",
@@ -6626,6 +6728,7 @@ function renderProjectSettingsBoundaryGuide(project, repos, baselineData, defaul
   const systemRuleCount = rulesLoaded ? (resolved.systemRules || []).length : "—";
   const businessRuleCount = rulesLoaded ? (resolved.businessRules || []).length : "—";
   const agentStats = projectAgentStats(project.id);
+  const roleOverlayCount = projectRoleSkillOverlays(project.id).length;
   return panel("项目设置职责分区", `
     <div class="module-grid action-grid">
       ${jumpModuleCard({
@@ -6643,6 +6746,14 @@ function renderProjectSettingsBoundaryGuide(project, repos, baselineData, defaul
         panelTitle: "项目基础配置",
         tone: defaultRoles.length ? "blue" : "gray",
         action: "看角色"
+      })}
+      ${jumpModuleCard({
+        title: "Skill 定制",
+        metric: roleOverlayCount,
+        detail: "项目或任务组的特殊角色能力要求在“角色 Skill 定制”维护",
+        panelTitle: "角色 Skill 定制",
+        tone: roleOverlayCount ? "orange" : "gray",
+        action: "看定制"
       })}
       ${jumpModuleCard({
         title: "执行规则",
@@ -6742,6 +6853,11 @@ function renderProjectSettings() {
         })}
       </div>
       <div class="small muted">这里不再承载注册表单，避免仓库/规则配置与运行节点管理混在一起。</div>
+    `, {wide: true}),
+    panel("角色 Skill 定制", `
+      <div class="notice">项目级定制会影响本项目后续派发中匹配该角色 Skill 的 agent；任务组里的特殊要求请在对应任务组详情里创建。服务端会把生效 overlay 写进任务契约和下发给 agent 的 Skill 工作集。</div>
+      ${roleSkillOverlayTable(projectRoleSkillOverlays(project.id), {showScope: true})}
+      ${roleSkillOverlayForm({scope: "project", projectId: project.id, readOnly: !canEdit || archived})}
     `, {wide: true}),
     !rulesLoaded
       ? panel("规则配置", projConfigStatus === "failed"
@@ -6956,6 +7072,30 @@ document.addEventListener("submit", async (event) => {
       await api(`/api/task-groups/${encodeURIComponent(form.dataset.task)}/language-policy`, {method: "POST", body: JSON.stringify({languageTag: data.languageTag, languageName})});
       formTouched = false;
       await loadPage();
+      return;
+    }
+    if (kind === "role-skill-overlay") {
+      const roleSkillRef = String(data.roleSkillRef || "").trim();
+      if (!roleSkillRef) throw new Error("请选择要定制的角色 Skill");
+      const allowedCapabilityAdds = splitHumanList(data.allowedCapabilityAdds);
+      const forbiddenCapabilityAdds = splitHumanList(data.forbiddenCapabilityAdds);
+      const instructionRef = String(data.instructionRef || "").trim() || "overlay:empty";
+      const modelRequirementPatchRef = String(data.modelRequirementPatchRef || "").trim() || "overlay:model:none";
+      if (!allowedCapabilityAdds.length && !forbiddenCapabilityAdds.length
+        && instructionRef === "overlay:empty" && modelRequirementPatchRef === "overlay:model:none") {
+        throw new Error("请至少填写一项定制内容：允许能力、禁止能力、附加说明引用或模型要求补丁引用");
+      }
+      await api("/api/role-skill-overlays", {method: "POST", body: JSON.stringify({
+        scope: form.dataset.scope || "project",
+        projectId: form.dataset.project || currentProjectId,
+        ...(form.dataset.scope === "task_group" ? {taskGroupId: form.dataset.task} : {}),
+        roleSkillRef,
+        decisionRecordRef: String(data.decisionRecordRef || "").trim() || undefined,
+        patch: {allowedCapabilityAdds, forbiddenCapabilityAdds, instructionRef, modelRequirementPatchRef}
+      })});
+      formTouched = false;
+      await loadPage();
+      toast.success("已创建角色 Skill 定制，后续派发会使用新的生效配置");
       return;
     }
     if (kind === "tg-config") {

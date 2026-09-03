@@ -3625,9 +3625,20 @@ async function handleApi(req, res) {
       const key = skill.sourceId || "unknown";
       roleSkillCountBySource[key] = (roleSkillCountBySource[key] || 0) + 1;
     }
+    const roleSkillIndex = (state.roleSkills || []).map((skill) => ({
+      roleSkillId: skill.roleSkillId,
+      sourceId: skill.sourceId,
+      sourcePath: skill.sourcePath,
+      name: skill.name || skill.title || skill.roleSkillId,
+      category: skill.category || skill.domain || "role",
+      status: skill.status || "active",
+      capabilities: (skill.capabilities || []).slice(0, 12),
+      contentDigest: skill.contentDigest
+    })).sort((left, right) => String(left.roleSkillId || "").localeCompare(String(right.roleSkillId || ""), "zh-Hans-CN"));
     json(res, 200, {
       skillSources: scoped.skillSources,
       roleSkillCountBySource,
+      roleSkillIndex,
       roleSkillOverlays: scoped.roleSkillOverlays
     });
     return;
