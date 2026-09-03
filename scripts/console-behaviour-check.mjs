@@ -291,6 +291,8 @@ globalThis.__probe = {
   renderSysOverviewWith: (nextState, account, overviewData) => { state = nextState; currentAccount = account; systemOverview = overviewData; return renderSysOverview(); },
   renderSysSettingsWith: (nextState, instructions) => { state = nextState; if (instructions !== undefined) instructionState = instructions; return renderSysSettings(); },
   renderSysAccountsWith: (nextState, account) => { state = nextState; currentAccount = account; return renderSysAccounts(); },
+  renderOrgMembersWith: (nextState, account, members) => { state = nextState; currentAccount = account; orgMembers = members || []; return renderOrgMembers(); },
+  renderOrgAgentsWith: (nextState, account, nodes) => { state = nextState; currentAccount = account; orgAgentNodes = nodes || []; return renderOrgAgents(); },
   blockerGuide: (type) => blockerGuide(type),
   renderMonitorWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; return renderMonitor(); },
   setAuth: (token, account) => { authToken = token; currentAccount = account; },
@@ -3893,7 +3895,8 @@ function runPendingTruncationCase() {
   {
     const overviewState = {
       schemaVersion: "runtime-state/v1", stateVersion: 1,
-      runtime: {accountRoles: ["viewer"], knownPermissions: ["project:view"], grantRoleTemplates: {project: ["viewer"]}},
+      runtime: {status: "running", accountRoles: ["viewer"], knownPermissions: ["project:view"], grantRoleTemplates: {project: ["viewer"]}, mcp: {toolCount: 85}},
+      organizations: [{orgId: "org_default", name: "默认组织", status: "active", quotas: {maxProjects: 5}, usage: {projects: 1}}],
       projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
       taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", progress: 40,
         languagePolicy: {languageTag: "zh-CN"}, workItemCount: 2,
@@ -3905,6 +3908,10 @@ function runPendingTruncationCase() {
       accessGrants: [{grantId: "g1", subjectRef: {subjectId: "acct_a"}, resource: {type: "system", id: "system"}, role: "system-owner", status: "active", permissions: ["system:*"]}],
       agents: [{id: "agent_1", name: "档案", role: "reviewer", model: "auto_best", status: "active"}],
       agentJoinTokens: [{joinTokenId: "join_1", projectId: "p1", status: "issued", expiresAt: "2099-01-01T00:00:00Z"}],
+      skillSources: [{sourceId: "src_1", status: "active", repositoryUrl: "https://example.test/skills.git"}],
+      roleSkillCountBySource: {src_1: 3},
+      modelCapabilities: [{modelId: "gpt-5.5", providerClass: "openai", availability: "available", strengths: ["implementation"]}],
+      roleSkillOverlays: [{overlayId: "ov_1", status: "active", roleSkillRef: "reviewer", projectId: "p1", patch: {}}],
       agentDispatches: [{dispatchId: "adp1", taskGroupId: "tg1", workItemId: "w1", status: "queued"}],
       workSessions: [{sessionId: "sess1", taskGroupId: "tg1", roleId: "reviewer", workItemId: "w1", placement: "new_session", status: "active"}],
       workerLanes: [{laneId: "lane1", taskGroupId: "tg1", roleId: "reviewer", laneFunction: "implementation", status: "busy", reuseGeneration: 1}],
@@ -3915,6 +3922,8 @@ function runPendingTruncationCase() {
       reviewBundles: [], ruleSourceResolutions: [], sharedDefinitions: [], findings: [], systemUpgradeCandidates: [],
       dlqEntries: [], truncatedCollections: []
     };
+    const orgAdmin = {accountId: "acct_a", accountType: "org_admin", displayName: "组织管理员", email: "a@example.com", organizationId: "org_default",
+      roles: ["org_admin"], permissions: ["project:create", "project:grant", "member:invite", "agent:activate"]};
     const accountHtml = probe.renderSysAccountsWith(overviewState, admin).replace(/<!--[\s\S]*?-->/gu, "");
     check("账号与授权页先显示总览，再显示邀请表单",
       accountHtml.indexOf("账号与授权总览") >= 0
@@ -3930,6 +3939,27 @@ function runPendingTruncationCase() {
       monitorHtml.indexOf("执行监控总览") >= 0
         && monitorHtml.indexOf("执行监控总览") < monitorHtml.indexOf("实时事件流"),
       "执行监控页没有入口级状态地图，用户只能从长表里猜当前卡点");
+    const sysSettingsHtml = probe.renderSysSettingsWith(overviewState, {sharedDefinitions: [{contractId: "def_1", definitionType: "api_contract", canonicalOwnerRole: "integration_owner", producerRole: "architect", status: "active"}]}).replace(/<!--[\s\S]*?-->/gu, "");
+    check("系统设置页先显示总览，再显示运行参数",
+      sysSettingsHtml.indexOf("系统设置总览") >= 0
+        && sysSettingsHtml.indexOf("系统设置总览") < sysSettingsHtml.indexOf("运行参数（只读）"),
+      "系统设置页首屏直接进入只读字段和长表，管理员无法先判断模型、技能、MCP 与共享定义状态");
+    const membersHtml = probe.renderOrgMembersWith(overviewState, orgAdmin, [
+      {...orgAdmin, status: "active"},
+      {accountId: "acct_wait", accountType: "user_account", displayName: "待登录成员", email: "wait@example.com", status: "invited", roles: []}
+    ]).replace(/<!--[\s\S]*?-->/gu, "");
+    check("成员管理页先显示总览和列表，再显示创建表单",
+      membersHtml.indexOf("成员管理总览") >= 0
+        && membersHtml.indexOf("成员管理总览") < membersHtml.indexOf("成员列表")
+        && membersHtml.indexOf("成员列表") < membersHtml.indexOf("创建成员"),
+      "成员管理页首屏直接创建成员，组织管理员看不到现有成员与邀请状态就被推去填表");
+    const agentsHtml = probe.renderOrgAgentsWith(overviewState, orgAdmin, [
+      {nodeId: "node1", nodeName: "节点", status: "online", display: {health: "ok", currentDispatchIds: ["adp1"]}, lastHeartbeatAt: "2099-01-01T00:00:00Z"}
+    ]).replace(/<!--[\s\S]*?-->/gu, "");
+    check("AI 智能体页先显示运行总览，再显示节点列表",
+      agentsHtml.indexOf("智能体运行总览") >= 0
+        && agentsHtml.indexOf("智能体运行总览") < agentsHtml.indexOf("智能体节点"),
+      "AI 智能体页没有先给在线率、忙碌节点和入网令牌概览，用户只能读整张节点表");
   }
 
   // 明细页的工作项来自专用端点，它现在也有上限（4000 单元时曾是约 1.1MB 载荷 + 4000 个 DOM 节点）。

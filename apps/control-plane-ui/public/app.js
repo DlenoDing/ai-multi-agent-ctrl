@@ -2269,6 +2269,31 @@ function renderSysOrgs() {
 
 /* ---------------- 系统管理员：系统设置 ---------------- */
 
+function renderSysSettingsSummary(runtime, metrics) {
+  const modelCapabilities = state.modelCapabilities || [];
+  const skillSources = state.skillSources || [];
+  const roleSkillCount = state.roleSkillCountBySource || {};
+  const usableSkillSources = skillSources.filter((source) => source.status !== "retired"
+    && Number(roleSkillCount[source.sourceId] || 0) > 0).length;
+  const availableModels = modelCapabilities.filter((profile) =>
+    !["unavailable", "disabled", "retired"].includes(profile.availability)).length;
+  const activeOverlays = (state.roleSkillOverlays || []).filter((item) => item.status === "active").length;
+  const sharedDefinitions = instructionState?.sharedDefinitions || [];
+  return panel("系统设置总览", `
+    <div class="metric-grid">
+      ${summaryMetric("运行状态", t(runtime.status), "控制面当前运行状态")}
+      ${summaryMetric("MCP 工具", runtime.mcp?.toolCount ?? "—", "集中式服务端工具数量")}
+      ${summaryMetric("模型数量", modelCapabilities.length, "已登记的模型能力")}
+      ${summaryMetric("可用模型", availableModels, "未被标记为不可用的模型")}
+      ${summaryMetric("技能源", skillSources.length, "可同步角色 skill 的来源")}
+      ${summaryMetric("可用技能源", usableSkillSources, "已经同步到角色 skill 的来源")}
+      ${summaryMetric("角色叠加", activeOverlays, "项目或任务组级生效定制")}
+      ${summaryMetric("共享定义", sharedDefinitions.length, "公共语义和契约归属")}
+    </div>
+    <div class="small muted">查看顺序：先看“技能源”和“模型能力注册”，再看“指令压缩指标”和“共享定义归属”；异常时优先处理 stale 技能源或不可用模型。</div>
+  `, {wide: true});
+}
+
 function renderSysSettings() {
   const runtime = state.runtime || {};
   const models = (state.modelCapabilities || []).slice(0, 40).map((profile) => row([
@@ -2311,6 +2336,7 @@ function renderSysSettings() {
   ])).join("");
 
   return [
+    renderSysSettingsSummary(runtime, metrics),
     panel("运行参数（只读）", `
       <dl class="kv-list">
         <dt>运行档案</dt><dd class="mono">${esc(runtime.profileId || "-")}</dd>
@@ -2817,6 +2843,25 @@ function permissionCheckboxes(selected = ["project:view", "task_group:read"]) {
   `;
 }
 
+function renderOrgMembersSummary(members) {
+  const activeMembers = members.filter((account) => account.status === "active").length;
+  const invitedMembers = members.filter((account) => account.status === "invited" || account.invitationWithdrawn).length;
+  const suspendedMembers = members.filter((account) => ["suspended", "disabled"].includes(account.status)).length;
+  const retiredMembers = members.filter((account) => account.status === "retired").length;
+  const self = members.find((account) => account.accountId === currentAccount?.accountId);
+  return panel("成员管理总览", `
+    <div class="metric-grid">
+      ${summaryMetric("成员总数", members.length, "不含 service_account")}
+      ${summaryMetric("启用成员", activeMembers, "可登录并参与项目管理")}
+      ${summaryMetric("待接受邀请", invitedMembers, "需要重发或等待首次登录")}
+      ${summaryMetric("已停用", suspendedMembers, "暂时不能登录")}
+      ${summaryMetric("已注销", retiredMembers, "终态，不可恢复")}
+      ${summaryMetric("可授权项目", assignableProjects().length, "可作为默认项目或授权目标")}
+    </div>
+    <div class="small muted">当前登录：${esc(self?.displayName || currentAccount?.displayName || "-")}。先查看“成员列表”的状态和风险，再创建新成员或调整权限。</div>
+  `, {wide: true});
+}
+
 function renderOrgMembers() {
   const members = (orgMembers || []).filter((account) => account.accountType !== "service_account");
   const memberRows = members.map((account) => {
@@ -2854,6 +2899,9 @@ function renderOrgMembers() {
   }).join("");
 
   return [
+    renderOrgMembersSummary(members),
+    panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows,
+      {emptyText: listEmptyText("成员列表")}), {wide: true, headerSide: filterInput("按姓名、邮箱过滤…", "members")}),
     panel("创建成员", `
       <form class="form-grid" data-form="member-create">
         <div class="form-row-inline">
@@ -2876,9 +2924,7 @@ function renderOrgMembers() {
         <div class="record"><div class="record-title"><strong>一次性令牌</strong></div><div class="record-meta"><span>成员首次使用令牌登录后令牌即失效，可在顶栏“修改密码”设置个人密码。</span></div></div>
         <div class="record"><div class="record-title"><strong>权限边界</strong></div><div class="record-meta"><span>成员权限不可包含系统级与组织级通配权限；项目、任务组细粒度授权可在「系统管理」→「账号与授权」或「组织管理」→「项目列表」补充。</span></div></div>
       </div>
-    `),
-    panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows,
-      {emptyText: listEmptyText("成员列表")}), {wide: true, headerSide: filterInput("按姓名、邮箱过滤…", "members")})
+    `)
   ].join("");
 }
 
@@ -2911,6 +2957,31 @@ function agentActions(node) {
     `<button class="danger-button" data-action="revoke-agent-node" data-node-id="${esc(node.nodeId)}">吊销</button>`
     + `<button class="danger-button" data-action="force-revoke-agent-node" data-node-id="${esc(node.nodeId)}" title="不等节点确认，当场作废其凭据">立即切断</button>`
   ].join(" ");
+}
+
+function renderOrgAgentsSummary(nodes) {
+  const aliveNodes = nodes.filter((node) => node.status !== "revoked");
+  const onlineNodes = aliveNodes.filter((node) => node.status === "online").length;
+  const busyNodes = aliveNodes.filter((node) => Number((node.display?.currentDispatchIds || []).length) > 0).length;
+  const runningDispatches = aliveNodes.reduce((sum, node) => sum + Number((node.display?.currentDispatchIds || []).length), 0);
+  const abnormalNodes = aliveNodes.filter((node) =>
+    node.status !== "online" || !["ok", "healthy", "normal", undefined, ""].includes(node.display?.health)).length;
+  const projectIds = new Set((state.projects || []).map((project) => project.id));
+  const liveTokens = (state.agentJoinTokens || []).filter((token) =>
+    projectIds.has(token.projectId)
+    && token.status === "issued"
+    && (!token.expiresAt || new Date(token.expiresAt).getTime() > serverNow())).length;
+  return panel("智能体运行总览", `
+    <div class="metric-grid">
+      ${summaryMetric("节点总数", aliveNodes.length, "已接入且未吊销的 agent 节点")}
+      ${summaryMetric("在线节点", `${onlineNodes}/${aliveNodes.length}`, "可接收控制面派发")}
+      ${summaryMetric("忙碌节点", busyNodes, "当前正在承载任务")}
+      ${summaryMetric("当前任务", runningDispatches, "节点正在执行的派发数量")}
+      ${summaryMetric("待用加入令牌", liveTokens, "可注册到本组织项目的票据")}
+      ${summaryMetric("异常节点", abnormalNodes, "离线、非健康或需排查的节点")}
+    </div>
+    <div class="small muted">查看顺序：先看节点在线率和异常节点，再在“智能体节点”里暂停、恢复、关停或吊销；新增机器只通过“加入令牌管理”入网。</div>
+  `, {wide: true});
 }
 
 function renderOrgAgents() {
@@ -2954,6 +3025,7 @@ function renderOrgAgents() {
   }
 
   return [
+    renderOrgAgentsSummary(nodes),
     panel("智能体节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "org-nodes")}${toggle}`}),
     panel("加入令牌管理", renderJoinTokenSection(), {wide: true})
   ].join("");
