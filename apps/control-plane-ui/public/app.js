@@ -3790,10 +3790,10 @@ function renderProjectOperationPath(project, groups, openGroups, eventsInScope, 
       ${projectModuleCard({
         pageId: "proj-agents",
         title: "1 执行准备",
-        metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : `${repoTargets.length}`,
+        metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : "无节点",
         detail: agentStats.aliveNodes.length
           ? "先确认 Agent 在线、准入和远程 MCP 生效"
-          : "没有项目节点时先注册 agent，再核对仓库落点",
+          : `没有项目节点时先注册 agent，再核对仓库落点（${repoTargets.length} 条）`,
         tone: agentStats.onlineNodes ? "green" : "orange",
         action: "检查 Agent"
       })}
