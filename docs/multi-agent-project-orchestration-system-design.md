@@ -798,7 +798,7 @@ Agent 加入系统后必须接受总控所需的控制能力，但控制必须�
 
 ### 10.6 Agent 自动加入脚本和最小 bootstrap
 
-Agent 加入系统必须做到“登录管理界面、进入目标项目、生成一次性 join token、受信执行环境运行 bootstrap、系统自动初始化”。不要要求 Agent Runtime 之外的配置动作填写仓库、MCP、数据库、规则路径和资源参数。join token 由有项目 `agent:activate` 权限的账号在「项目管理」→「项目设置」→「智能体接入」生成，必须绑定 project、expected node、allowed roles、MCP tool allowlist、ttl、maxUses 和创建者审计记录；常规入网流程不得依赖服务器命令行生成 token。
+Agent 加入系统必须做到“登录管理界面、进入目标项目、生成一次性 join token、受信执行环境运行 bootstrap、系统自动初始化”。不要要求 Agent Runtime 之外的配置动作填写仓库、MCP、数据库、规则路径和资源参数。join token 由有项目 `agent:activate` 权限的账号在「项目管理」→「AI 智能体」→「注册 agent」生成，必须绑定 project、expected node、allowed roles、MCP tool allowlist、ttl、maxUses 和创建者审计记录；常规入网流程不得依赖服务器命令行生成 token。
 
 给 Agent 主机执行的最小 bootstrap 模板。受信开发环境可以使用管道方式，生产环境必须使用后面的校验版：
 

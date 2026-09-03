@@ -3214,6 +3214,87 @@ function projectAgentStats(projectId = currentProjectId, nodes = projectAgentNod
   return {aliveNodes, onlineNodes, busyNodes, runningDispatches, abnormalNodes, liveTokens};
 }
 
+function renderOrgAgentsBoundaryGuide() {
+  return panel("智能体管理边界", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "组织节点总览",
+        metric: "组织",
+        detail: "这里看全组织 agent 节点、健康度、负载和吊销",
+        panelTitle: "智能体节点",
+        tone: "blue",
+        action: "看节点"
+      })}
+      ${jumpModuleCard({
+        title: "项目注册入口",
+        metric: "项目",
+        detail: "接新机器时进入目标项目的 AI 智能体页注册",
+        panelTitle: "加入令牌管理",
+        tone: "green",
+        action: "看令牌"
+      })}
+      ${jumpModuleCard({
+        title: "服务集中运行",
+        metric: "MCP",
+        detail: "MCP 与技能同步在服务端，agent 端只跑轻量执行器",
+        panelTitle: "加入令牌管理",
+        tone: "gray",
+        action: "看说明"
+      })}
+    </div>
+    <div class="small muted">边界：组织页负责全组织节点状态、控制和吊销；项目页负责按项目签发一次性令牌、复制注册脚本和确认项目节点可用。</div>
+  `, {wide: true});
+}
+
+function renderProjectAgentRegistrationFlow(project, nodes) {
+  const stats = projectAgentStats(project.id, nodes);
+  return panel("Agent 注册流程", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "1 选择项目",
+        metric: "当前",
+        detail: project.name || project.id,
+        panelTitle: "注册 agent",
+        tone: "blue",
+        action: "已定位"
+      })}
+      ${jumpModuleCard({
+        title: "2 签发令牌",
+        metric: stats.liveTokens || "签发",
+        detail: "一次性 join token 绑定当前项目、角色和 MCP scope",
+        panelTitle: "注册 agent",
+        tone: stats.liveTokens ? "green" : "orange",
+        action: "签发"
+      })}
+      ${jumpModuleCard({
+        title: "3 复制脚本",
+        metric: "sh",
+        detail: "弹窗返回 direct 和 SHA256 校验版安装命令",
+        panelTitle: "注册 agent",
+        tone: "blue",
+        action: "复制"
+      })}
+      ${jumpModuleCard({
+        title: "4 自动自检",
+        metric: "MCP",
+        detail: "agent 自动注册、自检并维护远程 MCP 配置",
+        panelTitle: "项目智能体节点",
+        tone: "gray",
+        action: "等回报"
+      })}
+      ${jumpModuleCard({
+        title: "5 确认可用",
+        metric: `${stats.onlineNodes}/${stats.aliveNodes.length}`,
+        detail: "回到节点列表确认在线、准入和健康度",
+        panelTitle: "项目智能体节点",
+        tone: stats.onlineNodes ? "green" : "orange",
+        action: "看节点"
+      })}
+    </div>
+    <div class="small muted">注册脚本不是固定写死命令，必须先由服务端在当前项目签发一次性加入令牌；agent 注册后通过 node token 与服务端 Gateway、远程 MCP 和技能工作集交互。</div>
+  `, {wide: true});
+}
+
 function renderOrgAgentsSummary(nodes) {
   const stats = orgAgentStats(nodes);
   return panel("智能体运行总览", `
@@ -3329,6 +3410,7 @@ function renderOrgAgents() {
   return [
     renderOrgAgentsSummary(nodes),
     renderOrgAgentsActionBoard(nodes),
+    renderOrgAgentsBoundaryGuide(),
     panel("智能体节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "org-nodes")}${toggle}`}),
     panel("加入令牌管理", renderJoinTokenSection(), {wide: true})
   ].join("");
@@ -3418,6 +3500,7 @@ function renderProjectAgents() {
   return [
     renderProjectAgentsSummary(project, nodes),
     renderProjectAgentsActionBoard(project, nodes),
+    renderProjectAgentRegistrationFlow(project, nodes),
     panel("项目智能体节点", `<div class="stack">${nodeNotice}${table(["名称", "运行状态", "准入", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"], nodeRows, {emptyText: "当前项目暂无智能体节点"})}</div>`,
       {wide: true, headerSide: filterInput("按节点名、地区过滤…", "project-nodes")}),
     panel("注册 agent", renderJoinTokenSection({projectId: project.id, context: "project"}), {wide: true})
@@ -4681,9 +4764,9 @@ function agentNodeManagementPath({needSelfCheck = false, needMoreCapacity = fals
     return `切到「组织管理」，打开 AI 智能体，${action}${suffix ? `；${suffix}` : ""}`;
   }
   if (perspective === "system") {
-    return `到「项目管理」→「项目设置」→「智能体接入」签发当前项目的加入令牌；已有节点离线或自检异常时，让对应组织管理员在「组织管理」→「AI 智能体」${action}${suffix ? `；${suffix}` : ""}`;
+    return `到「项目管理」→「AI 智能体」→「注册 agent」签发当前项目的加入令牌；已有节点离线或自检异常时，让对应组织管理员在「组织管理」→「AI 智能体」${action}${suffix ? `；${suffix}` : ""}`;
   }
-  return `联系项目管理员到「项目管理」→「项目设置」→「智能体接入」签发当前项目的加入令牌；已有节点异常时，由组织管理员在「组织管理」→「AI 智能体」${action}${suffix ? `；${suffix}` : ""}`;
+  return `联系项目管理员到「项目管理」→「AI 智能体」→「注册 agent」签发当前项目的加入令牌；已有节点异常时，由组织管理员在「组织管理」→「AI 智能体」${action}${suffix ? `；${suffix}` : ""}`;
 }
 
 // 派发排着队、会话挂着 active，但一个能干活的 agent 都没有 —— 这时控制台看上去一片繁忙，
@@ -5856,8 +5939,8 @@ function renderMonitor() {
   // 项目空间已经和系统/组织空间拆开，跨空间指路不能再写成"去某某页"：
   // 人在当前左侧菜单里看不到那一项，会以为功能丢了。先点空间，再说面板名。
   const JOIN_TOKEN_ENTRY_BY_PERSPECTIVE = {
-    system: "先打开「项目管理」→「项目设置」→「智能体接入」",
-    org: "先打开「项目管理」→「项目设置」→「智能体接入」；也可以在「组织管理」→「AI 智能体」统一管理节点"
+    system: "先打开「项目管理」→「AI 智能体」→「注册 agent」",
+    org: "先打开「项目管理」→「AI 智能体」→「注册 agent」；也可以在「组织管理」→「AI 智能体」统一管理节点"
   };
   const joinTokenWhere = JOIN_TOKEN_ENTRY_BY_PERSPECTIVE[perspectiveOf(currentAccount)];
   const nothingRanYetNotice = nothingRanYet

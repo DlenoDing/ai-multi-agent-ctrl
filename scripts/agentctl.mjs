@@ -29,7 +29,7 @@ if (process.argv.slice(2).some((arg) => arg === "--help" || arg === "-h")) {
   for (const [name, flags] of Object.entries(SUBCOMMAND_FLAGS)) {
     console.log(`  · ${name}：${flags.length ? flags.map((key) => `--${key}`).join(" ") : "只认上面那几个通用参数"}`);
   }
-  console.log("  · 接一台新机器通常不用它：到「AI 智能体」页的「加入令牌管理」面板点「签发一次性加入令牌」");
+  console.log("  · 接一台新机器通常不用它：到目标项目的「项目管理」→「AI 智能体」→「注册 agent」面板点「签发一次性加入令牌」");
   process.exit(0);
 }
 if (action !== "join-token create" && action !== "nodes list" && action !== "doctor") {
@@ -37,9 +37,9 @@ if (action !== "join-token create" && action !== "nodes list" && action !== "doc
     ["可用：agentctl join-token create | nodes list | doctor",
      "都要带 --server=<控制面地址>（默认 http://127.0.0.1:4317，也可用 AIMAC_PUBLIC_URL）",
      // 这句原先写的是"项目管理界面上「发加入令牌」"——页名和控件名两个都不存在
-     // （真名：「AI 智能体」页 →「加入令牌管理」面板 →「签发一次性加入令牌」）。
+     // （真名：目标项目的「项目管理」→「AI 智能体」→「注册 agent」面板 →「签发一次性加入令牌」）。
      // 写成【页 + 面板 + 点某按钮】这三种形状，指路核对那道门才看得见它。
-     "接一台新机器通常不用它：到「AI 智能体」页的「加入令牌管理」面板点「签发一次性加入令牌」，"
+     "接一台新机器通常不用它：到目标项目的「项目管理」→「AI 智能体」→「注册 agent」面板点「签发一次性加入令牌」，"
        + "会直接给出可粘贴的安装命令"]);
 }
 

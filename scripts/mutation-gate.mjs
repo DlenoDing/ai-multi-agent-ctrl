@@ -6052,8 +6052,8 @@ const MUTATIONS = [
     name: "刚装完的指路要指这个账号点得到的那一页",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '    system: "先打开「项目管理」→「项目设置」→「智能体接入」",',
-    to: '    system: "「AI 智能体」页的「加入令牌管理」面板",',
+    from: '    system: "先打开「项目管理」→「AI 智能体」→「注册 agent」",',
+    to: '    system: "先打开「项目管理」→「项目设置」→「智能体接入」",',
     expect: "而这一屏的导航里没有这几页"
   },
   {
@@ -9393,7 +9393,7 @@ const MUTATIONS = [
     name: "agentctl 指的入口要写成页+面板+按钮（否则判据看不见它）",
     file: "scripts/agentctl.mjs",
     check: "verifyGuidanceNamesRealPages",
-    from: "到「AI 智能体」页的「加入令牌管理」面板点「签发一次性加入令牌」，",
+    from: "到目标项目的「项目管理」→「AI 智能体」→「注册 agent」面板点「签发一次性加入令牌」，",
     to: "项目管理界面上点「发加入令牌」，",
     expect: "没有这个按钮"
   },

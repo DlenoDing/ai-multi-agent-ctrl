@@ -3948,7 +3948,8 @@ function runPendingTruncationCase() {
       "一个能干活的节点都没有，界面却只显示'执行中' —— 人会一直等一件永远不会发生的事");
     check("提示要说清已注册几个、以及该去哪儿看",
       /已注册 2 个/.test(offlineView)
-        && (/智能体接入/.test(offlineView) || /AI 智能体/.test(offlineView))
+        && /AI 智能体/.test(offlineView)
+        && !/项目设置」→「智能体接入/.test(offlineView)
         && /「项目管理」|「组织管理」|联系项目管理员|联系组织管理员/u.test(offlineView),
       "只说没有在线节点，不说是一台都没装还是装了都挂了，人不知道下一步做什么");
 
@@ -4086,12 +4087,13 @@ function runPendingTruncationCase() {
     const agentsHtml = probe.renderOrgAgentsWith(overviewState, orgAdmin, [
       {nodeId: "node1", nodeName: "节点", status: "online", display: {health: "ok", currentDispatchIds: ["adp1"]}, lastHeartbeatAt: "2099-01-01T00:00:00Z"}
     ]).replace(/<!--[\s\S]*?-->/gu, "");
-    check("AI 智能体页先显示运行总览和接入看板，再显示节点列表",
+    check("AI 智能体页先显示运行总览、接入看板和管理边界，再显示节点列表",
       panelAt(agentsHtml, "智能体运行总览") >= 0
         && panelAt(agentsHtml, "智能体运行总览") < panelAt(agentsHtml, "智能体接入操作看板")
-        && panelAt(agentsHtml, "智能体接入操作看板") < panelAt(agentsHtml, "智能体节点")
+        && panelAt(agentsHtml, "智能体接入操作看板") < panelAt(agentsHtml, "智能体管理边界")
+        && panelAt(agentsHtml, "智能体管理边界") < panelAt(agentsHtml, "智能体节点")
         && panelAt(agentsHtml, "智能体节点") < panelAt(agentsHtml, "加入令牌管理"),
-      "AI 智能体页没有把在线率、异常节点、负载和接入令牌排成可点击操作看板");
+      "AI 智能体页没有把在线率、异常节点、负载、接入令牌和组织/项目边界排成可点击操作看板");
     check("AI 智能体操作看板要提供节点和加入令牌的跳转入口",
       /data-jump-panel="智能体节点"/u.test(agentsHtml)
         && /data-jump-panel="加入令牌管理"/u.test(agentsHtml),
@@ -4106,15 +4108,18 @@ function runPendingTruncationCase() {
       agentDispatches: [{dispatchId: "adp1", taskGroupId: "tg1", status: "running"}]
     };
     const projectAgentHtml = probe.renderProjectAgentsWith(projectAgentsState, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
-    check("项目 AI 智能体页要先显示总览和操作看板，再显示节点与注册入口",
+    check("项目 AI 智能体页要先显示总览、操作看板和注册流程，再显示节点与注册入口",
       panelAt(projectAgentHtml, "项目智能体总览") >= 0
         && panelAt(projectAgentHtml, "项目智能体总览") < panelAt(projectAgentHtml, "项目智能体操作看板")
-        && panelAt(projectAgentHtml, "项目智能体操作看板") < panelAt(projectAgentHtml, "项目智能体节点")
+        && panelAt(projectAgentHtml, "项目智能体操作看板") < panelAt(projectAgentHtml, "Agent 注册流程")
+        && panelAt(projectAgentHtml, "Agent 注册流程") < panelAt(projectAgentHtml, "项目智能体节点")
         && panelAt(projectAgentHtml, "项目智能体节点") < panelAt(projectAgentHtml, "注册 agent"),
-      "项目级智能体入口仍可能藏在项目设置里，项目负责人不能直接按项目查看节点和注册脚本");
+      "项目级智能体入口仍可能藏在项目设置里，项目负责人不能直接按项目查看节点、注册流程和注册脚本");
     check("项目 AI 智能体页要提供注册脚本来源和节点控制入口",
       /签发一次性加入令牌/u.test(projectAgentHtml)
         && /注册脚本/u.test(projectAgentHtml)
+        && /Agent 注册流程/u.test(projectAgentHtml)
+        && /远程 MCP/u.test(projectAgentHtml)
         && /项目节点/u.test(projectAgentHtml)
         && /data-jump-panel="注册 agent"/u.test(projectAgentHtml),
       "项目智能体页没有把「先签发令牌、再拿服务端注册脚本」这条操作链路放到首屏");
@@ -4329,7 +4334,11 @@ function runPendingTruncationCase() {
       sessionPlacementDecisions: [], closeBarriers: [], agentExecutionEvents: [], truncatedCollections: []};
     const freshView = probe.renderMonitorWith(freshState, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
     check("一件执行记录都没有时，监控页要说清这是正常的以及下一步",
-      /还没有任何执行记录/.test(freshView) && /签发一次性加入令牌/.test(freshView),
+      /还没有任何执行记录/.test(freshView)
+        && /AI 智能体/.test(freshView)
+        && /注册 agent/.test(freshView)
+        && !/项目设置」→「智能体接入/.test(freshView)
+        && /签发一次性加入令牌/.test(freshView),
       "十一张「暂无数据」并排，人分不清「还没开始跑」和「跑了但没取回来」");
     const busyState = structuredClone(freshState);
     busyState.workSessions = [{sessionId: "s1", taskGroupId: "tg1", status: "running"}];
@@ -5398,7 +5407,10 @@ await runCodedApiErrorCase();
     /没有任何在线的 agent 节点/.test(stalled),
     "进度条不会再动，而这一页一个字都不说 —— 人会一直等，并且会以为是 agent 在慢慢做");
   check("要说清它们不会有进展、以及去哪儿看",
-    /不会有任何进展/.test(stalled) && /智能体接入/.test(stalled) && /「项目管理」|联系项目管理员/u.test(stalled),
+    /不会有任何进展/.test(stalled)
+      && /AI 智能体/.test(stalled)
+      && !/项目设置」→「智能体接入/.test(stalled)
+      && /「项目管理」|联系项目管理员/u.test(stalled),
     "只说没节点，不说这对他意味着什么、下一步做什么");
   check("有在线 agent 时不挂这条提示",
     !/没有任何在线的 agent 节点/.test(probe.renderTaskGroupsWith(withCells("assigned", {online: 1, total: 2}), account, "p1", null, {})),

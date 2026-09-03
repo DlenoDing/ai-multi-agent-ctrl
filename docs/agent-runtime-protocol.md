@@ -8,7 +8,7 @@ Runtime 不是无限远程 shell。所有副作用都必须由控制平面授权
 
 ## 2. 自动加入流程
 
-系统管理员或具有项目 `agent:activate` 权限的账号登录管理界面，在目标项目的「项目管理」→「项目设置」→「智能体接入」中生成一次性 join token。join token 必须绑定 project、expected node、allowed roles、MCP tool allowlist、ttl、maxUses 和创建者审计记录；管理界面返回 direct/verified 两条加入命令。常规 Agent 入网不得要求用户在服务器命令行单独执行 token 生成脚本。
+系统管理员或具有项目 `agent:activate` 权限的账号登录管理界面，在目标项目的「项目管理」→「AI 智能体」→「注册 agent」中生成一次性 join token。join token 必须绑定 project、expected node、allowed roles、MCP tool allowlist、ttl、maxUses 和创建者审计记录；管理界面返回 direct/verified 两条加入命令。常规 Agent 入网不得要求用户在服务器命令行单独执行 token 生成脚本。
 
 受信执行环境的自动加入命令模板：
 
