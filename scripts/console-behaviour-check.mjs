@@ -4046,11 +4046,16 @@ function runPendingTruncationCase() {
       {directiveId: "dir1", taskGroupId: "tg1", directiveType: "pause", instruction: "暂停", status: "applied", appliedActions: [{action: "task_group_pause"}], createdAt: "2026-08-12T00:00:00Z"},
       {directiveId: "dir2", taskGroupId: "tg1", directiveType: "free_text", instruction: "补充说明", status: "rejected", rejectReason: "task_group_settled", createdAt: "2026-08-12T00:01:00Z"}
     ]).replace(/<!--[\s\S]*?-->/gu, "");
-    check("人工指令页先显示总览和流水，再显示下达表单",
+    check("人工指令页先显示总览和操作看板，再显示流水与下达表单",
       panelAt(directivesHtml, "人工指令总览") >= 0
-        && panelAt(directivesHtml, "人工指令总览") < panelAt(directivesHtml, "指令流水")
+        && panelAt(directivesHtml, "人工指令总览") < panelAt(directivesHtml, "人工指令操作看板")
+        && panelAt(directivesHtml, "人工指令操作看板") < panelAt(directivesHtml, "指令流水")
         && panelAt(directivesHtml, "指令流水") < panelAt(directivesHtml, "下达人工指令"),
-      "人工指令页首屏直接给操作表单，用户看不到已有指令是否已执行或被拒就可能重复下达");
+      "人工指令页没有把待处理、拒绝、可控范围和下达入口排成可点击看板，用户仍要先读长表");
+    check("人工指令操作看板要提供流水和下达表单的跳转入口",
+      /data-jump-panel="指令流水"/u.test(directivesHtml)
+        && /data-jump-panel="下达人工指令"/u.test(directivesHtml),
+      "人工指令操作看板只显示指标，没有接上指令流水和下达人工指令面板的跳转");
   }
 
   // 明细页的工作项来自专用端点，它现在也有上限（4000 单元时曾是约 1.1MB 载荷 + 4000 个 DOM 节点）。

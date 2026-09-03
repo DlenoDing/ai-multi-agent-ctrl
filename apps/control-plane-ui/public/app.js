@@ -4977,7 +4977,7 @@ const DIRECTIVE_TYPES = [
   ["free_text", "自由指令"]
 ];
 
-function renderDirectiveSummary(directives, canControl) {
+function directiveStats(directives) {
   const projectGroupIds = new Set(projectTaskGroups().map((taskGroup) => taskGroup.id));
   const pending = directives.filter((directive) => ["created", "queued", "pending", "accepted"].includes(directive.status)).length;
   const applied = directives.filter((directive) => ["applied", "completed", "executed"].includes(directive.status)
@@ -4986,16 +4986,78 @@ function renderDirectiveSummary(directives, canControl) {
     || directive.rejectReason).length;
   const involvedGroups = new Set(directives.map((directive) => directive.taskGroupId).filter((id) => projectGroupIds.has(id))).size;
   const controllableGroups = projectTaskGroups().filter((taskGroup) => hasGroupPerm(taskGroup.id, "task_group:control")).length;
+  return {pending, applied, rejected, involvedGroups, controllableGroups};
+}
+
+function renderDirectiveSummary(directives, canControl) {
+  const stats = directiveStats(directives);
   return panel("人工指令总览", `
     <div class="metric-grid">
       ${summaryMetric("指令总数", directives.length, "当前项目范围内的人工指令")}
-      ${summaryMetric("待处理", pending, "等待编排周期消费或确认")}
-      ${summaryMetric("已执行", applied, "已产生结构化动作")}
-      ${summaryMetric("已拒绝", rejected, "需要查看拒绝原因")}
-      ${summaryMetric("涉及任务组", involvedGroups, "已有指令触达的任务组")}
-      ${summaryMetric("可控任务组", controllableGroups, canControl ? "你可下达控制指令的范围" : "当前账号只能查看")}
+      ${summaryMetric("待处理", stats.pending, "等待编排周期消费或确认")}
+      ${summaryMetric("已执行", stats.applied, "已产生结构化动作")}
+      ${summaryMetric("已拒绝", stats.rejected, "需要查看拒绝原因")}
+      ${summaryMetric("涉及任务组", stats.involvedGroups, "已有指令触达的任务组")}
+      ${summaryMetric("可控任务组", stats.controllableGroups, canControl ? "你可下达控制指令的范围" : "当前账号只能查看")}
     </div>
     <div class="small muted">查看顺序：先看“指令流水”确认是否已提交或被拒，再决定是否下达新指令；指令会进入编排输入，不直接改总控会话。</div>
+  `, {wide: true});
+}
+
+function renderDirectiveActionBoard(directives, canControl) {
+  const stats = directiveStats(directives);
+  return panel("人工指令操作看板", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "待处理",
+        metric: `${stats.pending}`,
+        detail: stats.pending ? "等待编排周期消费或确认" : "当前没有等待处理的指令",
+        panelTitle: "指令流水",
+        tone: stats.pending ? "orange" : "green",
+        action: "查看流水"
+      })}
+      ${jumpModuleCard({
+        title: "已拒绝",
+        metric: `${stats.rejected}`,
+        detail: stats.rejected ? "需要核对拒绝原因，避免重复提交" : "当前没有被拒绝的指令",
+        panelTitle: "指令流水",
+        tone: stats.rejected ? "red" : "green",
+        action: "查看原因"
+      })}
+      ${jumpModuleCard({
+        title: "已执行",
+        metric: `${stats.applied}`,
+        detail: "核对已产生的结构化动作",
+        panelTitle: "指令流水",
+        tone: stats.applied ? "blue" : "gray",
+        action: "查看动作"
+      })}
+      ${jumpModuleCard({
+        title: "涉及任务组",
+        metric: `${stats.involvedGroups}`,
+        detail: "已有指令触达的任务组范围",
+        panelTitle: "指令流水",
+        tone: stats.involvedGroups ? "blue" : "gray",
+        action: "查看范围"
+      })}
+      ${jumpModuleCard({
+        title: "可控任务组",
+        metric: `${stats.controllableGroups}`,
+        detail: canControl ? "你可下达控制指令的范围" : "当前账号只能查看",
+        panelTitle: "下达人工指令",
+        tone: canControl ? "blue" : "orange",
+        action: canControl ? "准备下达" : "查看权限"
+      })}
+      ${jumpModuleCard({
+        title: "下达入口",
+        metric: canControl ? "可用" : "只读",
+        detail: "向总控提交结构化输入，不直接改会话",
+        panelTitle: "下达人工指令",
+        tone: canControl ? "blue" : "gray",
+        action: "打开表单"
+      })}
+    </div>
+    <div class="small muted">处理顺序：先核对待处理、拒绝原因和已执行动作，再下达新指令。</div>
   `, {wide: true});
 }
 
@@ -5041,6 +5103,7 @@ function renderDirectives() {
 
   return [
     renderDirectiveSummary(directiveList, canControl),
+    renderDirectiveActionBoard(directiveList, canControl),
     panel("指令流水", table([{label: "时间", c: "nowrap"}, "类型", {label: "指令内容", c: "text-clip"}, "状态", {label: "已执行动作", c: "text-clip"}, "拒绝原因"], directiveRows), {wide: true, headerSide: filterInput("按指令内容过滤…", "directives")}),
     panel("下达人工指令", `
       <div class="stack">
