@@ -4145,6 +4145,11 @@ function runPendingTruncationCase() {
         && /项目节点/u.test(projectAgentHtml)
         && /data-jump-panel="注册 agent"/u.test(projectAgentHtml),
       "项目智能体页没有把「先签发令牌、再拿服务端注册脚本」这条操作链路放到首屏");
+    check("项目 AI 智能体页要说明加入令牌命令只显示一次且不能从列表还原",
+      /安装命令和明文 join token 只在签发成功弹窗里显示一次/u.test(projectAgentHtml)
+        && /不能还原明文 join token/u.test(projectAgentHtml)
+        && /撤销旧令牌后重新签发/u.test(projectAgentHtml),
+      "项目智能体注册入口没有说明弹窗关闭后的令牌处置方式，用户会误以为列表还能拿回安装命令");
     check("项目 AI 智能体页要提供列表和卡片两种节点管理视图",
       /data-action="agent-view-mode" data-mode="table"/u.test(projectAgentHtml)
         && /data-action="agent-view-mode" data-mode="cards"/u.test(projectAgentHtml),

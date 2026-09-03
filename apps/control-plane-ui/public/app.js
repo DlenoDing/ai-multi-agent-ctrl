@@ -2902,6 +2902,11 @@ function renderJoinTokenSection(options = {}) {
     : `<div class="form-row"><label>目标项目</label>
         <select name="projectId">${scopedProjects.map((project) => `<option value="${esc(project.id)}" ${project.id === selectedProject?.id ? "selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}</select>
       </div>`;
+  const liveIssued = scopedTokens.filter((token) =>
+    token.status === "issued" && (!token.expiresAt || new Date(token.expiresAt).getTime() > serverNow())).length;
+  const installNotice = liveIssued
+    ? `<div class="notice warn-notice">当前有 ${esc(liveIssued)} 张待用加入令牌。安装命令和明文 join token 只在签发成功弹窗里显示一次；列表不能还原明文 join token。如果弹窗已关闭且命令没有被目标 agent 使用，请撤销旧令牌后重新签发。</div>`
+    : `<div class="notice">签发成功后会弹出一次性安装命令；关闭弹窗后列表只保留脱敏令牌记录、状态和撤销入口，不能还原明文 join token。</div>`;
   return `
     <div class="stack">
       ${options.context === "project"
@@ -2917,6 +2922,7 @@ function renderJoinTokenSection(options = {}) {
         </div>
         <button class="primary-button" type="submit">签发一次性加入令牌</button>
       </form>
+      ${installNotice}
       ${table(["令牌", "项目", "角色范围", "状态", {label: "已用次数", c: "num"}, {label: "过期时间", c: "nowrap"}, "操作"], tokens, {moreText: moreText(scopedTokens.length, 20, "agentJoinTokens")})}
     </div>
   `;

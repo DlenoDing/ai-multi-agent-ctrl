@@ -37,3 +37,7 @@
 - 已补充 `console-behaviour-gate` 断言：项目 AI 智能体页必须提供列表 / 卡片切换，卡片视图必须显示准入、健康、任务、心跳和节点控制操作。
 - 已完成静态语法检查：`node --check apps/control-plane-ui/public/app.js`、`node --check scripts/console-behaviour-check.mjs`。
 - 已完成界面行为门：`console-behaviour-gate` 通过，565 条断言全部通过。
+- 已补充注册入口持久提示：签发成功弹窗关闭后，列表只保留脱敏记录、状态和撤销入口，不能还原明文 join token；已有待用令牌但命令未使用时，应撤销旧令牌后重新签发。
+- 已补充 `console-behaviour-gate` 断言：项目 AI 智能体页必须说明安装命令和明文 join token 只显示一次，且列表不能还原明文。
+- 已再次完成静态语法检查：`node --check apps/control-plane-ui/public/app.js`、`node --check scripts/console-behaviour-check.mjs`。
+- 已再次完成界面行为门：`console-behaviour-gate` 通过，566 条断言全部通过。
