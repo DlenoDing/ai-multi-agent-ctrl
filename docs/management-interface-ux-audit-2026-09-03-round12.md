@@ -37,4 +37,11 @@
 
 ## 实施结果
 
-- 待实施。
+- 已在 `apps/control-plane-ui/public/app.js` 新增“人工审核处置看板”，放在“人工审核总览”之后、“待你处理”之前。
+- 已抽出 `reviewStats`，让总览和处置看板共用待人工确认、核心决策、阻塞确认和涉及任务组的统计口径。
+- 看板复用现有 `jumpModuleCard`，不新增接口、不新增轮询、不新增依赖；所有指标均来自当前项目已加载确认单、授权请求、审批请求、发现项和定稿记录。
+- 已补充 `scripts/console-behaviour-check.mjs` 行为门，覆盖人工审核页的面板顺序和看板跳转目标。
+- 已通过 `node --check apps/control-plane-ui/public/app.js`、`node --check scripts/console-behaviour-check.mjs`、`git diff --check`、`npm run console-behaviour-gate`、`npm run mutation-anchors`。
+- 真实浏览器桌面走查通过：人工审核页显示 6 个面板，顺序为“人工审核总览 → 人工审核处置看板 → 待你处理 → 待人工确认 → 授权与处置 → 已答历史”；看板 6 张卡片均有明确跳转目标；页面无横向溢出。
+- 真实浏览器交互走查通过：点击“待人工确认”和“授权与处置”卡片后，对应面板进入当前视口。
+- 真实浏览器 390px 窄屏走查通过：看板仍为 6 张可读卡片，页面级 `scrollWidth` 与视口宽度一致；导航区域局部横向滚动不撑开整页。
