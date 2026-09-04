@@ -31,6 +31,7 @@ const I18N = "apps/control-plane-ui/public/i18n-zh.js";
 const APP_I18N_UTILS = "apps/control-plane-ui/public/modules/i18n-utils.js";
 const APP_LABELS = "apps/control-plane-ui/public/modules/labels.js";
 const APP_TIME = "apps/control-plane-ui/public/modules/time-format.js";
+const APP_UI_CONFIG = "apps/control-plane-ui/public/modules/ui-config.js";
 const STATIC_ASSETS = "apps/control-plane-ui/lib/static-assets.mjs";
 const CONSOLE_GATE = "scripts/console-behaviour-check.mjs";
 
@@ -2942,7 +2943,7 @@ const MUTATIONS = [
   },
   {
     name: "权限码本地化：授权列表里的权限码要有中文",
-    file: APP,
+    file: APP_UI_CONFIG,
     gate: "specs",
     from: '  "task_group:control": "任务组执行控制",',
     to: "",
@@ -2951,7 +2952,7 @@ const MUTATIONS = [
   {
     // 与审计动作那条同理：标签块换个名字，这道门就再也提取不到任何权限码，而它一片绿。
     name: "权限码本地化：标签块取不到时必须报空转",
-    file: APP,
+    file: APP_UI_CONFIG,
     gate: "specs",
     from: "const MEMBER_PERMISSION_OPTIONS = [",
     to: "const MEMBER_PERM_OPTIONS = [",
@@ -4973,7 +4974,7 @@ const MUTATIONS = [
   },
   {
     name: "视图下发的集合都要有中文名",
-    file: "apps/control-plane-ui/public/app.js",
+    file: APP_UI_CONFIG,
     check: "verifyEveryViewCollectionHasAChineseLabel",
     gate: "contract",
     from: '  instructionMetrics: "指令度量", modelSelectionPolicies: "模型选型策略",',
@@ -5334,7 +5335,7 @@ const MUTATIONS = [
   },
   {
     name: "界面不许列后端不认的执行角色",
-    file: "apps/control-plane-ui/public/app.js",
+    file: APP_UI_CONFIG,
     gate: "console",
     from: 'const WORK_ITEM_OWNER_ROLE_CHOICES = ["orchestrator",',
     to: 'const WORK_ITEM_OWNER_ROLE_CHOICES = ["kitchen-sink", "orchestrator",',
@@ -5358,7 +5359,7 @@ const MUTATIONS = [
   },
   {
     name: "归属为空要按默认组织算（与服务端同口径）",
-    file: "apps/control-plane-ui/public/app.js",
+    file: APP_UI_CONFIG,
     gate: "console",
     from: 'const organizationOf = (record) => String(record?.organizationId || DEFAULT_ORGANIZATION_ID);',
     to: 'const organizationOf = (record) => String(record?.organizationId || "");',
@@ -10889,7 +10890,7 @@ const MUTATIONS = [
   },
   {
     name: "会被容量裁掉的集合也要有中文名（横幅只在被裁到那一刻才渲染）",
-    file: "apps/control-plane-ui/public/app.js",
+    file: APP_UI_CONFIG,
     gate: "contract",
     check: "verifyEveryViewCollectionHasAChineseLabel",
     from: 'runtimeIssuePatterns: "运行问题模式", transitionEvidence: "状态转移证据",',
@@ -11085,7 +11086,7 @@ const MUTATIONS = [
   },
   {
     name: "授权作用在什么东西上，那一列不许露英文（真实数据里的 system_console 就露过）",
-    file: "apps/control-plane-ui/public/app.js",
+    file: APP_UI_CONFIG,
     gate: "contract",
     from: '  system_console: "系统控制台", user_console: "用户控制台", system_policy: "系统策略",',
     to: '  user_console: "用户控制台", system_policy: "系统策略",',

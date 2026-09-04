@@ -47,6 +47,17 @@ const {
 } = window.AIMAC_CONSOLE_TIME;
 const {uuid, copyText, esc} = window.AIMAC_CONSOLE_DOM_UTILS;
 const {progressBar, progressLine, quotaLine, panel, row} = window.AIMAC_CONSOLE_UI_PRIMITIVES;
+const {
+  WORK_ITEM_OWNER_ROLE_CHOICES,
+  DEFAULT_ORGANIZATION_ID,
+  organizationOf,
+  MEMBER_PERMISSION_OPTIONS,
+  PERMISSION_LABELS,
+  RESOURCE_TYPE_LABELS,
+  LANGUAGE_OPTIONS,
+  RULE_LIMITS,
+  COLLECTION_LABELS
+} = window.AIMAC_CONSOLE_UI_CONFIG;
 
 const app = document.querySelector("#app");
 
@@ -2732,19 +2743,7 @@ function noProjectYetNotice(what) {
     + "先创建一个项目：组织管理员切到「组织管理」→「项目列表」创建项目，系统管理员切到「系统管理」→「账号与授权」创建项目；创建后再进入「项目管理」→「成员权限」授权。</div>";
 }
 
-// 归属为空的账号（历史上经 MCP 建的那批）服务端按「默认组织」处理，界面必须用同一个口径 ——
-// 两边不一致，屏幕上能选的就会是后端必拒的（或者反过来，把本可以授的人藏起来）。
-// 这个常量与 core 的 DEFAULT_ORGANIZATION_ID 是同一件事，判据每次校验两边一致。
-// 工作项的执行角色只列【人会指派的那几个】。core 的 REGISTERED_OWNER_ROLES 有 22 个，
-// 另外 15 个是服务角色（command-bus / mcp-proxy / identity-service…）—— 把它们摆进下拉，
-// 等于让人给一个基础设施组件派活。这是有意收窄，不是漏了。
-// 两份清单没有任何东西钉着就一定会漂：判据两向核对 —— 这里列的必须都是 core 认的
-//（否则是选了必被拒的死杠杆），core 认而这里不列的，必须在登记册里逐个写明为什么。
-const WORK_ITEM_OWNER_ROLE_CHOICES = ["orchestrator", "agent-runtime", "reviewer", "qa", "security", "release", "monitor"];
-
-const DEFAULT_ORGANIZATION_ID = "org_default";
 let memberGrantProjectId = "";
-const organizationOf = (record) => String(record?.organizationId || DEFAULT_ORGANIZATION_ID);
 
 function renderProjectMemberForm(options = {}) {
   if (!(state.projects || []).length) return noProjectYetNotice("项目成员授权");
@@ -3003,57 +3002,9 @@ function renderOrgOverview() {
 
 /* ---------------- 组织管理员：成员管理 ---------------- */
 
-const MEMBER_PERMISSION_OPTIONS = [
-  ["project:view", "查看项目"],
-  ["project:grant", "项目授权管理"],
-  // task_group:* 这一类权限【只认按具体资源落位的 grant】，写在账号上的直接权限一律不生效
-  // （直接权限不绑定任何资源，等于对所有资源生效，因此服务端一律拒绝）。
-  // 继续把它们摆在这里，人会勾上、看到按钮被渲染出来、点下去却必定 403 —— 界面在说谎。
-  // 要把"人工审核"交出去，请到项目「成员权限」里的「项目成员授权」面板授予"评审人"角色。
-  ["member:invite", "邀请成员"],
-  ["agent:activate", "智能体管理"]
-];
-
-// 权限码 → 中文（授权列表等处复用，覆盖成员可选项之外的权限码）
-const PERMISSION_LABELS = {
-  ...Object.fromEntries(MEMBER_PERMISSION_OPTIONS),
-  "project:update": "编辑项目",
-  "project:create": "创建项目",
-  "project:*": "项目全部权限",
-  "task_group:orchestrate": "任务组编排调度",
-  "task_group:checkpoint_submit": "提交检查点",
-  "task_group:*": "任务组全部权限",
-  "org:member_admin": "组织成员管理",
-  "org:project_admin": "组织项目管理",
-  "org:*": "组织全部权限",
-  // 这几条此前掉到 permLabel 的 t() 兜底上，而 i18n 字典里也没有它们，于是「账号与授权」页
-  // 的授权列表直接显示 task_group:control 这样的英文码。实测在真实数据上露出过四条。
-  "task_group:read": "查看任务组",
-  "task_group:control": "任务组执行控制",
-  "task_group:review": "任务组人工审核",
-  "task_group:monitor": "任务组执行监控",
-  "system:account_admin": "系统账号管理",
-  "system:bootstrap": "系统初始化",
-  "system:model_registry": "模型能力注册",
-  "system:skill_sync": "技能源同步",
-  "system:*": "系统全部权限"
-};
 function permLabel(code) {
   return PERMISSION_LABELS[String(code || "")] || t(code);
 }
-// 授权列表里那一列写的是"这份授权作用在什么东西上"。这张表原先只有四项，而规范里
-// resourceType 有 17 个取值、代码另外还产出 state —— 真实数据里的 system_console 恰恰不在表里，
-// 于是系统负责人那一行显示成「system_console： system」。手编的清单又一次落在权威来源后面，
-// 所以现在按【规范枚举 ∪ 代码实际产出】全量核（契约门在守这条）。
-const RESOURCE_TYPE_LABELS = {
-  project: "项目", task_group: "任务组", organization: "组织", system: "系统",
-  system_console: "系统控制台", user_console: "用户控制台", system_policy: "系统策略",
-  agent: "智能体", shared_definition: "共享定义", environment: "环境", state: "运行态",
-  mcp_server: "MCP 服务", mcp_tool: "MCP 工具",
-  git_repo: "Git 仓库", git_worktree: "Git 工作树",
-  file_path: "文件路径", dir_path: "目录路径", artifact_path: "产物路径",
-  db_schema: "数据库 schema", db_table: "数据库表"
-};
 function resourceScopeLabel(resource) {
   const type = resource?.resourceType;
   const typeLabel = RESOURCE_TYPE_LABELS[type] || (type || "-");
@@ -4601,15 +4552,6 @@ function taskGroupNameOf(taskGroupId) {
 
 /* ---------------- 成员：任务组 ---------------- */
 
-const LANGUAGE_OPTIONS = [
-  ["zh-CN", "中文"],
-  ["en", "English"],
-  ["ja", "日本語"],
-  ["fr", "Français"],
-  ["de", "Deutsch"],
-  ["es", "Español"]
-];
-
 // 语种名要显示中文：后端存的 languageName 是英文（"Chinese"/"Japanese"），
 // 直接摆到中文界面上就成了"语言：Chinese"。界面本来就有 LANGUAGE_OPTIONS（zh-CN → 中文），
 // 先按语言标签查它，查不到再退回后端给的名字（那时至少还有个名字，好过空白）。
@@ -5377,11 +5319,6 @@ function ruleEditorForm(opts) {
   `;
 }
 
-// 服务端特意对超长规则回 422 而不是截断（它的注释写着"绝不静默削弱一条安全规则的语义"）——
-// 而 textarea 的 maxlength 在请求发出之前就把超出部分丢掉了，于是那道 422 永远不会被人看到：
-// 人写了一万字，存下的是前 8192 字，界面一声不吭。maxlength 已移除，改为提交时明确拒绝并说清超了多少。
-const RULE_LIMITS = {title: 256, content: 8192};
-
 function assertRuleFragmentLengths(fragments) {
   for (const fragment of fragments) {
     if (String(fragment.title || "").length > RULE_LIMITS.title) {
@@ -5872,33 +5809,6 @@ function countSuffix(field) {
 // 判断"谁有权限"、"有哪些项目"，少列一条就是漏掉一个人或一个项目。
 // 视图为了体积会把每个集合截到上限，服务端如实登记在 truncatedCollections 里。此前只有 5 张表
 // 各自调 capNotice 报出来，而界面上有 23 张表在渲染 state 集合 —— 其余 18 张【截了也不说】。
-// 实测真实部署里 roleSkills 269 条被截到 188 条，屏幕上一个字都没有。
-// 逐表加提示要靠每次新增表时都记得，改成整屏报一次并逐个点名：新表以后自动被覆盖。
-// 视图会下发的每一个集合都要有中文名：缺一个，截断/淘汰横幅上就会露出英文键
-//（instructionMetrics、modelSelectionPolicies 原先就缺，而它们只在真被截断那一刻才显出来 ——
-//  漏译扫描看不见没渲染的屏）。契约门按视图清单逐个核对这份表。
-const COLLECTION_LABELS = {
-  // 【这张表的覆盖面不止「视图下发的集合」】。「已被容量上限丢弃」那条横幅列的是
-  // storageDroppedCounts 里的任何字段，而它的来源有两处：分片裁剪（projectShardCollections）
-  // 与中央态裁剪（capCentralCollection）——里面有 8 个集合任何视图都不下发，
-  // 于是中文名那道门从来没看见它们，而横幅在真被裁到的那一刻会印出一串英文键。
-  agentTaskContracts: "任务契约", effectiveInstructionPackets: "生效指令包",
-  roleDriftGuards: "角色漂移守卫", completionReadiness: "完成就绪度",
-  progressSnapshots: "进度快照", runtimeIssueSamples: "运行问题样本",
-  runtimeIssuePatterns: "运行问题模式", transitionEvidence: "状态转移证据",
-  instructionMetrics: "指令度量", modelSelectionPolicies: "模型选型策略",
-  accessGrants: "访问授权", accounts: "账号", admissionDecisions: "准入判决", agentControlCommands: "控制指令",
-  agentDispatches: "派发", agentExecutionEvents: "执行事件", agentJoinTokens: "加入令牌",
-  agentRuntimeNodes: "智能体节点", agents: "编排智能体", approvalRequests: "审批请求", auditLog: "审计台账",
-  artifacts: "产物", checkpoints: "检查点", closeBarriers: "关闭屏障", executionTopologies: "执行拓扑", findings: "评审发现",
-  humanConfirmationRequests: "人工确认", humanDirectives: "人工指令", modelCapabilities: "模型能力",
-  modelSelectionDecisions: "模型选择", organizations: "组织", permissionRequests: "授权请求", projects: "项目",
-  qualityGates: "质量门", repositoryOutputs: "仓库产出", reviewBundles: "评审包", reviewPlans: "评审计划",
-  roleSkillOverlays: "角色技能叠加", roleSkills: "角色技能", ruleSourceResolutions: "规则来源",
-  sessionPlacementDecisions: "会话放置", sharedDefinitions: "共享定义", skillSources: "技能源",
-  systemUpgradeCandidates: "升级候选", taskGroups: "任务组", testResults: "测试结果", dlqEntries: "死信队列",
-  workSessions: "工作会话", workerLanes: "载体"
-};
 // 这句话原先是无条件的："这里只保留最近 N 条；更早的记录在归档文件里，不在这一屏内。"
 // N 取的是当前条数 —— 于是全新部署只有 2 条时，它宣称"只保留最近 2 条、更早的在归档里"，
 // 凭空造出一次截断，还把人支去看一个空归档。这是截断诚实的镜像：不是藏起截断，是发明截断。

@@ -194,12 +194,14 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CONSOLE_APP_FILE = "apps/control-plane-ui/public/app.js";
 const CONSOLE_NAV_FILE = "apps/control-plane-ui/public/modules/navigation.js";
 const CONSOLE_LABELS_FILE = "apps/control-plane-ui/public/modules/labels.js";
+const CONSOLE_UI_CONFIG_FILE = "apps/control-plane-ui/public/modules/ui-config.js";
 const CONSOLE_PUBLIC_MODULE_FILES = [
   "apps/control-plane-ui/public/modules/dom-utils.js",
   "apps/control-plane-ui/public/modules/i18n-utils.js",
   CONSOLE_NAV_FILE,
   CONSOLE_LABELS_FILE,
   "apps/control-plane-ui/public/modules/time-format.js",
+  CONSOLE_UI_CONFIG_FILE,
   "apps/control-plane-ui/public/modules/ui-primitives.js"
 ];
 const CONSOLE_PRODUCT_FILES = [CONSOLE_APP_FILE, ...CONSOLE_PUBLIC_MODULE_FILES];
@@ -218,6 +220,10 @@ function consoleNavSource() {
 
 function consoleLabelsSource() {
   return productSource(CONSOLE_LABELS_FILE);
+}
+
+function consoleUiConfigSource() {
+  return productSource(CONSOLE_UI_CONFIG_FILE);
 }
 
 function consoleProductSource() {
@@ -6850,8 +6856,8 @@ function verifyCommandBusLifecycle(output) {
   // 恰恰不在表里，系统负责人那一行显示成「system_console： system」。
   // 漏译扫描看不见它：这一列只在【真有这类授权】时才渲染出那个值。按两个权威来源全量核。
   {
-    const appText = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
-    const table = /const RESOURCE_TYPE_LABELS = \{([\s\S]*?)\n\};/u.exec(appText);
+    const uiConfigText = consoleUiConfigSource();
+    const table = /const RESOURCE_TYPE_LABELS = \{([\s\S]*?)\n\s*\};/u.exec(uiConfigText);
     const labelled = new Set(table ? [...table[1].matchAll(/(\w+):/gu)].map((m) => m[1]) : []);
     const declared = new Set();
     for (const file of readdirSync(join(root, "spec")).filter((name) => name.endsWith(".schema.json"))) {
@@ -14034,8 +14040,8 @@ function findEnumDeep(node, field) {
 }
 
 function verifyEveryViewCollectionHasAChineseLabel(output) {
-  const appText = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
-  const labelsBlock = /const COLLECTION_LABELS = \{([\s\S]*?)\n\};/u.exec(appText);
+  const uiConfigText = consoleUiConfigSource();
+  const labelsBlock = /const COLLECTION_LABELS = \{([\s\S]*?)\n\s*\};/u.exec(uiConfigText);
   const labels = new Set(labelsBlock ? [...labelsBlock[1].matchAll(/(\w+):/gu)].map((match) => match[1]) : []);
   const serverText = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
   const at = serverText.indexOf("const viewFields = {");

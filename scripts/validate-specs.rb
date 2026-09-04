@@ -837,6 +837,7 @@ errors << "Postgres central+shards read must be transactionally consistent" unle
 app_js_source = read_source("apps/control-plane-ui/public/app.js")
 nav_module_source = read_source("apps/control-plane-ui/public/modules/navigation.js")
 label_module_source = read_source("apps/control-plane-ui/public/modules/labels.js")
+ui_config_source = read_source("apps/control-plane-ui/public/modules/ui-config.js")
 http_utils_source = read_source("apps/control-plane-ui/lib/http-utils.mjs")
 i18n_zh_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/i18n-zh.js"))
 # The zh dictionary must not contain duplicate keys — JS last-wins would silently shadow the intended
@@ -1513,8 +1514,7 @@ end
 # 实测用真实数据整页渲染时露出过四条（task_group:read/control/review/monitor）。
 # 权威来源取两处：permissionForAction 的映射值（每个受守卫动作都要一个权限）、
 # 以及角色包/种子直授里写死的那些。
-console_app_source = read_source("apps/control-plane-ui/public/app.js")
-permission_label_block = console_app_source[/const MEMBER_PERMISSION_OPTIONS.*?function permLabel/m]
+permission_label_block = ui_config_source[/const MEMBER_PERMISSION_OPTIONS.*?const RESOURCE_TYPE_LABELS/m]
 if permission_label_block.nil?
   errors << "权限码本地化门: 找不到 PERMISSION_LABELS 那一段 —— 提取逻辑与代码脱节，本条在空转"
 else
@@ -1894,7 +1894,7 @@ end
 end
 # 任务组级权限只认按资源落位的 grant；把它们摆在"直接权限"勾选框里，人会勾上、看到按钮、点下去必 403。
 # 注意：不能用 [^\]]* 去跨过数组内容 —— 它在第一个内层数组的 ] 处就停了，根本到不了 task_group 条目。
-member_permission_block = app_js_source[/const MEMBER_PERMISSION_OPTIONS = \[(.*?)^\];/m, 1].to_s
+member_permission_block = ui_config_source[/const MEMBER_PERMISSION_OPTIONS = \[(.*?)^\s*\];/m, 1].to_s
 errors << %(成员权限勾选框不得提供 task_group:* 直接权限（服务端一律不认，界面在说谎）) if member_permission_block.include?('"task_group:')
 # 钉的是「授权表单的角色候选里有 reviewer」这个属性，不是它当年那一段标记。原先钉 `<option value="reviewer">`
 # 整串，把角色下拉改成经 decisionSelect 渲染就会假红 —— 而"能不能把人工审核权交出去"一点没变。

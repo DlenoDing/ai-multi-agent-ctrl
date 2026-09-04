@@ -28,6 +28,7 @@ const consoleModuleFiles = [
   "modules/navigation.js",
   "modules/labels.js",
   "modules/time-format.js",
+  "modules/ui-config.js",
   "modules/ui-primitives.js"
 ];
 
@@ -5364,7 +5365,7 @@ function runCrossOrgGrantSelectCase() {
   // 界面这个默认组织常量与 core 那份必须是同一个值：不一致时，归属为空的账号会在
   // 一边算作「默认组织」、另一边算作别的组织 —— 屏幕能选的正是后端要拒的。
   const appConstant = /const DEFAULT_ORGANIZATION_ID = "([^"]+)";/u
-    .exec(fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8"));
+    .exec(fs.readFileSync(path.join(root, "apps/control-plane-ui/public/modules/ui-config.js"), "utf8"));
   const coreConstant = /export const DEFAULT_ORGANIZATION_ID = "([^"]+)";/u
     .exec(fs.readFileSync(path.join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8"));
   check("界面与 core 的「默认组织」必须是同一个值",
@@ -5837,13 +5838,13 @@ const OWNER_ROLES_NOT_OFFERED_IN_CONSOLE = {
   "instruction-optimizer": "控制面内部服务"
 };
 function runOwnerRoleChoiceCase() {
-  const appText = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const uiConfigText = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/modules/ui-config.js"), "utf8");
   const catalogText = fs.readFileSync(path.join(root, "apps/control-plane-ui/lib/model-catalog.mjs"), "utf8");
   const listOf = (text, pattern) => {
     const hit = pattern.exec(text);
     return hit ? [...hit[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]) : [];
   };
-  const offered = listOf(appText, /const WORK_ITEM_OWNER_ROLE_CHOICES = \[([^\]]*)\];/u);
+  const offered = listOf(uiConfigText, /const WORK_ITEM_OWNER_ROLE_CHOICES = \[([^\]]*)\];/u);
   const registered = listOf(catalogText, /export const REGISTERED_OWNER_ROLES = \[([\s\S]*?)\];/u);
   check("两份执行角色清单都要真的提取到（提取失配的话下面两条在空转）",
     offered.length >= 5 && registered.length >= 15,

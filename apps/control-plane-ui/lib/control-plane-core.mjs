@@ -23,6 +23,8 @@ import {
   roleCapabilityHints
 } from "./model-catalog.mjs";
 import { defaultLanguagePolicy, languagePolicyDirective, normalizeTaskGroupLanguagePolicy } from "./language-policy.mjs";
+import { defaultManagementSurfaces } from "./management-surface-catalog.mjs";
+import { defaultSkillSource } from "./skill-source-catalog.mjs";
 export { REGISTERED_OWNER_ROLES, providerClasses } from "./model-catalog.mjs";
 export { languagePolicyDirective, normalizeTaskGroupLanguagePolicy } from "./language-policy.mjs";
 
@@ -70,62 +72,6 @@ const COMMAND_TERMINAL = new Set(COMMAND_TERMINAL_STATES);
 const COMMAND_EFFECT_TERMINAL = new Set(COMMAND_EFFECT_TERMINAL_STATES);
 const DLQ_ENTRY_TERMINAL = new Set(DLQ_ENTRY_TERMINAL_STATES);
 
-const defaultSkillSource = {
-  schemaVersion: "agent-skill-source/v1",
-  sourceId: "agency-agents-zh",
-  repositoryUrl: "https://github.com/DlenoDing/agency-agents-zh.git",
-  defaultRef: "main",
-  pinnedCommit: "1d2345927e4a70c426472c37771e31f9333d7e0a",
-  status: "configured",
-  stateVersion: 1,
-  catalogFiles: ["AGENT-LIST.md", "CATALOG.md"],
-  roleFileGlobs: [
-    "academic/**/*.md",
-    "design/**/*.md",
-    "engineering/**/*.md",
-    "finance/**/*.md",
-    "game-development/**/*.md",
-    "gis/**/*.md",
-    "hr/**/*.md",
-    "integrations/**/*.md",
-    "legal/**/*.md",
-    "marketing/**/*.md",
-    "paid-media/**/*.md",
-    "product/**/*.md",
-    "project-management/**/*.md",
-    "sales/**/*.md",
-    "security/**/*.md",
-    "spatial-computing/**/*.md",
-    "specialized/**/*.md",
-    "strategy/**/*.md",
-    "supply-chain/**/*.md",
-    "support/**/*.md",
-    "testing/**/*.md",
-    "writing/**/*.md"
-  ],
-  catalogDigest: digestOf("agency-agents-zh:configured"),
-  roleSkillIndexRef: "runtime://skill-sources/agency-agents-zh/index.json",
-  digestIndexRef: "runtime://skill-sources/agency-agents-zh/digest-index.json",
-  digestIndexVerified: false,
-  trustPolicy: {
-    requirePinnedCommit: true,
-    requireFrontmatter: true,
-    requireDigestIndex: true,
-    allowUnsignedContent: false
-  },
-  syncPolicy: {
-    mode: "pinned_snapshot",
-    refreshTrigger: "orchestrator_need",
-    onUpstreamChange: "create_system_upgrade_candidate"
-  },
-  overlayPolicy: {
-    defaultPrecedence: ["task_group_overlay", "project_overlay", "upstream_default"],
-    allowedScopes: ["project", "task_group"],
-    requiresDecisionRecord: true,
-    requiresDigest: true
-  }
-};
-
 export function createId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -171,7 +117,7 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.transitionEvidence ||= [];
   state.authSessions ||= [];
   state.managementSurfaces ||= defaultManagementSurfaces();
-  state.skillSources ||= [clone(defaultSkillSource)];
+  state.skillSources ||= [clone(defaultSkillSource(digestOf))];
   state.roleSkills ||= defaultRoleSkills();
   state.roleSkillOverlays ||= [];
   state.modelProviders ||= clone(modelProviderAdapters);
@@ -593,46 +539,6 @@ export function updateTaskGroupLanguagePolicy(state, taskGroupId, input = {}, op
     languageTag: taskGroup.languagePolicy.languageTag
   });
   return {taskGroup, languagePolicy: taskGroup.languagePolicy, languagePolicyDigest};
-}
-
-function defaultManagementSurfaces() {
-  const at = new Date().toISOString();
-  return [
-    {
-      schemaVersion: "management-console-surface/v1",
-      surfaceId: "surface_system_management",
-      consoleType: "system_management",
-      status: "active",
-      route: "/#system",
-      views: ["runtime", "accounts", "audit", "policies", "instructions"],
-      guardedActions: [
-        {actionId: "runtime_reinitialize", riskClass: "high", requiredPermission: "system:bootstrap", decisionRequired: true},
-        {actionId: "skill_source_sync", riskClass: "medium", requiredPermission: "system:skill_sync", decisionRequired: true},
-        {actionId: "model_capability_register", riskClass: "medium", requiredPermission: "system:model_registry", decisionRequired: true}
-      ],
-      visualQualityGates: ["responsive_layout", "text_no_overlap", "action_state_visible", "progress_visible", "audit_trace_visible"],
-      auditRef: "audit_seed_surface_system",
-      createdAt: at,
-      updatedAt: at
-    },
-    {
-      schemaVersion: "management-console-surface/v1",
-      surfaceId: "surface_user_management",
-      consoleType: "user_management",
-      status: "active",
-      route: "/#projects",
-      views: ["projects", "task_groups", "agents", "permissions", "progress", "instructions"],
-      guardedActions: [
-        {actionId: "project_create", riskClass: "medium", requiredPermission: "project:create", decisionRequired: true},
-        {actionId: "task_group_control", riskClass: "medium", requiredPermission: "task_group:control", decisionRequired: true},
-        {actionId: "activate_agent", riskClass: "medium", requiredPermission: "agent:activate", decisionRequired: true}
-      ],
-      visualQualityGates: ["responsive_layout", "text_no_overlap", "action_state_visible", "progress_visible", "audit_trace_visible"],
-      auditRef: "audit_seed_surface_user",
-      createdAt: at,
-      updatedAt: at
-    }
-  ];
 }
 
 function defaultRoleSkills() {
