@@ -191,6 +191,38 @@ import { appendProjectExecutionEvent, readProjectExecutionEventByKey, readProjec
 import { assertTransition, requiresValuesToEvidenceRefs, resolveGate, loadStateMachines, loadGateCatalog } from "../apps/control-plane-ui/lib/transition-engine.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const CONSOLE_APP_FILE = "apps/control-plane-ui/public/app.js";
+const CONSOLE_NAV_FILE = "apps/control-plane-ui/public/modules/navigation.js";
+const CONSOLE_LABELS_FILE = "apps/control-plane-ui/public/modules/labels.js";
+const CONSOLE_PUBLIC_MODULE_FILES = [
+  "apps/control-plane-ui/public/modules/dom-utils.js",
+  "apps/control-plane-ui/public/modules/i18n-utils.js",
+  CONSOLE_NAV_FILE,
+  CONSOLE_LABELS_FILE,
+  "apps/control-plane-ui/public/modules/time-format.js",
+  "apps/control-plane-ui/public/modules/ui-primitives.js"
+];
+const CONSOLE_PRODUCT_FILES = [CONSOLE_APP_FILE, ...CONSOLE_PUBLIC_MODULE_FILES];
+
+function productSource(file) {
+  return readFileSync(join(root, file), "utf8");
+}
+
+function consoleAppSource() {
+  return productSource(CONSOLE_APP_FILE);
+}
+
+function consoleNavSource() {
+  return productSource(CONSOLE_NAV_FILE);
+}
+
+function consoleLabelsSource() {
+  return productSource(CONSOLE_LABELS_FILE);
+}
+
+function consoleProductSource() {
+  return CONSOLE_PRODUCT_FILES.map(productSource).join("\n");
+}
 
 // 本门验的是【逻辑】，不是耐久性：每一次原子替换都要 fsync 文件 + fsync 目录，
 // 实测这两项占了本门 63 秒里的 38 秒，而它们证明不了任何一条本门要断言的性质。
@@ -9017,11 +9049,11 @@ function verifyArchivedProjectWritePolicyIsAnswered(output) {
 }
 
 function verifySurveyRendersEveryRegisteredPage(output) {
-  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const app = consoleNavSource();
   const survey = readFileSync(join(root, "scripts/console-behaviour-check.mjs"), "utf8");
   const registered = [...new Set([...app.matchAll(/^\s*"([a-z][a-z0-9-]+)":\s*\["/gmu)].map((hit) => hit[1]))];
   if (registered.length < 10) {
-    output.push(`只从 app.js 提取到 ${registered.length} 个登记页面 —— 提取脱节，本条在空转`);
+    output.push(`只从 navigation.js 提取到 ${registered.length} 个登记页面 —— 提取脱节，本条在空转`);
     return;
   }
   const listed = survey.slice(survey.indexOf("const SURVEY_PAGES = ["));
@@ -9035,7 +9067,7 @@ function verifySurveyRendersEveryRegisteredPage(output) {
     output.push(`勘察工具不渲染这些已登记的页面：${missed.join("、")} —— 它们在那份输出里既不出现`
       + "也不报错，等于从来没被读过；而「读真实产出」正是靠人去读它发现问题的");
   }
-  console.log(`勘察页面清单：app.js 登记 ${registered.length} 页，勘察覆盖 ${covered.size} 页，漏 ${missed.length} 页`);
+  console.log(`勘察页面清单：navigation.js 登记 ${registered.length} 页，勘察覆盖 ${covered.size} 页，漏 ${missed.length} 页`);
 }
 
 function verifyDockerEnvironmentFailuresSayWhatToDo(output) {
@@ -9365,8 +9397,8 @@ function verifyGrantRoleTablesAgree(output) {
     output.push("取不到 spec/access-control-grant.schema.json 的 role 枚举 —— 本条在空转");
     return;
   }
-  const uiSource = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
-  const labelBlock = /const GRANT_ROLE_LABELS = \{([\s\S]*?)\n\};/u.exec(uiSource);
+  const uiSource = consoleLabelsSource();
+  const labelBlock = /const GRANT_ROLE_LABELS = \{([\s\S]*?)\n\s*\};/u.exec(uiSource);
   if (!labelBlock) {
     output.push("取不到控制台的授权角色词表（GRANT_ROLE_LABELS）—— 本条在空转");
     return;
@@ -10337,8 +10369,9 @@ function verifyDangerousConfirmsStateTheConsequence(output) {
 }
 
 function verifyGuidanceNamesRealPages(output) {
-  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
-  const pages = new Set([...app.matchAll(/^\s*"[a-z-]+": \["([^"]+)",/gmu)].map((match) => match[1]));
+  const app = consoleProductSource();
+  const nav = consoleNavSource();
+  const pages = new Set([...nav.matchAll(/^\s*"[a-z-]+": \["([^"]+)",/gmu)].map((match) => match[1]));
   const panels = new Set([...app.matchAll(/panel\("([^"]+)"/gu)].map((match) => match[1]));
   if (pages.size < 12 || panels.size < 15) {
     output.push(`页名/面板名的权威表没提出来（页 ${pages.size}、面板 ${panels.size}）—— 本条在空转`);
@@ -10433,7 +10466,7 @@ function verifyGuidanceNamesRealPages(output) {
 // 实测 STUCK_EXIT_HINT 里 assigned_node_shutdown_pending_stop 写了两遍，
 // 上面那条按权威词表写的「关停」永远不会出现，屏幕上显示的是下面那条。
 function verifyHintMapsHaveNoDuplicateKeys(output) {
-  const files = ["apps/control-plane-ui/public/app.js", "apps/control-plane-ui/public/i18n-zh.js"];
+  const files = [...CONSOLE_PRODUCT_FILES, "apps/control-plane-ui/public/i18n-zh.js"];
   let scanned = 0;
   let keys = 0;
   for (const file of files) {
@@ -13931,10 +13964,11 @@ function verifyModelCapabilityFieldsMatchTheSpec(output) {
 }
 
 function verifyLabelTablesMatchTheirEnums(output) {
-  const appText = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const appText = consoleAppSource();
+  const labelText = consoleLabelsSource();
   let checked = 0;
   for (const [table, specName, field] of LABEL_TABLE_SOURCES) {
-    const hit = new RegExp(`const ${table} = \\{([^}]*)\\}`, "u").exec(appText);
+    const hit = new RegExp(`const ${table} = \\{([^}]*)\\}`, "u").exec(labelText);
     if (!hit) { output.push(`界面里找不到 ${table} —— 这一对在空转`); continue; }
     const labelled = [...hit[1].matchAll(/(\w+):/gu)].map((match) => match[1]);
     let spec = null;
@@ -13960,7 +13994,7 @@ function verifyLabelTablesMatchTheirEnums(output) {
   //（实测过：11 个集合都用 active，组织与账号被显示成「进行中」）。两向都核：
   // 传了却没有覆盖表＝会串意思；有覆盖表却没人传＝表在空养着，多半是调用点改了名。
   {
-    const kindBlock = /const STATUS_LABEL_BY_KIND = \{([\s\S]*?)\n\};/u.exec(appText);
+    const kindBlock = /const STATUS_LABEL_BY_KIND = \{([\s\S]*?)\n\s*\};/u.exec(labelText);
     const kinds = new Set(kindBlock ? [...kindBlock[1].matchAll(/(?:^|[{,\s])([a-zA-Z][a-zA-Z0-9_]*)\s*:\s*\{/gu)]
       .map((match) => match[1]) : []);
     const used = new Set([...appText.matchAll(/statusBadge\("([a-zA-Z]+)"/gu)].map((match) => match[1]));
@@ -16451,7 +16485,8 @@ function verifyI18nKeysAreReachable(output) {
   const keys = [...i18n.matchAll(/^\s{4}([a-z][a-z0-9_]+):\s/gmu)].map((hit) => hit[1]);
   if (keys.length < 500) { output.push(`i18n 只提出 ${keys.length} 个键 —— 提取脱节`); return; }
   const codeFiles = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",
-    "apps/control-plane-ui/lib/state-store.mjs", "apps/control-plane-ui/lib/audit-ledger.mjs", "apps/mcp-server/server.mjs", "apps/control-plane-ui/public/app.js",
+    "apps/control-plane-ui/lib/state-store.mjs", "apps/control-plane-ui/lib/audit-ledger.mjs", "apps/control-plane-ui/lib/http-utils.mjs",
+    "apps/control-plane-ui/lib/static-assets.mjs", "apps/mcp-server/server.mjs", ...CONSOLE_PRODUCT_FILES,
     "apps/agent-runtime/runtime.mjs", "data/seed-state.json"];
   const specFiles = [];
   const walk = (dir) => { for (const entry of readdirSync(join(root, dir), {withFileTypes: true})) {

@@ -28,6 +28,10 @@ const STORE = "apps/control-plane-ui/lib/state-store.mjs";
 const SERVER = "apps/control-plane-ui/server.mjs";
 const APP = "apps/control-plane-ui/public/app.js";
 const I18N = "apps/control-plane-ui/public/i18n-zh.js";
+const APP_I18N_UTILS = "apps/control-plane-ui/public/modules/i18n-utils.js";
+const APP_LABELS = "apps/control-plane-ui/public/modules/labels.js";
+const APP_TIME = "apps/control-plane-ui/public/modules/time-format.js";
+const STATIC_ASSETS = "apps/control-plane-ui/lib/static-assets.mjs";
 const CONSOLE_GATE = "scripts/console-behaviour-check.mjs";
 
 // 每条 mutation：把守卫改坏，期望 contract-check 失败且输出里出现 expect 片段。
@@ -931,7 +935,7 @@ const MUTATIONS = [
   },
   {
     name: "带细节的失败原因要拆开翻译",
-    file: APP,
+    file: APP_I18N_UTILS,
     gate: "console",
     from: "  if (prefix && Object.prototype.hasOwnProperty.call(dict, prefix)) return `${t(prefix)}：${text.slice(at + 1)}`;",
     to: "  if (false) return text;",
@@ -992,7 +996,7 @@ const MUTATIONS = [
   },
   {
     name: "时钟偏差要告诉人，不能悄悄校正",
-    file: APP,
+    file: APP_TIME,
     gate: "console",
     from: '  return `本机时钟比服务器${minutes > 0 ? "快" : "慢"} ${Math.abs(minutes)} 分钟`;',
     to: '  return "";',
@@ -3078,7 +3082,7 @@ const MUTATIONS = [
   },
   {
     name: "准入判决 token 必须有中文（台账里那一栏就是回答'为什么不动'的）",
-    file: APP,
+    file: APP_LABELS,
     gate: "specs",
     from: '  cell_yielding_to_higher_priority: "让路给更高优先级的单元",',
     to: '  ignored_key: "x",',
@@ -3466,7 +3470,7 @@ const MUTATIONS = [
   },
   {
     name: "静态资源必须按 accept-encoding 压缩（首载三倍字节）",
-    file: "apps/control-plane-ui/server.mjs",
+    file: STATIC_ASSETS,
     gate: "doctor",
     from: "  const useGzip = wantsGzip && cached.gzip && cached.gzip.length < content.length;",
     to: "  const useGzip = false;",
@@ -3474,18 +3478,18 @@ const MUTATIONS = [
   },
   {
     name: "静态资源的条件缓存必须真的回 304",
-    file: "apps/control-plane-ui/server.mjs",
+    file: STATIC_ASSETS,
     gate: "doctor",
-    from: '    ...(useGzip ? {"content-encoding": "gzip"} : {})};\n  if (req.headers["if-none-match"] === etag) {',
-    to: '    ...(useGzip ? {"content-encoding": "gzip"} : {})};\n  if (false) {',
+    from: '      ...(useGzip ? {"content-encoding": "gzip"} : {})};\n    if (req.headers["if-none-match"] === etag) {',
+    to: '      ...(useGzip ? {"content-encoding": "gzip"} : {})};\n    if (false) {',
     expect: "没有 304"
   },
   {
     name: "控制台页面必须带防内嵌响应头（clickjacking）",
-    file: "apps/control-plane-ui/server.mjs",
+    file: STATIC_ASSETS,
     gate: "doctor",
-    from: '  const securityHeaders = {"x-content-type-options": "nosniff", "x-frame-options": "DENY",\n    "content-security-policy": "frame-ancestors \'none\'", "referrer-policy": "no-referrer",',
-    to: '  const securityHeaders = {"x-content-type-options": "nosniff",\n    "referrer-policy": "no-referrer",',
+    from: '    const securityHeaders = {"x-content-type-options": "nosniff", "x-frame-options": "DENY",\n      "content-security-policy": "frame-ancestors \'none\'", "referrer-policy": "no-referrer",',
+    to: '    const securityHeaders = {"x-content-type-options": "nosniff",\n      "referrer-policy": "no-referrer",',
     expect: "缺安全响应头 x-frame-options"
   },
   {
@@ -3619,7 +3623,7 @@ const MUTATIONS = [
   },
   {
     name: "陈旧时长要分级（小时/天），不得永远堆分钟",
-    file: APP,
+    file: APP_TIME,
     gate: "console",
     from: "  if (minutes < 60) return `${minutes} 分钟`;",
     to: "  if (minutes < 9999999) return `${minutes} 分钟`;",
@@ -4280,7 +4284,7 @@ const MUTATIONS = [
   },
   {
     name: "页面要显出占位并给出合计（否则还剩一格却签不出来）",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/ui-primitives.js",
     gate: "console",
     from: '${Number(reserved) > 0 ? `（另有 ${esc(reserved)} 张未使用的入网令牌占着位，合计 ${held}/${max ?? 0}）` : ""}',
     to: "",
@@ -4494,7 +4498,7 @@ const MUTATIONS = [
   },
   {
     name: "授权角色在下拉与列表里必须是同一个词",
-    file: APP,
+    file: APP_LABELS,
     gate: "console",
     from: '  reviewer: "评审人",',
     to: '  reviewer: "评审员",',
@@ -4502,7 +4506,7 @@ const MUTATIONS = [
   },
   {
     name: "授权角色词表回落到全局词表，不许掉成英文",
-    file: APP,
+    file: APP_LABELS,
     gate: "console",
     from: "  return GRANT_ROLE_LABELS[role] || t(role);",
     to: "  return GRANT_ROLE_LABELS[role] || role;",
@@ -4951,20 +4955,20 @@ const MUTATIONS = [
   },
   {
     name: "标签表少了取值要报红（屏幕会露英文键）",
-    file: "apps/control-plane-ui/public/app.js",
+    file: APP_LABELS,
     check: "verifyLabelTablesMatchTheirEnums",
     gate: "contract",
-    from: 'const EXECUTION_PROFILE_LABELS = { production: "生产档位", verification: "验证档位" };',
-    to: 'const EXECUTION_PROFILE_LABELS = { verification: "验证档位" };',
+    from: 'const EXECUTION_PROFILE_LABELS = {production: "生产档位", verification: "验证档位"};',
+    to: 'const EXECUTION_PROFILE_LABELS = {verification: "验证档位"};',
     expect: "少了这些取值的中文名"
   },
   {
     name: "标签表多写了不存在的取值也要报红",
-    file: "apps/control-plane-ui/public/app.js",
+    file: APP_LABELS,
     check: "verifyLabelTablesMatchTheirEnums",
     gate: "contract",
-    from: 'const EXECUTION_PROFILE_LABELS = { production: "生产档位", verification: "验证档位" };',
-    to: 'const EXECUTION_PROFILE_LABELS = { production: "生产档位", verification: "验证档位", fast: "高速档位" };',
+    from: 'const EXECUTION_PROFILE_LABELS = {production: "生产档位", verification: "验证档位"};',
+    to: 'const EXECUTION_PROFILE_LABELS = {production: "生产档位", verification: "验证档位", fast: "高速档位"};',
     expect: "写着系统里没有的取值"
   },
   {
@@ -5338,7 +5342,7 @@ const MUTATIONS = [
   },
   {
     name: "后端新增的执行角色不许在界面上悄悄够不着",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    file: "apps/control-plane-ui/lib/model-catalog.mjs",
     gate: "console",
     from: '"repository-router", "instruction-optimizer"];',
     to: '"repository-router", "instruction-optimizer", "field-engineer"];',
@@ -5442,7 +5446,7 @@ const MUTATIONS = [
   },
   {
     name: "没有待用令牌时页面不许多挂一句",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/ui-primitives.js",
     gate: "console",
     from: "${Number(reserved) > 0 ?",
     to: "${true ?",
@@ -9529,8 +9533,8 @@ const MUTATIONS = [
     name: "页名权威表提不出来要自报空转（否则 0 个页名＝谁都合法）",
     file: "scripts/contract-check.mjs",
     check: "verifyGuidanceNamesRealPages",
-    from: 'app.matchAll(/^\\s*"[a-z-]+": \\["([^"]+)",/gmu)',
-    to: 'app.matchAll(/^\\s*"[a-z-]+": \\[`([^`]+)`,/gmu)',
+    from: 'nav.matchAll(/^\\s*"[a-z-]+": \\["([^"]+)",/gmu)',
+    to: 'nav.matchAll(/^\\s*"[a-z-]+": \\[`([^`]+)`,/gmu)',
     expect: "本条在空转"
   },
   {
@@ -10011,7 +10015,7 @@ const MUTATIONS = [
   },
   {
     name: "组织/账号的 active 不能说成'进行中'（一个全局键盖住了别的意思）",
-    file: "apps/control-plane-ui/public/app.js",
+    file: APP_LABELS,
     gate: "console",
     from: "  const label = STATUS_LABEL_BY_KIND[kind]?.[value];",
     to: "  const label = null;",
@@ -10817,7 +10821,7 @@ const MUTATIONS = [
   },
   {
     name: "没选出模型时要说得出为什么、按的是哪条策略",
-    file: "apps/control-plane-ui/public/app.js",
+    file: APP_LABELS,
     gate: "console",
     from: "  if (decision.denialReason) {",
     to: "  if (false) {",

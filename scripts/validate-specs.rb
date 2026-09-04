@@ -835,6 +835,9 @@ errors << "buildTaskContract must be idempotent against an existing active dispa
 errors << "close-barrier all_commands_terminal must match the exact task-group subject" unless core_source.include?("command.subject === `TaskGroup:${taskGroupId}`")
 errors << "Postgres central+shards read must be transactionally consistent" unless pg_pool_worker_source.include?("readStateWithShards") && pg_pool_worker_source.include?("ISOLATION LEVEL REPEATABLE READ") && pg_sync_store_source.include?("pgReadStateWithShards") && state_store_source.include?("pgReadStateWithShards()")
 app_js_source = read_source("apps/control-plane-ui/public/app.js")
+nav_module_source = read_source("apps/control-plane-ui/public/modules/navigation.js")
+label_module_source = read_source("apps/control-plane-ui/public/modules/labels.js")
+http_utils_source = read_source("apps/control-plane-ui/lib/http-utils.mjs")
 i18n_zh_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/i18n-zh.js"))
 # The zh dictionary must not contain duplicate keys — JS last-wins would silently shadow the intended
 # value (a recurring defect this cycle when appending gate/objectType keys). Guard durably.
@@ -1350,7 +1353,7 @@ errors << %(实时 WebSocket 必须限制入站消息大小 maxPayload（否则�
 # 人打开控制台看不出"现在轮到我做什么"：菜单写死无计数，唯一的待办数字不可点击且只算当前项目，
 # 而等人拍板的东西被拆在两个页面上，其中一个还叫"执行监控" —— 名字完全不暗示这里有等你签字的东西。
 errors << %(控制台必须有跨项目的"待你处理"汇总，否则人工闸门存在但不可操作) unless app_js_source.include?("function pendingForMe()") && app_js_source.include?(%q{panel("待你处理"})
-errors << %(菜单必须带待办计数，否则等人签字的东西藏在别的页面里没人会去点) unless app_js_source.include?(%q{class="nav-badge">}) && app_js_source.include?("menuTodoCounts[item.id]")
+errors << %(菜单必须带待办计数，否则等人签字的东西藏在别的页面里没人会去点) unless nav_module_source.include?(%q{class="nav-badge">}) && app_js_source.include?("menuTodoCounts[item.id]")
 # 计数只能统计"这个人有权处置"的项：把别人负责的也算进来，红点就成了一个永远清不掉的东西。
 # 只查"有没有 allowed 这个入参"，不锁死整个签名：签名多一个参数就假红，而真正的过滤逻辑坏掉时
 # 它照样绿（字符串还在）。真正的不变式"无权的类别不进统计"由控制台行为门断言。
@@ -1901,7 +1904,7 @@ errors << %(成员权限勾选框不得提供 task_group:* 直接权限（服务
 errors << %(项目成员授权必须能授予「评审人」角色，否则没有任何界面能把人工审核权交出去) unless
   app_js_source.match?(/\["reviewer",\s*(?:"评审人|`\$\{GRANT_ROLE_LABELS\.reviewer\})/)
 errors << %(授权角色词表里没有 reviewer 的中文 —— 上面那条会拼出一个空标签) unless
-  app_js_source.match?(/reviewer: "评审人"/)
+  label_module_source.match?(/reviewer: "评审人"/)
 
 human_lever_forms.each do |action, form_kind|
   next unless server_source.include?("\"#{action}\"")
@@ -2768,7 +2771,7 @@ errors << "版本冲突的服务端文案与界面词典不一致（同一件事
 # 人在台账里看到一串英文 token，而那一栏正是回答"我这个单元为什么不动"的地方。
 # 现有的出口完整性门只覆盖【派发的 blockedReason】，准入这一面一直没人守；
 # 这一段新加的两个 token（等额度 / 让路给更高优先级）正好落在这个缺口里。
-why_labels = app_js_source[/const WHY_THIS_CELL_LABELS = \{(.*?)\n\};/m, 1].to_s
+why_labels = label_module_source[/const WHY_THIS_CELL_LABELS = \{(.*?)\n\s*\};/m, 1].to_s
 labelled = why_labels.scan(/^\s*([a-z_]+):/).flatten.to_set
 errors << "取不到 WHY_THIS_CELL_LABELS —— 下面这条在空转" if labelled.size < 5
 # 逐个 recordAdmissionDecision 调用取出这一处的 whyThisCellNow 与 reasonCode（三元两支都收）。
@@ -2858,7 +2861,7 @@ TRACED_OPAQUE_ERROR_FAMILIES = [
 
 traced_error_problems = []
 TRACED_OPAQUE_ERROR_FAMILIES.each do |family|
-  unless server_source.include?(family["evidence"]) || mcp_source.include?(family["evidence"])
+  unless server_source.include?(family["evidence"]) || mcp_source.include?(family["evidence"]) || http_utils_source.include?(family["evidence"])
     traced_error_problems << "错误码追查登记已过时：找不到「#{family['name']}」的依据 #{family['evidence']} —— 重新追一遍"
   end
   family["codes"].each do |code|

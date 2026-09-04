@@ -21,6 +21,33 @@ import vm from "node:vm";
 import {fileURLToPath} from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const consolePublicDir = path.join(root, "apps/control-plane-ui/public");
+const consoleModuleFiles = [
+  "modules/dom-utils.js",
+  "modules/i18n-utils.js",
+  "modules/navigation.js",
+  "modules/labels.js",
+  "modules/time-format.js",
+  "modules/ui-primitives.js"
+];
+
+function readConsoleSource(file) {
+  return fs.readFileSync(path.join(consolePublicDir, file), "utf8");
+}
+
+function readConsoleAppSource() {
+  return readConsoleSource("app.js");
+}
+
+function readConsoleNavigationSource() {
+  return readConsoleSource("modules/navigation.js");
+}
+
+function loadConsoleModules(context) {
+  for (const file of consoleModuleFiles) {
+    vm.runInContext(readConsoleSource(file), context, {filename: file});
+  }
+}
 
 /* ---------------- 极简 DOM 桩 ---------------- */
 
@@ -396,15 +423,15 @@ globalThis.__probe = {
 // realI18n：本门其余部分把 t 桩成恒等函数（断言按英文键匹配），但有些行为只有【真词表】在场时
 // 才看得见 —— 比如 "code:detail" 形态的失败原因要不要拆开翻译。需要时按这个开关加载真的 i18n。
 function loadConsole(documentRoot, options = {}) {
-  const source = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const source = readConsoleAppSource();
   const context = vm.createContext(makeContext(documentRoot));
   if (options.realI18n) {
-    vm.runInContext(fs.readFileSync(path.join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8"),
-      context, {filename: "i18n-zh.js"});
+    vm.runInContext(readConsoleSource("i18n-zh.js"), context, {filename: "i18n-zh.js"});
     if (typeof context.window?.AIMAC_I18N?.t !== "function") {
       throw new Error("控制台行为门: 要求真词表却没加载上 —— 相关断言会在空转");
     }
   }
+  loadConsoleModules(context);
   vm.runInContext(source + PROBE_EPILOGUE, context, {filename: "app.js"});
   if (!context.__probe) throw new Error("控制台行为门: 尾插探针未生效，本门无法断言任何东西");
   return context.__probe;
@@ -595,7 +622,7 @@ if (process.env.AIMAC_RENDER_REAL) {
     "sys-settings", "sys-overview", "proj-agents", "proj-settings",
     "org-overview", "org-projects", "org-members", "org-agents"];
   {
-    const registered = [...fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8").matchAll(/^\s*"([a-z][a-z0-9-]+)":\s*\["/gmu)].map((hit) => hit[1]);
+    const registered = [...readConsoleNavigationSource().matchAll(/^\s*"([a-z][a-z0-9-]+)":\s*\["/gmu)].map((hit) => hit[1]);
     // tg 与 monitor 走上面两个专用入口（要额外传项目/任务组），不在这个通用循环里。
     const covered = new Set([...SURVEY_PAGES, "tg", "monitor"]);
     const missed = [...new Set(registered)].filter((page) => !covered.has(page));
@@ -605,7 +632,7 @@ if (process.env.AIMAC_RENDER_REAL) {
     }
   }
   // 页 id → 标题（取自 app.js 的 PAGE_META）：下面用它核对"渲染出来的是不是要读的那一页"。
-  const pageTitles = Object.fromEntries([...fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8")
+  const pageTitles = Object.fromEntries([...readConsoleNavigationSource()
     .matchAll(/^\s*"([a-z][a-z0-9-]+)":\s*\["([^"]+)"/gmu)].map((hit) => [hit[1], hit[2]]));
   if (Object.keys(pageTitles).length < 10) {
     throw new Error(`只提取到 ${Object.keys(pageTitles).length} 个页标题 —— 提取脱节，下面那条"读的是不是这一页"的核对会空转`);
@@ -2153,7 +2180,7 @@ async function runErrorGuidanceCase() {
 // 才知道「人工指令」「执行监控」「系统设置」「AI 智能体」各自管什么。
 // 菜单用途说明不能另写一份文案：页面标题、副标题和菜单说明都必须取 PAGE_META 这一处真相源。
 {
-  const meta = Object.fromEntries([...fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8")
+  const meta = Object.fromEntries([...readConsoleNavigationSource()
     .matchAll(/^\s*"([a-z][a-z0-9-]+)":\s*\["([^"]+)",\s*"([^"]+)"/gmu)]
     .map((hit) => [hit[1], {title: hit[2], desc: hit[3]}]));
   const navState = {
@@ -5811,13 +5838,13 @@ const OWNER_ROLES_NOT_OFFERED_IN_CONSOLE = {
 };
 function runOwnerRoleChoiceCase() {
   const appText = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
-  const coreText = fs.readFileSync(path.join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const catalogText = fs.readFileSync(path.join(root, "apps/control-plane-ui/lib/model-catalog.mjs"), "utf8");
   const listOf = (text, pattern) => {
     const hit = pattern.exec(text);
     return hit ? [...hit[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]) : [];
   };
   const offered = listOf(appText, /const WORK_ITEM_OWNER_ROLE_CHOICES = \[([^\]]*)\];/u);
-  const registered = listOf(coreText, /export const REGISTERED_OWNER_ROLES = \[([\s\S]*?)\];/u);
+  const registered = listOf(catalogText, /export const REGISTERED_OWNER_ROLES = \[([\s\S]*?)\];/u);
   check("两份执行角色清单都要真的提取到（提取失配的话下面两条在空转）",
     offered.length >= 5 && registered.length >= 15,
     `界面提到 ${offered.length} 个、core 提到 ${registered.length} 个`);
@@ -7397,7 +7424,6 @@ await runCodedApiErrorCase();
     const tCalls = new Map();
     const scanRoot = el("div");
     const context = vm.createContext(makeContext(scanRoot));
-    context.window = {scrollTo: () => {}, addEventListener: () => {}, removeEventListener: () => {}};
     context.scrollTo = () => {};
     vm.runInContext(i18nSource, context, {filename: "i18n-zh.js"});
     const real = context.window.AIMAC_I18N;
@@ -7427,6 +7453,7 @@ await runCodedApiErrorCase();
       if (!misses.has(hit[1])) misses.set(hit[1], new Set());
       misses.get(hit[1]).add(`${label}/${pageId}`);
     }};
+    loadConsoleModules(context);
     vm.runInContext(appSource + PROBE_EPILOGUE, context, {filename: "app.js"});
     const done = [];
     for (const page of pages) {
@@ -7592,7 +7619,6 @@ await runCodedApiErrorCase();
       ["proj-settings", account]];
     for (const [page, pageAccount] of fetchDriven) {
       const context = vm.createContext(makeContext(el("div")));
-      context.window = {scrollTo: () => {}, addEventListener: () => {}, removeEventListener: () => {}};
       context.scrollTo = () => {};
       vm.runInContext(i18nSource, context, {filename: "i18n-zh.js"});
       // 变量名与上面那段不同是有意的：变异门要求锚点在文件里唯一，
@@ -7609,6 +7635,7 @@ await runCodedApiErrorCase();
         if (!misses.has(hit[1])) misses.set(hit[1], new Set());
         misses.get(hit[1]).add(`${label}(走接口)/${page}`);
       }};
+      loadConsoleModules(context);
       vm.runInContext(appSource + PROBE_EPILOGUE, context, {filename: "app.js"});
       try { await context.__probe.loadPageWith(state, pageAccount, projectId, page, fetchStub); }
       catch (error) { failures.push(`漏译扫描: ${page} 走 loadPage 抛错（${String(error?.message || error).slice(0, 100)}）—— 这一页没被检验`); }
@@ -7630,11 +7657,11 @@ await runCodedApiErrorCase();
     };
     const failRoot = el("div");
     const failContext = vm.createContext(makeContext(failRoot));
-    failContext.window = {scrollTo: () => {}, addEventListener: () => {}, removeEventListener: () => {}};
     failContext.scrollTo = () => {};
     vm.runInContext(i18nSource, failContext, {filename: "i18n-zh.js"});
     failContext.t = failContext.window.AIMAC_I18N.t;
     failContext.console = {log: () => {}, error: () => {}, warn: () => {}};
+    loadConsoleModules(failContext);
     vm.runInContext(appSource + PROBE_EPILOGUE, failContext, {filename: "app.js"});
     await failContext.__probe.loadPageWith(state, account, projectId, "proj-settings", failingConfigFetch);
     const failScreen = String(failRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");

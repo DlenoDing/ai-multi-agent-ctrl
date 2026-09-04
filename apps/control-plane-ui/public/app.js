@@ -4,22 +4,49 @@
  * 所有内部枚举展示一律经过 i18n-zh.js 提供的 t() 渲染。
  */
 
-const I18N = window.AIMAC_I18N || {t: (value) => String(value ?? "-")};
-const t = (value) => I18N.t(value);
-
-// 失败原因常常是 "code:detail" 形态（git_command_failed:… / skill_source_sync_failed:… /
-// agent_runtime_executor_failed:…）：t() 拿到的是整串，词表里永远命中不了，于是屏幕上
-// 摆着一串英文键加一段细节。这里先整串查词表，查不到就把冒号前那段翻译出来、细节原样接在后面。
-function explainCoded(value) {
-  if (value === null || value === undefined || value === "") return "-";
-  const text = String(value);
-  const dict = I18N.dict || {};
-  if (Object.prototype.hasOwnProperty.call(dict, text)) return t(text);
-  const at = text.indexOf(":");
-  const prefix = at > 0 ? text.slice(0, at) : "";
-  if (prefix && Object.prototype.hasOwnProperty.call(dict, prefix)) return `${t(prefix)}：${text.slice(at + 1)}`;
-  return t(text);
-}
+const {I18N, t, explainCoded} = window.AIMAC_CONSOLE_I18N_UTILS;
+const {
+  PROJECT_PAGES,
+  PROJECT_MENU_TAIL,
+  SYSTEM_MENU,
+  ORG_MENU,
+  MENUS,
+  PAGE_META,
+  perspectiveOf,
+  defaultPageFor,
+  allowedMenuItemsFor,
+  managementSectionOf,
+  menuForCurrentSection,
+  sectionLabel,
+  sectionSwitchHtml,
+  menuItemHtml
+} = window.AIMAC_CONSOLE_NAV;
+const {
+  TONE_GREEN,
+  GRANT_ROLE_LABELS,
+  toneOf,
+  grantRoleLabel,
+  statusBadge,
+  badge,
+  customBadge,
+  kindLabel,
+  strengthLabel,
+  executionProfileLabel,
+  admissionReasonLabel,
+  laneFunctionLabel,
+  modelDecisionSummaryZh
+} = window.AIMAC_CONSOLE_LABELS;
+const {
+  noteServerClock,
+  serverNow,
+  clockSkewNote,
+  localZoneLabel,
+  fmtTime,
+  fmtBytes,
+  durationText
+} = window.AIMAC_CONSOLE_TIME;
+const {uuid, copyText, esc} = window.AIMAC_CONSOLE_DOM_UTILS;
+const {progressBar, progressLine, quotaLine, panel, row} = window.AIMAC_CONSOLE_UI_PRIMITIVES;
 
 const app = document.querySelector("#app");
 
@@ -138,38 +165,6 @@ let execTimer = null;
 
 /* ---------------- 视角与菜单 ---------------- */
 
-const PROJECT_PAGES = new Set(["proj-overview", "proj-members", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"]);
-
-const PROJECT_MENU_TAIL = [
-  {divider: "项目总览"},
-  {id: "proj-overview", label: "项目概览"},
-  {divider: "准备与接入"},
-  {id: "proj-members", label: "成员权限"},
-  {id: "proj-agents", label: "AI 智能体"},
-  {divider: "执行推进"},
-  {id: "tg", label: "任务组"},
-  {id: "monitor", label: "执行监控"},
-  {divider: "人工控制"},
-  {id: "review", label: "人工审核"},
-  {id: "directives", label: "人工指令"},
-  {divider: "治理配置"},
-  {id: "proj-settings", label: "项目设置"}
-];
-
-const SYSTEM_MENU = [
-  {id: "sys-overview", label: "系统概览"},
-  {id: "sys-orgs", label: "组织管理"},
-  {id: "sys-settings", label: "系统设置"},
-  {id: "sys-accounts", label: "账号与授权"}
-];
-
-const ORG_MENU = [
-  {id: "org-overview", label: "组织概览"},
-  {id: "org-members", label: "成员管理"},
-  {id: "org-agents", label: "AI 智能体"},
-  {id: "org-projects", label: "项目列表"}
-];
-
 // "现在轮到我做什么" —— 此前控制台没有任何地方回答这个问题：菜单是写死的、没有计数，
 // 唯一的待办数字在项目概览里且不可点击、只统计当前项目；而等人拍板的东西被拆在两个页面上，
 // 其中一个还叫"执行监控"，名字完全不暗示"这里有等你签字的东西"。
@@ -246,18 +241,6 @@ function heartbeatTimedOut(node) {
   if (!timeoutMs || !node.lastHeartbeatAt || ["revoked", "offline"].includes(node.status)) return false;
   const ageMs = heartbeatAgeMs(node);
   return Number.isFinite(ageMs) && ageMs >= timeoutMs;
-}
-
-// 时长（毫秒）→ 人话，与 sinceText 同一套分级：分钟数一大就升到小时/天，否则运维得对着
-// 「已 11173 分钟没有心跳」自己换算是几天（真实运行态里读到过这种值）。传入的必须是【已按服务器
-// 时钟算好】的时长（heartbeatAgeMs / serverNow 那份），不在这里读 Date.now —— 那会把本机时钟
-// 偏移当成真实时长，正是「本机快 20 分钟→所有节点都显示已 20 分钟没心跳」那类假警报的来源。
-function durationText(ms) {
-  const minutes = Math.floor(Number(ms) / 60000);
-  if (minutes < 60) return `${minutes} 分钟`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours} 小时`;
-  return `${Math.round(hours / 24)} 天`;
 }
 
 function heartbeatStaleHint(node) {
@@ -342,104 +325,6 @@ function bucketNeedsProjectJump(bucket) {
   return projectIds.length > 1 || (currentProjectId && projectIds[0] !== currentProjectId) || (!currentProjectId && projectIds[0]);
 }
 
-const MENUS = {
-  system: SYSTEM_MENU,
-  org: ORG_MENU,
-  user: [...PROJECT_MENU_TAIL]
-};
-
-const PAGE_META = {
-  "sys-overview": ["系统概览", "服务器信息、资源占用、能耗估算、存储体量与运行指标"],
-  "sys-orgs": ["组织管理", "组织列表、配额与用量、创建组织并签发初始组织管理员账号"],
-  "sys-settings": ["系统设置", "运行参数只读展示、模型能力注册、技能源与指令协议"],
-  "sys-accounts": ["账号与授权", "系统账号、访问授权、服务账号与跨项目授权边界"],
-  "org-overview": ["组织概览", "配额用量、活跃项目与任务组统计"],
-  "org-members": ["成员管理", "创建成员、权限分配、停用与一次性登录令牌"],
-  "org-agents": ["AI 智能体", "组织内智能体节点：运行状态、健康度、令牌审计与吊销"],
-  "org-projects": ["项目列表", "创建项目、基础配置与成员授权"],
-  "proj-overview": ["项目概览", "总进度、健康度、任务组平均进度与待人工确认数"],
-  "proj-members": ["成员权限", "当前项目成员、角色授权、任务组控制与审核权限入口"],
-  "tg": ["任务组", "事项清单、角色、配置继承与执行控制"],
-  "review": ["人工审核", "集中处理执行过程中提交的人工确认请求"],
-  "directives": ["人工指令", "通过独立通道向系统下达结构化指令"],
-  "monitor": ["执行监控", "会话、派发、控制通道与实时执行事件流"],
-  "proj-agents": ["AI 智能体", "当前项目的 agent 节点、加入令牌、注册脚本与运行控制"],
-  "proj-settings": ["项目设置", "仓库与凭证引用、基线数据、规则与默认角色"]
-};
-
-function perspectiveOf(account) {
-  if (!account) return "user";
-  if (account.accountType === "system_admin" || (account.permissions || []).includes("system:*")) return "system";
-  if (account.accountType === "org_admin") return "org";
-  return "user";
-}
-
-function defaultPageFor(perspective) {
-  if (perspective === "system") return "sys-overview";
-  if (perspective === "org") return "org-overview";
-  return "proj-overview";
-}
-
-function primarySectionPageFor(perspective) {
-  if (perspective === "system") return "sys-overview";
-  if (perspective === "org") return "org-overview";
-  return "proj-overview";
-}
-
-function allowedMenuItemsFor(perspective) {
-  if (perspective === "system") return [...SYSTEM_MENU, ...PROJECT_MENU_TAIL];
-  if (perspective === "org") return [...ORG_MENU, ...PROJECT_MENU_TAIL];
-  return [...PROJECT_MENU_TAIL];
-}
-
-function managementSectionOf(pageId, perspective) {
-  if (PROJECT_PAGES.has(pageId)) return "project";
-  if (perspective === "system") return "system";
-  if (perspective === "org") return "org";
-  return "project";
-}
-
-function menuForCurrentSection(perspective, pageId) {
-  const section = managementSectionOf(pageId, perspective);
-  if (section === "project") return PROJECT_MENU_TAIL;
-  if (section === "org") return ORG_MENU;
-  return SYSTEM_MENU;
-}
-
-function sectionLabel(perspective, pageId) {
-  const section = managementSectionOf(pageId, perspective);
-  if (section === "project") return "项目管理";
-  if (section === "org") return "组织管理";
-  return "系统管理";
-}
-
-function sectionSwitchHtml(perspective, pageId) {
-  if (perspective === "user") return "";
-  const current = managementSectionOf(pageId, perspective);
-  const primaryLabel = perspective === "system" ? "系统管理" : "组织管理";
-  const primaryPage = primarySectionPageFor(perspective);
-  const item = (target, label, active) =>
-    `<button class="section-tab ${active ? "active" : ""}" data-section-target="${esc(target)}">${esc(label)}</button>`;
-  return `<div class="section-switch" aria-label="管理空间">`
-    + item(primaryPage, primaryLabel, current !== "project")
-    + item("proj-overview", "项目管理", current === "project")
-    + "</div>";
-}
-
-function menuItemHtml(item, active, todo) {
-  const meta = PAGE_META[item.id] || [item.label, ""];
-  const description = meta[1] || "";
-  return `
-    <button class="nav-item ${active ? "active" : ""}" data-menu="${esc(item.id)}">
-      <span class="nav-item-main">
-        <span class="nav-item-title">${esc(item.label)}</span>
-        ${todo.count ? `<span class="nav-badge">${todo.count}${todo.capped ? "+" : ""}</span>` : ""}
-      </span>
-      ${description ? `<span class="nav-item-desc">${esc(description)}</span>` : ""}
-    </button>
-  `;
-}
-
 /* ---------------- 基础工具 ---------------- */
 
 function emptyState() {
@@ -472,45 +357,6 @@ function emptyState() {
     auditLog: [],
     progressSnapshots: []
   };
-}
-
-/* 兼容非 HTTPS / 非 localhost：crypto.randomUUID 可能不存在 */
-function uuid() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
-    const bytes = crypto.getRandomValues(new Uint8Array(16));
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0"));
-    return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10, 16).join("")}`;
-  }
-  const rand = () => Math.floor((1 + Math.random()) * 0x10000).toString(16).slice(1);
-  return `${rand()}${rand()}-${rand()}-4${rand().slice(1)}-${rand()}-${rand()}${rand()}${Date.now().toString(16).slice(-6)}`;
-}
-
-/* 剪贴板降级：navigator.clipboard 在非安全上下文可能不可用 */
-async function copyText(text) {
-  const value = String(text ?? "");
-  try {
-    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-      await navigator.clipboard.writeText(value);
-      return true;
-    }
-  } catch {}
-  try {
-    const area = document.createElement("textarea");
-    area.value = value;
-    area.style.position = "fixed";
-    area.style.opacity = "0";
-    document.body.appendChild(area);
-    area.focus();
-    area.select();
-    const ok = document.execCommand("copy");
-    area.remove();
-    return ok;
-  } catch {
-    return false;
-  }
 }
 
 /* 权限门控：system_admin / org_admin 全权；user_account 看 permissions 列表 */
@@ -559,54 +405,6 @@ function accountName(accountId) {
   return accountId;
 }
 
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-const esc = escapeHtml;
-
-const TONE_GREEN = new Set(["completed", "verified", "ok", "active", "online", "passed", "succeeded", "accepted", "applied", "answered", "consumed", "satisfied", "clear", "healthy", "available", "pushed", "committed", "merged", "full", "current", "resolved", "admitted", "acked", "indexed", "review_passed", "completed_objective", "closed", "fixed", "reverified", "code_complete", "corrected", "verification_ready"]);
-const TONE_BLUE = new Set(["running", "in_progress", "queued", "assigned", "delivered", "monitoring", "syncing", "starting", "development", "evaluating", "collecting", "dispatched", "ready", "selected", "acknowledged", "received", "intake", "discovery", "product_design", "solution_design", "ui_design", "global_development_review", "verification", "repair", "reverification", "integration", "release", "online_quality", "implementation", "governance_design", "protocol", "cache_indexed", "initialized", "configured", "prepared", "submitted", "new_session", "subagent", "issued", "bound", "planned", "integrating", "checkpointed", "checkpoint_submitted", "created", "executor_started", "executor_output", "git_committed", "git_pushed", "repository_changed", "skill_synced", "dispatch_received", "heartbeat", "progress", "writing", "lease_bound"]);
-const TONE_ORANGE = new Set(["attention", "pending", "review_requested", "paused", "draining", "degraded", "limited", "invited", "waiting_room_event", "waiting_dependency", "permission_required", "needs_decision", "stale_state", "reverify_required", "standby", "active_paused_by_control", "change_requested", "reopened", "requested", "reviewing", "candidate", "drift_signal", "monitor_attention", "needs_reconcile", "quota_limited", "awaiting_human_confirmation", "read_only", "close_candidate", "waived", "proposed", "conflicted", "change_requested", "discovered"]);
-const TONE_RED = new Set(["failed", "blocked", "rejected", "denied", "error", "aborted", "quarantined", "quarantine", "dlq", "correction_required", "drift_detected", "timed_out", "unavailable", "blocked_dependency", "blocked_resource", "conflicted", "merge_conflict", "rolled_back", "invalidated", "S0", "critical"]);
-
-/* 阻塞严重度着色：S0 阻断=红，S1 严重=橙，S2 一般=蓝 */
-TONE_ORANGE.add("S1").add("major");
-TONE_BLUE.add("S2").add("normal");
-TONE_GREEN.add("S3");
-
-function toneOf(value) {
-  const key = String(value ?? "");
-  if (TONE_GREEN.has(key)) return "green";
-  if (TONE_BLUE.has(key)) return "blue";
-  if (TONE_ORANGE.has(key)) return "orange";
-  if (TONE_RED.has(key)) return "red";
-  return "gray";
-}
-
-// 同一个英文枚举在不同对象上是不同的中文：组织的 active 是"启用中"，授权的 active 是"生效中"，
-// 任务组的 active 才是"进行中"。而词表是全局的、一个键只能有一个值 —— 最常见的那个意思会盖住
-// 其余全部，屏幕上就出现了"账号：进行中""组织：进行中"（读真实渲染读出来的）。
-// 按对象加一层覆盖，命中不了退回全局词表 —— 不改词表，也不给每个枚举值另造新键。
-// 【授权角色】的中文，与【执行角色】分开。两者共用过同一个全局词表键 reviewer：
-// 执行角色那边是「评审员」（agent 干活的角色），而授权这边人看到的是「评审人」——
-// 授权下拉里写着"选评审人"，授出去之后列表里显示"评审员"，同一件事两个词。
-// 这和状态词表那次是同一个形状：一个全局键盖住了另一个对象的意思，所以按对象另立一张。
-// 没登记的角色回落到全局词表 —— 那边至少还有中文，不会掉成英文。
-const GRANT_ROLE_LABELS = {
-  project_owner: "项目负责人",
-  project_admin: "项目管理员",
-  task_group_owner: "任务组负责人",
-  reviewer: "评审人",
-  agent_operator: "智能体操作员",
-  viewer: "观察者",
-  project_member: "项目成员"
-};
 // 已归档的项目不该出现在「签发入网令牌」的目标里：后端已经拒（project_archived），
 // 界面还摆着它就是把人往死路上引 —— 按着选一个，回来的是一句拒绝。
 // 归档意味着"移出可建新工作的范围"，而接一个 agent 进来正是要开新工作。
@@ -628,27 +426,6 @@ function joinTokenTargetProjects() {
   return assignableProjects();
 }
 
-function grantRoleLabel(role) {
-  return GRANT_ROLE_LABELS[role] || t(role);
-}
-
-const STATUS_LABEL_BY_KIND = {
-  organization: {active: "启用中", suspended: "已停用", disabled: "已停用"},
-  // 账号的 retired 要按【对象】覆盖，不能往全局词表里加：那里的 retired 已经被技能源的
-  // 「已退役」占着，同一个对象里加第二个键只有后面那个生效（本仓撞过这个形状）。
-  // 而且这两件事的分量不同：停用还能启用回来，注销是终态 —— 屏幕上写一样的字，
-  // 人就会以为它也能点回来。
-  account: {active: "已启用", suspended: "已停用", disabled: "已停用", invited: "待接受邀请",
-    retired: "已注销（不可恢复）"},
-  grant: {active: "生效中", revoked: "已撤销", expired: "已过期"},
-  agent: {active: "已启用", disabled: "已停用", retired: "已退役"},
-  skillSource: {active: "已启用", retired: "已退役"},
-  // 入网令牌的 consumed 是"这张一次性票被用掉了"，而全局词表里 consumed 已经被评审包的
-  // 「已采纳」占着 —— 屏幕上一张用过的加入令牌写着「已采纳」，读起来像有人批准了什么。
-  // 同一个词在不同对象上意思不同时，只能按【对象】覆盖（本仓 active/retired 都撞过这个形状）。
-  joinToken: {issued: "已签发", consumed: "已使用（一次性票已用掉）", expired: "已过期", revoked: "已撤销"}
-};
-
 // 加载失败时，列表为空【不等于】没有记录 —— 它可能压根没取回来。
 // 顶部横幅说的是"整页加载失败"，而表格里那句"暂无数据"是在断言"确实一条都没有"。
 // 两句话互相矛盾时，人信的是离数据最近的那一句 —— 于是"接口挂了"被读成"这个组织没有成员"。
@@ -664,11 +441,6 @@ function projConfigUnavailableText() {
     + "这里显示不了已有的配置 —— 不是「还没有配置」。点右上角的 ↻ 刷新再试一次。";
 }
 
-function statusBadge(kind, value, tone) {
-  const label = STATUS_LABEL_BY_KIND[kind]?.[value];
-  return label ? customBadge(label, tone || toneOf(value)) : badge(value, tone);
-}
-
 // 给"请求级失败"打个记号：连不上、超时、服务端回 4xx/5xx —— 这些是控制面那边的事。
 // 没有这个记号的异常是【控制台自己抛的】（我们代码里的缺陷）。两者在屏幕上必须分开说：
 // 一律写"连不上控制面"会把人支去查网络和服务端，而 bug 就在这一页里。
@@ -678,185 +450,6 @@ function requestFailure(error, status) {
   // 一句「读取失败或无权查看」—— 人看了不知道该去要权限还是该重试（任务组房间那块就是）。
   if (status !== undefined) error.status = status;
   return error;
-}
-
-function badge(value, tone) {
-  if (value === null || value === undefined || value === "") return `<span class="badge gray">-</span>`;
-  return `<span class="badge ${tone || toneOf(value)}">${esc(t(value))}</span>`;
-}
-
-function customBadge(label, tone) {
-  return `<span class="badge ${tone}">${esc(label)}</span>`;
-}
-
-// 任务分解项类别标签：优先 kind_<k> 映射，缺失则退回裸类别（再经 t 兜底），避免直出 "kind_xxx"
-function kindLabel(k) {
-  const key = `kind_${k}`;
-  const mapped = t(key);
-  return mapped === key ? String(k) : mapped;
-}
-
-// 模型能力标签专用映射（与 t() 共享命名空间隔离，避免 writing 等与仓库状态冲突）
-const STRENGTH_LABELS = {
-  planning: "规划", architecture: "架构", deep_reasoning: "深度推理", long_context: "长上下文",
-  fast_execution: "快速执行", coding: "编码", review: "评审", security: "安全", qa: "质量保障",
-  math: "数学", data_analysis: "数据分析", multimodal: "多模态", low_cost: "低成本",
-  local_private: "本地私有", translation: "翻译", writing: "写作", reasoning: "推理", vision: "视觉"
-};
-function strengthLabel(code) { return STRENGTH_LABELS[String(code || "")] || t(code); }
-
-// 执行档位专用映射（避免 verification 与"验证中"状态冲突）
-// 与 spec/runtime-bootstrap.schema.json 的 executionProfile 枚举逐字一致（契约门双向核对）。
-// 原先这里有 standard / fast / full 三个档位 —— 系统里根本没有它们，读表的人会以为有；
-// 而真正会出现的 production 反倒不在表里，只能靠 t() 兜出「生产」（与旁边的「验证档位」不齐）。
-const EXECUTION_PROFILE_LABELS = { production: "生产档位", verification: "验证档位" };
-function executionProfileLabel(code) { return EXECUTION_PROFILE_LABELS[String(code || "")] || t(code); }
-
-// 任务执行类别 / 推理档 专用映射（避免 verification 与"验证中"等跨域冲突）
-const TASK_EXECUTION_CLASS_LABELS = { verification: "定向验证", short_execution: "短机械任务", deep_analysis: "深度分析", implementation: "实现", mixed_analysis_implementation: "分析并实现" };
-const REASONING_LEVEL_LABELS = { high: "高", medium: "中", standard: "标准", low: "低", minimal: "最简" };
-const LANE_FUNCTION_LABELS = { ...TASK_EXECUTION_CLASS_LABELS, general_execution: "通用执行", review: "评审", analysis: "分析", short_execution: "短机械任务", implementation: "实现" };
-// §4.5 admission whyThisCellNow closed-set tokens → Chinese; dynamic reasons fall back to t(reasonCode).
-const WHY_THIS_CELL_LABELS = {
-  executable_cell_admitted_this_cycle: "本周期准入执行",
-  cell_awaiting_independent_review: "等待独立评审",
-  cell_needs_external_decision: "需人工决策处置",
-  cell_already_executing: "已在执行中",
-  cell_split_into_analysis_and_implementation: "已拆分为分析与实现",
-  no_model_satisfies_hard_constraints: "无模型满足硬约束",
-  role_drift_guard_intercepted_dispatch: "角色偏移守卫拦截派发",
-  cell_deferred_condition_window: "等待条件窗口（按环境独立延后）",
-  cell_waiting_for_wip_capacity: "等在制品额度",
-  cell_yielding_to_higher_priority: "让路给更高优先级的单元",
-  cell_held_for_human_confirmation: "等你在确认卡上定稿",
-  cell_held_for_human_plan_confirmation: "等你为拆分方案定稿",
-  cell_processing_error: "处理这个单元时出错（详见运行时问题）"
-};
-function admissionReasonLabel(decision) {
-  const why = decision.whyThisCellNow;
-  if (why && WHY_THIS_CELL_LABELS[why]) return WHY_THIS_CELL_LABELS[why];
-  if (decision.reasonCode) {
-    const localized = t(decision.reasonCode);
-    if (localized && localized !== decision.reasonCode) return localized;
-  }
-  return why || decision.reasonCode || "-";
-}
-function laneFunctionLabel(value) { return value ? (LANE_FUNCTION_LABELS[value] || value) : "-"; }
-// 模型决策的中文可读摘要（原始 modelDecision 为机器契约技术串，此处从结构化字段生成人读版本）
-function modelDecisionSummaryZh(decision) {
-  const parts = [];
-  if (decision.taskExecutionClass) parts.push(`任务类型：${TASK_EXECUTION_CLASS_LABELS[decision.taskExecutionClass] || decision.taskExecutionClass}`);
-  const model = decision.selectedModel?.modelId;
-  if (model) parts.push(`选定模型：${model}`);
-  const reasoning = decision.selectedModel?.reasoningLevel || decision.reasoningLevel;
-  if (reasoning) parts.push(`推理档：${REASONING_LEVEL_LABELS[reasoning] || reasoning}`);
-  // 没选出模型的那一条此前在屏幕上只剩一个任务类型：为什么没选出来（denialReason）、
-  // 按的是哪条策略的硬约束（fallbackPolicyRef）都写了，却没有任何读取点 ——
-  // 人看到的是"这个工作项就是没有模型"，查不下去。派发时那句报错只在【那一刻】出现。
-  if (decision.denialReason) {
-    parts.push(`未选出模型：${explainCoded(decision.denialReason)}`);
-    // 只报策略【引用】，不去读 modelSelectionPolicies：主视图有意清空了那个集合（没人读），
-    // 而这一行不值得为一个名字把 7.7KB 重新挂回每一次轮询。策略明细有专用端点
-    //（/api/model-selection），拿着这个 id 就能查过去。
-    if (decision.fallbackPolicyRef) parts.push(`按策略 ${decision.fallbackPolicyRef} 的硬约束`);
-  }
-  // t() 自己就把空值渲染成 "-"；再兜一个 "-" 进去，等于拿显示文本当词条去查，
-  // 开发期的"未映射枚举值"告警里就会混进 "-" 这种噪声，把真正漏译的那几条埋掉。
-  return parts.length ? parts.join(" · ") : t(decision.selectionMode);
-}
-
-// 本机时区标签（UTC+8 这种）。服务端记的是 UTC，两边差几个小时而屏幕上不标，
-// 对日志的人会以为记录不存在。
-// 界面上"已 N 分钟没有心跳"这类判断，此前拿【浏览器本机时钟】去减服务端给的时间戳。
-// 本机时钟快 20 分钟，所有健康节点都会显示"已 20 分钟没有心跳" —— 假警报会把人派去查一个
-// 不存在的故障（慢的方向反而无害：算出来是负数，不会报警）。每次响应都带 Date 头，
-// 拿它算一次偏差，之后所有相对时间都按【服务器的现在】算。
-let serverClockSkewMs = 0;
-function noteServerClock(response) {
-  const header = response?.headers?.get?.("date");
-  if (!header) return;
-  const serverNowMs = new Date(header).getTime();
-  if (!Number.isFinite(serverNowMs)) return;
-  serverClockSkewMs = Date.now() - serverNowMs;
-}
-function serverNow() {
-  return Date.now() - serverClockSkewMs;
-}
-// 偏差大到会影响判读时，直接说出来 —— 悄悄替人校正，人就永远不知道自己这台机器的表是错的。
-function clockSkewNote() {
-  const minutes = Math.round(serverClockSkewMs / 60000);
-  if (Math.abs(minutes) < 2) return "";
-  return `本机时钟比服务器${minutes > 0 ? "快" : "慢"} ${Math.abs(minutes)} 分钟`;
-}
-
-function localZoneLabel() {
-  const minutes = -new Date().getTimezoneOffset();
-  if (!Number.isFinite(minutes)) return "UTC";
-  const sign = minutes < 0 ? "-" : "+";
-  const abs = Math.abs(minutes);
-  const rest = abs % 60;
-  return `UTC${sign}${Math.floor(abs / 60)}${rest ? `:${String(rest).padStart(2, "0")}` : ""}`;
-}
-
-function fmtTime(value) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return esc(value);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function fmtBytes(value) {
-  const bytes = Number(value || 0);
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
-  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${bytes} B`;
-}
-
-function progressBar(percent, extra = "") {
-  const safe = Math.max(0, Math.min(100, Number(percent || 0)));
-  return `<div class="progress ${extra}" aria-label="进度 ${safe}%"><span style="width:${safe}%"></span></div>`;
-}
-
-function progressLine(percent) {
-  const safe = Math.max(0, Math.min(100, Number(percent || 0)));
-  return `<div class="progress-line">${progressBar(safe)}<em>${safe}%</em></div>`;
-}
-
-// reserved：已经占着位、但还不是"用量"的那部分（目前只有未使用的入网令牌）。
-// 不并进 used 是因为服务端两处判定口径不同（签发令牌算占位、节点注册不算），
-// 但人看到的那一格必须把它显出来 —— 否则"还剩一格却签不出来"没有任何解释。
-function quotaLine(used, max, reserved = 0) {
-  const total = Math.max(1, Number(max || 1));
-  const held = Number(used || 0) + Number(reserved || 0);
-  const percent = Math.round((held / total) * 100);
-  const tone = percent >= 100 ? "quota-full" : percent >= 80 ? "quota-warn" : "quota-ok";
-  return `<div class="progress-line">${progressBar(percent, tone)}<em>${used ?? 0}/${max ?? 0}`
-    + `${Number(reserved) > 0 ? `（另有 ${esc(reserved)} 张未使用的入网令牌占着位，合计 ${held}/${max ?? 0}）` : ""}</em></div>`;
-}
-
-function panel(title, body, options = {}) {
-  return `
-    <article class="panel ${options.wide ? "wide" : ""}">
-      <div class="panel-header"><h2>${esc(title)}</h2>${options.headerSide ? `<div class="header-side">${options.headerSide}</div>` : ""}</div>
-      <div class="panel-body">${body}</div>
-    </article>
-  `;
-}
-
-// 单元格可为字符串，或 {v, c} 形态（v=已转义内容，c=列 class，如 "num"/"text-clip"/"nowrap"）
-function cell(item) {
-  if (item && typeof item === "object" && "v" in item) {
-    // 截断列补 title，鼠标悬浮可看全文（v 为已转义纯文本时才加，避免把 HTML 塞进 title）
-    const titleAttr = (item.c && item.c.includes("text-clip") && !/[<>]/u.test(String(item.v))) ? ` title="${item.v}"` : "";
-    return `<td class="${item.c || ""}"${titleAttr}>${item.v}</td>`;
-  }
-  return `<td>${item}</td>`;
-}
-
-function row(items) {
-  return `<tr>${items.map(cell).join("")}</tr>`;
 }
 
 function table(headers, bodyRows, options = {}) {

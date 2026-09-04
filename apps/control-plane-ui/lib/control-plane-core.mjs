@@ -9,6 +9,22 @@ import { assertTransition, canonicalTransition, requiresValuesToEvidenceRefs } f
 import { AGENT_DISPATCH_TERMINAL_STATES, isTerminalDispatchStatus } from "./lifecycle-states.mjs";
 import { mcpToolNames } from "./mcp-tool-catalog.mjs";
 import { clampEnvNumber } from "./env-number.mjs";
+import {
+  REGISTERED_OWNER_ROLES,
+  agentJoinCommand,
+  credentialEnvNames,
+  defaultModelCeiling,
+  embeddedMcpLogicalServers,
+  embeddedServices,
+  modelProviderAdapters,
+  providerClasses,
+  providerDefaultModelIds,
+  providerDefaults,
+  roleCapabilityHints
+} from "./model-catalog.mjs";
+import { defaultLanguagePolicy, languagePolicyDirective, normalizeTaskGroupLanguagePolicy } from "./language-policy.mjs";
+export { REGISTERED_OWNER_ROLES, providerClasses } from "./model-catalog.mjs";
+export { languagePolicyDirective, normalizeTaskGroupLanguagePolicy } from "./language-policy.mjs";
 
 const controlPlaneRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "../../..");
 const specDigestCache = new Map();
@@ -24,215 +40,6 @@ export function specContentDigest(specRelativePath) {
   specDigestCache.set(specRelativePath, digest);
   return digest;
 }
-
-export const providerClasses = [
-  "openai",
-  "anthropic",
-  "google",
-  "xai",
-  "meta",
-  "mistral",
-  "deepseek",
-  "qwen",
-  "moonshot",
-  "zhipu",
-  "baidu",
-  "tencent",
-  "openrouter",
-  "azure_openai",
-  "aws_bedrock",
-  "vertex_ai",
-  "ollama",
-  "vllm",
-  "custom"
-];
-
-const embeddedServices = [
-  ["control-plane", "ui-console-service"],
-  ["room-broker", "room-broker"],
-  ["scheduler", "scheduler"],
-  ["agent-gateway", "agent-runtime"],
-  ["identity-service", "identity-service"],
-  ["ui-console-service", "ui-console-service"],
-  ["repository-router", "repository-router"],
-  ["instruction-optimizer", "instruction-optimizer"],
-  ["policy-engine", "policy-engine"],
-  ["command-bus", "command-bus"],
-  ["permission-gateway", "permission-gateway"],
-  ["mcp-proxy", "mcp-proxy"],
-  ["model-registry", "model-registry"],
-  ["skill-registry", "skill-registry"],
-  ["monitor", "monitor"]
-];
-
-const agentJoinCommand = "create one-time join token in project UI, then run the generated curl installer command on the Agent host";
-
-const embeddedMcpLogicalServers = [
-  "agent-control-mcp",
-  "definition-mcp",
-  "evidence-mcp",
-  "governance-mcp",
-  "human-review-mcp",
-  "identity-mcp",
-  "instruction-mcp",
-  "model-mcp",
-  "orchestration-mcp",
-  "permission-mcp",
-  "repository-mcp",
-  "resource-mcp",
-  "review-mcp",
-  "room-mcp",
-  "scheduler-mcp",
-  "skill-mcp",
-  "ui-console-mcp"
-];
-
-
-const modelProviderAdapters = providerClasses.map((providerClass) => ({
-  schemaVersion: "model-provider/v1",
-  providerClass,
-  adapterId: `adapter:${providerClass}`,
-  credentialEnvNames: credentialEnvNames(providerClass),
-  invocationMode: ["ollama", "vllm", "custom"].includes(providerClass) ? "local_or_http_endpoint" : "provider_api",
-  // discovered 是 ModelProvider 状态机的初态：适配器目录是静态的，还没有探过它能不能用。
-  // 此前写的是 configured —— 机器里根本没有这个状态，按状态机推理的东西一个都不认识它。
-  status: "discovered"
-}));
-
-// 两个清单是不同层面的东西，不能混为一谈：
-//   · REGISTERED_OWNER_ROLES —— manifest 里登记的系统角色，工作项的 ownerRole 必须是其中之一；
-//   · roleCapabilityHints —— 其中【有专属技能】的那几个。
-// 未登记的角色要在创建工作项时就拒绝；已登记但没有专属技能的角色（如 agent-runtime），
-// 回退到通用执行技能是正当的 —— 但必须是【显式的、留痕的】回退，而不是静默拿 orchestrator 的。
-export const REGISTERED_OWNER_ROLES = ["orchestrator", "decision-center", "scheduler", "work-session", "reviewer", "qa",
-  "security", "release", "rule-steward", "monitor", "agent-runtime", "command-bus", "permission-gateway", "policy-engine",
-  "mcp-proxy", "room-broker", "model-registry", "skill-registry", "identity-service", "ui-console-service",
-  "repository-router", "instruction-optimizer"];
-
-const roleCapabilityHints = {
-  orchestrator: {
-    category: "control",
-    skillRef: "engineering-multi-agent-systems-architect",
-    capabilities: ["planning", "architecture", "deep_reasoning", "long_context", "tool_use", "review"],
-    strengths: ["planning", "architecture", "deep_reasoning", "long_context"]
-  },
-  scheduler: {
-    category: "control",
-    skillRef: "project-management-project-shepherd",
-    capabilities: ["planning", "fast_execution", "cost_aware", "quota_aware", "tool_use"],
-    strengths: ["planning", "fast_execution"]
-  },
-  reviewer: {
-    category: "review",
-    skillRef: "engineering-code-reviewer",
-    capabilities: ["review", "coding", "security", "qa", "deep_reasoning"],
-    strengths: ["review", "coding", "security"]
-  },
-  qa: {
-    category: "quality",
-    skillRef: "testing-qa-engineer",
-    capabilities: ["qa", "review", "coding", "data_analysis"],
-    strengths: ["qa", "review"]
-  },
-  security: {
-    category: "security",
-    skillRef: "security-architect",
-    capabilities: ["security", "review", "deep_reasoning", "tool_use"],
-    strengths: ["security", "review", "deep_reasoning"]
-  },
-  release: {
-    category: "release",
-    skillRef: "engineering-devops-automator",
-    capabilities: ["coding", "qa", "planning", "tool_use", "fast_execution"],
-    strengths: ["coding", "qa", "planning"]
-  },
-  monitor: {
-    category: "monitor",
-    skillRef: "engineering-sre",
-    capabilities: ["qa", "data_analysis", "fast_execution", "tool_use"],
-    strengths: ["qa", "data_analysis", "fast_execution"]
-  },
-  "agent-runtime": {
-    category: "runtime",
-    skillRef: "engineering-backend-architect",
-    capabilities: ["coding", "architecture", "tool_use", "qa"],
-    strengths: ["coding", "architecture"]
-  },
-  "ui-console-service": {
-    category: "ui",
-    skillRef: "engineering-frontend-developer",
-    capabilities: ["coding", "creative", "qa", "tool_use"],
-    strengths: ["coding", "creative"]
-  },
-  "policy-engine": {
-    category: "policy",
-    skillRef: "security-compliance-auditor",
-    capabilities: ["security", "review", "deep_reasoning", "planning"],
-    strengths: ["security", "review"]
-  },
-  "model-registry": {
-    category: "runtime",
-    skillRef: "engineering-ai-engineer",
-    capabilities: ["data_analysis", "planning", "deep_reasoning", "tool_use"],
-    strengths: ["data_analysis", "planning"]
-  },
-  "skill-registry": {
-    category: "runtime",
-    skillRef: "specialized-prompt-engineer",
-    capabilities: ["writing", "planning", "review", "translation"],
-    strengths: ["writing", "planning"]
-  }
-};
-
-const providerDefaults = {
-  openai: {modalities: ["text", "vision", "tool_use"], strengths: ["deep_reasoning", "coding", "architecture", "review", "security", "qa", "planning", "long_context"], context: 128000, output: 16000, quality: [0.96, 0.95, 0.94, "normal", 0.95], cost: ["high", "normal"]},
-  anthropic: {modalities: ["text", "vision", "tool_use"], strengths: ["deep_reasoning", "coding", "architecture", "review", "writing", "long_context"], context: 200000, output: 16000, quality: [0.94, 0.92, 0.94, "normal", 0.94], cost: ["high", "normal"]},
-  google: {modalities: ["text", "vision", "audio", "video", "tool_use"], strengths: ["deep_reasoning", "coding", "math", "data_analysis", "multimodal", "long_context"], context: 1000000, output: 16000, quality: [0.92, 0.9, 0.9, "normal", 0.92], cost: ["normal", "high"]},
-  xai: {modalities: ["text", "vision", "tool_use"], strengths: ["deep_reasoning", "fast_execution", "coding", "writing"], context: 128000, output: 12000, quality: [0.89, 0.86, 0.84, "low", 0.88], cost: ["normal", "normal"]},
-  meta: {modalities: ["text", "tool_use"], strengths: ["coding", "fast_execution", "low_cost", "local_private"], context: 128000, output: 8000, quality: [0.84, 0.85, 0.8, "low", 0.84], cost: ["low", "high"]},
-  mistral: {modalities: ["text", "tool_use"], strengths: ["coding", "fast_execution", "low_cost", "multimodal"], context: 128000, output: 8000, quality: [0.86, 0.86, 0.82, "low", 0.86], cost: ["low", "high"]},
-  deepseek: {modalities: ["text", "tool_use"], strengths: ["deep_reasoning", "coding", "math", "low_cost"], context: 128000, output: 8000, quality: [0.91, 0.92, 0.85, "normal", 0.86], cost: ["low", "normal"]},
-  qwen: {modalities: ["text", "vision", "tool_use"], strengths: ["coding", "math", "translation", "low_cost", "long_context"], context: 128000, output: 8000, quality: [0.88, 0.89, 0.84, "low", 0.87], cost: ["low", "high"]},
-  moonshot: {modalities: ["text", "vision", "tool_use"], strengths: ["long_context", "writing", "translation", "deep_reasoning"], context: 1000000, output: 8000, quality: [0.88, 0.84, 0.84, "normal", 0.87], cost: ["normal", "normal"]},
-  zhipu: {modalities: ["text", "vision", "tool_use"], strengths: ["translation", "writing", "low_cost", "multimodal"], context: 128000, output: 8000, quality: [0.84, 0.82, 0.8, "low", 0.84], cost: ["low", "normal"]},
-  baidu: {modalities: ["text", "vision", "tool_use"], strengths: ["translation", "writing", "data_analysis", "multimodal"], context: 128000, output: 8000, quality: [0.83, 0.8, 0.8, "normal", 0.84], cost: ["normal", "normal"]},
-  tencent: {modalities: ["text", "vision", "tool_use"], strengths: ["writing", "translation", "data_analysis", "low_cost"], context: 128000, output: 8000, quality: [0.82, 0.8, 0.8, "normal", 0.83], cost: ["normal", "normal"]},
-  openrouter: {modalities: ["text", "vision", "tool_use"], strengths: ["planning", "coding", "low_cost", "fast_execution"], context: 128000, output: 12000, quality: [0.86, 0.86, 0.84, "low", 0.82], cost: ["low", "high"]},
-  azure_openai: {modalities: ["text", "vision", "tool_use"], strengths: ["deep_reasoning", "coding", "architecture", "review", "security", "planning", "long_context"], context: 128000, output: 16000, quality: [0.95, 0.94, 0.94, "normal", 0.95], cost: ["high", "normal"]},
-  aws_bedrock: {modalities: ["text", "vision", "tool_use"], strengths: ["architecture", "security", "writing", "planning"], context: 200000, output: 12000, quality: [0.9, 0.87, 0.9, "normal", 0.92], cost: ["normal", "normal"]},
-  vertex_ai: {modalities: ["text", "vision", "audio", "video", "tool_use"], strengths: ["data_analysis", "multimodal", "long_context", "planning"], context: 1000000, output: 16000, quality: [0.91, 0.88, 0.89, "normal", 0.92], cost: ["normal", "normal"]},
-  ollama: {modalities: ["text", "tool_use"], strengths: ["local_private", "low_cost", "fast_execution", "coding"], context: 64000, output: 8000, quality: [0.76, 0.78, 0.74, "low", 0.78], cost: ["low", "high"]},
-  vllm: {modalities: ["text", "tool_use"], strengths: ["local_private", "low_cost", "fast_execution", "coding"], context: 128000, output: 8000, quality: [0.78, 0.8, 0.75, "low", 0.8], cost: ["low", "high"]},
-  custom: {modalities: ["text", "tool_use"], strengths: ["planning", "coding", "review"], context: 128000, output: 8000, quality: [0.75, 0.75, 0.75, "unknown", 0.75], cost: ["unknown", "unknown"]}
-};
-
-const providerDefaultModelIds = {
-  openai: "openai:gpt-5.5",
-  anthropic: "anthropic:claude-sonnet-4-5",
-  google: "google:gemini-2.5-pro",
-  xai: "xai:grok-4",
-  meta: "meta:llama-4-maverick",
-  mistral: "mistral:mistral-large-latest",
-  deepseek: "deepseek:deepseek-chat",
-  qwen: "qwen:qwen-max-latest",
-  moonshot: "moonshot:kimi-k2",
-  zhipu: "zhipu:glm-4.5",
-  baidu: "baidu:ernie-4.5",
-  tencent: "tencent:hunyuan-turbos-latest",
-  openrouter: "openrouter:openai/gpt-5.5",
-  azure_openai: "azure_openai:gpt-5.5",
-  aws_bedrock: "aws_bedrock:anthropic.claude-sonnet-4-5",
-  vertex_ai: "vertex_ai:gemini-2.5-pro",
-  ollama: "ollama:llama3.1",
-  vllm: "vllm:Qwen/Qwen2.5-Coder-32B-Instruct",
-  custom: "custom:custom-model"
-};
-
-const defaultModelCeiling = {
-  maxModelTier: "frontier_standard",
-  maxReasoningLevel: "high",
-  escalationPolicy: "special_signal_required"
-};
 
 // 字符串清单的上限：REST 与 MCP 各有一份归一实现（normalizeStringList / normalizeMcpStringList），
 // 逻辑同规，但上限原先是【各写一份字面量】—— 值一样只是巧合，改一处另一处不会跟，
@@ -262,47 +69,6 @@ export const DLQ_ENTRY_TERMINAL_STATES = Object.freeze(["replayed", "discarded",
 const COMMAND_TERMINAL = new Set(COMMAND_TERMINAL_STATES);
 const COMMAND_EFFECT_TERMINAL = new Set(COMMAND_EFFECT_TERMINAL_STATES);
 const DLQ_ENTRY_TERMINAL = new Set(DLQ_ENTRY_TERMINAL_STATES);
-
-const defaultLanguagePolicy = Object.freeze({
-  schemaVersion: "language-policy/v1",
-  languageTag: "zh-CN",
-  languageName: "Chinese",
-  script: "Hans",
-  scope: [
-    "role_interaction",
-    "dispatch_instruction",
-    "room_message",
-    "execution_event",
-    "checkpoint",
-    "repository_output",
-    "review_material"
-  ],
-  enforcement: "required",
-  fallback: "return_blocked_for_language_mismatch"
-});
-
-const languageAliases = new Map([
-  ["中文", {languageTag: "zh-CN", languageName: "Chinese", script: "Hans"}],
-  ["汉语", {languageTag: "zh-CN", languageName: "Chinese", script: "Hans"}],
-  ["简体中文", {languageTag: "zh-CN", languageName: "Chinese", script: "Hans"}],
-  ["zh", {languageTag: "zh-CN", languageName: "Chinese", script: "Hans"}],
-  ["zh-cn", {languageTag: "zh-CN", languageName: "Chinese", script: "Hans"}],
-  ["chinese", {languageTag: "zh-CN", languageName: "Chinese", script: "Hans"}],
-  ["english", {languageTag: "en", languageName: "English"}],
-  ["英语", {languageTag: "en", languageName: "English"}],
-  ["en", {languageTag: "en", languageName: "English"}],
-  ["en-us", {languageTag: "en-US", languageName: "English"}],
-  ["french", {languageTag: "fr", languageName: "French"}],
-  ["法语", {languageTag: "fr", languageName: "French"}],
-  ["fr", {languageTag: "fr", languageName: "French"}],
-  ["fr-fr", {languageTag: "fr-FR", languageName: "French"}],
-  ["ja", {languageTag: "ja", languageName: "Japanese"}],
-  ["japanese", {languageTag: "ja", languageName: "Japanese"}],
-  ["de", {languageTag: "de", languageName: "German"}],
-  ["german", {languageTag: "de", languageName: "German"}],
-  ["es", {languageTag: "es", languageName: "Spanish"}],
-  ["spanish", {languageTag: "es", languageName: "Spanish"}]
-]);
 
 const defaultSkillSource = {
   schemaVersion: "agent-skill-source/v1",
@@ -379,64 +145,6 @@ function stableJson(value) {
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
-}
-
-export function normalizeTaskGroupLanguagePolicy(input = {}, fallback = {}) {
-  const rawPolicy = input?.languagePolicy && typeof input.languagePolicy === "object" ? input.languagePolicy : input;
-  const fallbackPolicy = fallback?.languagePolicy && typeof fallback.languagePolicy === "object" ? fallback.languagePolicy : fallback;
-  const rawLanguage = String(
-    rawPolicy.languageTag ||
-    rawPolicy.language ||
-    rawPolicy.outputLanguage ||
-    rawPolicy.interactionLanguage ||
-    fallbackPolicy.languageTag ||
-    defaultLanguagePolicy.languageTag
-  ).trim();
-  const preset = resolveLanguagePreset(rawLanguage);
-  const scope = unique([
-    ...(Array.isArray(rawPolicy.scope) ? rawPolicy.scope : []),
-    ...(Array.isArray(rawPolicy.appliesTo) ? rawPolicy.appliesTo : []),
-    ...(!rawPolicy.scope && !rawPolicy.appliesTo && Array.isArray(fallbackPolicy.scope) ? fallbackPolicy.scope : []),
-    ...(!rawPolicy.scope && !rawPolicy.appliesTo && !fallbackPolicy.scope ? defaultLanguagePolicy.scope : [])
-  ]);
-  return {
-    schemaVersion: "language-policy/v1",
-    languageTag: preset.languageTag,
-    languageName: String(rawPolicy.languageName || preset.languageName || preset.languageTag),
-    ...(rawPolicy.script || preset.script ? {script: String(rawPolicy.script || preset.script)} : {}),
-    scope: scope.length ? scope : [...defaultLanguagePolicy.scope],
-    enforcement: ["advisory", "required"].includes(rawPolicy.enforcement)
-      ? rawPolicy.enforcement
-      : fallbackPolicy.enforcement === "advisory" ? "advisory" : "required",
-    fallback: normalizeLanguageFallback(rawPolicy.fallback, fallbackPolicy.fallback)
-  };
-}
-
-export function languagePolicyDirective(policy = defaultLanguagePolicy) {
-  const normalized = normalizeTaskGroupLanguagePolicy(policy);
-  return `LanguagePolicy ${normalized.languageTag}/${normalized.languageName}: all role interaction, dispatch instructions, room messages, execution events, checkpoints, repository outputs and review materials MUST use this language; return blocked if unable.`;
-}
-
-function resolveLanguagePreset(rawLanguage) {
-  const key = String(rawLanguage || "").trim().toLowerCase();
-  const alias = languageAliases.get(key);
-  if (alias) return alias;
-  if (/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/iu.test(rawLanguage)) {
-    return {languageTag: canonicalLanguageTag(rawLanguage), languageName: canonicalLanguageTag(rawLanguage)};
-  }
-  return {...defaultLanguagePolicy};
-}
-
-function normalizeLanguageFallback(primary, fallback) {
-  const allowed = new Set(["return_blocked_for_language_mismatch", "translate_or_return_blocked"]);
-  if (allowed.has(primary)) return primary;
-  if (allowed.has(fallback)) return fallback;
-  return defaultLanguagePolicy.fallback;
-}
-
-function canonicalLanguageTag(value) {
-  const parts = String(value || "").trim().split("-").filter(Boolean);
-  return parts.map((part, index) => index === 0 ? part.toLowerCase() : part.toUpperCase()).join("-");
 }
 
 function ensureTaskGroupLanguagePolicies(state) {
@@ -5140,30 +4848,6 @@ function gitPathExists(root, commit, path) {
 
 function normalizeGitRemoteUrl(url = "") {
   return String(url).trim().replace(/\.git$/u, "");
-}
-
-function credentialEnvNames(providerClass) {
-  return {
-    openai: ["OPENAI_API_KEY"],
-    anthropic: ["ANTHROPIC_API_KEY"],
-    google: ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
-    xai: ["XAI_API_KEY"],
-    meta: ["META_API_KEY"],
-    mistral: ["MISTRAL_API_KEY"],
-    deepseek: ["DEEPSEEK_API_KEY"],
-    qwen: ["DASHSCOPE_API_KEY", "QWEN_API_KEY"],
-    moonshot: ["MOONSHOT_API_KEY"],
-    zhipu: ["ZHIPU_API_KEY"],
-    baidu: ["BAIDU_API_KEY"],
-    tencent: ["TENCENT_HUNYUAN_API_KEY"],
-    openrouter: ["OPENROUTER_API_KEY"],
-    azure_openai: ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"],
-    aws_bedrock: ["AWS_ACCESS_KEY_ID", "AWS_PROFILE"],
-    vertex_ai: ["GOOGLE_APPLICATION_CREDENTIALS", "VERTEX_PROJECT_ID"],
-    ollama: ["OLLAMA_HOST"],
-    vllm: ["VLLM_ENDPOINT"],
-    custom: ["AIMAC_CUSTOM_MODEL_ENDPOINT"]
-  }[providerClass] || [];
 }
 
 function appendEvent(state, type, subjectType, subjectId, actorId, payload, extra = {}) {
