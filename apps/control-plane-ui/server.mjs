@@ -7,10 +7,12 @@ import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypt
 import { gzipSync } from "node:zlib";
 import { accessSync, constants as fsConstants, appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { arch, cpus, freemem, hostname, loadavg, platform, totalmem } from "node:os";
-import { basename, dirname, extname, join, normalize, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AUDIT_LOG_CAP, appendAuditEntry, auditArchiveFault as sharedAuditArchiveFault, flushPendingAuditAppends as flushAuditArchive } from "./lib/audit-ledger.mjs";
+import { json, jsonString, parseBody } from "./lib/http-utils.mjs";
 import { mcpServiceAllowedTools, mcpServiceAllowlistNotice } from "./lib/mcp-service-allowlist.mjs";
+import { createStaticAssetHandler } from "./lib/static-assets.mjs";
 import { assertStateStoreConfig, consumeStateRebuildSignal, ensureStoredState, isStateStoreConflict, markRuntimeStorage, projectShardStorageFault, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
 import { appendProjectExecutionEvent, projectEventLogFault, projectExecutionEventStorageInfo, readProjectExecutionEventByKey, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
 import {
@@ -186,13 +188,6 @@ const unsafeSecretValues = new Set([
   "change-this-local-agent-runtime-token"
 ]);
 
-
-const mimeTypes = {
-  ".html": "text/html; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".js": "application/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8"
-};
 
 function now() {
   return new Date().toISOString();
@@ -2461,61 +2456,6 @@ function driftGuardRequiredForAction(action) {
   ].includes(action);
 }
 
-function json(res, status, payload) {
-  res.writeHead(status, {"content-type": "application/json; charset=utf-8", "cache-control": "no-store"});
-  res.end(JSON.stringify(payload));
-}
-
-function jsonString(res, status, payload, extraHeaders) {
-  res.writeHead(status, {"content-type": "application/json; charset=utf-8",
-    "cache-control": "no-store", ...(extraHeaders || {})});
-  res.end(payload);
-}
-
-function parseBody(req) {
-  return new Promise((resolveBody, reject) => {
-    const chunks = [];
-    let size = 0;
-    let tooLarge = false;
-    let settled = false;
-    const fail = (message, status) => {
-      if (settled) return;
-      settled = true;
-      const error = new Error(message);
-      error.status = status;
-      reject(error);
-    };
-    req.on("data", (chunk) => {
-      size += chunk.length;
-      if (size > 2 * 1024 * 1024) {
-        tooLarge = true;
-        return;
-      }
-      if (!tooLarge) chunks.push(chunk);
-    });
-    req.on("error", () => fail("request_stream_error", 400));
-    req.on("aborted", () => fail("request_aborted", 400));
-    req.on("end", () => {
-      if (settled) return;
-      if (tooLarge) {
-        fail("request_body_too_large", 413);
-        return;
-      }
-      settled = true;
-      if (!chunks.length) {
-        resolveBody({});
-        return;
-      }
-      try {
-        resolveBody(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      } catch {
-        settled = false;
-        fail("request_body_invalid_json", 400);
-      }
-    });
-  });
-}
-
 // 不走 guarded write 的那些路径（agent 网关、以及少数直接改状态的路由）自己把版本号推一格再落盘。
 // 这里原先是【两个逐字相同的函数】：commitGatewayWrite 与 commitDirectStateWrite。
 // 两个名字暗示有区别，实际没有 —— 而「同一件事两条路、只有一条被改到」是本仓反复出问题的形态
@@ -2888,65 +2828,7 @@ async function prepareRemoteGitVerification(target, checkpointInput) {
   return verificationRoot;
 }
 
-const staticFileCache = new Map();
-
-function serveStatic(req, res, pathname) {
-  let requested = pathname === "/" ? "/index.html" : pathname;
-  try {
-    requested = decodeURIComponent(requested);
-  } catch {
-    res.writeHead(400, {"content-type": "text/plain; charset=utf-8"});
-    res.end("Bad request");
-    return;
-  }
-  const target = normalize(join(publicDir, requested));
-  if ((target !== publicDir && !target.startsWith(`${publicDir}/`)) || !existsSync(target)) {
-    res.writeHead(404, {"content-type": "text/plain; charset=utf-8"});
-    res.end("Not found");
-    return;
-  }
-  const stat = statSync(target);
-  if (!stat.isFile()) {
-    res.writeHead(404, {"content-type": "text/plain; charset=utf-8"});
-    res.end("Not found");
-    return;
-  }
-  const stamp = `${stat.mtimeMs}:${stat.size}`;
-  let cached = staticFileCache.get(target);
-  if (!cached || cached.stamp !== stamp) {
-    const bytes = readFileSync(target);
-    // 压缩在【缓存填充】这一次做（≤64 个文件、mtime 变了才重算），请求路径零压缩 CPU。
-    cached = {stamp, content: bytes, gzip: gzipSync(bytes)};
-    if (staticFileCache.size > 64) staticFileCache.clear();
-    staticFileCache.set(target, cached);
-  }
-  const content = cached.content;
-  // 管理台上全是不可逆按钮（归档/吊销/注销账号），而它从不被任何页面合法内嵌 —— 禁止内嵌即封死
-  // clickjacking；referrer 对内不使用（全仓无 document.referrer）、对外不该泄漏控制台路径。
-  // 这三个头对正常使用零影响。完整 script-src CSP 不在此列：它需要真浏览器验证（门套件跑不了
-  // 浏览器，配错会静默弄坏控制台 —— 模板里满是内联 style），没有判据作保的防线不加。
-  //
-  // 缓存：静态引用没有 cache-busting（裸 /app.js），此前又没有任何验证器/缓存头 —— 浏览器
-  // 每次页载整下几百 KB。给 no-cache + ETag（内存缓存的 mtimeMs:size 戳现成就是）：每次仍
-  // 必须回源核对（部署后立刻拿到新版，不存在旧 app.js 配新服务端的版本漂移），没变时 304 空体。
-  // 首载 app.js+词表+样式约 507KB，gzip 后 164KB。按 accept-encoding 协商；ETag 按【表示】区分
-  //（强 ETag 标识的是这一份字节，gzip 表示加 -gz 后缀，否则 304 会把另一种表示当没变）；
-  // Vary 让中间缓存分开存两种表示。
-  const wantsGzip = /\bgzip\b/u.test(String(req.headers["accept-encoding"] || ""));
-  const useGzip = wantsGzip && cached.gzip && cached.gzip.length < content.length;
-  const etag = `"${cached.stamp}${useGzip ? "-gz" : ""}"`;
-  const securityHeaders = {"x-content-type-options": "nosniff", "x-frame-options": "DENY",
-    "content-security-policy": "frame-ancestors 'none'", "referrer-policy": "no-referrer",
-    "cache-control": "no-cache", vary: "accept-encoding", etag,
-    ...(useGzip ? {"content-encoding": "gzip"} : {})};
-  if (req.headers["if-none-match"] === etag) {
-    res.writeHead(304, securityHeaders);
-    res.end();
-    return;
-  }
-  res.writeHead(200, {"content-type": mimeTypes[extname(target)] || "application/octet-stream", ...securityHeaders});
-  res.end(useGzip ? cached.gzip : content);
-}
+const serveStatic = createStaticAssetHandler(publicDir);
 
 const execFileAsync = promisify(execFile);
 
