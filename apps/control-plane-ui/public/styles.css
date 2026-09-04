@@ -666,7 +666,7 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .rule-head .rule-id-input { flex: 0 0 auto; width: 200px; }
 .rule-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-sub); white-space: nowrap; }
 .rule-toggle input { accent-color: var(--brand-accent); }
-.rule-row textarea[name="ruleContent"] { width: 100%; min-height: 220px; }
+.rule-row textarea[name="ruleContent"] { width: 100%; min-height: 220px; field-sizing: content; }
 .rule-row .rule-content-view {
   font-size: 12px;
   color: var(--text-main);

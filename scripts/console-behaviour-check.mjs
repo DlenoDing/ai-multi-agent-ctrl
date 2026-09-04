@@ -1809,6 +1809,36 @@ function runPlanFinalizationNoticeCase() {
     "没被要求定稿方案的单元也挂着这条提示 —— 噪声会让真的那条被忽略");
 }
 
+// 任务按时间线倒序：任务组里的工作项要最新建的排最前。服务端下发的是插入序（最旧在前），
+// 界面必须自己按 createdAt 倒序；两条数据路径（进度接口 / 列表内嵌）都经同一个排序，各验一遍。
+function runWorkItemOrderCase() {
+  const probe = loadConsole(el("div"));
+  const older = {id: "w_old", title: "旧的工作项甲", status: "ready", progress: 0, ownerRole: "orchestrator", createdAt: "2026-01-01T00:00:00.000Z"};
+  const newer = {id: "w_new", title: "新的工作项乙", status: "ready", progress: 0, ownerRole: "orchestrator", createdAt: "2026-09-01T00:00:00.000Z"};
+  const embedded = probe.renderTaskGroupDetail({taskGroupId: "tg_ord", progress: {}, config: null, roomMessages: []},
+    {id: "tg_ord", roles: [], workItems: [older, newer]});
+  check("任务组内工作项按时间倒序（列表内嵌路径）：最新建的排最前",
+    embedded.indexOf("新的工作项乙") >= 0 && embedded.indexOf("新的工作项乙") < embedded.indexOf("旧的工作项甲"),
+    "最新建的工作项没有排在最前：界面按服务端的插入序（最旧在前）渲染，人找最近的活要翻到最底下");
+  const viaProgress = probe.renderTaskGroupDetail({taskGroupId: "tg_ord", progress: {workItems: [older, newer]}, config: null, roomMessages: []},
+    {id: "tg_ord", roles: [], workItems: []});
+  check("任务组内工作项按时间倒序（进度接口路径）：最新建的排最前",
+    viaProgress.indexOf("新的工作项乙") >= 0 && viaProgress.indexOf("新的工作项乙") < viaProgress.indexOf("旧的工作项甲"),
+    "最新建的工作项没有排在最前（进度接口路径）");
+}
+
+
+// 规则内容文本框要随内容自动撑高（原先固定 min-height，长规则要在小框里滚动着改，正是人反映的「太小」）。
+// field-sizing: content 让它按内容长高；不支持的浏览器保持原样（min-height + 手动拖高），无回归。
+function runRuleTextareaAutoGrowCase() {
+  const styles = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/styles.css"), "utf8");
+  const rule = styles.match(/\.rule-row textarea\[name="ruleContent"\]\s*\{([^}]*)\}/u)?.[1] || "";
+  check("规则内容文本框要随内容自动撑高（field-sizing: content）",
+    /field-sizing:\s*content/u.test(rule),
+    "规则文本框没有随内容自动撑高：长规则得在固定高度的小框里滚动着改");
+}
+
+
 function runRoomVisibilityCase() {
   const probe = loadConsole(el("div"));
   const spoken = "我建议把订单状态机换成事件溯源，评审那步可以跳过";
@@ -6017,6 +6047,8 @@ await runNoResponseGuidanceCase();
 await runDoubleSubmitGuardCase();
 runNoDeadHelperCase();
 runPlanFinalizationNoticeCase();
+runWorkItemOrderCase();
+runRuleTextareaAutoGrowCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();

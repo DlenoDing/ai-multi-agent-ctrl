@@ -531,6 +531,24 @@ const MUTATIONS = [
     expect: "看不出还有更多"
   },
   {
+    // 任务组里的工作项要按时间线倒序（最新在前）。去掉 slice().sort(...) 即回到服务端的插入序（最旧在前）。
+    name: "任务组内工作项必须按时间倒序展示（最新在前）",
+    file: APP,
+    gate: "console",
+    from: "(progressData.workItems || taskGroup.workItems || []).slice().sort((a, b) => String(b.createdAt || \"\").localeCompare(String(a.createdAt || \"\"))).map((workItem) => {",
+    to: "(progressData.workItems || taskGroup.workItems || []).map((workItem) => {",
+    expect: "最新建的工作项没有排在最前"
+  },
+  {
+    // 规则内容文本框要随内容自动撑高。去掉 field-sizing: content 即回到固定高度的小框。
+    name: "规则内容文本框必须随内容自动撑高",
+    file: "apps/control-plane-ui/public/styles.css",
+    gate: "console",
+    from: "min-height: 220px; field-sizing: content; }",
+    to: "min-height: 220px; }",
+    expect: "规则文本框没有随内容自动撑高"
+  },
+  {
     // 项目设置的配置行（仓库/基线/角色）对只读成员必须收起「删除」：cfg-del 是本地暂存，保存已禁用，
     // 只读成员点了删本地行却存不下＝按了看不到效果的死动作。去掉 cfgRepoRow 的 readOnly 门即让删除对只读成员出现。
     name: "只读成员的配置行不许摆删除按钮",

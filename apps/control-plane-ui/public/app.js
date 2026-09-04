@@ -5170,7 +5170,8 @@ function renderTaskGroupDetail(taskGroup) {
   // 视图里嵌的工作项是截断过的（真实总数在 workItemCount）。明细页优先用专用端点的完整列表；
   // 只有它没加载出来时才回落到这份截断的，而那时必须说清楚"这不是全部"。
   const embeddedTruncated = !progressData.workItems && taskGroup.workItemsTruncated === true;
-  const workItems = (progressData.workItems || taskGroup.workItems || []).map((workItem) => {
+  // 任务按时间线倒序：最新建的排最前（服务端下发的是插入序＝最旧在前）。两条数据路径（进度接口/列表内嵌）经同一个排序；slice 不改原数组。
+  const workItems = (progressData.workItems || taskGroup.workItems || []).slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))).map((workItem) => {
     const dispatch = findWorkItemDispatch(taskGroup.id, workItem.id);
     return `
       <div class="record">
