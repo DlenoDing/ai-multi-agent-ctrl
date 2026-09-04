@@ -5759,6 +5759,65 @@ function renderReviewActionBoard({pending, pendingPermissions, pendingApprovals,
   `, {wide: true});
 }
 
+function renderReviewLifecycleGuide({pending, pendingPermissions, pendingApprovals, openFindings, answered, finalizations}) {
+  const stats = reviewStats({pending, pendingPermissions, pendingApprovals, openFindings});
+  const todo = pendingForMe();
+  return panel("人工审核流程", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "1 待办入口",
+        metric: todo.known ? `${todo.total}${todo.partial ? "+" : ""}` : "未知",
+        detail: todo.known ? "先处理当前项目里明确分派给你的待办，避免漏掉个人责任项" : "待办数据未完整加载，先查看汇总和明细",
+        panelTitle: "待你处理",
+        tone: todo.known && todo.total ? "red" : "green",
+        action: "看待办"
+      })}
+      ${jumpModuleCard({
+        title: "2 方案定稿",
+        metric: pending.length,
+        detail: `${stats.majorDecisions} 个核心决策必须真人主动选择；AI 只提交材料，不替人定稿`,
+        panelTitle: "待人工确认",
+        tone: stats.blockingConfirmations ? "red" : pending.length ? "orange" : "green",
+        action: "处理确认"
+      })}
+      ${jumpModuleCard({
+        title: "3 授权审批",
+        metric: pendingPermissions.length + pendingApprovals.length,
+        detail: "涉及权限、危险操作或阶段门放行时，先看资源范围再批准或驳回",
+        panelTitle: "授权与处置",
+        tone: pendingPermissions.length + pendingApprovals.length ? "orange" : "green",
+        action: "处理授权"
+      })}
+      ${jumpModuleCard({
+        title: "4 发现项处置",
+        metric: openFindings.length,
+        detail: "发现项会阻塞关闭门；处置时要补齐结论、状态和必要证据",
+        panelTitle: "授权与处置",
+        tone: openFindings.length ? "orange" : "green",
+        action: "处置发现"
+      })}
+      ${projectModuleCard({
+        pageId: "monitor",
+        title: "5 执行回看",
+        metric: stats.affectedTaskGroups || "回看",
+        detail: "提交定稿、授权或处置后，回执行监控看派发继续、控制 ACK 和关闭门变化",
+        tone: stats.affectedTaskGroups ? "blue" : "gray",
+        action: "看监控"
+      })}
+      ${jumpModuleCard({
+        title: "6 历史追溯",
+        metric: answered.length + finalizations.length,
+        detail: "已答确认和最近定稿用于追责、复盘和后续系统外升级依据",
+        panelTitle: "已答历史",
+        tone: answered.length + finalizations.length ? "blue" : "gray",
+        action: "看历史"
+      })}
+    </div>
+    <div class="small muted">人工审核是 AI-native 执行链路的阶段门：AI 负责提交结构化材料和互审，人只在目标、权限、风险、定稿和必要纠偏处介入。</div>
+    <div class="small muted">处理闭环：待办/确认/授权/发现项 → 提交决定 → 执行监控实时回送 → 任务组关闭门重新计算；系统运行中不会自动把重复问题改造成系统升级。</div>
+  `, {wide: true});
+}
+
 function renderReview() {
   if (!projectTaskGroups().length) {
     // 「待你处理」按当前项目视图统计，不能被"当前项目有没有任务组"这个不相干的条件
@@ -5951,6 +6010,7 @@ function renderReview() {
   return [
     renderReviewSummary({pending, pendingPermissions, pendingApprovals, openFindings, answered, finalizations}),
     renderReviewActionBoard({pending, pendingPermissions, pendingApprovals, openFindings, answered, finalizations}),
+    renderReviewLifecycleGuide({pending, pendingPermissions, pendingApprovals, openFindings, answered, finalizations}),
     todoPanel,
     aiAnalysisStalledNotice(allRequests),
     panel("待人工确认", `
@@ -6060,6 +6120,64 @@ function renderDirectiveActionBoard(directives, canControl) {
   `, {wide: true});
 }
 
+function renderDirectiveLifecycleGuide(directives, canControl) {
+  const stats = directiveStats(directives);
+  return panel("人工指令流程", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "1 选任务组",
+        metric: stats.controllableGroups,
+        detail: canControl ? "只能向你有任务组控制权的组下达指令，避免跨组误操作" : "当前账号只读，不能下达新指令",
+        panelTitle: "下达人工指令",
+        tone: canControl ? "blue" : "gray",
+        action: canControl ? "选目标" : "看权限"
+      })}
+      ${jumpModuleCard({
+        title: "2 选指令类型",
+        metric: DIRECTIVE_TYPES.length,
+        detail: "暂停、恢复、取消、调优先级、补充要求和决策处置都会落成结构化输入",
+        panelTitle: "下达人工指令",
+        tone: "blue",
+        action: "看类型"
+      })}
+      ${jumpModuleCard({
+        title: "3 提交输入",
+        metric: canControl ? "可提交" : "只读",
+        detail: "表单不会直接改总控会话，只生成可审计的人工指令记录",
+        panelTitle: "下达人工指令",
+        tone: canControl ? "blue" : "gray",
+        action: "打开表单"
+      })}
+      ${jumpModuleCard({
+        title: "4 编排消费",
+        metric: stats.pending,
+        detail: "待处理指令由下一编排周期读取；拒绝会写明原因，不能静默失败",
+        panelTitle: "指令流水",
+        tone: stats.pending ? "orange" : "green",
+        action: "看待处理"
+      })}
+      ${jumpModuleCard({
+        title: "5 核对结果",
+        metric: stats.applied,
+        detail: "已执行动作会留在流水里；被拒绝时先看原因，再决定是否重新提交",
+        panelTitle: "指令流水",
+        tone: stats.rejected ? "red" : stats.applied ? "blue" : "gray",
+        action: "看流水"
+      })}
+      ${projectModuleCard({
+        pageId: "monitor",
+        title: "6 回看运行",
+        metric: stats.involvedGroups || "回看",
+        detail: "指令被消费后，到执行监控查看派发、会话、事件流和控制 ACK 是否按预期变化",
+        tone: stats.involvedGroups ? "blue" : "gray",
+        action: "看监控"
+      })}
+    </div>
+    <div class="small muted">人工指令是给 AI-native 总控的结构化控制输入，不是给总控会话直接发聊天消息；系统会按任务组权限、状态机和编排周期消费。</div>
+    <div class="small muted">推荐闭环：先查流水和拒绝原因 → 选择目标任务组和指令类型 → 提交 → 等编排消费 → 到执行监控看实时回送。</div>
+  `, {wide: true});
+}
+
 function renderDirectives() {
   if (!projectTaskGroups().length) {
     return panel("人工指令", hasNoVisibleProject()
@@ -6103,6 +6221,7 @@ function renderDirectives() {
   return [
     renderDirectiveSummary(directiveList, canControl),
     renderDirectiveActionBoard(directiveList, canControl),
+    renderDirectiveLifecycleGuide(directiveList, canControl),
     panel("指令流水", table([{label: "时间", c: "nowrap"}, "类型", {label: "指令内容", c: "text-clip"}, "状态", {label: "已执行动作", c: "text-clip"}, "拒绝原因"], directiveRows), {wide: true, headerSide: filterInput("按指令内容过滤…", "directives")}),
     panel("下达人工指令", `
       <div class="stack">

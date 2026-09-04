@@ -4524,15 +4524,25 @@ function runPendingTruncationCase() {
     check("人工审核页先显示审核总览和处置看板，再显示待办与明细",
       panelAt(reviewHtml, "人工审核总览") >= 0
         && panelAt(reviewHtml, "人工审核总览") < panelAt(reviewHtml, "人工审核处置看板")
-        && panelAt(reviewHtml, "人工审核处置看板") < panelAt(reviewHtml, "待你处理")
+        && panelAt(reviewHtml, "人工审核处置看板") < panelAt(reviewHtml, "人工审核流程")
+        && panelAt(reviewHtml, "人工审核流程") < panelAt(reviewHtml, "待你处理")
         && panelAt(reviewHtml, "待你处理") < panelAt(reviewHtml, "待人工确认"),
-      "人工审核页没有把确认、授权、审批、发现项和历史追溯排成可点击处置看板");
+      "人工审核页没有把确认、授权、审批、发现项和历史追溯排成可点击处置看板与流程图");
     check("人工审核处置看板要提供待办、确认、授权处置和历史的跳转入口",
       /data-jump-panel="待你处理"/u.test(reviewHtml)
         && /data-jump-panel="待人工确认"/u.test(reviewHtml)
         && /data-jump-panel="授权与处置"/u.test(reviewHtml)
         && /data-jump-panel="已答历史"/u.test(reviewHtml),
       "人工审核处置看板只显示指标，没有接上待你处理、待人工确认、授权与处置和已答历史面板的跳转");
+    check("人工审核流程要说明人机边界、监控回看和关闭门闭环",
+      /人工审核流程/u.test(reviewHtml)
+        && /AI 只提交材料，不替人定稿/u.test(reviewHtml)
+        && /涉及权限、危险操作或阶段门放行/u.test(reviewHtml)
+        && /发现项会阻塞关闭门/u.test(reviewHtml)
+        && /执行监控看派发继续、控制 ACK 和关闭门变化/u.test(reviewHtml)
+        && /系统运行中不会自动把重复问题改造成系统升级/u.test(reviewHtml)
+        && /data-menu="monitor"/u.test(reviewHtml),
+      "人工审核页没有把人工定稿、授权审批、发现项、执行监控回看和系统外升级边界讲成流程");
     const directivesHtml = probe.renderDirectivesWith(overviewState, orgAdmin, "p1", [
       {directiveId: "dir1", taskGroupId: "tg1", directiveType: "pause", instruction: "暂停", status: "applied", appliedActions: [{action: "task_group_pause"}], createdAt: "2026-08-12T00:00:00Z"},
       {directiveId: "dir2", taskGroupId: "tg1", directiveType: "free_text", instruction: "补充说明", status: "rejected", rejectReason: "task_group_settled", createdAt: "2026-08-12T00:01:00Z"}
@@ -4540,13 +4550,24 @@ function runPendingTruncationCase() {
     check("人工指令页先显示总览和操作看板，再显示流水与下达表单",
       panelAt(directivesHtml, "人工指令总览") >= 0
         && panelAt(directivesHtml, "人工指令总览") < panelAt(directivesHtml, "人工指令操作看板")
-        && panelAt(directivesHtml, "人工指令操作看板") < panelAt(directivesHtml, "指令流水")
+        && panelAt(directivesHtml, "人工指令操作看板") < panelAt(directivesHtml, "人工指令流程")
+        && panelAt(directivesHtml, "人工指令流程") < panelAt(directivesHtml, "指令流水")
         && panelAt(directivesHtml, "指令流水") < panelAt(directivesHtml, "下达人工指令"),
-      "人工指令页没有把待处理、拒绝、可控范围和下达入口排成可点击看板，用户仍要先读长表");
+      "人工指令页没有把待处理、拒绝、可控范围和下达入口排成可点击看板与流程图，用户仍要先读长表");
     check("人工指令操作看板要提供流水和下达表单的跳转入口",
       /data-jump-panel="指令流水"/u.test(directivesHtml)
         && /data-jump-panel="下达人工指令"/u.test(directivesHtml),
       "人工指令操作看板只显示指标，没有接上指令流水和下达人工指令面板的跳转");
+    check("人工指令流程要说明结构化输入、编排消费和监控回看",
+      /人工指令流程/u.test(directivesHtml)
+        && /只能向你有任务组控制权的组下达指令/u.test(directivesHtml)
+        && /都会落成结构化输入/u.test(directivesHtml)
+        && /不会直接改总控会话/u.test(directivesHtml)
+        && /下一编排周期读取/u.test(directivesHtml)
+        && /被拒绝时先看原因/u.test(directivesHtml)
+        && /控制 ACK 是否按预期变化/u.test(directivesHtml)
+        && /data-menu="monitor"/u.test(directivesHtml),
+      "人工指令页没有把目标任务组、结构化指令、编排周期、拒绝原因和监控回看讲成流程");
   }
 
   // 明细页的工作项来自专用端点，它现在也有上限（4000 单元时曾是约 1.1MB 载荷 + 4000 个 DOM 节点）。
