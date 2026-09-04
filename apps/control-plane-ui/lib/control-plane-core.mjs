@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,8 +24,70 @@ import {
 import { defaultLanguagePolicy, languagePolicyDirective, normalizeTaskGroupLanguagePolicy } from "./language-policy.mjs";
 import { defaultManagementSurfaces } from "./management-surface-catalog.mjs";
 import { defaultSkillSource } from "./skill-source-catalog.mjs";
+import { unique } from "./collection-utils.mjs";
+import { clone, digestOf } from "./digest-utils.mjs";
+import {
+  capIdempotencyRecords,
+  idempotentReplayOutcome,
+  purgeExpiredIdempotencyPayloads,
+  recordIdempotentResult
+} from "./idempotency-records.mjs";
+import {
+  beginOrchestrationGitFacts,
+  commitWithRuntimeIdentity,
+  endOrchestrationGitFacts,
+  git,
+  gitCommandTimeoutMs,
+  gitFailureDetail,
+  gitHead,
+  gitHeadOrNull,
+  gitIsAncestor,
+  gitPathExists,
+  gitRemoteSha,
+  gitRemoteUrl,
+  gitStatusPaths,
+  gitStrict,
+  normalizeGitRemoteUrl
+} from "./git-utils.mjs";
+import {
+  MANDATORY_PATH_DENYLIST,
+  canUseGitPath,
+  clampVisibleText,
+  effectivePathDenylist,
+  isSafeGitRef,
+  pathAllowlistValid,
+  pathMatchesAllowlist,
+  projectRepositories,
+  repositoryUrlRegisteredForProject
+} from "./path-policy.mjs";
 export { REGISTERED_OWNER_ROLES, providerClasses } from "./model-catalog.mjs";
 export { languagePolicyDirective, normalizeTaskGroupLanguagePolicy } from "./language-policy.mjs";
+export { clone, digestOf, stableJson } from "./digest-utils.mjs";
+export {
+  capIdempotencyRecords,
+  idempotentReplayOutcome,
+  purgeExpiredIdempotencyPayloads,
+  recordIdempotentResult
+} from "./idempotency-records.mjs";
+export {
+  GIT_HEAD_UNAVAILABLE,
+  commitWithRuntimeIdentity,
+  git,
+  gitHead,
+  gitHeadOrNull,
+  gitRemoteUrl
+} from "./git-utils.mjs";
+export {
+  MANDATORY_PATH_DENYLIST,
+  canUseGitPath,
+  clampVisibleText,
+  effectivePathDenylist,
+  isSafeGitRef,
+  pathAllowlistValid,
+  pathMatchesAllowlist,
+  projectRepositories,
+  repositoryUrlRegisteredForProject
+} from "./path-policy.mjs";
 
 const controlPlaneRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "../../..");
 const specDigestCache = new Map();
@@ -74,23 +135,6 @@ const DLQ_ENTRY_TERMINAL = new Set(DLQ_ENTRY_TERMINAL_STATES);
 
 export function createId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-export function digestOf(value) {
-  const input = typeof value === "string" ? value : stableJson(value);
-  return `sha256:${createHash("sha256").update(input).digest("hex")}`;
-}
-
-function stableJson(value) {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function clone(value) {
-  return JSON.parse(JSON.stringify(value));
 }
 
 function ensureTaskGroupLanguagePolicies(state) {
@@ -1840,12 +1884,12 @@ export function conditionWindowGate(workItem, conditionSource) {
 export function runAutonomousCycle(state, request = {}) {
   // HEAD 备忘录只在这一轮内有效。finally 保证抛异常时也会清掉 —— 否则一次失败的编排会把
   // 那一刻的 HEAD 永久留给后续的请求路径，而请求路径本来是要实时取的。
-  orchestrationGitFacts = new Map();
+  beginOrchestrationGitFacts();
   capsDeferredToCycleEnd = true;
   try {
     return runAutonomousCycleBody(state, request);
   } finally {
-    orchestrationGitFacts = null;
+    endOrchestrationGitFacts();
     capsDeferredToCycleEnd = false;
     // 一轮之内攒下来的历史在这里一次性裁掉。放在 finally 里：抛异常的那一轮也不能把上界丢掉。
     try { capBoundedHistories(state); } catch { /* 裁剪失败不该掩盖本轮真正的异常 */ }
@@ -4607,155 +4651,6 @@ function agentForRole(state, roleId) {
   return state.agents.find((agent) => agent.role === roleId && agent.status === "active") || state.agents.find((agent) => agent.status === "active");
 }
 
-// 命中网络的 git（ls-remote / 技能源 clone·fetch / push）必须有墙钟超时：execFileSync 默认无超时，
-// 一个只接受不响应的远端会让它无限阻塞。其中【最危险的是同步阻塞事件循环】——syncSkillSource 跑在
-// runAutonomousCycle→orchestrator tick（主线程）里，一次挂死的技能源 clone 就能冻住整个控制面（不再服务
-// 任何请求）。本地快操作（rev-parse 等）远在超时之内、不受影响；超时到点 execFileSync 会 SIGTERM 掉 git
-// 并抛 ETIMEDOUT，各调用点本就 catch（git() 返 fallback、gitStrict 抛 git_command_failed、技能同步转
-// skillSyncBlocked），挂死因此变成干净降级。默认 10 分钟，AIMAC_GIT_COMMAND_TIMEOUT_MS 可调、下限 1 分钟、NaN 安全。
-function gitCommandTimeoutMs() {
-  return clampEnvNumber(process.env.AIMAC_GIT_COMMAND_TIMEOUT_MS, 60000, 600000);
-}
-
-function git(root = process.cwd(), args = [], fallback = "") {
-  try {
-    return execFileSync("git", ["-C", root, ...args], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: gitCommandTimeoutMs()}).trim();
-  } catch {
-    return fallback;
-  }
-}
-
-// execFileSync 抛出来的 message 是 "Command failed: git -C <本机绝对路径> push origin …"：
-// 【真正的原因在 stderr 里】（被拒的非快进、认证失败、连不上远端），而这条 message 会原样
-// 变成运维在控制台看到的那句失败摘要 —— 既没说为什么，又把服务器的绝对路径给了出去。
-function gitStrict(root = process.cwd(), args = []) {
-  try {
-    return execFileSync("git", ["-C", root, ...args], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: gitCommandTimeoutMs()}).trim();
-  } catch (error) {
-    // stderr/status 原样带上：commitWithRuntimeIdentity 这类调用方要靠它认出"缺身份"那一种失败。
-    throw Object.assign(new Error(`git_command_failed:${gitFailureText(args, error)}`),
-      {cause: error, stderr: error?.stderr, status: error?.status});
-  }
-}
-
-// git 自己说的原因。只取它的结论行（fatal/error/remote/warning 开头的那些）：其余是进度输出，
-// 而进度里恰恰带着本机路径 —— "Cloning into '/var/folders/…'" 就会把服务器目录塞进给人看的报文。
-// 一条结论行都没有时才退回末尾几行，并把这种情况如实说成"只有进度输出"。
-function gitFailureDetail(error) {
-  const lines = String(error?.stderr || error?.stdout || "").trim().split("\n")
-    .map((line) => line.trim()).filter(Boolean);
-  const conclusions = lines.filter((line) => /^(fatal|error|remote|warning):/iu.test(line));
-  const detail = (conclusions.length ? conclusions : lines).slice(-3).join("；").slice(0, 400);
-  const prefix = conclusions.length || !detail ? "" : "只有进度输出：";
-  return `退出码 ${error?.status ?? "?"}${detail ? `：${prefix}${detail}` : "，且没有任何输出"}`;
-}
-
-// 只保留命令与原因，不带 -C 后面的路径。
-function gitFailureText(args, error) {
-  return `git ${args.join(" ")}（${gitFailureDetail(error)}）`;
-}
-
-// 一次编排周期内的"仓库事实"备忘录。为什么需要：gitHead 与 gitRemoteUrl 都落在【每个工作项】
-// 都会走的路径上（准备产出目标、写契约的 resourceDigestBefore），每次都是一个 git 子进程 ≈ 40ms。
-// 实测 2000 个单元的一轮编排 83 秒，其中 96.6% 的 CPU 时间在 spawnSync —— 而编排是同步跑在
-// 主线程上的，这段时间整个控制面不响应。这两样在一轮里都不会变，那些子进程算的是同一个值。
-//
-// 只收"一轮内不变的只读事实"：HEAD 与 remote url。像 diff --cached 这类会被同一轮里的写入
-// 改变的查询绝不能进来 —— 它们在检查点受理路径上，那条路径确实会改仓库。
-// 作用域刻意只到"一次周期"，不做 TTL：TTL 会让同一轮里的两次调用横跨过期点而读到两个值，
-// 反而不如现在一致。周期之外备忘录为 null，行为与改动前完全相同（请求路径仍然实时取）。
-let orchestrationGitFacts = null;
-function memoizedGitFact(key, compute) {
-  if (orchestrationGitFacts?.has(key)) return orchestrationGitFacts.get(key);
-  const value = compute();
-  orchestrationGitFacts?.set(key, value);
-  return value;
-}
-
-// git 答不上来时回落成的那个值。它长得像一个短提交号，所以【必须能被认出来】——
-// 把「这台机器上根本没有那个仓库」记成一个看起来正常的基线提交，是本仓「缺省不得等于
-// 有利结果」那一族最安静的样子：证据栏是满的，而它什么也没证明。
-export const GIT_HEAD_UNAVAILABLE = "000000000000";
-
-export function gitHead(root = process.cwd()) {
-  return memoizedGitFact(`head\u0000${root}`, () => git(root, ["rev-parse", "--short=12", "HEAD"], GIT_HEAD_UNAVAILABLE));
-}
-
-// 要「取不到就是取不到」的调用方用这个。12 个 0 不可能是真实提交的短号，
-// 而它是 gitHead 唯一会自己编出来的值，所以这个比较是可靠的。
-export function gitHeadOrNull(root = process.cwd()) {
-  const head = gitHead(root);
-  return head === GIT_HEAD_UNAVAILABLE ? null : head;
-}
-
-export function gitRemoteUrl(root = process.cwd(), remote = "origin") {
-  return memoizedGitFact(`remote\u0000${root}\u0000${remote}`, () => git(root, ["remote", "get-url", remote], ""));
-}
-
-// 用运行时身份提交，但【不改用户的仓库配置】。
-// 原写法是每次提交前先问两次 `git config`，没配就把 agent-runtime@local 永久写进那个仓库 ——
-// 常见路径上白付两次子进程，而且留下一个我们不该留的副作用（在别人的仓库里改配置）。
-// 这里改成：先按仓库自己的身份提交；只有 git 因为缺身份拒绝时，才用 -c 就地补一个。
-// 语义与原来一致（配了就用配的），-c 只作用于这一次调用。
-// 抽成导出函数是为了让"没配身份的仓库"这个情形【测得到】：它在真实夹具里造不出来
-// （机器全局配置里总有身份），而不可测的分支等于没写。
-export function commitWithRuntimeIdentity(root, message) {
-  try {
-    return gitStrict(root, ["commit", "-m", message]);
-  } catch (error) {
-    const text = String(error?.stderr || error?.message || "");
-    if (!/user\.email|user\.name|empty ident|Author identity unknown/iu.test(text)) throw error;
-    return gitStrict(root, ["-c", "user.email=agent-runtime@local", "-c", "user.name=AI Agent Runtime",
-      "commit", "-m", message]);
-  }
-}
-
-function gitIsAncestor(root, ancestor, descendant) {
-  try {
-    execFileSync("git", ["-C", root, "merge-base", "--is-ancestor", ancestor, descendant], {stdio: ["ignore", "pipe", "pipe"]});
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function gitRemoteSha(root, remote, ref) {
-  const output = git(root, ["ls-remote", remote, ref], "");
-  const line = output.split("\n").find(Boolean);
-  return line?.split(/\s+/u)[0] || "";
-}
-
-// 必须用 -z。`git status --porcelain`（不带 -z）会把【带空格或非 ASCII 的路径】加引号并做八进制
-// 转义（core.quotePath 默认开着）：`docs/a b.md` 变成 `"docs/a b.md"`，`docs/设计说明.md` 变成
-// `"docs/\350\256\276..."`。而这里解析出来的路径要跟执行方申报的路径逐条比对，对不上就判成
-// 「未申报的改动」把提交拒掉 —— 也就是说，仓库里只要有一个中文文件名，提交路径就走不通，
-// 而报文里是一串八进制。这是个中文产品。agent 运行时那份孪生实现一直用的是 -z。
-// -z 的记录形态：`XY <path>` NUL 结尾；重命名/复制（X 或 Y 是 R/C）后面【另起一个字段】放源路径，
-// 不带 `XY ` 前缀，也不会出现 ` -> `。所以要逐字段走，不能对源路径再 slice(3)。
-function gitStatusPaths(root = process.cwd()) {
-  const fields = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], "").split("\0");
-  const paths = [];
-  for (let index = 0; index < fields.length; index += 1) {
-    const entry = fields[index];
-    if (!entry) continue;
-    paths.push(entry.slice(3));
-    if (/[RC]/u.test(entry.slice(0, 2))) {
-      const source = fields[index + 1];
-      if (source) paths.push(source);
-      index += 1;
-    }
-  }
-  return [...new Set(paths)].filter(Boolean);
-}
-
-function gitPathExists(root, commit, path) {
-  return git(root, ["cat-file", "-e", `${commit}:${path}`], "__missing__") !== "__missing__";
-}
-
-function normalizeGitRemoteUrl(url = "") {
-  return String(url).trim().replace(/\.git$/u, "");
-}
-
 function appendEvent(state, type, subjectType, subjectId, actorId, payload, extra = {}) {
   const event = {
     schemaVersion: "control-event/v1",
@@ -6782,106 +6677,6 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
   return {reviewed: true, verdict, reviewBundleRef: bundle.bundleId, humanConfirmationRef: confirmation.requestId, awaitingHumanConfirmation: true};
 }
 
-// 人要据以定稿的文本被静默截断，读起来仍然完整，人却在对着半句话拍板 —— 而这里没有任何地方
-// 保留全文（不像 question.summary 还有 detail 兜底），截断后的这一份就是记录本身。
-// 上限保留（防无界负载），但截断必须留痕：宁可让人看到"这里被切掉了"，也不能让人误以为读完了。
-// 不改成超长即拒（规则编辑器那套）：那会让一次完整的互审因为超长整个丢掉，代价比截断更大。
-export function clampVisibleText(value, max) {
-  const text = String(value || "");
-  if (text.length <= max) return text;
-  const marker = "…（已截断）";
-  return `${text.slice(0, Math.max(0, max - marker.length))}${marker}`;
-}
-
-function unique(items) {
-  return [...new Set((items || []).filter(Boolean))];
-}
-
-export function canUseGitPath(path) {
-  return typeof path === "string" && path.length > 0 && !path.startsWith("/") && !path.startsWith("artifacts/") && !path.startsWith(".runtime/") && !path.startsWith("tmp/") && !path.includes("..");
-}
-
-// 分支/引用名会被原样交给 git。以 - 开头会被当成选项，空白与 ^~:?*[\\ 是 git 的引用语法字符。
-// 控制面这一侧收严到白名单字符集；agent 运行时是【单文件、只依赖 node 内置】的孪生实现，
-// 它自带一份检查（runtime.mjs 的 content_bundle_git_transfer_unsafe_ref），
-// 两份不能共用代码，但对危险形态的判断必须一致 —— 由 verifyGitRefGuardsAgree 交叉核对。
-export function isSafeGitRef(ref) {
-  const value = String(ref || "");
-  if (!value) return false;
-  if (value.startsWith("-") || value.includes("..")) return false;
-  return /^[A-Za-z0-9._/-]+$/u.test(value);
-}
-
-export function pathAllowlistValid(paths) {
-  return Array.isArray(paths) && paths.length > 0 && paths.every(canUseGitPath);
-}
-
-export function pathMatchesAllowlist(path, allowlist) {
-  if (!canUseGitPath(path)) return false;
-  return (allowlist || []).some((pattern) => {
-    if (!canUseGitPath(pattern)) return false;
-    // 「前缀/**」这条快路只有在前缀是【字面量】时才成立。原先它对 apps/*/src/** 也照走，
-    // 拿字符串 "apps/*/src/" 去 startsWith —— 一个真实路径都匹配不上，于是这条允许路径
-    // 匹配不到任何东西。表现是【守卫过头且不出声】：人按规则写了它，agent 照它写文件，
-    // 却被判成「写到批准范围之外」，而报文只说越界，不会说「你这条规则本身没生效」。
-    if (pattern.endsWith("/**") && !pattern.slice(0, -3).includes("*")) {
-      return path === pattern.slice(0, -3) || path.startsWith(pattern.slice(0, -2));
-    }
-    if (!pattern.includes("*")) return path === pattern;
-    return globPathMatches(pattern.split("/"), path.split("/"));
-  });
-}
-
-function globPathMatches(patternSegments, pathSegments) {
-  let patternIndex = 0;
-  let pathIndex = 0;
-  let starPatternIndex = -1;
-  let starPathIndex = -1;
-  while (pathIndex < pathSegments.length) {
-    if (patternIndex < patternSegments.length && patternSegments[patternIndex] === "**") {
-      starPatternIndex = patternIndex;
-      starPathIndex = pathIndex;
-      patternIndex += 1;
-    } else if (patternIndex < patternSegments.length && globSegmentMatches(patternSegments[patternIndex], pathSegments[pathIndex])) {
-      patternIndex += 1;
-      pathIndex += 1;
-    } else if (starPatternIndex >= 0) {
-      starPathIndex += 1;
-      pathIndex = starPathIndex;
-      patternIndex = starPatternIndex + 1;
-    } else {
-      return false;
-    }
-  }
-  while (patternIndex < patternSegments.length && patternSegments[patternIndex] === "**") patternIndex += 1;
-  return patternIndex === patternSegments.length;
-}
-
-function globSegmentMatches(patternSegment, pathSegment) {
-  let patternIndex = 0;
-  let pathIndex = 0;
-  let starPatternIndex = -1;
-  let starPathIndex = -1;
-  while (pathIndex < pathSegment.length) {
-    if (patternIndex < patternSegment.length && patternSegment[patternIndex] === "*") {
-      starPatternIndex = patternIndex;
-      starPathIndex = pathIndex;
-      patternIndex += 1;
-    } else if (patternIndex < patternSegment.length && patternSegment[patternIndex] === pathSegment[pathIndex]) {
-      patternIndex += 1;
-      pathIndex += 1;
-    } else if (starPatternIndex >= 0) {
-      starPathIndex += 1;
-      pathIndex = starPathIndex;
-      patternIndex = starPatternIndex + 1;
-    } else {
-      return false;
-    }
-  }
-  while (patternIndex < patternSegment.length && patternSegment[patternIndex] === "*") patternIndex += 1;
-  return patternIndex === patternSegment.length;
-}
-
 // --- Gap 2A: shared governance mutators lifted from mcp-server (behavior-neutral) ---
 // These are pure (state, args) governance/room/lease/finding/review mutators previously defined
 // only inside apps/mcp-server/server.mjs. They are lifted here verbatim so HTTP endpoints, the
@@ -8487,117 +8282,6 @@ export const HUMAN_ACTOR_KEY = Symbol.for("dleno.control-plane.humanActor");
 // 同因：房间消息的发送者署名。传输层从已认证主体派生后用这个键交给 roomSend，
 // 调用方报文里的 senderRef 一律不采信。
 // 写入禁区的**下限**：任何产出目标都至少禁掉这些路径，调用方只能往上加，不能往下减。
-// 原先每个生产者各写一份默认值（`request.pathDenylist || [...]`），于是两件事同时成立：
-// 调用方传个空数组就能把禁区整个抹掉；而 REST 那条创建路径【根本没有写这个字段】——
-// 服务端的禁区判据 `target.pathDenylist || []` 随之恒为空集，执行侧同理。
-// 结果是一个具备任务组写作用域的用户可以建一个 pathAllowlist 含 ".github/workflows/**" 的目标，
-// agent 改掉 CI 配置、推上去，CI 拿仓库凭据执行 —— 两侧都没有禁区。
-// 每条都带 `**/` 前缀：禁区的语义是「这些名字在【任何深度】都禁」，而不是「只在仓库根禁」。
-// 本仓是 monorepo，子目录里的 .env / node_modules / 子模块 .git / 各 app 自己的 CI 配置极常见 ——
-// 根锚模式（".env" 只等于根 .env、"node_modules/**" 只匹配根 node_modules）会让 apps/x/.env、
-// apps/x/node_modules/**、services/api/Jenkinsfile 全部逃过禁区。而禁区是【唯一的服务端强制点】
-// （执行方自查不算），配一个宽 allowlist（apps/**）子目录密钥/CI 配置就被接受提交。
-// `**/.env` + `**/.env.*` 覆盖所有 env 变体（.env / .env.local / .env.staging …）且精确：
-// 不误伤 foo.env、environment.ts（段必须以 .env 起头）。
-export const MANDATORY_PATH_DENYLIST = Object.freeze([
-  "**/.runtime/**", "**/.git/**", "**/node_modules/**", "**/.env", "**/.env.*",
-  // CI 配置等于"仓库凭据可执行的代码"：允许改它，等于把写代码的权限升级成执行权限。
-  "**/.github/workflows/**", "**/.github/actions/**", "**/.gitlab-ci.yml", "**/Jenkinsfile"
-]);
-
-// 使用点求取：已经落库的旧目标（含那些完全没有该字段的）也要拿到这个下限，
-// 只在生产者补齐是不够的 —— 生产者可以再多一个，而判据只有这一处。
-// 产出目标指向的仓库必须是【本项目登记过的】那一个。原先 repositoryUrl 直接取调用方入参，
-// 覆盖项目登记的地址，没有任何交叉校验 —— 而写入只被授权在任务组作用域上。于是一个对任务组
-// 有写权限的人可以把目标指向宿主机上另一个仓库（isSafeGitRemoteUrl 放行 file:// 与裸本地路径），
-// agent 在其中改动并 push，写进一个与本任务毫无关系的仓库。
-// 这是"守卫作用域没有覆盖实际被变更的资源"那一类：授权针对 A，改动落在 B。
-export function normalizeRepositoryUrl(url) {
-  // 先剥尾斜杠再剥 .git —— 反过来的话 "…/repo.git/" 里的 .git 剥不掉（它不在结尾），
-  // 于是同一个仓库的两种写法被判成两个仓库。顺序错了不会报错，只会静默拒绝合法地址。
-  return String(url || "").trim().replace(/\/+$/u, "").replace(/\.git$/u, "").replace(/\/+$/u, "").toLowerCase();
-}
-
-// 项目的仓库登记在【两个地方】：顶层 project.repositories（只有种子写过）与
-// project.config.repositories（界面那个"仓库与凭证引用"表单写的、建项目时也写这里）。
-// 而准入判定、提交目标、URL 白名单读的都是顶层 —— 于是经界面建的项目永远"没登记仓库"：
-// 单元被 project_repository_not_registered 挡住，人去项目设置里加一条仓库，那条改动
-// 落在另一个字段上，挡的那道判定一动不动。界面上有入口，接的却不是这根线。
-// 统一从这里取：先看配置层（人能改的那份），没有再退回顶层（老数据/种子）。
-export function projectRepositories(project) {
-  const configured = project?.config?.repositories;
-  if (Array.isArray(configured) && configured.length) return configured;
-  return Array.isArray(project?.repositories) ? project.repositories : [];
-}
-
-export function repositoryUrlRegisteredForProject(project, url) {
-  const registered = projectRepositories(project).map((item) => normalizeRepositoryUrl(item.url)).filter(Boolean);
-  // 项目一个仓库都没登记时不拦（本地部署/引导期），此时地址由服务端从工作区推导，不是调用方给的。
-  if (!registered.length) return true;
-  return registered.includes(normalizeRepositoryUrl(url));
-}
-
-// 一条幂等记录同时承担两件事，而两件事的时限差了几个数量级：
-//   1) 重放 —— 同一个键的重试要拿回同一份响应体。客户端的重试发生在几秒到几分钟内。
-//   2) 按键复用冲突检测 —— 同一个键配上不同 actor/动作/请求体必须 409。这条要保留整个上限窗口。
-// 原先响应体跟着记录一起留到被淘汰为止：单条实测 8KB（orchestrator_run 的完整返回），上限 5000 条
-// 就是中央文档里 ~40MB，而中央文档【每一次任意写入都要整份重写】—— 一次失败登录的审计写也要。
-// 所以响应体按重放窗口清掉，判据字段照旧长期保留。
-export function purgeExpiredIdempotencyPayloads(state, at = Date.now()) {
-  const ttlMs = clampEnvNumber(process.env.AIMAC_IDEMPOTENCY_PAYLOAD_TTL_MS, 60000, 600000);
-  for (const record of Object.values(state.idempotencyRecords || {})) {
-    if (record.payload === undefined || record.payloadExpiredAt) continue;
-    if (at - new Date(record.createdAt || 0).getTime() <= ttlMs) continue;
-    delete record.payload;
-    record.payloadExpiredAt = new Date(at).toISOString();
-  }
-}
-
-// 命中一条幂等记录时该怎么答 —— 两条路（REST 的 finishGuardedWrite、MCP 的工具派发）
-// 此前各写各的：REST 明确拒绝"空的成功回执"，MCP 那一支直接 ok:true / replayed:true 而正文是
-// undefined —— 看起来像原来那次调用的结果，其实什么内容都没有。而 agent 全都走 MCP。
-// 所以把这个判断收成一个入口，下一次改动不会再只改到一边。
-export function idempotentReplayOutcome(record) {
-  if (!record) return {replay: false};
-  if (record.payload === undefined) {
-    return {replay: false, expired: true, error: "idempotent_result_expired",
-      originalStatus: record.status, completedAt: record.createdAt,
-      payloadExpiredAt: record.payloadExpiredAt};
-  }
-  return {replay: true, status: record.status, payload: record.payload};
-}
-
-// 幂等回执有【两个写入点】：REST 的 finishGuardedWrite、MCP 的工具派发。
-// 上面那个正文清理原先只挂在 REST 那一侧 —— agent 全都走 MCP，于是 MCP-only 的部署
-// 从来不清理回执正文：实测按出厂上限（5000 条）跑满是 29.6MB 中央态，光这一项
-// 给每一轮读写加 74ms（0 条 8.4ms → 5000 条 82.4ms，线性），而中央文档【每一次任意写入
-// 都要整份重写】。这是本仓反复出问题的那个形状：同一件事两条路，只有一条被改到。
-// 所以把「写下一条幂等回执」收成一个入口，清理与淘汰跟着它走，两侧都不再各自记得。
-export function recordIdempotentResult(state, key, record, at = Date.now()) {
-  state.idempotencyRecords = state.idempotencyRecords || {};
-  state.idempotencyRecords[key] = record;
-  purgeExpiredIdempotencyPayloads(state, at);
-  capIdempotencyRecords(state);
-}
-
-// 条数上限。旋钮与落盘那步（state-store 的 pruneIdempotencyRecords）用【同一个】——
-// 两个名字两层上限时生效的永远是更严的那个，调大的那个等于没用（本仓撞过）。
-export function capIdempotencyRecords(state) {
-  const cap = clampEnvNumber(process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS, 100, 5000);
-  const keys = Object.keys(state.idempotencyRecords || {});
-  if (keys.length <= cap) return;
-  const ordered = keys
-    .map((key) => ({key, createdAt: state.idempotencyRecords[key]?.createdAt || ""}))
-    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
-  for (const {key} of ordered.slice(0, keys.length - cap)) delete state.idempotencyRecords[key];
-}
-
-export function effectivePathDenylist(target) {
-  const declared = Array.isArray(target?.pathDenylist) ? target.pathDenylist
-    : Array.isArray(target?.forbiddenPathRules) ? target.forbiddenPathRules : [];
-  return [...new Set([...MANDATORY_PATH_DENYLIST, ...declared])];
-}
-
 export const ROOM_SENDER_KEY = Symbol.for("dleno.control-plane.roomSender");
 
 // 同因：房间参与者身份。这张表按 participantId 替换，调用方自报就等于可以覆盖别人的记录。

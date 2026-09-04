@@ -558,6 +558,9 @@ end
 
 server_source = read_source("apps/control-plane-ui/server.mjs")
 core_source = read_source("apps/control-plane-ui/lib/control-plane-core.mjs")
+git_utils_source = read_source("apps/control-plane-ui/lib/git-utils.mjs")
+path_policy_source = read_source("apps/control-plane-ui/lib/path-policy.mjs")
+idempotency_records_source = read_source("apps/control-plane-ui/lib/idempotency-records.mjs")
 
 # schema 与代码的双向一致：上面几条只查了 schema 内部自洽（enum 与 required 互相覆盖），
 # 没查 schema 里的门是否真的存在于代码。我删掉两道恒不触发的指令包门时，schema 里的残留就是
@@ -765,15 +768,15 @@ errors << "Agent Runtime skill-workset curl download must set a wall-clock timeo
 # 控制面侧命中网络的 git 同样必须带墙钟超时——最危险的是 syncSkillSource 的 clone/fetch 跑在
 # runAutonomousCycle→orchestrator tick（主线程 execFileSync），一个挂死的技能源远端会冻住整个控制面。
 # 通用 git()/gitStrict 包装器（含 ls-remote）也要有超时；提取各自的体来核，去掉任一处即红。
-core_git_wrapper = core_source[/function git\(root = process\.cwd\(\)[\s\S]*?\n\}/]
-core_gitstrict_wrapper = core_source[/function gitStrict\(root = process\.cwd\(\)[\s\S]*?\n\}/]
+core_git_wrapper = git_utils_source[/function git\(root = process\.cwd\(\)[\s\S]*?\n\}/]
+core_gitstrict_wrapper = git_utils_source[/function gitStrict\(root = process\.cwd\(\)[\s\S]*?\n\}/]
 skill_sync_clone = core_source[/execFileSync\("git", \["clone", "--", repoUrl[^)]*\)/]
 skill_sync_fetch = core_source[/execFileSync\("git", \["-C", repoDir, "fetch"[^)]*\)/]
 errors << "control-plane git() wrapper must set a wall-clock timeout (ls-remote and others must not hang the request/cycle)" unless core_git_wrapper&.include?("timeout: gitCommandTimeoutMs()")
 errors << "control-plane gitStrict() wrapper must set a wall-clock timeout" unless core_gitstrict_wrapper&.include?("timeout: gitCommandTimeoutMs()")
 errors << "skill-source git clone must set a wall-clock timeout (a hung skill remote otherwise freezes the whole control plane via the orchestrator tick)" unless skill_sync_clone&.include?("timeout:")
 errors << "skill-source git fetch must set a wall-clock timeout" unless skill_sync_fetch&.include?("timeout:")
-errors << "control-plane git command timeout must be NaN-safe with a floor (clampEnvNumber)" unless core_source.include?("function gitCommandTimeoutMs") && core_source.include?("clampEnvNumber(process.env.AIMAC_GIT_COMMAND_TIMEOUT_MS")
+errors << "control-plane git command timeout must be NaN-safe with a floor (clampEnvNumber)" unless git_utils_source.include?("function gitCommandTimeoutMs") && git_utils_source.include?("clampEnvNumber(process.env.AIMAC_GIT_COMMAND_TIMEOUT_MS")
 # server 侧远端检查点验证的 git（execFileAsync）挂死会悬挂验证请求、堆积 git 进程 —— 也要超时。
 errors << "remote git verification (server) must set a wall-clock timeout on execFileAsync git" unless server_source.include?("execFileAsync(\"git\", args, {timeout: clampEnvNumber(process.env.AIMAC_GIT_COMMAND_TIMEOUT_MS")
 # bootstrap 校过 --server 是 https，但 run/status/self-check 发请求用的是盘上 config 的 URL（运维会手改）；改成 http://
@@ -2201,14 +2204,14 @@ errors << "the postgres read path must not pay for a full central read just to p
 # 现在写入收成 core 的 recordIdempotentResult 一个入口：清理与淘汰跟着它走，
 # 「谁都不许绕过它直写」由 contract-check 的 verifyNobodyWritesIdempotencyRecordsDirectly 扫。
 errors << "idempotency payload purge must run inside the single write entry point" unless
-  core_source.match?(/export function recordIdempotentResult\([\s\S]{0,400}?purgeExpiredIdempotencyPayloads\(state, at\);[\s\S]{0,200}?capIdempotencyRecords\(state\);/)
+  idempotency_records_source.match?(/export function recordIdempotentResult\([\s\S]{0,400}?purgeExpiredIdempotencyPayloads\(state, at\);[\s\S]{0,200}?capIdempotencyRecords\(state\);/)
 errors << "a gate must forbid bypassing the idempotency write entry point" unless
   contract_check_source.include?("verifyNobodyWritesIdempotencyRecordsDirectly")
 # 这条原先只问 server.mjs 里出没出现过那个码 —— 而【MCP 那一侧从来没有过它】，判据照样绿：
 # agent 全都走 MCP，拿到的是 ok:true/replayed:true 而正文是 undefined 的空成功回执。
 # 现在两条路共用 core 里那一份判断，所以要问的是：判断在、且两侧都真的经过它。
-core_decides_replay = core_source.include?("export function idempotentReplayOutcome")\
-  && core_source.include?('error: "idempotent_result_expired"')
+core_decides_replay = idempotency_records_source.include?("export function idempotentReplayOutcome")\
+  && idempotency_records_source.include?('error: "idempotent_result_expired"')
 errors << "an expired idempotency replay must not be returned as an empty success" unless core_decides_replay
 errors << "both the REST and the MCP replay path must go through the one shared decision (this pair has diverged before)" unless
   read_source("apps/control-plane-ui/server.mjs").include?("idempotentReplayOutcome(existingRecord)")\

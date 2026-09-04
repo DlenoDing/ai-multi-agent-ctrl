@@ -8679,9 +8679,9 @@ function verifyGitStatusParsingSurvivesRealFilenames(output) {
     if (!zeroed.includes("docs/设计说明.md") || !zeroed.includes("docs/a b.md")) {
       output.push("加了 -z 之后中文/带空格的路径仍然不是原样 —— 解析口径要重新想");
     }
-    const core = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+    const coreGit = readFileSync(join(root, "apps/control-plane-ui/lib/git-utils.mjs"), "utf8");
     const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
-    for (const [label, text] of [["控制面", core], ["agent 运行时", runtime]]) {
+    for (const [label, text] of [["控制面", coreGit], ["agent 运行时", runtime]]) {
       const at = text.indexOf("function gitStatusPaths(");
       const body = at < 0 ? "" : text.slice(at, text.indexOf("\n}", at));
       if (!body) {
@@ -8774,7 +8774,7 @@ function verifyGitRemoteGuardTwinsAgree(output) {
   }
   // 同一对孪生里还有 gitFailureDetail：它拼的是【人看到的那句失败原因】。
   // 两侧各写一份，一侧改进了措辞另一侧没跟，人在控制台与在 agent 日志里看到的就不是一句话。
-  const coreText = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const coreText = readFileSync(join(root, "apps/control-plane-ui/lib/git-utils.mjs"), "utf8");
   const pick = (text, name) => {
     const at = text.indexOf(`function ${name}(`);
     return at < 0 ? "" : text.slice(at, text.indexOf("\n}", at) + 2);
@@ -10193,7 +10193,7 @@ function verifySeedLooksLikeSomethingTheProductMade(output) {
 }
 
 function verifyProjectRepositoriesHaveOneReader(output) {
-  const files = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
+  const files = ["apps/control-plane-ui/lib/path-policy.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs"];
   let readers = 0;
   for (const file of files) {
@@ -10216,7 +10216,7 @@ function verifyProjectRepositoriesHaveOneReader(output) {
         + "直接读某一个就会与界面写的那个分叉；一律走 projectRepositories()");
     }
   }
-  console.log(`项目仓库读取口径：4 份源码逐个核对，${readers} 处绕开了统一入口（应为 0）`);
+  console.log(`项目仓库读取口径：5 份源码逐个核对，${readers} 处绕开了统一入口（应为 0）`);
 }
 
 function verifyInitFailsWithWordsNotAStackTrace(output) {
@@ -12027,7 +12027,10 @@ function verifyCallsDoNotPassIgnoredArguments(output) {
     // 声明的扫描面必须含所有被这几个文件调用的模块，否则"声明找不到"会被当成"零参"
     // （实测：audit-ledger 不在表里，flushPendingAuditAppends(state, path) 被报成多传）。
     "apps/control-plane-ui/lib/audit-ledger.mjs", "apps/control-plane-ui/lib/project-event-store.mjs",
-    "apps/control-plane-ui/lib/transition-engine.mjs", "apps/control-plane-ui/lib/mcp-service-allowlist.mjs"];
+    "apps/control-plane-ui/lib/transition-engine.mjs", "apps/control-plane-ui/lib/mcp-service-allowlist.mjs",
+    "apps/control-plane-ui/lib/collection-utils.mjs", "apps/control-plane-ui/lib/digest-utils.mjs",
+    "apps/control-plane-ui/lib/git-utils.mjs", "apps/control-plane-ui/lib/path-policy.mjs",
+    "apps/control-plane-ui/lib/idempotency-records.mjs"];
   const balanced = (src, openIdx) => {
     let depth = 0;
     let count = 0;
@@ -16492,7 +16495,10 @@ function verifyI18nKeysAreReachable(output) {
   if (keys.length < 500) { output.push(`i18n 只提出 ${keys.length} 个键 —— 提取脱节`); return; }
   const codeFiles = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",
     "apps/control-plane-ui/lib/state-store.mjs", "apps/control-plane-ui/lib/audit-ledger.mjs", "apps/control-plane-ui/lib/http-utils.mjs",
-    "apps/control-plane-ui/lib/static-assets.mjs", "apps/mcp-server/server.mjs", ...CONSOLE_PRODUCT_FILES,
+    "apps/control-plane-ui/lib/static-assets.mjs", "apps/control-plane-ui/lib/collection-utils.mjs",
+    "apps/control-plane-ui/lib/digest-utils.mjs", "apps/control-plane-ui/lib/git-utils.mjs",
+    "apps/control-plane-ui/lib/path-policy.mjs", "apps/control-plane-ui/lib/idempotency-records.mjs",
+    "apps/mcp-server/server.mjs", ...CONSOLE_PRODUCT_FILES,
     "apps/agent-runtime/runtime.mjs", "data/seed-state.json"];
   const specFiles = [];
   const walk = (dir) => { for (const entry of readdirSync(join(root, dir), {withFileTypes: true})) {
@@ -18647,7 +18653,10 @@ function verifyCapKeepsLiveTaskGroupRecords(output) {
 }
 
 function verifyEveryCapExplainsWhatItKeeps(output) {
-  const core = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const core = [
+    "apps/control-plane-ui/lib/control-plane-core.mjs",
+    "apps/control-plane-ui/lib/idempotency-records.mjs"
+  ].map((rel) => readFileSync(join(root, rel), "utf8")).join("\n");
   // 三个是 export function（第一版只认行首 function，把它们当成"登记过期"报了红 ——
   // 好在过期校验先咬住了我，否则漏掉的是三个真在裁剪的函数）。
   const found = [...core.matchAll(/^(?:export )?function (cap[A-Z]\w*)\(/gum)].map((match) => match[1]);

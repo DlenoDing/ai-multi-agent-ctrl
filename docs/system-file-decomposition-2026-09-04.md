@@ -47,6 +47,11 @@
 
 - `apps/control-plane-ui/lib/http-utils.mjs`：`json`、`jsonString`、`parseBody`。
 - `apps/control-plane-ui/lib/static-assets.mjs`：静态资源安全路径、ETag、gzip、缓存和安全响应头。
+- `apps/control-plane-ui/lib/collection-utils.mjs`：跨核心模块复用的集合去重等小型纯函数。
+- `apps/control-plane-ui/lib/digest-utils.mjs`：稳定 JSON、深拷贝和 `sha256:` 内容摘要。
+- `apps/control-plane-ui/lib/git-utils.mjs`：控制面 Git 子进程封装、墙钟超时、失败原因净化、编排周期 Git 事实缓存、状态路径解析。
+- `apps/control-plane-ui/lib/path-policy.mjs`：Git 路径白名单、引用名安全、强制禁区、项目仓库读取口径和仓库 URL 规范化。
+- `apps/control-plane-ui/lib/idempotency-records.mjs`：REST/MCP 共用幂等回执、过期正文清理和记录上限淘汰。
 - `apps/control-plane-ui/lib/model-catalog.mjs`：模型供应商、默认模型、角色登记、角色能力提示、内置服务和 MCP 逻辑服务目录。
 - `apps/control-plane-ui/lib/language-policy.mjs`：任务组语言策略、语言别名、语言策略下发指令。
 - `apps/control-plane-ui/lib/skill-source-catalog.mjs`：默认 `DlenoDing/agency-agents-zh` skill 源、同步策略、覆盖层级和完整性要求。
@@ -72,6 +77,10 @@
 - 前端业务装配和页面渲染仍在 `public/app.js`。
 - 服务端 HTTP 基础设施在 `lib/http-utils.mjs`、`lib/static-assets.mjs`。
 - 服务端业务控制仍在 `server.mjs`。
+- 核心摘要/深拷贝在 `lib/digest-utils.mjs`。
+- 核心幂等回执在 `lib/idempotency-records.mjs`。
+- 核心 Git 操作在 `lib/git-utils.mjs`。
+- 核心路径/仓库策略在 `lib/path-policy.mjs`。
 - 核心模型/角色目录在 `lib/model-catalog.mjs`。
 - 核心语言策略在 `lib/language-policy.mjs`。
 - 核心 skill 源目录在 `lib/skill-source-catalog.mjs`。
@@ -88,6 +97,10 @@
 - 新增面板、进度、配额、基础表格行组件必须优先改 `ui-primitives.js`。
 - 新增服务端 JSON 响应或请求体读取逻辑必须复用 `http-utils.mjs`。
 - 新增静态资源响应逻辑必须复用 `static-assets.mjs`，不得在业务路由里另写一套路径拼接或缓存逻辑。
+- 新增稳定摘要、稳定 JSON 或深拷贝逻辑必须优先改 `digest-utils.mjs`。
+- 新增幂等回执重放、过期正文清理或记录上限逻辑必须优先改 `idempotency-records.mjs`。
+- 新增 Git 子进程、Git 失败原因净化、HEAD/remote 查询或工作树状态解析逻辑必须优先改 `git-utils.mjs`。
+- 新增 Git 路径、引用名、路径白名单、强制禁区、项目仓库读取或仓库 URL 规范化逻辑必须优先改 `path-policy.mjs`。
 - 新增模型供应商、模型默认值、角色能力提示、执行角色登记，必须优先改 `model-catalog.mjs`。
 - 新增任务组语言策略解析、语言别名、语言指令格式，必须优先改 `language-policy.mjs`。
 - 新增默认 skill 源、同步策略、覆盖层级或完整性规则，必须优先改 `skill-source-catalog.mjs`。

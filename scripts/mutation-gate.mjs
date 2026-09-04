@@ -21,6 +21,9 @@ import {waitForChildExit} from "./lib/child-tracking.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CORE = "apps/control-plane-ui/lib/control-plane-core.mjs";
+const CORE_GIT_UTILS = "apps/control-plane-ui/lib/git-utils.mjs";
+const CORE_IDEMPOTENCY = "apps/control-plane-ui/lib/idempotency-records.mjs";
+const CORE_PATH_POLICY = "apps/control-plane-ui/lib/path-policy.mjs";
 const MCP = "apps/mcp-server/server.mjs";
 const GATEWAY = "apps/control-plane-ui/lib/agent-gateway.mjs";
 const PGSTORE = "apps/control-plane-ui/lib/pg-sync-store.mjs";
@@ -132,7 +135,7 @@ const MUTATIONS = [
   },
   {
     name: "禁区必须在任何深度命中（子目录 node_modules 不得逃过根锚模式）",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    file: CORE_PATH_POLICY,
     gate: "contract",
     check: "verifyHumanAndOrganizationContracts",
     from: '  "**/.runtime/**", "**/.git/**", "**/node_modules/**", "**/.env", "**/.env.*",',
@@ -305,7 +308,7 @@ const MUTATIONS = [
   {
     name: "人要据以定稿的文本被截断时必须留痕",
     check: "verifyHumanAndOrganizationContracts",
-    file: CORE,
+    file: CORE_PATH_POLICY,
     from: "return `${text.slice(0, Math.max(0, max - marker.length))}${marker}`;",
     to: "return text.slice(0, max);",
     expect: "静默截断"
@@ -628,7 +631,7 @@ const MUTATIONS = [
   {
     name: "运行时提交不得改用户仓库的 git 配置",
     check: "verifyCommitWorksWithoutConfiguredIdentity",
-    file: CORE,
+    file: CORE_GIT_UTILS,
     from: "  try {\n    return gitStrict(root, [\"commit\", \"-m\", message]);",
     to: "  if (!git(root, [\"config\", \"user.email\"], \"\")) gitStrict(root, [\"config\", \"user.email\", \"agent-runtime@local\"]);\n  try {\n    return gitStrict(root, [\"commit\", \"-m\", message]);",
     expect: "写了东西"
@@ -1475,7 +1478,7 @@ const MUTATIONS = [
     // 编排里的 git 事实必须【一轮一次】备忘：去掉备忘之后 200 单元一轮就是 401 次 git 子进程，
     // 每次约 40ms，而编排同步占着主线程 —— 规模一上来控制面整段不响应。
     name: "编排不得按单元起 git 子进程",
-    file: CORE,
+    file: CORE_GIT_UTILS,
     check: "verifyOrchestrationDoesNotShellOutPerCell",
     from: "  return memoizedGitFact(`head\\u0000${root}`, () => git(root, [\"rev-parse\", \"--short=12\", \"HEAD\"], GIT_HEAD_UNAVAILABLE));",
     to: "  return git(root, [\"rev-parse\", \"--short=12\", \"HEAD\"], GIT_HEAD_UNAVAILABLE);",
@@ -2105,7 +2108,7 @@ const MUTATIONS = [
   {
     // 控制面通用 git() 包装器（含 ls-remote 网络操作）无超时会挂住请求/自治周期。去掉超时即红。
     name: "控制面 git() 包装器必须带墙钟超时",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    file: CORE_GIT_UTILS,
     gate: "specs",
     from: 'return execFileSync("git", ["-C", root, ...args], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: gitCommandTimeoutMs()}).trim();\n  } catch {\n    return fallback;',
     to: 'return execFileSync("git", ["-C", root, ...args], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]}).trim();\n  } catch {\n    return fallback;',
@@ -2777,7 +2780,7 @@ const MUTATIONS = [
     // 退回 execFileSync 原样抛出：报文会变回 "Command failed: git -C <服务器绝对路径> …"，
     // 既不说原因、又泄露路径，而它会原样显示在控制台的失败原因里。
     name: "git 失败要说原因且不带服务器路径",
-    file: CORE,
+    file: CORE_GIT_UTILS,
     check: "verifyGitFailureSaysWhyWithoutLeakingPaths",
     from: `    throw Object.assign(new Error(\`git_command_failed:\${gitFailureText(args, error)}\`),
       {cause: error, stderr: error?.stderr, status: error?.status});`,
@@ -3649,7 +3652,7 @@ const MUTATIONS = [
   },
   {
     name: "仓库地址规范化：.git 与结尾斜杠同时出现时不能判成两个仓库（剥离顺序）",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    file: CORE_PATH_POLICY,
     gate: "contract",
     check: "verifyHumanAndOrganizationContracts",
     from: '  return String(url || "").trim().replace(/\\/+$/u, "").replace(/\\.git$/u, "").replace(/\\/+$/u, "").toLowerCase();',
@@ -4736,7 +4739,7 @@ const MUTATIONS = [
   },
   {
     name: "带通配前缀的允许路径必须真的能匹配上",
-    file: CORE,
+    file: CORE_PATH_POLICY,
     check: "verifyPathAllowlistMatcherIsExercised",
     from: '    if (pattern.endsWith("/**") && !pattern.slice(0, -3).includes("*")) {',
     to: '    if (pattern.endsWith("/**")) {',
@@ -4744,7 +4747,7 @@ const MUTATIONS = [
   },
   {
     name: "批准范围之外的路径不许放行",
-    file: CORE,
+    file: CORE_PATH_POLICY,
     check: "verifyPathAllowlistMatcherIsExercised",
     from: "function globPathMatches(patternSegments, pathSegments) {\n  let patternIndex = 0;",
     to: "function globPathMatches(patternSegments, pathSegments) {\n  if (true) return true;\n  let patternIndex = 0;",
@@ -4786,7 +4789,7 @@ const MUTATIONS = [
   },
   {
     name: "gitHead 的兜底值改了，「取不到」必须仍然认得出来",
-    file: CORE,
+    file: CORE_GIT_UTILS,
     check: "verifyExecutionTopologyBaselineTellsTheTruth",
     from: '["rev-parse", "--short=12", "HEAD"], GIT_HEAD_UNAVAILABLE)',
     to: '["rev-parse", "--short=12", "HEAD"], "deadbeefcafe")',
@@ -4794,7 +4797,7 @@ const MUTATIONS = [
   },
   {
     name: "幂等回执正文必须被清（不清＝中央态每次写都整份重写它）",
-    file: CORE,
+    file: CORE_IDEMPOTENCY,
     check: "verifyIdempotencyPayloadsAreSwept",
     from: "  purgeExpiredIdempotencyPayloads(state, at);",
     to: "  void at;",
@@ -4802,7 +4805,7 @@ const MUTATIONS = [
   },
   {
     name: "幂等回执条数淘汰必须跟着写入一起做",
-    file: CORE,
+    file: CORE_IDEMPOTENCY,
     check: "verifyIdempotencyPayloadsAreSwept",
     from: "  capIdempotencyRecords(state);\n}",
     to: "}",
@@ -4947,7 +4950,7 @@ const MUTATIONS = [
   },
   {
     name: "新增的容量旋钮必须进文档",
-    file: CORE,
+    file: CORE_IDEMPOTENCY,
     check: "verifyCapacityKnobsAreDocumented",
     gate: "contract",
     from: "  const cap = clampEnvNumber(process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS, 100, 5000);",
@@ -9124,7 +9127,7 @@ const MUTATIONS = [
   },
   {
     name: "控制面解析 git status 必须用 -z（否则中文文件名让提交走不通）",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    file: CORE_GIT_UTILS,
     check: "verifyGitStatusParsingSurvivesRealFilenames",
     from: '  const fields = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], "").split("\\0");',
     to: '  const fields = git(root, ["status", "--porcelain", "--untracked-files=all"], "").split("\\n");',
@@ -9164,7 +9167,7 @@ const MUTATIONS = [
   },
   {
     name: "引用名以 - 开头 / 含 .. 要拒（字符集白名单挡不住这两种）",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    file: CORE_PATH_POLICY,
     check: "verifyGitRefGuardsAgree",
     from: '  if (value.startsWith("-") || value.includes("..")) return false;',
     to: "  if (false) return false;",
@@ -9180,7 +9183,7 @@ const MUTATIONS = [
   },
   {
     name: "正常分支名不许被拒（拒了项目配不出产出目标）",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    file: CORE_PATH_POLICY,
     check: "verifyGitRefGuardsAgree",
     from: "return /^[A-Za-z0-9._/-]+$/u.test(value);",
     to: "return /^[A-Za-z0-9._]+$/u.test(value);",
@@ -9196,7 +9199,7 @@ const MUTATIONS = [
   },
   {
     name: "产出路径不许向上穿越（写到仓库外面去）",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    file: CORE_PATH_POLICY,
     check: "verifyGitPathGuardRejectsEscapes",
     from: '!path.includes("..");',
     to: "true;",
@@ -9204,7 +9207,7 @@ const MUTATIONS = [
   },
   {
     name: "白名单要逐条校验（夹带一条 ../ 就能扩大写入范围）",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    file: CORE_PATH_POLICY,
     check: "verifyGitPathGuardRejectsEscapes",
     from: "  return Array.isArray(paths) && paths.length > 0 && paths.every(canUseGitPath);",
     to: "  return Array.isArray(paths) && paths.length > 0;",
@@ -9212,7 +9215,7 @@ const MUTATIONS = [
   },
   {
     name: "通配模式不许把穿越的目标路径一起放行",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    file: CORE_PATH_POLICY,
     check: "verifyGitPathGuardRejectsEscapes",
     from: "  if (!canUseGitPath(path)) return false;\n  return (allowlist || []).some((pattern) => {",
     to: "  return (allowlist || []).some((pattern) => {",
@@ -9380,7 +9383,7 @@ const MUTATIONS = [
   },
   {
     name: "项目仓库要认界面写的那个字段（否则界面上有入口却接错线）",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    file: CORE_PATH_POLICY,
     check: "verifyHumanAndOrganizationContracts",
     from: "  const configured = project?.config?.repositories;",
     to: "  const configured = null;",
@@ -9388,7 +9391,7 @@ const MUTATIONS = [
   },
   {
     name: "只认配置层会让只有顶层字段的老项目集体卡死",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    file: CORE_PATH_POLICY,
     check: "verifyHumanAndOrganizationContracts",
     from: "  return Array.isArray(project?.repositories) ? project.repositories : [];",
     to: "  return [];",
@@ -10750,7 +10753,7 @@ const MUTATIONS = [
   },
   {
     name: "正文已过重放窗口的幂等记录不得当成可重放（REST 与 MCP 同一份判断）",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    file: CORE_IDEMPOTENCY,
     gate: "contract",
     from: '  if (record.payload === undefined) {\n    return {replay: false, expired: true, error: "idempotent_result_expired",',
     to: '  if (false) {\n    return {replay: false, expired: true, error: "idempotent_result_expired",',
