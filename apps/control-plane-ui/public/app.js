@@ -2744,7 +2744,7 @@ function renderSysAccounts() {
 // 与其让人填完再撞一个错误，不如当场说清第一步是什么。
 function noProjectYetNotice(what) {
   return `<div class="notice">还没有任何项目，而${what}必须落在具体项目上。`
-    + "先创建一个项目：组织管理员切到「组织管理」→「项目列表」创建项目，系统管理员切到「系统管理」→「账号与授权」创建项目；创建后再进入「项目管理」→「成员权限」授权。</div>";
+    + "先创建一个项目：组织管理员切到「组织管理」→「项目列表」创建项目；系统管理员先在「系统管理」→「组织管理」开通组织并交付初始组织管理员，由组织管理员创建项目。创建后再进入「项目管理」→「成员权限」授权。</div>";
 }
 
 let memberGrantProjectId = "";
@@ -2810,6 +2810,104 @@ function renderProjectMemberForm(options = {}) {
       <button class="primary-button" type="submit">授权</button>
     </form>
   `;
+}
+
+function taskGroupGrantCandidates(project) {
+  const projectOrg = organizationOf(project);
+  const candidates = (orgMembers && orgMembers.length ? orgMembers : (state.accounts || []));
+  return candidates.filter((account) => organizationOf(account) === projectOrg && account.status !== "retired");
+}
+
+function renderTaskGroupGrantForm(project) {
+  const groups = projectTaskGroups().filter((taskGroup) => taskGroup.projectId === project.id);
+  const candidates = taskGroupGrantCandidates(project);
+  if (!groups.length) {
+    return `<div class="notice">当前项目还没有任务组。先到“任务组”页创建任务组，再按具体任务组授予控制、审核或监控权限。</div>`;
+  }
+  if (!candidates.length) {
+    return `<div class="notice warn-notice">当前组织下没有可授权账号。先到“组织管理”→“成员管理”创建子账户，再回到这里按任务组授权。</div>`;
+  }
+  return `
+    <form class="form-grid" data-form="grant-create" data-refresh-project-members="1">
+      <input type="hidden" name="resourceType" value="task_group">
+      <div class="form-row-inline">
+        <div class="form-row"><label>任务组</label>${decisionSelect("resourceId",
+          groups.map((taskGroup) => [taskGroup.id, taskGroup.name || taskGroup.id]), "请选择任务组…")}</div>
+        <div class="form-row"><label>账号</label>${decisionSelect("subjectId",
+          candidates.map((account) => [account.accountId, account.displayName || account.email || account.accountId]), "请选择账号…")}</div>
+        <div class="form-row"><label>任务组角色</label>${decisionSelect("role", [
+          ["task_group_owner", "任务组负责人（控制任务组与工作项）"],
+          ["reviewer", "评审人（人工定稿 / 验收）"],
+          ["agent_operator", "智能体操作员（监控与节点协同）"],
+          ["viewer", "观察者（只读查看）"]
+        ], "请选择任务组角色…")}</div>
+      </div>
+      <div class="notice">任务组授权只影响所选任务组，不会自动扩大到同项目其它任务组。项目级角色仍在上方“项目成员授权”里维护。</div>
+      <button class="primary-button" type="submit">授予任务组权限</button>
+    </form>
+  `;
+}
+
+function renderTaskGroupGrantList(project) {
+  const groupIds = new Set(projectTaskGroups().filter((taskGroup) => taskGroup.projectId === project.id).map((taskGroup) => taskGroup.id));
+  const grants = (state.accessGrants || []).filter((grant) =>
+    grant.status === "active" && grant.resource?.resourceType === "task_group" && groupIds.has(grant.resource.resourceId));
+  const rows = grants.map((grant) => row([
+    esc(taskGroupNameOf(grant.resource.resourceId)),
+    `<strong>${esc(accountName(grant.subjectRef?.subjectId))}</strong><div class="small muted mono">${esc(grant.subjectRef?.subjectId || "-")}</div>`,
+    esc(grantRoleLabel(grant.role)),
+    esc((grant.permissions || []).map((permission) => permLabel(permission)).join("、")),
+    {v: fmtTime(grant.createdAt), c: "nowrap"},
+    hasPerm("project:grant")
+      ? `<button class="danger-button" data-action="revoke-grant" data-grant="${esc(grant.grantId)}">撤销</button>`
+      : "-"
+  ])).join("");
+  return table(["任务组", "账号", "角色", "权限", {label: "授权时间", c: "nowrap"}, "操作"], rows,
+    {emptyText: "当前项目还没有任务组级授权。项目成员可以先有项目角色，真正的任务组控制和审核建议按任务组细分。"});
+}
+
+function projectMembershipsForAccount(accountId) {
+  return (state.projects || []).flatMap((project) => (project.members || [])
+    .filter((member) => member.accountId === accountId)
+    .map((member) => ({project, role: member.role})));
+}
+
+function taskGroupGrantsForAccount(accountId, projectId = "") {
+  const groupIds = new Set((state.taskGroups || [])
+    .filter((taskGroup) => !projectId || taskGroup.projectId === projectId)
+    .map((taskGroup) => taskGroup.id));
+  return (state.accessGrants || []).filter((grant) =>
+    grant.status === "active"
+    && grant.subjectRef?.subjectType === "account"
+    && grant.subjectRef?.subjectId === accountId
+    && grant.resource?.resourceType === "task_group"
+    && groupIds.has(grant.resource.resourceId));
+}
+
+function renderOrgMemberScopeMatrix(members) {
+  const rows = members.map((account) => {
+    const projectMemberships = projectMembershipsForAccount(account.accountId);
+    const taskGroupGrants = taskGroupGrantsForAccount(account.accountId);
+    return row([
+      `<strong>${esc(account.displayName || account.accountId)}</strong><div class="small muted mono">${esc(account.accountId)}</div>`,
+      `${statusBadge("account", account.status)}${retiredNote(account)}`,
+      esc((account.permissions || []).map((permission) => permLabel(permission)).join("、") || "无直接组织权限"),
+      projectMemberships.length
+        ? projectMemberships.map(({project, role}) => `${esc(project.name || project.id)}：${esc(grantRoleLabel(role))}`).join("<br>")
+        : `<span class="muted">未分配项目</span>`,
+      taskGroupGrants.length
+        ? taskGroupGrants.map((grant) => `${esc(taskGroupNameOf(grant.resource.resourceId))}：${esc(grantRoleLabel(grant.role))}`).join("<br>")
+        : `<span class="muted">未分配任务组角色</span>`,
+      projectMemberships.length
+        ? `<button class="secondary-button" data-action="open-project-page" data-project="${esc(projectMemberships[0].project.id)}" data-target-menu="proj-members">去项目授权</button>`
+        : `<button class="secondary-button" data-menu="org-projects">去项目列表</button>`
+    ]);
+  }).join("");
+  return panel("子账户项目 / 任务组权限矩阵", `
+    <div class="notice">这里按账号汇总组织直接权限、项目角色和任务组角色。项目和任务组授权必须在具体项目“成员权限”里落位，避免把组织账号生命周期和任务执行权限混在一起。</div>
+    ${table(["成员", "状态", "组织权限", "项目角色", "任务组角色", "授权入口"], rows,
+      {emptyText: listEmptyText("成员权限矩阵")})}
+  `, {wide: true, headerSide: filterInput("按成员、项目、任务组过滤…", "member-scope-matrix")});
 }
 
 function renderJoinTokenSection(options = {}) {
@@ -3211,6 +3309,7 @@ function renderOrgMembers() {
     renderOrgMembersLifecycleGuide(members),
     panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows,
       {emptyText: listEmptyText("成员列表")}), {wide: true, headerSide: filterInput("按姓名、邮箱过滤…", "members")}),
+    renderOrgMemberScopeMatrix(members),
     panel("创建成员", `
       <form class="form-grid" data-form="member-create">
         <div class="form-row-inline">
@@ -4211,7 +4310,11 @@ function renderProjectMembers() {
     panel("项目成员列表", memberRows
       ? table(["成员", "项目角色", "角色影响"], memberRows)
       : `<div class="notice warn-notice">当前项目还没有成员授权。没有成员角色时，任务组控制、人工审核和 Agent 操作入口会缺少负责人。</div>`, {wide: true}),
-    panel("项目成员授权", grantPanel)
+    panel("项目成员授权", grantPanel),
+    panel("任务组权限授权", hasPerm("project:grant")
+      ? renderTaskGroupGrantForm(project)
+      : `<div class="notice warn-notice">当前账号没有“项目授权管理(project:grant)”权限，只能查看任务组授权列表。</div>`, {wide: true}),
+    panel("任务组权限列表", renderTaskGroupGrantList(project), {wide: true, headerSide: filterInput("按任务组、账号、角色过滤…", "task-group-grants")})
   ].join("");
 }
 
