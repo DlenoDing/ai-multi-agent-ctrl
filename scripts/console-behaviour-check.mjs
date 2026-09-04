@@ -4230,6 +4230,12 @@ function runPendingTruncationCase() {
     const systemAdmin = {accountId: "acct_sys", accountType: "system_admin", displayName: "系统管理员", email: "sys@example.com", organizationId: "org_default",
       roles: ["system-owner"], permissions: ["system:*"]};
     const panelAt = (html, title) => html.indexOf(`<h2>${title}</h2>`);
+    const panelSlice = (html, title, nextTitle) => {
+      const start = panelAt(html, title);
+      if (start < 0) return "";
+      const end = nextTitle ? panelAt(html, nextTitle) : -1;
+      return end > start ? html.slice(start, end) : html.slice(start);
+    };
     const sysOrgsHtml = probe.renderSysOrgsWith(overviewState, admin, overviewState.organizations).replace(/<!--[\s\S]*?-->/gu, "");
     check("系统组织页先显示总览、操作看板和治理流程，再显示列表、创建表单和说明",
       panelAt(sysOrgsHtml, "组织管理总览") >= 0
@@ -4570,15 +4576,36 @@ function runPendingTruncationCase() {
       agentDispatches: [{dispatchId: "adp1", taskGroupId: "tg1", status: "running"}]
     };
     const projectAgentHtml = probe.renderProjectAgentsWith(projectAgentsState, systemAdmin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
+    const projectAgentScriptHubHtml = panelSlice(projectAgentHtml, "注册与脚本操作台", "Agent 接入与运行闭环");
     check("项目 AI 智能体页要先显示总览、操作看板、注册流程、运行闭环和节点处置流程，再显示节点与注册入口",
       panelAt(projectAgentHtml, "项目智能体总览") >= 0
         && panelAt(projectAgentHtml, "项目智能体总览") < panelAt(projectAgentHtml, "项目智能体操作看板")
         && panelAt(projectAgentHtml, "项目智能体操作看板") < panelAt(projectAgentHtml, "Agent 注册流程")
-        && panelAt(projectAgentHtml, "Agent 注册流程") < panelAt(projectAgentHtml, "Agent 接入与运行闭环")
+        && panelAt(projectAgentHtml, "Agent 注册流程") < panelAt(projectAgentHtml, "注册与脚本操作台")
+        && panelAt(projectAgentHtml, "注册与脚本操作台") < panelAt(projectAgentHtml, "Agent 接入与运行闭环")
         && panelAt(projectAgentHtml, "Agent 接入与运行闭环") < panelAt(projectAgentHtml, "Agent 节点处置流程")
         && panelAt(projectAgentHtml, "Agent 节点处置流程") < panelAt(projectAgentHtml, "项目智能体节点")
         && panelAt(projectAgentHtml, "项目智能体节点") < panelAt(projectAgentHtml, "注册 agent"),
       "项目级智能体入口仍可能藏在项目设置里，项目负责人不能直接按项目查看节点、注册流程、运行闭环和注册脚本");
+    check("项目 AI 智能体页要在节点长表前提供注册与脚本操作台",
+      /注册与脚本操作台/u.test(projectAgentScriptHubHtml)
+        && /签发 join token/u.test(projectAgentScriptHubHtml)
+        && /获取安装脚本/u.test(projectAgentScriptHubHtml)
+        && /签发后/u.test(projectAgentScriptHubHtml)
+        && /确认节点自检/u.test(projectAgentScriptHubHtml)
+        && /查看实时回送/u.test(projectAgentScriptHubHtml)
+        && /签发成功弹窗给出 direct 和 SHA256 校验版 sh 命令，只显示一次/u.test(projectAgentScriptHubHtml)
+        && /第一次接入 agent 的快捷操作台/u.test(projectAgentScriptHubHtml)
+        && /必须先由服务端按当前项目签发一次性 join token/u.test(projectAgentScriptHubHtml)
+        && /列表只能审计和撤销，不能还原明文/u.test(projectAgentScriptHubHtml)
+        && /Agent 端执行脚本后只运行 Runtime/u.test(projectAgentScriptHubHtml)
+        && /服务端 Gateway、远程 MCP 和最小 Skill 工作集/u.test(projectAgentScriptHubHtml)
+        && /模型输出摘要和控制 ACK/u.test(projectAgentScriptHubHtml)
+        && /data-jump-panel="注册 agent"/u.test(projectAgentScriptHubHtml)
+        && /data-jump-panel="项目智能体节点"/u.test(projectAgentScriptHubHtml)
+        && /data-menu="monitor"/u.test(projectAgentScriptHubHtml)
+        && panelAt(projectAgentHtml, "注册与脚本操作台") < panelAt(projectAgentHtml, "项目智能体节点"),
+      "项目 AI 智能体页仍没有把生成注册脚本、节点自检和实时监控入口做成节点长表前的操作台");
     check("项目 AI 智能体页要提供注册脚本来源和节点控制入口",
       /签发一次性加入令牌/u.test(projectAgentHtml)
         && /注册脚本/u.test(projectAgentHtml)

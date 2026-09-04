@@ -4219,6 +4219,48 @@ function renderProjectAgentsActionBoard(project, nodes) {
   `, {wide: true});
 }
 
+function renderProjectAgentScriptHub(project, nodes) {
+  const stats = projectAgentStats(project.id, nodes);
+  return panel("注册与脚本操作台", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "1 签发 join token",
+        metric: stats.liveTokens ? `${stats.liveTokens}` : "签发",
+        detail: "在当前项目生成一次性加入令牌",
+        panelTitle: "注册 agent",
+        tone: stats.liveTokens ? "blue" : "orange",
+        action: "去签发"
+      })}
+      ${jumpModuleCard({
+        title: "2 获取安装脚本",
+        metric: "签发后",
+        detail: "签发成功弹窗给出 direct 和 SHA256 校验版 sh 命令，只显示一次",
+        panelTitle: "注册 agent",
+        tone: "blue",
+        action: "看入口"
+      })}
+      ${jumpModuleCard({
+        title: "3 确认节点自检",
+        metric: `${stats.onlineNodes}/${stats.aliveNodes.length}`,
+        detail: "脚本执行后回到节点列表确认在线、准入、远程 MCP 和 Skill 工作集",
+        panelTitle: "项目智能体节点",
+        tone: stats.onlineNodes ? "green" : stats.aliveNodes.length ? "orange" : "gray",
+        action: "看节点"
+      })}
+      ${projectModuleCard({
+        pageId: "monitor",
+        title: "4 查看实时回送",
+        metric: stats.runningDispatches ? `${stats.runningDispatches}` : "监控",
+        detail: "派发状态、执行事件、模型输出摘要和控制 ACK 到执行监控查看",
+        tone: stats.runningDispatches ? "blue" : "green",
+        action: "看监控"
+      })}
+    </div>
+    <div class="notice">这是第一次接入 agent 的快捷操作台：注册脚本不是固定写死命令；必须先由服务端按当前项目签发一次性 join token。安装命令和明文 join token 只在签发成功弹窗显示一次，列表只能审计和撤销，不能还原明文。</div>
+    <div class="small muted">Agent 端执行脚本后只运行 Runtime；后续通过服务端 Gateway、远程 MCP 和最小 Skill 工作集执行任务，并持续回送事件、进度、模型输出摘要和控制 ACK。</div>
+  `, {wide: true});
+}
+
 function renderProjectAgents() {
   const project = currentProject();
   if (!project) return panel("AI 智能体", noVisibleProjectNotice(), {wide: true});
@@ -4258,6 +4300,7 @@ function renderProjectAgents() {
     renderProjectAgentsSummary(project, nodes),
     renderProjectAgentsActionBoard(project, nodes),
     renderProjectAgentRegistrationFlow(project, nodes),
+    renderProjectAgentScriptHub(project, nodes),
     renderProjectAgentExecutionLoop(project, nodes),
     renderProjectAgentNodeGovernanceGuide(project, nodes),
     panel("项目智能体节点", `<div class="stack">${nodeNotice}${bodyHtml}</div>`,
