@@ -2862,6 +2862,69 @@ function renderSysAccountsBoundaryGuide() {
   `, {wide: true});
 }
 
+function renderSysAccountsLifecycleGuide() {
+  const accounts = state.accounts || [];
+  const grants = state.accessGrants || [];
+  const agents = state.agents || [];
+  const serviceAccounts = accounts.filter((account) => account.accountType === "service_account" && account.status !== "retired").length;
+  const activeGrants = grants.filter((grant) => grant.status === "active").length;
+  const activeAgents = agents.filter((agent) => agent.status === "active").length;
+  const invited = accounts.filter((account) => account.status === "invited" || account.invitationWithdrawn).length;
+  return panel("账号授权处置流程", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "1 账号身份",
+        metric: accounts.length,
+        detail: invited ? `先处理 ${invited} 个待接受或已撤回邀请` : "先确认系统管理员、组织成员和服务账号身份",
+        panelTitle: "账号列表",
+        tone: invited ? "orange" : "blue",
+        action: "看账号"
+      })}
+      ${jumpModuleCard({
+        title: "2 访问授权",
+        metric: activeGrants,
+        detail: "项目、任务组和系统资源授权先审计，必要时再撤销或补发",
+        panelTitle: "访问授权列表",
+        tone: activeGrants ? "blue" : "gray",
+        action: "看授权"
+      })}
+      ${jumpModuleCard({
+        title: "3 服务账号",
+        metric: serviceAccounts,
+        detail: "服务账号只用于系统和 agent runtime 服务身份，不作为真人管理入口",
+        panelTitle: "账号列表",
+        tone: serviceAccounts ? "blue" : "gray",
+        action: "看服务账号"
+      })}
+      ${jumpModuleCard({
+        title: "4 入网令牌审计",
+        metric: liveJoinTokenCount(),
+        detail: "这里只看跨项目待用票据和撤销，项目 join token 到项目 AI 智能体页签发",
+        panelTitle: "智能体入网审计",
+        tone: liveJoinTokenCount() ? "orange" : "green",
+        action: "看审计"
+      })}
+      ${jumpModuleCard({
+        title: "5 Agent 档案",
+        metric: `${activeAgents}/${agents.length}`,
+        detail: "编排角色档案决定总控可激活的角色，不等于某台执行节点已注册",
+        panelTitle: "编排智能体档案",
+        tone: activeAgents ? "blue" : "gray",
+        action: "看档案"
+      })}
+      ${projectModuleCard({
+        pageId: "org-projects",
+        title: "6 项目级落位",
+        metric: assignableProjects().length,
+        detail: "成员加入项目、项目 Agent 注册、任务组执行都回到目标项目空间完成",
+        tone: assignableProjects().length ? "green" : "orange",
+        action: "去项目治理"
+      })}
+    </div>
+    <div class="small muted">账号授权页是系统身份和授权治理入口：先确认账号，再审计授权和令牌；真正让用户或 agent 参与某个项目，必须回到项目管理完成成员授权、Agent 注册和任务组执行。</div>
+  `, {wide: true});
+}
+
 function renderSysAccounts() {
   const accounts = (state.accounts || []).map((account) => row([
     esc(account.displayName),
@@ -2892,6 +2955,7 @@ function renderSysAccounts() {
     renderSysAccountsSummary(),
     renderSysAccountsActionBoard(),
     renderSysAccountsBoundaryGuide(),
+    renderSysAccountsLifecycleGuide(),
     panel("账号列表", table(["账号", "邮箱", "类型", "状态", "角色"], accounts), {wide: true}),
     panel("访问授权列表", table(["主体", "资源", "角色", "状态", "权限", "操作"], grants), {wide: true}),
     panel("智能体入网审计", renderJoinTokenSection({auditOnly: true, context: "system"}), {wide: true}),
@@ -4025,6 +4089,66 @@ function renderOrgProjectsActionBoard({projects, activeProjects, archivedProject
   `, {wide: true});
 }
 
+function renderOrgProjectsLifecycleGuide({projects, activeProjects, archivedProjects, unhealthyProjects, memberLinks}) {
+  const assignableCount = assignableProjects().length;
+  return panel("项目治理流程", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "1 创建项目",
+        metric: projects.length || "创建",
+        detail: "先在组织配额内创建项目，创建人自动成为项目负责人",
+        panelTitle: "创建项目",
+        tone: projects.length ? "blue" : "orange",
+        action: "去创建"
+      })}
+      ${jumpModuleCard({
+        title: "2 成员授权",
+        metric: memberLinks,
+        detail: "把用户加入项目并指定项目角色，否则只能看到组织账号，不能管理项目",
+        panelTitle: "项目成员授权",
+        tone: memberLinks ? "blue" : "orange",
+        action: "去授权"
+      })}
+      ${projectModuleCard({
+        pageId: "proj-settings",
+        title: "3 项目配置",
+        metric: activeProjects.length,
+        detail: "仓库、基线、默认角色、系统规则、业务规则和角色 Skill 定制在项目设置维护",
+        tone: activeProjects.length ? "blue" : "gray",
+        action: "去设置"
+      })}
+      ${projectModuleCard({
+        pageId: "proj-agents",
+        title: "4 Agent 接入",
+        metric: "注册",
+        detail: "一次性 join token 和 sh 安装命令只在目标项目 AI 智能体页生成",
+        tone: activeProjects.length ? "green" : "gray",
+        action: "去注册"
+      })}
+      ${projectModuleCard({
+        pageId: "tg",
+        title: "5 任务组执行",
+        metric: "执行",
+        detail: "任务组承载目标、统一语言、角色、工作项和自动派发主线",
+        tone: activeProjects.length ? "blue" : "gray",
+        action: "去任务组"
+      })}
+      ${jumpModuleCard({
+        title: "6 归档收口",
+        metric: archivedProjects,
+        detail: unhealthyProjects
+          ? "异常项目先修复或关闭任务组，再归档释放管理视野；归档是终态不能继续新建工作"
+          : "任务组关闭后再归档，归档是终态不能继续新建工作",
+        panelTitle: "项目列表",
+        tone: unhealthyProjects ? "orange" : archivedProjects ? "gray" : "green",
+        action: "看项目"
+      })}
+    </div>
+    <div class="small muted">组织项目页负责项目生命周期治理；项目内部执行仍回到项目设置、AI 智能体、任务组和执行监控。不要在组织项目页寻找 Agent 注册脚本，脚本必须绑定具体项目后签发。</div>
+    <div class="small muted">当前可授权在用项目：${esc(assignableCount)} 个；在用项目：${esc(activeProjects.length)} 个；健康异常：${esc(unhealthyProjects)} 个。</div>
+  `, {wide: true});
+}
+
 function renderOrgProjects() {
   const projects = state.projects || [];
   const activeProjects = projects.filter((project) => project.status !== "archived");
@@ -4055,6 +4179,7 @@ function renderOrgProjects() {
       </div>
     `, {wide: true}),
     renderOrgProjectsActionBoard({projects, activeProjects, archivedProjects, unhealthyProjects, memberLinks}),
+    renderOrgProjectsLifecycleGuide({projects, activeProjects, archivedProjects, unhealthyProjects, memberLinks}),
     panel("项目列表", table(["项目", "状态", "进度", "阶段", "健康度", "成员", "操作"], projectRows), {wide: true}),
     panel("创建项目", `
       <form class="form-grid" data-form="org-project-create">

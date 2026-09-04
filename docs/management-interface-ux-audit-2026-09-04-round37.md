@@ -39,10 +39,24 @@
 5. 补充控制台行为门，固定页面顺序和关键边界文案，防止后续退回长表单堆砌。
 6. 完成后运行语法检查、控制台行为门、完整验证和本地服务走查。
 
+## 已实施
+
+1. `apps/control-plane-ui/public/app.js` 新增“账号授权处置流程”，把账号身份、访问授权、服务账号、入网令牌审计、Agent 档案和项目级落位串成固定顺序。
+2. `apps/control-plane-ui/public/app.js` 新增“项目治理流程”，把创建项目、成员授权、项目配置、Agent 接入、任务组执行和归档收口串成固定顺序。
+3. 两个流程都复用当前页面已有状态和现有跳转，不新增后端接口、轮询、写入或数据库结构。
+4. `scripts/console-behaviour-check.mjs` 已增加行为门，校验流程面板顺序、关键边界文案和项目/Agent/任务组跳转入口。
+
+## 多角度复验
+
+- 中文管理视角：组织管理员可以从“项目治理流程”理解一个项目从创建到归档的顺序，不必从项目列表、创建表单和授权表单中自行推导。
+- 权限治理视角：系统管理员可以从“账号授权处置流程”区分系统身份治理、令牌审计、Agent 档案与项目级成员/Agent 落位。
+- AI-native 执行视角：新增面板仍明确 Agent 注册脚本必须绑定具体项目，任务执行、MCP、Skill 和实时回送不在人类表单里完成。
+- 性能视角：新增内容为纯前端状态渲染，不增加服务端读写压力，适合高并发控制台访问。
+
 ## 验证计划
 
-- `node --check apps/control-plane-ui/public/app.js`
-- `node --check scripts/console-behaviour-check.mjs`
-- `npm run console-behaviour-gate`
-- `npm run validate`
+- `node --check apps/control-plane-ui/public/app.js`：已通过。
+- `node --check scripts/console-behaviour-check.mjs`：已通过。
+- `npm run console-behaviour-gate`：已通过，612 条断言全部通过。
+- `npm run validate`：已通过，覆盖规格、契约、MCP、权限、控制台行为、崩溃一致性、并发写入和空闲推进。
 - 本地服务 `http://127.0.0.1:4317/` 检查新版前端内容已加载。

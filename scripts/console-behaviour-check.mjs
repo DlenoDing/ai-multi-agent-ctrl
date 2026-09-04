@@ -4165,7 +4165,8 @@ function runPendingTruncationCase() {
       panelAt(accountHtml, "账号与授权操作看板") >= 0
         && panelAt(accountHtml, "账号与授权总览") < panelAt(accountHtml, "账号与授权操作看板")
         && panelAt(accountHtml, "账号与授权操作看板") < panelAt(accountHtml, "账号与授权职责边界")
-        && panelAt(accountHtml, "账号与授权职责边界") < panelAt(accountHtml, "账号列表")
+        && panelAt(accountHtml, "账号与授权职责边界") < panelAt(accountHtml, "账号授权处置流程")
+        && panelAt(accountHtml, "账号授权处置流程") < panelAt(accountHtml, "账号列表")
         && panelAt(accountHtml, "账号列表") < panelAt(accountHtml, "访问授权列表")
         && panelAt(accountHtml, "访问授权列表") < panelAt(accountHtml, "邀请账号")
         && panelAt(accountHtml, "邀请账号") < panelAt(accountHtml, "新增访问授权")
@@ -4180,6 +4181,17 @@ function runPendingTruncationCase() {
         && /系统页只做跨项目令牌审计和撤销/u.test(accountHtml)
         && /data-menu="proj-agents"/u.test(accountHtml),
       "账号与授权页仍像普通 Agent 注册入口，没有明确提示常规注册应进入目标项目的项目级 AI 智能体注册面板");
+    check("账号与授权页要把账号、授权、服务账号、令牌审计、Agent 档案和项目落位串成流程",
+      /账号授权处置流程/u.test(accountHtml)
+        && /项目、任务组和系统资源授权先审计/u.test(accountHtml)
+        && /服务账号只用于系统和 agent runtime 服务身份/u.test(accountHtml)
+        && /项目 join token 到项目 AI 智能体页签发/u.test(accountHtml)
+        && /不等于某台执行节点已注册/u.test(accountHtml)
+        && /真正让用户或 agent 参与某个项目/u.test(accountHtml)
+        && /data-jump-panel="智能体入网审计"/u.test(accountHtml)
+        && /data-jump-panel="编排智能体档案"/u.test(accountHtml)
+        && /data-menu="org-projects"/u.test(accountHtml),
+      "账号与授权页没有把系统身份治理和项目级落位讲成可操作流程");
     check("系统账号页不能承载常规 Agent 注册表单，项目页才保留注册脚本入口",
       !/data-form="join-token"/u.test(accountHtml)
         && /智能体入网审计/u.test(accountHtml)
@@ -4506,7 +4518,8 @@ function runPendingTruncationCase() {
     check("组织项目页先显示总览和操作看板，再显示列表与新增授权表单",
       panelAt(orgProjectsHtml, "项目管理总览") >= 0
         && panelAt(orgProjectsHtml, "项目管理总览") < panelAt(orgProjectsHtml, "项目管理操作看板")
-        && panelAt(orgProjectsHtml, "项目管理操作看板") < panelAt(orgProjectsHtml, "项目列表")
+        && panelAt(orgProjectsHtml, "项目管理操作看板") < panelAt(orgProjectsHtml, "项目治理流程")
+        && panelAt(orgProjectsHtml, "项目治理流程") < panelAt(orgProjectsHtml, "项目列表")
         && panelAt(orgProjectsHtml, "项目列表") < panelAt(orgProjectsHtml, "创建项目")
         && panelAt(orgProjectsHtml, "创建项目") < panelAt(orgProjectsHtml, "项目成员授权"),
       "组织项目页仍然缺少总览后的操作入口，组织管理员要先读长表和表单才知道从哪里处理");
@@ -4515,6 +4528,19 @@ function runPendingTruncationCase() {
         && /data-jump-panel="创建项目"/u.test(orgProjectsHtml)
         && /data-jump-panel="项目成员授权"/u.test(orgProjectsHtml),
       "项目管理操作看板只显示指标，没有接上列表、创建项目和成员授权面板的跳转");
+    check("组织项目页要把项目创建、成员授权、配置、Agent 接入、任务组执行和归档串成流程",
+      /项目治理流程/u.test(orgProjectsHtml)
+        && /创建人自动成为项目负责人/u.test(orgProjectsHtml)
+        && /否则只能看到组织账号，不能管理项目/u.test(orgProjectsHtml)
+        && /角色 Skill 定制在项目设置维护/u.test(orgProjectsHtml)
+        && /一次性 join token 和 sh 安装命令只在目标项目 AI 智能体页生成/u.test(orgProjectsHtml)
+        && /统一语言、角色、工作项和自动派发主线/u.test(orgProjectsHtml)
+        && /归档是终态不能继续新建工作/u.test(orgProjectsHtml)
+        && /不要在组织项目页寻找 Agent 注册脚本/u.test(orgProjectsHtml)
+        && /data-menu="proj-settings"/u.test(orgProjectsHtml)
+        && /data-menu="proj-agents"/u.test(orgProjectsHtml)
+        && /data-menu="tg"/u.test(orgProjectsHtml),
+      "组织项目页没有把项目生命周期和项目内部执行入口讲成清晰流程");
     const orgOverviewHtml = probe.renderOrgOverviewWith(overviewState, orgAdmin, [
       {...orgAdmin, status: "active"},
       {accountId: "acct_wait", accountType: "user_account", displayName: "待登录成员", email: "wait@example.com", status: "invited", roles: []}
