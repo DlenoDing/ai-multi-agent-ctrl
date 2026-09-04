@@ -2469,6 +2469,82 @@ function renderSysSettingsActionBoard(runtime, metrics) {
   `, {wide: true});
 }
 
+function renderSysSettingsLifecycleGuide(runtime, metrics) {
+  const modelCapabilities = state.modelCapabilities || [];
+  const skillSources = state.skillSources || [];
+  const roleSkillCount = state.roleSkillCountBySource || {};
+  const usableSkillSources = skillSources.filter((source) => source.status !== "retired"
+    && Number(roleSkillCount[source.sourceId] || 0) > 0).length;
+  const unavailableModels = modelCapabilities.filter((profile) =>
+    ["unavailable", "disabled", "retired"].includes(profile.availability)).length;
+  const activeOverlays = (state.roleSkillOverlays || []).filter((item) => item.status === "active").length;
+  const sharedDefinitions = instructionState?.sharedDefinitions || [];
+  const envelopeCount = (metrics.envelopes || []).length;
+  return panel("系统能力治理流程", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "1 运行参数",
+        metric: t(runtime.status),
+        detail: "先确认控制面状态、自治周期、状态机和集中 MCP 工具数",
+        panelTitle: "运行参数（只读）",
+        tone: runtime.status === "active" || runtime.status === "initialized" ? "green" : "orange",
+        action: "看参数"
+      })}
+      ${jumpModuleCard({
+        title: "2 技能源同步",
+        metric: `${usableSkillSources}/${skillSources.length}`,
+        detail: "技能源只在服务端同步，Agent 端按派发下载最小 Skill 工作集",
+        panelTitle: "技能源",
+        tone: usableSkillSources ? "blue" : "orange",
+        action: "看技能源"
+      })}
+      ${jumpModuleCard({
+        title: "3 模型能力",
+        metric: `${modelCapabilities.length}`,
+        detail: unavailableModels
+          ? `${unavailableModels} 个模型不可用时任务选型会避开或阻塞`
+          : "模型不可用时任务选型会避开或阻塞；这里登记供应商、能力和上下文窗口",
+        panelTitle: "模型能力注册（只读）",
+        tone: unavailableModels ? "orange" : "blue",
+        action: "看模型"
+      })}
+      ${jumpModuleCard({
+        title: "4 角色叠加追踪",
+        metric: `${activeOverlays}`,
+        detail: "系统页只追踪项目/任务组叠加，创建入口回项目设置或任务组详情",
+        panelTitle: "角色技能叠加（改动 agent 能力，只读）",
+        tone: activeOverlays ? "orange" : "gray",
+        action: "看叠加"
+      })}
+      ${projectModuleCard({
+        pageId: "proj-settings",
+        title: "5 项目级定制",
+        metric: "项目",
+        detail: "仓库、规则、角色 Skill 定制和任务组覆盖回项目空间处理",
+        tone: "blue",
+        action: "去项目设置"
+      })}
+      ${projectModuleCard({
+        pageId: "proj-agents",
+        title: "6 Agent 注册",
+        metric: "项目",
+        detail: "系统设置不签发 join token；注册脚本只在项目 AI 智能体页生成",
+        tone: "blue",
+        action: "去注册"
+      })}
+      ${jumpModuleCard({
+        title: "7 压缩与定义",
+        metric: `${envelopeCount}/${sharedDefinitions.length}`,
+        detail: "指令压缩指标和共享定义用于控制 token、缓存命中和公共语义归属",
+        panelTitle: "指令压缩指标",
+        tone: envelopeCount || sharedDefinitions.length ? "blue" : "gray",
+        action: "看指标"
+      })}
+    </div>
+    <div class="small muted">系统设置是全局能力治理面板：集中 MCP、模型能力、技能源和公共定义在服务端统一维护；项目执行仍回到项目设置、AI 智能体、任务组和执行监控。</div>
+  `, {wide: true});
+}
+
 function renderSysSettings() {
   const runtime = state.runtime || {};
   const models = (state.modelCapabilities || []).slice(0, 40).map((profile) => row([
@@ -2513,6 +2589,7 @@ function renderSysSettings() {
   return [
     renderSysSettingsSummary(runtime, metrics),
     renderSysSettingsActionBoard(runtime, metrics),
+    renderSysSettingsLifecycleGuide(runtime, metrics),
     panel("运行参数（只读）", `
       <dl class="kv-list">
         <dt>运行档案</dt><dd class="mono">${esc(runtime.profileId || "-")}</dd>
@@ -7240,6 +7317,69 @@ function renderProjectSettingsBoundaryGuide(project, repos, baselineData, defaul
   `, {wide: true});
 }
 
+function renderProjectSettingsLifecycleGuide(project, repos, baselineData, defaultRoles, resolved, rulesLoaded) {
+  const agentStats = projectAgentStats(project.id);
+  const roleOverlayCount = projectRoleSkillOverlays(project.id).length;
+  const ruleCount = rulesLoaded
+    ? (resolved.systemRules || []).length + (resolved.businessRules || []).length
+    : "—";
+  return panel("项目配置生效流程", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "1 产出落点",
+        metric: `${repos.length}`,
+        detail: "先配置 Git 仓库和凭证引用，所有任务产出仍落到项目仓库",
+        panelTitle: "项目基础配置",
+        tone: repos.length ? "blue" : "red",
+        action: "看仓库"
+      })}
+      ${jumpModuleCard({
+        title: "2 角色与 Skill",
+        metric: `${defaultRoles.length + roleOverlayCount}`,
+        detail: "默认角色和角色 Skill 定制会进入后续派发；任务组特殊要求在详情覆盖",
+        panelTitle: "角色 Skill 定制",
+        tone: roleOverlayCount ? "orange" : "blue",
+        action: "看定制"
+      })}
+      ${jumpModuleCard({
+        title: "3 规则生效",
+        metric: `${ruleCount}`,
+        detail: rulesLoaded
+          ? "系统规则守执行边界，业务规则守项目约束，任务组可继续覆盖"
+          : "规则配置未加载，先不要提交覆盖",
+        panelTitle: rulesLoaded ? "系统规则" : "规则配置",
+        tone: rulesLoaded ? "blue" : "orange",
+        action: "看规则"
+      })}
+      ${projectModuleCard({
+        pageId: "tg",
+        title: "4 创建任务组",
+        metric: "任务组",
+        detail: "配置不会替你创建任务组；新任务组会引用项目配置并继续按组设语言和角色",
+        tone: "blue",
+        action: "去任务组"
+      })}
+      ${projectModuleCard({
+        pageId: "proj-agents",
+        title: "5 Agent 执行",
+        metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : "注册",
+        detail: "Agent 注册、远程 MCP 和 Skill 工作集生效确认在项目 AI 智能体页",
+        tone: agentStats.onlineNodes ? "green" : "orange",
+        action: "看智能体"
+      })}
+      ${projectModuleCard({
+        pageId: "monitor",
+        title: "6 监控回看",
+        metric: "实时",
+        detail: "配置调整后看后续派发、事件流、模型选择和仓库产出是否按预期变化",
+        tone: "blue",
+        action: "看监控"
+      })}
+    </div>
+    <div class="small muted">项目配置只影响后续派发和产出落地；已经在执行的会话按其任务契约继续回送，必要时由任务组控制或人工指令调整。</div>
+  `, {wide: true});
+}
+
 function renderProjectSettings() {
   const project = currentProject();
   if (!project) return panel("项目设置", noVisibleProjectNotice(), {wide: true});
@@ -7283,6 +7423,7 @@ function renderProjectSettings() {
     renderProjectSettingsSummary(project, repos, baselineData, defaultRoles, resolved, rulesLoaded),
     renderProjectSettingsActionBoard(project, repos, baselineData, defaultRoles, resolved, rulesLoaded),
     renderProjectSettingsBoundaryGuide(project, repos, baselineData, defaultRoles, resolved, rulesLoaded),
+    renderProjectSettingsLifecycleGuide(project, repos, baselineData, defaultRoles, resolved, rulesLoaded),
     panel("项目基础配置", `
       <div class="notice">当前项目：${esc(project.name || project.id)}。这里配置 agent 产出的仓库落点、可引用基线和任务组默认角色。</div>
       ${archivedNotice}

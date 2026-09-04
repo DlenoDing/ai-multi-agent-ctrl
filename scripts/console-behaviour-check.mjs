@@ -1294,7 +1294,8 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
       settingsPanelAt("项目设置总览") >= 0
         && settingsPanelAt("项目设置总览") < settingsPanelAt("项目设置操作看板")
         && settingsPanelAt("项目设置操作看板") < settingsPanelAt("项目设置职责分区")
-        && settingsPanelAt("项目设置职责分区") < settingsPanelAt("项目基础配置")
+        && settingsPanelAt("项目设置职责分区") < settingsPanelAt("项目配置生效流程")
+        && settingsPanelAt("项目配置生效流程") < settingsPanelAt("项目基础配置")
         && settingsPanelAt("项目基础配置") < settingsPanelAt("AI 智能体")
         && settingsPanelAt("AI 智能体") < settingsPanelAt("系统规则")
         && settingsPanelAt("系统规则") < settingsPanelAt("业务规则"),
@@ -1309,6 +1310,17 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         && /一次性 join token.+安装脚本.+远程 MCP/u.test(settingsHtml)
         && /项目管理.+AI 智能体/u.test(settingsHtml),
       "项目设置页仍把配置、规则和 Agent 接入混成一个长页面，没有先给普通用户职责分区");
+    check("项目设置页要说明配置从仓库、Skill、规则进入任务组、Agent 和监控",
+      /项目配置生效流程/u.test(settingsHtml)
+        && /所有任务产出仍落到项目仓库/u.test(settingsHtml)
+        && /默认角色和角色 Skill 定制会进入后续派发/u.test(settingsHtml)
+        && /新任务组会引用项目配置/u.test(settingsHtml)
+        && /Agent 注册、远程 MCP 和 Skill 工作集生效确认/u.test(settingsHtml)
+        && /配置调整后看后续派发、事件流、模型选择和仓库产出/u.test(settingsHtml)
+        && /data-menu="tg"/u.test(settingsHtml)
+        && /data-menu="proj-agents"/u.test(settingsHtml)
+        && /data-menu="monitor"/u.test(settingsHtml),
+      "项目设置页没有把配置如何进入任务组、agent 执行和监控回看讲成流程");
     check("项目设置里的 Agent 入口要说明注册脚本只来自项目 AI 智能体页",
       /注册脚本只在签发成功弹窗显示|需要新节点时进入「AI 智能体」→「注册 agent」签发/u.test(settingsHtml)
         && /Agent 节点、注册脚本和远程 MCP 确认不在本页处理/u.test(settingsHtml),
@@ -4308,7 +4320,8 @@ function runPendingTruncationCase() {
     check("系统设置页要先给全局能力操作看板，再显示长表",
       panelAt(sysSettingsHtml, "系统设置总览") >= 0
         && panelAt(sysSettingsHtml, "系统设置总览") < panelAt(sysSettingsHtml, "系统设置操作看板")
-        && panelAt(sysSettingsHtml, "系统设置操作看板") < panelAt(sysSettingsHtml, "运行参数（只读）")
+        && panelAt(sysSettingsHtml, "系统设置操作看板") < panelAt(sysSettingsHtml, "系统能力治理流程")
+        && panelAt(sysSettingsHtml, "系统能力治理流程") < panelAt(sysSettingsHtml, "运行参数（只读）")
         && /data-jump-panel="运行参数（只读）"/u.test(sysSettingsHtml)
         && /data-jump-panel="技能源"/u.test(sysSettingsHtml)
         && /data-jump-panel="模型能力注册（只读）"/u.test(sysSettingsHtml)
@@ -4317,6 +4330,18 @@ function runPendingTruncationCase() {
         && /data-jump-panel="共享定义归属"/u.test(sysSettingsHtml)
         && /项目管理.+AI 智能体.+注册 agent/u.test(sysSettingsHtml),
       "系统设置页只有总览没有操作入口，管理员仍要向下读运行参数、技能源、模型和共享定义长表");
+    check("系统设置页要说明全局能力治理和项目级入口边界",
+      /系统能力治理流程/u.test(sysSettingsHtml)
+        && /集中 MCP 工具数/u.test(sysSettingsHtml)
+        && /技能源只在服务端同步/u.test(sysSettingsHtml)
+        && /Agent 端按派发下载最小 Skill 工作集/u.test(sysSettingsHtml)
+        && /任务选型会避开或阻塞/u.test(sysSettingsHtml)
+        && /系统页只追踪项目\/任务组叠加/u.test(sysSettingsHtml)
+        && /系统设置不签发 join token/u.test(sysSettingsHtml)
+        && /项目执行仍回到项目设置、AI 智能体、任务组和执行监控/u.test(sysSettingsHtml)
+        && /data-menu="proj-settings"/u.test(sysSettingsHtml)
+        && /data-menu="proj-agents"/u.test(sysSettingsHtml),
+      "系统设置页没有把模型、技能源、集中 MCP、项目级定制和 agent 注册边界讲成流程");
     const membersHtml = probe.renderOrgMembersWith(overviewState, orgAdmin, [
       {...orgAdmin, status: "active"},
       {accountId: "acct_wait", accountType: "user_account", displayName: "待登录成员", email: "wait@example.com", status: "invited", roles: []}
