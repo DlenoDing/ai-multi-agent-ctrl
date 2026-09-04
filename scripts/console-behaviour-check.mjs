@@ -297,7 +297,11 @@ globalThis.__probe = {
     state = nextState; currentAccount = account; orgMembers = members || []; orgAgentNodes = nodes || [];
     return renderOrgOverview();
   },
-  renderOrgMembersWith: (nextState, account, members) => { state = nextState; currentAccount = account; orgMembers = members || []; return renderOrgMembers(); },
+  renderOrgMembersWith: (nextState, account, members, projectId) => {
+    state = nextState; currentAccount = account; orgMembers = members || [];
+    if (projectId !== undefined) currentProjectId = projectId;
+    return renderOrgMembers();
+  },
   renderOrgAgentsWith: (nextState, account, nodes) => { state = nextState; currentAccount = account; orgAgentNodes = nodes || []; return renderOrgAgents(); },
   renderProjectAgentsWith: (nextState, account, projectId, viewMode) => {
     state = nextState; currentAccount = account; currentProjectId = projectId;
@@ -806,6 +810,12 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
       check(`拒绝提示「${label}」要点名拼错的与可用的`, mustName.every((word) => String(hint).includes(word)),
         `提示里少了 ${mustName.filter((word) => !String(hint).includes(word)).join("、")}：${String(hint).slice(0, 160)}`);
     }
+    const groupPermHint = probe.requestFailureHint({error: "forbidden", requiredPermission: "task_group:review",
+      resourceScope: {resourceType: "task_group", resourceId: "tg1"}});
+    check("任务组权限拒绝提示要直接指到项目成员权限页",
+      /项目管理」→「成员权限」→「项目成员授权/u.test(groupPermHint)
+        && /写在账号上的直接权限不生效/u.test(groupPermHint),
+      `任务组权限拒绝仍只给面板名，用户不知道入口在哪里：${String(groupPermHint).slice(0, 200)}`);
     // requestFailureHint 产出【纯文本】，最终嵌进 Error.message，两个显示口（toast 的 esc(message)、
     // 顶部横幅的 esc(lastError)）都会整体转义一次。若函数内部再 esc 自由文本字段（decidedOption、账号名），
     // 就是双重转义：含 < & 的值会显示成 &lt; 字面乱码。这条钉住「函数内不得二次转义」——
@@ -3125,7 +3135,8 @@ function runNoVisibleProjectCase() {
       /你处置不了/u.test(reachText) && /2 项/u.test(reachText) && /别人的组/u.test(reachText),
       "警告没出来：跨资源并集判成「有权」，而按组过滤又把这两条计划整个滤掉 —— 人什么都看不到");
     check("要说清权限是按任务组给的（否则他会以为自己已经有了）",
-      /按【任务组】授予/u.test(reachText),
+      /按【任务组】授予/u.test(reachText)
+        && /项目管理」→「成员权限」→「项目成员授权/u.test(reachText),
       "只说缺权限，没说这个权限是按组给的 —— 他在别的组上确实有，会以为界面坏了");
     // 正面对照：全都够得着时不要多说一句（常亮的警告等于没有警告）。
     const fullReachState = structuredClone(reachState);
@@ -4433,7 +4444,7 @@ function runPendingTruncationCase() {
     const membersHtml = probe.renderOrgMembersWith(overviewState, orgAdmin, [
       {...orgAdmin, status: "active"},
       {accountId: "acct_wait", accountType: "user_account", displayName: "待登录成员", email: "wait@example.com", status: "invited", roles: []}
-    ]).replace(/<!--[\s\S]*?-->/gu, "");
+    ], "p1").replace(/<!--[\s\S]*?-->/gu, "");
     check("成员管理页先显示总览和列表，再显示创建表单",
       panelAt(membersHtml, "成员管理总览") >= 0
         && panelAt(membersHtml, "成员管理总览") < panelAt(membersHtml, "成员管理操作看板")
@@ -4449,13 +4460,22 @@ function runPendingTruncationCase() {
     check("成员授权流程要说明组织成员、项目授权和任务组权限边界",
       /成员授权流程/u.test(membersHtml)
         && /创建成员只完成账号入网，不等于已经能参与某个项目/u.test(membersHtml)
-        && /项目协作授权在「组织管理」→「项目列表」→「项目成员授权」里完成/u.test(membersHtml)
+        && /已选项目时直接进入「成员权限」→「项目成员授权」/u.test(membersHtml)
+        && /组织项目列表保留集中入口/u.test(membersHtml)
         && /任务组控制和人工审核通过项目角色落位/u.test(membersHtml)
+        && /进入目标项目「成员权限」完成项目成员授权/u.test(membersHtml)
         && /回项目概览检查任务组、AI 智能体、监控和审核入口是否可用/u.test(membersHtml)
         && /成员管理只处理组织账号生命周期/u.test(membersHtml)
-        && /data-menu="org-projects"/u.test(membersHtml)
+        && /data-menu="proj-members"/u.test(membersHtml)
         && /data-menu="proj-overview"/u.test(membersHtml),
       "成员管理页没有把账号入网、项目授权、任务组权限和回项目操作讲成闭环");
+    const membersWithoutProjectHtml = probe.renderOrgMembersWith(overviewState, orgAdmin, [
+      {...orgAdmin, status: "active"}
+    ], "").replace(/<!--[\s\S]*?-->/gu, "");
+    check("成员授权流程没有当前项目时仍要回组织项目列表选目标项目",
+      /先在组织项目列表选定目标项目/u.test(membersWithoutProjectHtml)
+        && /data-menu="org-projects"/u.test(membersWithoutProjectHtml),
+      "没有当前项目时仍直接跳项目成员权限，用户没有目标项目上下文");
     const agentsHtml = probe.renderOrgAgentsWith(overviewState, orgAdmin, [
       {nodeId: "node1", nodeName: "节点", status: "online", display: {health: "ok", currentDispatchIds: ["adp1"]}, lastHeartbeatAt: "2099-01-01T00:00:00Z"}
     ]).replace(/<!--[\s\S]*?-->/gu, "");

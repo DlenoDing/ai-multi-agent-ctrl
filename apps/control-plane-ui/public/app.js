@@ -1016,7 +1016,7 @@ function requestFailureHint(payload) {
   // 于是人只看到"权限不足"，看不出该去要什么权限、找谁要 —— 报错指不到真正的原因。
   if (payload.requiredPermission) {
     const scope = payload.resourceScope ? `${payload.resourceScope.resourceType || "?"}:${payload.resourceScope.resourceId || "?"}` : "";
-    hint = `（需要 ${payload.requiredPermission}${scope ? ` @ ${scope}` : ""}${String(payload.requiredPermission).startsWith("task_group:") ? "；这类权限只能在「项目成员授权」里按角色授予，写在账号上的直接权限不生效" : ""}）`;
+    hint = `（需要 ${payload.requiredPermission}${scope ? ` @ ${scope}` : ""}${String(payload.requiredPermission).startsWith("task_group:") ? "；这类权限只能在「项目管理」→「成员权限」→「项目成员授权」里按角色授予，写在账号上的直接权限不生效" : ""}）`;
   }
   if (Array.isArray(payload.permissions) && payload.permissions.length) hint += `（涉及：${payload.permissions.join("、")}）`;
   // 核心决策闸门上最容易并发的一步：两个人同时打开同一张确认单各自点定稿。CAS 只让一个写成，
@@ -3372,7 +3372,7 @@ const MEMBER_PERMISSION_OPTIONS = [
   // task_group:* 这一类权限【只认按具体资源落位的 grant】，写在账号上的直接权限一律不生效
   // （直接权限不绑定任何资源，等于对所有资源生效，因此服务端一律拒绝）。
   // 继续把它们摆在这里，人会勾上、看到按钮被渲染出来、点下去却必定 403 —— 界面在说谎。
-  // 要把"人工审核"交出去，请到「项目成员授权」里授予"评审人"角色。
+  // 要把"人工审核"交出去，请到项目「成员权限」里的「项目成员授权」面板授予"评审人"角色。
   ["member:invite", "邀请成员"],
   ["agent:activate", "智能体管理"]
 ];
@@ -3425,7 +3425,7 @@ function resourceScopeLabel(resource) {
 
 function permissionCheckboxes(selected = ["project:view", "task_group:read"]) {
   return `
-    <div class="notice">「人工审核（验收定稿）」「任务组控制」这类任务组级权限不在这里授予 —— 它们必须按具体项目/任务组落位，请到「项目成员授权」里选择相应角色（例如"评审人"）。</div>
+    <div class="notice">「人工审核（验收定稿）」「任务组控制」这类任务组级权限不在这里授予 —— 它们必须按具体项目/任务组落位，请到「项目管理」→「成员权限」→「项目成员授权」里选择相应角色（例如"评审人"）。</div>
     <div class="checkbox-grid">
       ${MEMBER_PERMISSION_OPTIONS.map(([value, label]) => `
         <label><input type="checkbox" name="perm" value="${esc(value)}" ${selected.includes(value) ? "checked" : ""}> ${esc(label)}</label>
@@ -3518,6 +3518,7 @@ function renderOrgMembersActionBoard(members) {
 function renderOrgMembersLifecycleGuide(members) {
   const stats = memberStats(members);
   const activeProjects = assignableProjects().length;
+  const selectedProject = currentProject();
   return panel("成员授权流程", `
     <div class="module-grid action-grid">
       ${jumpModuleCard({
@@ -3537,10 +3538,12 @@ function renderOrgMembersLifecycleGuide(members) {
         action: "看邀请"
       })}
       ${projectModuleCard({
-        pageId: "org-projects",
+        pageId: selectedProject ? "proj-members" : "org-projects",
         title: "3 分配项目",
         metric: activeProjects,
-        detail: "项目协作授权在「组织管理」→「项目列表」→「项目成员授权」里完成",
+        detail: selectedProject
+          ? "已选项目时直接进入「成员权限」→「项目成员授权」；组织项目列表保留集中入口"
+          : "先在组织项目列表选定目标项目；进入项目后到「成员权限」→「项目成员授权」完成",
         tone: activeProjects ? "blue" : "orange",
         action: "去授权"
       })}
@@ -3570,7 +3573,7 @@ function renderOrgMembersLifecycleGuide(members) {
       })}
     </div>
     <div class="small muted">成员管理只处理组织账号生命周期；项目协作、Agent 操作、任务组控制和人工审核权限必须回到具体项目和任务组作用域。</div>
-    <div class="small muted">推荐闭环：邀请成员 → 首次登录 → 项目成员授权 → 回项目检查按钮是否出现 → 后续在成员列表停用、注销或重发邀请。</div>
+    <div class="small muted">推荐闭环：邀请成员 → 首次登录 → 进入目标项目「成员权限」完成项目成员授权 → 回项目检查按钮是否出现 → 后续在成员列表停用、注销或重发邀请。</div>
   `, {wide: true});
 }
 
@@ -3636,7 +3639,7 @@ function renderOrgMembers() {
     panel("说明", `
       <div class="stack">
         <div class="record"><div class="record-title"><strong>一次性令牌</strong></div><div class="record-meta"><span>成员首次使用令牌登录后令牌即失效，可在顶栏“修改密码”设置个人密码。</span></div></div>
-        <div class="record"><div class="record-title"><strong>权限边界</strong></div><div class="record-meta"><span>成员权限不可包含系统级与组织级通配权限；项目、任务组细粒度授权可在「系统管理」→「账号与授权」或「组织管理」→「项目列表」补充。</span></div></div>
+        <div class="record"><div class="record-title"><strong>权限边界</strong></div><div class="record-meta"><span>成员权限不可包含系统级与组织级通配权限；项目、任务组细粒度授权优先在目标项目「成员权限」补充，系统管理只做跨项目身份和服务账号治理。</span></div></div>
       </div>
     `)
   ].join("");
@@ -7315,7 +7318,7 @@ function renderMonitor() {
       + ` —— 需要「${perm}」`);
     return `<div class="notice warn-notice">其中 ${outOfReach.length} 项你处置不了，它们仍然挡着关闭门：`
       + `${esc(lines.join("；"))}。权限按【任务组】授予（在别的组上有同名权限不算），`
-      + "只能在「项目成员授权」里按角色授予（例如\"评审人\"），请找项目负责人或组织管理员授予后再来。</div>";
+      + "只能在「项目管理」→「成员权限」→「项目成员授权」里按角色授予（例如\"评审人\"），请找项目负责人或组织管理员授予后再来。</div>";
   };
 
   // 同段其余六处都按 inScope 过滤，唯独关闭门禁没有 —— 于是在项目 A 的监控页上会列出项目 B 的
