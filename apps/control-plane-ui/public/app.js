@@ -2309,6 +2309,62 @@ function renderSysOrgsActionBoard({orgs, activeOrgs, suspendedOrgs, quotaPressur
   `, {wide: true});
 }
 
+function renderSysOrgsLifecycleGuide({orgs, activeOrgs, suspendedOrgs, quotaPressure}) {
+  return panel("组织开通治理流程", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "1 创建组织",
+        metric: orgs.length || "创建",
+        detail: "先创建组织并签发初始组织管理员账号，一次性令牌只在创建成功弹窗显示",
+        panelTitle: "创建组织",
+        tone: orgs.length ? "blue" : "orange",
+        action: "去创建"
+      })}
+      ${jumpModuleCard({
+        title: "2 设置配额",
+        metric: quotaPressure,
+        detail: "成员、项目、任务组和智能体配额在组织列表里调整，接近上限先扩容或收口",
+        panelTitle: "组织列表",
+        tone: quotaPressure ? "orange" : "green",
+        action: "看配额"
+      })}
+      ${projectModuleCard({
+        pageId: "sys-accounts",
+        title: "3 交付管理员",
+        metric: "账号",
+        detail: "系统管理员只完成开通和审计；日常成员、项目和 Agent 管理由组织管理员承接",
+        tone: "blue",
+        action: "看账号"
+      })}
+      ${projectModuleCard({
+        pageId: "proj-overview",
+        title: "4 项目侧建设",
+        metric: activeOrgs,
+        detail: "组织开通后，项目配置、Agent 注册、任务组执行和监控都在项目管理空间完成",
+        tone: activeOrgs ? "green" : "gray",
+        action: "去项目"
+      })}
+      ${jumpModuleCard({
+        title: "5 启停治理",
+        metric: suspendedOrgs,
+        detail: "停用组织会影响成员、项目、任务组和 Agent 准入；恢复也从组织列表执行",
+        panelTitle: "组织列表",
+        tone: suspendedOrgs ? "red" : "green",
+        action: "看状态"
+      })}
+      ${jumpModuleCard({
+        title: "6 审计说明",
+        metric: "3 层",
+        detail: "系统管理员、组织管理员、项目成员职责边界在说明区固定展示",
+        panelTitle: "说明",
+        tone: "gray",
+        action: "看说明"
+      })}
+    </div>
+    <div class="small muted">组织管理页只负责租户开通、配额和启停治理；组织创建不是执行终点，后续项目、Agent、任务组和监控必须进入对应管理空间处理。</div>
+  `, {wide: true});
+}
+
 function renderSysOrgs() {
   const activeOrgs = organizations.filter((org) => org.status === "active").length;
   const suspendedOrgs = organizations.filter((org) => org.status !== "active").length;
@@ -2348,6 +2404,7 @@ function renderSysOrgs() {
       </div>
     `, {wide: true}),
     renderSysOrgsActionBoard({orgs: organizations, activeOrgs, suspendedOrgs, quotaPressure}),
+    renderSysOrgsLifecycleGuide({orgs: organizations, activeOrgs, suspendedOrgs, quotaPressure}),
     panel("组织列表", table(["组织", "状态", "成员", "项目", "任务组", "智能体", "创建时间", "操作"], orgRows,
       {emptyText: listEmptyText("组织列表")}), {wide: true, headerSide: filterInput("按组织名过滤…", "orgs")}),
     panel("创建组织", `
@@ -3877,6 +3934,63 @@ function renderOrgAgentsActionBoard(nodes) {
   `, {wide: true});
 }
 
+function renderOrgAgentsLifecycleGuide(nodes) {
+  const stats = orgAgentStats(nodes);
+  return panel("组织 Agent 治理流程", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "1 看在线率",
+        metric: `${stats.onlineNodes}/${stats.aliveNodes.length}`,
+        detail: "先判断组织内是否有可接收派发的节点，再看异常和负载",
+        panelTitle: "智能体节点",
+        tone: stats.onlineNodes ? "green" : "orange",
+        action: "看节点"
+      })}
+      ${jumpModuleCard({
+        title: "2 定位异常",
+        metric: stats.abnormalNodes,
+        detail: stats.abnormalNodes ? "离线、非健康或自检缺项先定位节点，再决定恢复或吊销" : "当前没有异常节点；离线、非健康或自检缺项先定位节点",
+        panelTitle: "智能体节点",
+        tone: stats.abnormalNodes ? "red" : "green",
+        action: "定位"
+      })}
+      ${projectModuleCard({
+        pageId: "proj-agents",
+        title: "3 项目注册",
+        metric: "join token",
+        detail: "新增节点必须回目标项目 AI 智能体页签发一次性令牌和 sh 安装命令",
+        tone: "blue",
+        action: "去注册"
+      })}
+      ${projectModuleCard({
+        pageId: "monitor",
+        title: "4 负载与派发",
+        metric: stats.runningDispatches,
+        detail: "节点正在执行的派发、实时事件和控制 ACK 回项目执行监控查看",
+        tone: stats.runningDispatches ? "blue" : "gray",
+        action: "看监控"
+      })}
+      ${jumpModuleCard({
+        title: "5 令牌审计",
+        metric: stats.liveTokens,
+        detail: "组织页只审计和撤销待用令牌，不在这里生成项目注册脚本",
+        panelTitle: "加入令牌审计",
+        tone: stats.liveTokens ? "orange" : "green",
+        action: "看令牌"
+      })}
+      ${jumpModuleCard({
+        title: "6 节点处置",
+        metric: "控制",
+        detail: "暂停、恢复、关停、吊销和立即切断都在节点列表按单节点执行",
+        panelTitle: "智能体节点",
+        tone: "blue",
+        action: "看控制"
+      })}
+    </div>
+    <div class="small muted">组织 Agent 页负责跨项目节点治理和令牌审计；项目级注册脚本、远程 MCP 生效确认、Skill 工作集和具体派发回送仍回目标项目处理。</div>
+  `, {wide: true});
+}
+
 function renderOrgAgents() {
   const nodes = orgAgentNodes;
   const toggle = `
@@ -3921,6 +4035,7 @@ function renderOrgAgents() {
     renderOrgAgentsSummary(nodes),
     renderOrgAgentsActionBoard(nodes),
     renderOrgAgentsBoundaryGuide(),
+    renderOrgAgentsLifecycleGuide(nodes),
     panel("智能体节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "org-nodes")}${toggle}`}),
     panel("加入令牌审计", renderJoinTokenSection({auditOnly: true, context: "org"}), {wide: true})
   ].join("");

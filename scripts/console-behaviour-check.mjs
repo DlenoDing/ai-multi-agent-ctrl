@@ -4144,10 +4144,11 @@ function runPendingTruncationCase() {
       roles: ["system-owner"], permissions: ["system:*"]};
     const panelAt = (html, title) => html.indexOf(`<h2>${title}</h2>`);
     const sysOrgsHtml = probe.renderSysOrgsWith(overviewState, admin, overviewState.organizations).replace(/<!--[\s\S]*?-->/gu, "");
-    check("系统组织页先显示总览和操作看板，再显示列表、创建表单和说明",
+    check("系统组织页先显示总览、操作看板和治理流程，再显示列表、创建表单和说明",
       panelAt(sysOrgsHtml, "组织管理总览") >= 0
         && panelAt(sysOrgsHtml, "组织管理总览") < panelAt(sysOrgsHtml, "组织与配额操作看板")
-        && panelAt(sysOrgsHtml, "组织与配额操作看板") < panelAt(sysOrgsHtml, "组织列表")
+        && panelAt(sysOrgsHtml, "组织与配额操作看板") < panelAt(sysOrgsHtml, "组织开通治理流程")
+        && panelAt(sysOrgsHtml, "组织开通治理流程") < panelAt(sysOrgsHtml, "组织列表")
         && panelAt(sysOrgsHtml, "组织列表") < panelAt(sysOrgsHtml, "创建组织")
         && panelAt(sysOrgsHtml, "创建组织") < panelAt(sysOrgsHtml, "说明"),
       "系统组织页仍然缺少总览后的操作入口，系统管理员要先读长表和表单才知道从哪里处理");
@@ -4156,6 +4157,17 @@ function runPendingTruncationCase() {
         && /data-jump-panel="创建组织"/u.test(sysOrgsHtml)
         && /data-jump-panel="说明"/u.test(sysOrgsHtml),
       "组织与配额操作看板只显示指标，没有接上组织列表、创建组织和说明面板的跳转");
+    check("系统组织页要把组织开通、配额、管理员交接、项目建设和启停治理串成流程",
+      /组织开通治理流程/u.test(sysOrgsHtml)
+        && /一次性令牌只在创建成功弹窗显示/u.test(sysOrgsHtml)
+        && /成员、项目、任务组和智能体配额在组织列表里调整/u.test(sysOrgsHtml)
+        && /日常成员、项目和 Agent 管理由组织管理员承接/u.test(sysOrgsHtml)
+        && /项目配置、Agent 注册、任务组执行和监控都在项目管理空间完成/u.test(sysOrgsHtml)
+        && /停用组织会影响成员、项目、任务组和 Agent 准入/u.test(sysOrgsHtml)
+        && /组织创建不是执行终点/u.test(sysOrgsHtml)
+        && /data-menu="sys-accounts"/u.test(sysOrgsHtml)
+        && /data-menu="proj-overview"/u.test(sysOrgsHtml),
+      "系统组织页没有把租户开通后的交接和治理顺序讲成流程");
     const accountHtml = probe.renderSysAccountsWith(overviewState, admin).replace(/<!--[\s\S]*?-->/gu, "");
     check("账号与授权页先显示总览，再显示邀请表单",
       panelAt(accountHtml, "账号与授权总览") >= 0
@@ -4384,11 +4396,12 @@ function runPendingTruncationCase() {
     const agentsHtml = probe.renderOrgAgentsWith(overviewState, orgAdmin, [
       {nodeId: "node1", nodeName: "节点", status: "online", display: {health: "ok", currentDispatchIds: ["adp1"]}, lastHeartbeatAt: "2099-01-01T00:00:00Z"}
     ]).replace(/<!--[\s\S]*?-->/gu, "");
-    check("AI 智能体页先显示运行总览、治理看板和管理边界，再显示节点列表",
+    check("AI 智能体页先显示运行总览、治理看板、管理边界和治理流程，再显示节点列表",
       panelAt(agentsHtml, "智能体运行总览") >= 0
         && panelAt(agentsHtml, "智能体运行总览") < panelAt(agentsHtml, "智能体治理操作看板")
         && panelAt(agentsHtml, "智能体治理操作看板") < panelAt(agentsHtml, "智能体管理边界")
-        && panelAt(agentsHtml, "智能体管理边界") < panelAt(agentsHtml, "智能体节点")
+        && panelAt(agentsHtml, "智能体管理边界") < panelAt(agentsHtml, "组织 Agent 治理流程")
+        && panelAt(agentsHtml, "组织 Agent 治理流程") < panelAt(agentsHtml, "智能体节点")
         && panelAt(agentsHtml, "智能体节点") < panelAt(agentsHtml, "加入令牌审计"),
       "AI 智能体页没有把在线率、异常节点、负载、令牌审计和组织/项目边界排成可点击操作看板");
     check("组织 AI 智能体治理看板要提供节点、令牌审计和项目注册跳转入口",
@@ -4398,6 +4411,18 @@ function runPendingTruncationCase() {
         && /进入后先用顶部项目选择器确认目标项目/u.test(agentsHtml)
         && !/data-form="join-token"/u.test(agentsHtml),
       "组织智能体治理看板只显示指标，或仍把组织页当作常规 agent 注册入口");
+    check("组织 AI 智能体页要把在线率、异常、项目注册、派发、令牌审计和节点处置串成流程",
+      /组织 Agent 治理流程/u.test(agentsHtml)
+        && /先判断组织内是否有可接收派发的节点/u.test(agentsHtml)
+        && /离线、非健康或自检缺项先定位节点/u.test(agentsHtml)
+        && /新增节点必须回目标项目 AI 智能体页签发一次性令牌和 sh 安装命令/u.test(agentsHtml)
+        && /实时事件和控制 ACK 回项目执行监控查看/u.test(agentsHtml)
+        && /组织页只审计和撤销待用令牌，不在这里生成项目注册脚本/u.test(agentsHtml)
+        && /暂停、恢复、关停、吊销和立即切断都在节点列表按单节点执行/u.test(agentsHtml)
+        && /项目级注册脚本、远程 MCP 生效确认、Skill 工作集和具体派发回送/u.test(agentsHtml)
+        && /data-menu="proj-agents"/u.test(agentsHtml)
+        && /data-menu="monitor"/u.test(agentsHtml),
+      "组织 AI 智能体页没有按节点治理和项目注册分工形成流程");
     check("组织 AI 智能体节点操作要提供刷新自检入口",
       /data-command="refresh_profile"/u.test(agentsHtml) && /刷新自检/u.test(agentsHtml),
       "阻塞处置提示会要求到组织 AI 智能体页刷新自检，但节点行没有这个按钮");
