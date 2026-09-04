@@ -186,6 +186,12 @@ html, body {
   letter-spacing: 1px;
 }
 
+.nav .nav-divider:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .workspace { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
 .topbar {

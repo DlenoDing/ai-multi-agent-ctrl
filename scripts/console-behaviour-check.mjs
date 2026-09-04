@@ -2192,6 +2192,25 @@ async function runErrorGuidanceCase() {
     projectMenuOrder.every((pageId, index) => index === 0
       || projectNav.indexOf(`data-menu="${pageId}"`) > projectNav.indexOf(`data-menu="${projectMenuOrder[index - 1]}"`)),
     "项目菜单顺序没有按概览、Agent 准备、任务组织、实时监控、人工介入、控制补充、配置调整排列");
+  check("项目管理侧栏要按普通管理动作分栏目",
+    /<div class="nav-divider">项目总览<\/div>/u.test(projectNav)
+      && /<div class="nav-divider">准备与接入<\/div>/u.test(projectNav)
+      && /<div class="nav-divider">执行推进<\/div>/u.test(projectNav)
+      && /<div class="nav-divider">人工控制<\/div>/u.test(projectNav)
+      && /<div class="nav-divider">治理配置<\/div>/u.test(projectNav)
+      && projectNav.indexOf("项目总览") < projectNav.indexOf('data-menu="proj-overview"')
+      && projectNav.indexOf("准备与接入") < projectNav.indexOf('data-menu="proj-members"')
+      && projectNav.indexOf("准备与接入") < projectNav.indexOf('data-menu="proj-agents"')
+      && projectNav.indexOf("准备与接入") > projectNav.indexOf('data-menu="proj-overview"')
+      && projectNav.indexOf("执行推进") < projectNav.indexOf('data-menu="tg"')
+      && projectNav.indexOf("执行推进") < projectNav.indexOf('data-menu="monitor"')
+      && projectNav.indexOf("执行推进") > projectNav.indexOf('data-menu="proj-agents"')
+      && projectNav.indexOf("人工控制") < projectNav.indexOf('data-menu="review"')
+      && projectNav.indexOf("人工控制") < projectNav.indexOf('data-menu="directives"')
+      && projectNav.indexOf("人工控制") > projectNav.indexOf('data-menu="monitor"')
+      && projectNav.indexOf("治理配置") < projectNav.indexOf('data-menu="proj-settings"')
+      && projectNav.indexOf("治理配置") > projectNav.indexOf('data-menu="directives"'),
+    "项目管理侧栏仍是平铺功能清单，没有把项目总览、准备接入、执行推进、人工控制和治理配置分开");
   const membersRoot = el("div");
   const membersProbe = loadConsole(membersRoot, {realI18n: true});
   const projectMemberState = {

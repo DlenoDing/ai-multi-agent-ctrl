@@ -141,13 +141,18 @@ let execTimer = null;
 const PROJECT_PAGES = new Set(["proj-overview", "proj-members", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"]);
 
 const PROJECT_MENU_TAIL = [
+  {divider: "项目总览"},
   {id: "proj-overview", label: "项目概览"},
+  {divider: "准备与接入"},
   {id: "proj-members", label: "成员权限"},
   {id: "proj-agents", label: "AI 智能体"},
+  {divider: "执行推进"},
   {id: "tg", label: "任务组"},
   {id: "monitor", label: "执行监控"},
+  {divider: "人工控制"},
   {id: "review", label: "人工审核"},
   {id: "directives", label: "人工指令"},
+  {divider: "治理配置"},
   {id: "proj-settings", label: "项目设置"}
 ];
 
