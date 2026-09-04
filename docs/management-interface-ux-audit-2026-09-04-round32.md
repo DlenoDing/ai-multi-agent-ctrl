@@ -38,13 +38,19 @@
 
 ## 实施记录
 
-- 待实施。
+- 已在项目级「AI 智能体」页新增「Agent 接入与运行闭环」面板，按卡片说明项目签发、轻量 Runtime、远程 MCP/Skill、实时回送、服务端控制五段链路。
+- 已在执行监控页新增「实时回送链路」面板，按卡片串起派发会话、实时事件、控制通道、运行节点和关闭门禁，放在明细表之前。
+- 已修正系统/组织/项目空间里仍然含糊的 Agent 注册路径，统一指向「项目管理」→「AI 智能体」→「注册 agent」。
+- 已修正「待你处理」相关源码注释和审核看板说明，使其与当前“按项目视图统计”的实现一致。
+- 已补充 console 行为门，新增断言覆盖项目 Agent 运行闭环、集中 MCP、最小 Skill 工作集、持续事件回送、服务端控制 ACK、监控实时链路和对应跳转目标。
+- 已根据行为门反馈修正一次实现：不在项目闭环卡片里直接读取 `agentControlCommands` 窗口集合计数，避免把服务端截断窗口当成完整总数。
 
 ## 验证计划
 
-- `node --check apps/control-plane-ui/public/app.js`
-- `node --check scripts/console-behaviour-check.mjs`
-- `npm run -s console-behaviour-gate`
-- `npm run validate`
-- 本地浏览器桌面与移动视口走查项目 AI 智能体、执行监控、项目概览和项目设置。
-- 只读互审或外部复审本轮终态。
+- `node --check apps/control-plane-ui/public/app.js`：通过。
+- `node --check scripts/console-behaviour-check.mjs`：通过。
+- `npm run console-behaviour-gate`：通过，604 条断言全部通过。
+- `npm run validate`：通过；覆盖规格、契约、MCP、权限、视图瘦身、中文指路、控制台行为、崩溃一致性、并发写入和空转不落盘。
+- 本地服务已用 `npm start` 重启到 `http://127.0.0.1:4317`；内置浏览器已打开该地址。
+- 真实服务文件走查：从 `http://127.0.0.1:4317/app.js` 读取前端产物，确认包含「Agent 接入与运行闭环」「实时回送链路」「控制面公网 /mcp」「最小 Skill 工作集」「节点长轮询领取并 ACK」等关键文案。
+- Claude CLI 只读复审已尝试启动，但在限定等待时间内未返回可用结论；本轮以本地综合门、行为门和真实服务走查作为收口依据。

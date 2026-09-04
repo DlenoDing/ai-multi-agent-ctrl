@@ -167,8 +167,8 @@ const ORG_MENU = [
 // "现在轮到我做什么" —— 此前控制台没有任何地方回答这个问题：菜单是写死的、没有计数，
 // 唯一的待办数字在项目概览里且不可点击、只统计当前项目；而等人拍板的东西被拆在两个页面上，
 // 其中一个还叫"执行监控"，名字完全不暗示"这里有等你签字的东西"。
-// 这里跨【全部可见项目】统计，且只统计"确实需要这个人动手"的项 —— 没权限处置的不算进来，
-// 否则计数会变成一个人永远清不掉的红点。
+// 这里按当前项目视图统计，且只统计"确实需要这个人动手"的项 —— 没权限处置的不算进来，
+// 否则计数会变成一个人永远清不掉的红点。若未来视图里出现跨项目数据，按钮会先切到对应项目。
 // 心跳有多旧要一眼看得出来。控制面把节点扫下线要等超时（默认 15 分钟），在那之前它照旧显示"在线" ——
 // 而人此刻正想知道的就是"它是不是已经没了"。这里只做客户端提示，不改判定：真正的下线由服务端对账决定。
 // "在线但一直不领活"是最容易让人干瞪眼的一种：节点绿着、派发排着，两种原因（角色不匹配 /
@@ -2761,13 +2761,13 @@ function renderSysAccountsBoundaryGuide() {
         pageId: "proj-agents",
         title: "项目 Agent 注册",
         metric: "项目页",
-        detail: "进入后先用顶部项目选择器确认目标项目，再在 AI 智能体页签发",
+        detail: "进入后先用顶部项目选择器确认目标项目，再到「项目管理」→「AI 智能体」→「注册 agent」签发",
         tone: "green",
         action: "确认后注册"
       }) : jumpModuleCard({
         title: "项目 Agent 注册",
         metric: "先选项目",
-        detail: "常规接新 agent 到目标项目的 AI 智能体页签发",
+        detail: "先创建或选择目标项目，再到「项目管理」→「AI 智能体」→「注册 agent」签发",
         panelTitle: "创建项目（系统级）",
         tone: "orange",
         action: "建项目"
@@ -3552,6 +3552,58 @@ function renderProjectAgentRegistrationFlow(project, nodes) {
   `, {wide: true});
 }
 
+function renderProjectAgentExecutionLoop(project, nodes) {
+  const stats = projectAgentStats(project.id, nodes);
+  const groupIds = new Set(projectTaskGroups().map((taskGroup) => taskGroup.id));
+  const activeDispatches = (state.agentDispatches || [])
+    .filter((dispatch) => groupIds.has(dispatch.taskGroupId) && !terminalDispatchStatuses.has(dispatch.status)).length;
+  return panel("Agent 接入与运行闭环", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "1 项目签发",
+        metric: stats.liveTokens || "令牌",
+        detail: "只在「注册 agent」签发一次性加入令牌，脚本由服务端按当前项目生成",
+        panelTitle: "注册 agent",
+        tone: stats.liveTokens ? "blue" : "orange",
+        action: "签发令牌"
+      })}
+      ${jumpModuleCard({
+        title: "2 轻量 Runtime",
+        metric: stats.aliveNodes.length || "未接入",
+        detail: "Agent 主机只跑 Runtime：注册、自检、领活、写仓库，不启动本地 MCP、数据库或 Skill Registry",
+        panelTitle: "项目智能体节点",
+        tone: stats.aliveNodes.length ? "green" : "gray",
+        action: "看节点"
+      })}
+      ${jumpModuleCard({
+        title: "3 远程能力",
+        metric: "MCP/Skill",
+        detail: "Runtime 访问控制面公网 /mcp，并按派发下载总控指定的最小 Skill 工作集",
+        panelTitle: "项目智能体节点",
+        tone: "blue",
+        action: "看自检"
+      })}
+      ${projectModuleCard({
+        pageId: "monitor",
+        title: "4 实时回送",
+        metric: activeDispatches,
+        detail: "执行中持续回送事件、进度、模型输出摘要、仓库变更和检查点准备",
+        tone: activeDispatches ? "blue" : "gray",
+        action: "看事件"
+      })}
+      ${projectModuleCard({
+        pageId: "monitor",
+        title: "5 服务端控制",
+        metric: "ACK",
+        detail: "暂停、取消、吊销先在服务端冻结派发并撤销 MCP grant，再等待节点 ACK",
+        tone: "green",
+        action: "看控制"
+      })}
+    </div>
+    <div class="small muted">这条闭环是机器执行链路：管理界面只签发项目令牌、查看状态和下发控制；任务执行、MCP 调用、Skill 应用、事件回送和 checkpoint 都由 Agent Runtime 与控制面自动完成。</div>
+  `, {wide: true});
+}
+
 function renderOrgAgentsSummary(nodes) {
   const stats = orgAgentStats(nodes);
   return panel("智能体运行总览", `
@@ -3563,7 +3615,7 @@ function renderOrgAgentsSummary(nodes) {
       ${summaryMetric("待用加入令牌", stats.liveTokens, "可注册到本组织项目的票据")}
       ${summaryMetric("异常节点", stats.abnormalNodes, "离线、非健康或需排查的节点")}
     </div>
-    <div class="small muted">查看顺序：先看节点在线率和异常节点，再在“智能体节点”里暂停、恢复、关停或吊销；新增机器从目标项目的“AI 智能体”页签发一次性令牌，本页只做组织范围令牌审计。</div>
+    <div class="small muted">查看顺序：先看节点在线率和异常节点，再在“智能体节点”里暂停、恢复、关停或吊销；新增机器从目标项目的「项目管理」→「AI 智能体」→「注册 agent」签发一次性令牌，本页只做组织范围令牌审计。</div>
   `, {wide: true});
 }
 
@@ -3615,7 +3667,7 @@ function renderOrgAgentsActionBoard(nodes) {
         pageId: "proj-agents",
         title: "当前项目接入入口",
         metric: "项目",
-        detail: "进入后先用顶部项目选择器确认目标项目，再到项目 AI 智能体页签发脚本",
+        detail: "进入后先用顶部项目选择器确认目标项目，再到「项目管理」→「AI 智能体」→「注册 agent」签发脚本",
         tone: "blue",
         action: "确认后注册"
       })}
@@ -3770,6 +3822,7 @@ function renderProjectAgents() {
     renderProjectAgentsSummary(project, nodes),
     renderProjectAgentsActionBoard(project, nodes),
     renderProjectAgentRegistrationFlow(project, nodes),
+    renderProjectAgentExecutionLoop(project, nodes),
     panel("项目智能体节点", `<div class="stack">${nodeNotice}${bodyHtml}</div>`,
       {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "project-nodes")}${toggle}`}),
     panel("注册 agent", renderJoinTokenSection({projectId: project.id, context: "project"}), {wide: true})
@@ -3785,7 +3838,7 @@ function renderOrgProjectsActionBoard({projects, activeProjects, archivedProject
       ${jumpModuleCard({
         title: "在用项目",
         metric: `${activeProjects.length}`,
-        detail: activeProjects.length ? "可继续创建任务组，并在项目 AI 智能体页注册 agent" : "当前没有可继续推进的项目",
+        detail: activeProjects.length ? "可继续创建任务组，并在「项目管理」→「AI 智能体」→「注册 agent」注册 agent" : "当前没有可继续推进的项目",
         panelTitle: "项目列表",
         tone: activeProjects.length ? "blue" : "orange",
         action: "查看项目"
@@ -5021,7 +5074,7 @@ function taskGroupSelector(selectedId, selectName, requirePermission = null) {
 }
 
 
-// 「待你处理」是等人拍板的东西的唯一汇总入口，所以它不能依赖"当前选中的是哪个项目"。
+// 「待你处理」是当前项目里等人拍板的汇总入口；如果未来视图里混入跨项目记录，按钮必须先切到记录所属项目。
 // 视图接口按 limit 截断每个集合，因此数组长度不是总数。凡是把长度当成"共 N 项"呈现的地方，
 // 数不全时都要带上 +，否则人会以为处置完眼前这些就清空了。
 // 关闭门的阻塞类型有 16 种，而"执行监控页的阻塞项人工处置"只处理其中 6 种。其余 11 种的人
@@ -5594,7 +5647,7 @@ function renderReviewActionBoard({pending, pendingPermissions, pendingApprovals,
       ${jumpModuleCard({
         title: "待你处理",
         metric: todo.known ? `${todo.total}${todo.partial ? "+" : ""}` : "未知",
-        detail: todo.known ? "跨可见项目的个人处置入口" : "待办数据未完整加载",
+        detail: todo.known ? "当前项目的个人处置入口" : "待办数据未完整加载",
         panelTitle: "待你处理",
         tone: todo.known && todo.total ? "red" : "green",
         action: "查看待办"
@@ -5646,7 +5699,7 @@ function renderReviewActionBoard({pending, pendingPermissions, pendingApprovals,
 
 function renderReview() {
   if (!projectTaskGroups().length) {
-    // 「待你处理」自称是跨全部可见项目的唯一汇总入口，却被"当前项目有没有任务组"这个不相干的条件
+    // 「待你处理」按当前项目视图统计，不能被"当前项目有没有任务组"这个不相干的条件
     // 挡在提前返回之后 —— 人切到一个空项目，"3 项等你处理"整块消失，会被读成"已经处理完了"。
     return panel("人工审核", hasNoVisibleProject()
       ? noVisibleProjectNotice()
@@ -6116,6 +6169,60 @@ function renderMonitorActionBoard({
   `, {wide: true});
 }
 
+function renderMonitorRealtimeGuide({eventsShown, sessionsAll, dispatchesAll, commandsInScope, nodes, barriersInScope}) {
+  const activeSessions = sessionsAll.filter((session) => !SESSION_SETTLED_STATUSES.includes(session.status)).length;
+  const activeDispatches = dispatchesAll.filter((dispatch) => !terminalDispatchStatuses.has(dispatch.status)).length;
+  const pendingCommands = commandsInScope.filter((command) => !["completed", "failed", "rejected", "cancelled"].includes(command.status)).length;
+  const onlineNodes = nodes.filter((node) => node.status === "online" && !heartbeatTimedOut(node)).length;
+  const blockingBarriers = barriersInScope.reduce((sum, barrier) =>
+    sum + (barrier.satisfied ? 0 : Number((barrier.blockingObjects || []).length)), 0);
+  return panel("实时回送链路", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "1 派发会话",
+        metric: `${activeDispatches}/${activeSessions}`,
+        detail: "总控把工作项落成派发和工作会话，Agent 从服务端原子领活",
+        panelTitle: activeDispatches ? "智能体派发" : "工作会话",
+        tone: activeDispatches || activeSessions ? "blue" : "gray",
+        action: "看派发"
+      })}
+      ${jumpModuleCard({
+        title: "2 实时事件",
+        metric: eventsShown.length,
+        detail: "Agent 执行中持续回送进度、输出摘要、仓库变更、push 和 checkpoint 准备",
+        panelTitle: "实时事件流",
+        tone: eventsShown.length ? "blue" : "gray",
+        action: "看事件"
+      })}
+      ${jumpModuleCard({
+        title: "3 控制通道",
+        metric: pendingCommands,
+        detail: "暂停、取消、刷新自检和吊销命令先在服务端落盘，再由节点长轮询领取并 ACK",
+        panelTitle: "控制通道",
+        tone: pendingCommands ? "orange" : "green",
+        action: "看命令"
+      })}
+      ${jumpModuleCard({
+        title: "4 运行节点",
+        metric: `${onlineNodes}/${nodes.length}`,
+        detail: "节点只报告自身 Runtime 状态；远程 MCP、Skill 工作集和任务控制都由服务端统一调度",
+        panelTitle: "运行时节点",
+        tone: onlineNodes ? "green" : nodes.length ? "orange" : "gray",
+        action: "看节点"
+      })}
+      ${jumpModuleCard({
+        title: "5 收尾门禁",
+        metric: blockingBarriers,
+        detail: "检查点、质量门、人工定稿和共享定义都满足后，任务组才允许关闭",
+        panelTitle: "关闭门禁",
+        tone: blockingBarriers ? "red" : "green",
+        action: "看门禁"
+      })}
+    </div>
+    <div class="small muted">实时链路不依赖人盯终态：Agent 运行中持续上报事件；总控和监测角色通过服务端状态及时纠偏；管理界面点击派发、会话或节点即可查看对应明细。</div>
+  `, {wide: true});
+}
+
 function renderMonitor() {
   // 一个项目都没有时，这一页原先摆出十一张"暂无数据"的空表和一个空的监听范围下拉 ——
   // 屏幕上全是表头，没有一句话说明为什么什么都没有、下一步该做什么。
@@ -6436,6 +6543,14 @@ function renderMonitor() {
       openUpgradeCandidates,
       blockingDefinitions
     }),
+    renderMonitorRealtimeGuide({
+      eventsShown,
+      sessionsAll,
+      dispatchesAll,
+      commandsInScope,
+      nodes: state.agentRuntimeNodes || [],
+      barriersInScope
+    }),
     canOrchestrate ? panel("自治控制", `
       <div class="button-row">
         <button class="primary-button" data-action="orchestrator-run">运行自治循环</button>
@@ -6753,7 +6868,7 @@ function renderProjectSettingsSummary(project, repos, baselineData, defaultRoles
       ${summaryMetric("仓库", repos.length, "代码与文档产出的 Git 落点")}
       ${summaryMetric("基线", baselineData.length, "agent 可引用的现状材料")}
       ${summaryMetric("默认角色", defaultRoles.length, "任务组未指定时的角色回退")}
-      ${summaryMetric("待用加入令牌", liveJoinTokenCount(project.id), "在 AI 智能体页签发和使用")}
+      ${summaryMetric("待用加入令牌", liveJoinTokenCount(project.id), "在「项目管理」→「AI 智能体」签发和使用")}
       ${summaryMetric("角色定制", roleOverlayCount, "项目/任务组级 Skill 覆盖")}
       ${summaryMetric("系统规则", systemRuleCount, "项目层生效的系统规则")}
       ${summaryMetric("业务规则", businessRuleCount, "项目层生效的业务规则")}
@@ -6875,7 +6990,7 @@ function renderProjectSettingsBoundaryGuide(project, repos, baselineData, defaul
         pageId: "proj-agents",
         title: "Agent 接入",
         metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : "项目页",
-        detail: "Agent 节点、注册脚本和远程 MCP 确认不在本页处理，进入项目 AI 智能体页",
+        detail: "Agent 节点、注册脚本和远程 MCP 确认不在本页处理，进入「项目管理」→「AI 智能体」",
         tone: agentStats.onlineNodes ? "green" : "orange",
         action: "去注册"
       })}

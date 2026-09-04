@@ -3546,7 +3546,7 @@ function runNoVisibleProjectCase() {
     check("跨项目待办入口必须先切到待办所在项目",
       /处置入口：人工审核 · 先进入项目：待办项目/u.test(crossProjectHtml)
         && /data-action="open-project-page" data-project="p2" data-target-menu="review"/u.test(crossProjectHtml),
-      "待你处理面板说跨全部可见项目统计，但按钮只进当前项目，用户点进去可能看不到待办");
+      "待你处理面板必须按当前项目口径说明；若混入跨项目数据，按钮要先切到待办所属项目");
   }
   // 「受阻项」数的是任务组身上的 blockers；而【被挡住的派发】是另一回事，只在执行监控页上说。
   // 真实运行态上实测过：概览显示「受阻项 0」，同一份数据里有 2 个 blocked 派发、
@@ -4167,7 +4167,7 @@ function runPendingTruncationCase() {
         && /智能体入网审计/u.test(accountHtml)
         && /系统页只做跨项目令牌审计和撤销/u.test(accountHtml)
         && /data-menu="proj-agents"/u.test(accountHtml),
-      "账号与授权页仍像普通 Agent 注册入口，没有明确提示常规注册应进入目标项目 AI 智能体页");
+      "账号与授权页仍像普通 Agent 注册入口，没有明确提示常规注册应进入目标项目的项目级 AI 智能体注册面板");
     check("系统账号页不能承载常规 Agent 注册表单，项目页才保留注册脚本入口",
       !/data-form="join-token"/u.test(accountHtml)
         && /智能体入网审计/u.test(accountHtml)
@@ -4252,13 +4252,24 @@ function runPendingTruncationCase() {
       panelAt(monitorHtml, "执行监控总览") >= 0
         && panelAt(monitorHtml, "执行监控总览") < panelAt(monitorHtml, "实时事件流"),
       "执行监控页没有入口级状态地图，用户只能从长表里猜当前卡点");
-    check("执行监控页先显示处置看板，再显示实时事件流",
+    check("执行监控页先显示处置看板和实时回送链路，再显示实时事件流",
       panelAt(monitorHtml, "监控处置看板") >= 0
         && panelAt(monitorHtml, "执行监控总览") < panelAt(monitorHtml, "监控处置看板")
-        && panelAt(monitorHtml, "监控处置看板") < panelAt(monitorHtml, "实时事件流")
+        && panelAt(monitorHtml, "监控处置看板") < panelAt(monitorHtml, "实时回送链路")
+        && panelAt(monitorHtml, "实时回送链路") < panelAt(monitorHtml, "实时事件流")
         && /data-jump-panel="(智能体派发|工作会话)"/u.test(monitorHtml)
         && /data-jump-panel="关闭门禁"/u.test(monitorHtml),
-      "执行监控页没有把派发、关闭门、节点、质量门等问题汇成可跳转的处置看板");
+      "执行监控页没有把派发、关闭门、节点、质量门和实时回送关系汇成可跳转的处置看板");
+    check("执行监控页要说明任务执行中的实时回送和控制 ACK 关系",
+      /实时回送链路/u.test(monitorHtml)
+        && /Agent 从服务端原子领活/u.test(monitorHtml)
+        && /Agent 执行中持续回送进度、输出摘要/u.test(monitorHtml)
+        && /节点长轮询领取并 ACK/u.test(monitorHtml)
+        && /远程 MCP、Skill 工作集和任务控制都由服务端统一调度/u.test(monitorHtml)
+        && /总控和监测角色通过服务端状态及时纠偏/u.test(monitorHtml)
+        && /data-jump-panel="控制通道"/u.test(monitorHtml)
+        && /data-jump-panel="运行时节点"/u.test(monitorHtml),
+      "执行监控页仍然只堆明细表，没有解释事件流、控制通道、节点和关闭门之间的实时链路");
     const monitorNoNodeState = structuredClone(overviewState);
     monitorNoNodeState.agentRuntimeNodes = [];
     const monitorNoNodeHtml = probe.renderMonitorWith(monitorNoNodeState, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
@@ -4341,13 +4352,14 @@ function runPendingTruncationCase() {
       agentDispatches: [{dispatchId: "adp1", taskGroupId: "tg1", status: "running"}]
     };
     const projectAgentHtml = probe.renderProjectAgentsWith(projectAgentsState, systemAdmin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
-    check("项目 AI 智能体页要先显示总览、操作看板和注册流程，再显示节点与注册入口",
+    check("项目 AI 智能体页要先显示总览、操作看板、注册流程和运行闭环，再显示节点与注册入口",
       panelAt(projectAgentHtml, "项目智能体总览") >= 0
         && panelAt(projectAgentHtml, "项目智能体总览") < panelAt(projectAgentHtml, "项目智能体操作看板")
         && panelAt(projectAgentHtml, "项目智能体操作看板") < panelAt(projectAgentHtml, "Agent 注册流程")
-        && panelAt(projectAgentHtml, "Agent 注册流程") < panelAt(projectAgentHtml, "项目智能体节点")
+        && panelAt(projectAgentHtml, "Agent 注册流程") < panelAt(projectAgentHtml, "Agent 接入与运行闭环")
+        && panelAt(projectAgentHtml, "Agent 接入与运行闭环") < panelAt(projectAgentHtml, "项目智能体节点")
         && panelAt(projectAgentHtml, "项目智能体节点") < panelAt(projectAgentHtml, "注册 agent"),
-      "项目级智能体入口仍可能藏在项目设置里，项目负责人不能直接按项目查看节点、注册流程和注册脚本");
+      "项目级智能体入口仍可能藏在项目设置里，项目负责人不能直接按项目查看节点、注册流程、运行闭环和注册脚本");
     check("项目 AI 智能体页要提供注册脚本来源和节点控制入口",
       /签发一次性加入令牌/u.test(projectAgentHtml)
         && /注册脚本/u.test(projectAgentHtml)
@@ -4357,6 +4369,16 @@ function runPendingTruncationCase() {
         && /data-command="refresh_profile"/u.test(projectAgentHtml)
         && /data-jump-panel="注册 agent"/u.test(projectAgentHtml),
       "项目智能体页没有把「先签发令牌、再拿服务端注册脚本」这条操作链路放到首屏");
+    check("项目 AI 智能体页要说明 Agent 接入后的机器执行闭环",
+      /Agent 接入与运行闭环/u.test(projectAgentHtml)
+        && /Agent 主机只跑 Runtime/u.test(projectAgentHtml)
+        && /不启动本地 MCP、数据库或 Skill Registry/u.test(projectAgentHtml)
+        && /控制面公网 \/mcp/u.test(projectAgentHtml)
+        && /最小 Skill 工作集/u.test(projectAgentHtml)
+        && /持续回送事件、进度、模型输出摘要/u.test(projectAgentHtml)
+        && /撤销 MCP grant，再等待节点 ACK/u.test(projectAgentHtml)
+        && /data-menu="monitor"/u.test(projectAgentHtml),
+      "项目智能体页仍只讲安装步骤，没有把集中 MCP、Skill 工作集、实时回送和服务端控制画成闭环");
     check("项目 AI 智能体页要说明加入令牌命令只显示一次且不能从列表还原",
       /安装命令和明文 join token 只在签发成功弹窗里显示一次/u.test(projectAgentHtml)
         && /不能还原明文 join token/u.test(projectAgentHtml)
