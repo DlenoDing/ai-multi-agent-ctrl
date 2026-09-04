@@ -804,6 +804,50 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 /* 横向滚动右侧渐隐提示 */
 .table-scroll { position: relative; }
 
+/* ============ 执行时间线 ============ */
+.timeline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.timeline-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  position: relative;
+  padding: 0 0 12px;
+}
+.timeline-row::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 18px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--card-border);
+}
+.timeline-row:last-child::before { display: none; }
+.timeline-point {
+  width: 15px;
+  height: 15px;
+  margin-top: 4px;
+  border-radius: 50%;
+  border: 3px solid var(--gray-bg);
+  background: var(--gray);
+  z-index: 1;
+}
+.timeline-point.tone-blue { background: var(--blue); border-color: var(--blue-bg); }
+.timeline-point.tone-green { background: var(--green); border-color: var(--green-bg); }
+.timeline-point.tone-orange { background: var(--orange); border-color: var(--orange-bg); }
+.timeline-point.tone-red { background: var(--red); border-color: var(--red-bg); }
+.timeline-body {
+  min-width: 0;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
 /* ============ 通用空态 ============ */
 .empty-state {
   text-align: center;

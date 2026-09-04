@@ -5317,6 +5317,7 @@ function renderTaskGroupDetail(taskGroup) {
         : ""}${workItems || `<div class="notice">暂无工作项。</div>`}</div>`)}
       ${sectionBlock("准入与阻断分类", admissionHtml)}
       ${sectionBlock("阻塞", `<div class="stack">${blockers}</div>`)}
+      ${sectionBlock("任务执行时间线", renderTaskGroupExecutionTimeline(taskGroup, progressData))}
       ${sectionBlock("协作记录（agent 之间的房间消息）", roomHtml)}
     </div>
   `;
@@ -5382,7 +5383,15 @@ function renderTaskGroupDetailPath(summary) {
       action: "查看"
     }),
     jumpModuleCard({
-      title: "8 协作记录",
+      title: "8 任务时间线",
+      metric: "倒序",
+      detail: "任务、模型、会话、派发、事件和 Git 证据",
+      panelTitle: "任务执行时间线",
+      tone: "blue",
+      action: "查看"
+    }),
+    jumpModuleCard({
+      title: "9 协作记录",
       metric: roomMetric,
       detail: "agent 房间消息和过程追溯",
       panelTitle: "协作记录（agent 之间的房间消息）",
@@ -5392,7 +5401,7 @@ function renderTaskGroupDetailPath(summary) {
   ].join("");
   return sectionBlock("任务组详情阅读路径", `
     <div class="module-grid action-grid">${cards}</div>
-    <div class="small muted">建议按 1 到 8 查看：先确认拆解和执行单元，再看配置、控制、阻塞和协作过程；需要操作时直接点对应卡片跳到小节。</div>
+    <div class="small muted">建议按 1 到 9 查看：先确认拆解和执行单元，再看配置、控制、阻塞、任务时间线和协作过程；需要操作时直接点对应卡片跳到小节。</div>
   `);
 }
 
@@ -5583,6 +5592,170 @@ function findWorkItemDispatch(taskGroupId, workItemId) {
     .filter((dispatch) => dispatch.taskGroupId === taskGroupId && dispatch.workItemId === workItemId)
     .sort((left, right) => String(right.updatedAt || right.createdAt || "").localeCompare(String(left.updatedAt || left.createdAt || "")));
   return candidates.find((dispatch) => !terminalDispatchStatuses.has(dispatch.status)) || candidates[0] || null;
+}
+
+function agentNodeLabel(nodeId) {
+  if (!nodeId) return "未分配";
+  const node = (state.agentRuntimeNodes || []).find((item) => item.nodeId === nodeId);
+  return node ? `${node.nodeName || node.nodeId}` : nodeId;
+}
+
+function eventTimeOf(item) {
+  return item?.createdAt || item?.updatedAt || item?.decidedAt || item?.computedAt || "";
+}
+
+function workItemTitleIn(taskGroup, workItemId, fallback = "") {
+  const workItem = (taskGroup.workItems || []).find((item) => item.id === workItemId)
+    || ((tgDetail?.progress?.workItems || []).find((item) => item.id === workItemId));
+  return workItem?.title || fallback || workItemId || "-";
+}
+
+function timelineItem({kind, title, status, at, tone = "blue", detail = "", meta = []}) {
+  return {kind, title, status, at, tone, detail, meta: meta.filter(Boolean)};
+}
+
+function renderTaskGroupExecutionTimeline(taskGroup, progressData = {}) {
+  const groupId = taskGroup.id;
+  const workItems = progressData.workItems || taskGroup.workItems || [];
+  const inGroup = (item) => item?.taskGroupId === groupId;
+  const entries = [];
+  for (const workItem of workItems) {
+    entries.push(timelineItem({
+      kind: "工作项",
+      title: workItem.title || workItem.id,
+      status: workItem.status,
+      at: eventTimeOf(workItem) || taskGroup.updatedAt,
+      tone: workItem.blockedReason || ["blocked", "needs_decision"].includes(workItem.status) ? "red" : "blue",
+      detail: workItem.blockedReason ? explainCoded(workItem.blockedReason) : (workItem.requirements || []).slice(0, 2).join("；"),
+      meta: [`角色：${t(workItem.ownerRole) || workItem.ownerRole || "未指定"}`,
+        workItem.pinnedModelId ? `指定模型：${workItem.pinnedModelId}` : "模型：自动选择"]
+    }));
+  }
+  for (const decision of (state.modelSelectionDecisions || []).filter(inGroup).slice(0, 40)) {
+    entries.push(timelineItem({
+      kind: "模型",
+      title: workItemTitleIn(taskGroup, decision.workItemId, decision.workItemId),
+      status: decision.status,
+      at: eventTimeOf(decision),
+      tone: decision.status === "blocked" ? "red" : "green",
+      detail: modelDecisionSummaryZh(decision),
+      meta: [`角色：${t(decision.roleId) || decision.roleId || "-"}`,
+        `模型：${decision.selectedModel?.modelId || "-"}`,
+        decision.modelDecision ? `依据：${decision.modelDecision}` : ""]
+    }));
+  }
+  for (const placement of (state.sessionPlacementDecisions || []).filter(inGroup).slice(0, 40)) {
+    entries.push(timelineItem({
+      kind: "会话",
+      title: workItemTitleIn(taskGroup, placement.workItemId, placement.workItemId),
+      status: placement.status,
+      at: eventTimeOf(placement),
+      tone: placement.status === "blocked" ? "red" : "blue",
+      detail: `放置方式：${t(placement.placement) || placement.placement || "-"}；执行载体：${placement.workerCarrierDecision?.carrier || "-"}`,
+      meta: [placement.sessionId ? `会话：${placement.sessionId}` : "", placement.laneId ? `Lane：${placement.laneId}` : ""]
+    }));
+  }
+  for (const dispatch of (state.agentDispatches || []).filter(inGroup)) {
+    entries.push(timelineItem({
+      kind: "派发",
+      title: workItemTitleIn(taskGroup, dispatch.workItemId, dispatch.workItemId),
+      status: dispatch.status,
+      at: dispatch.lastExecutionEventAt || eventTimeOf(dispatch),
+      tone: dispatch.status === "blocked" || dispatch.failureReason ? "red" : terminalDispatchStatuses.has(dispatch.status) ? "gray" : "blue",
+      detail: explainCoded(dispatch.blockedReason || dispatch.failureReason || dispatch.dispatchReason || ""),
+      meta: [`Agent：${agentNodeLabel(dispatch.assignedNodeId)}`,
+        `派发：${dispatch.dispatchId}`,
+        dispatch.progressPercent !== undefined ? `进度：${dispatch.progressPercent}%` : ""]
+    }));
+  }
+  for (const event of (state.agentExecutionEvents || []).filter(inGroup).slice(0, 60)) {
+    entries.push(timelineItem({
+      kind: "事件",
+      title: workItemTitleIn(taskGroup, event.workItemId, event.eventType),
+      status: event.status,
+      at: eventTimeOf(event),
+      tone: event.status === "failed" || event.status === "error" ? "red" : "blue",
+      detail: event.summary || "",
+      meta: [`事件：${t(event.eventType) || event.eventType || "-"}`,
+        `Agent：${agentNodeLabel(event.nodeId)}`,
+        event.progressPercent !== undefined ? `进度：${event.progressPercent}%` : ""]
+    }));
+  }
+  for (const checkpoint of (state.checkpoints || []).filter(inGroup)) {
+    const lastCommit = checkpoint.commitRefs?.at(-1);
+    entries.push(timelineItem({
+      kind: "证据",
+      title: workItemTitleIn(taskGroup, checkpoint.workId, checkpoint.workId),
+      status: checkpoint.status || "checkpoint",
+      at: eventTimeOf(checkpoint),
+      tone: "green",
+      detail: checkpoint.artifactManifestRefs?.[0] || "",
+      meta: [lastCommit ? `提交：${String(lastCommit.commit || lastCommit).slice(0, 12)}` : "",
+        checkpoint.pushRefs?.length ? `已推送：${checkpoint.pushRefs.length}` : ""]
+    }));
+  }
+  entries.sort((left, right) => String(right.at || "").localeCompare(String(left.at || "")));
+  const rows = entries.slice(0, 40).map((entry) => `
+    <div class="timeline-row">
+      <div class="timeline-point tone-${esc(entry.tone)}"></div>
+      <div class="timeline-body">
+        <div class="record-title">
+          ${customBadge(entry.kind, entry.tone)}
+          <strong>${esc(entry.title || "-")}</strong>
+          ${entry.status ? badge(entry.status) : ""}
+        </div>
+        <div class="record-meta">
+          <span>${fmtTime(entry.at)}</span>
+          ${entry.meta.map((item) => `<span>${esc(item)}</span>`).join("")}
+        </div>
+        ${entry.detail ? `<div class="small muted">${esc(entry.detail).slice(0, 600)}</div>` : ""}
+      </div>
+    </div>
+  `).join("");
+  return `
+    <div class="timeline-list">
+      ${rows || `<div class="notice">当前任务组还没有可合并展示的执行记录。工作项进入派发、Agent 回送事件或提交 checkpoint 后，会按时间倒序出现在这里。</div>`}
+    </div>
+    ${entries.length > 40 ? `<div class="small muted">共 ${entries.length} 条，这里显示最新 40 条；更完整的事件仍在执行监控页按派发或任务组查看。</div>` : ""}
+  `;
+}
+
+function renderTaskGroupMonitorMatrix(groups, {dispatchesAll = [], sessionsAll = [], barriersInScope = []} = {}) {
+  const groupIds = new Set(groups.map((taskGroup) => taskGroup.id));
+  const latestEventByGroup = new Map();
+  for (const event of (state.agentExecutionEvents || []).filter((item) => groupIds.has(item.taskGroupId)).slice(0, 60)) {
+    if (event.taskGroupId && !latestEventByGroup.has(event.taskGroupId)) latestEventByGroup.set(event.taskGroupId, event);
+  }
+  const cards = groups.map((taskGroup) => {
+    const dispatches = dispatchesAll.filter((dispatch) => dispatch.taskGroupId === taskGroup.id);
+    const sessions = sessionsAll.filter((session) => session.taskGroupId === taskGroup.id);
+    const barrier = barriersInScope.find((item) => item.taskGroupId === taskGroup.id);
+    const activeDispatches = dispatches.filter((dispatch) => !terminalDispatchStatuses.has(dispatch.status)).length;
+    const blockedDispatches = dispatches.filter((dispatch) => dispatch.status === "blocked").length;
+    const activeSessions = sessions.filter((session) => !SESSION_SETTLED_STATUSES.includes(session.status)).length;
+    const barrierBlocks = barrier && !barrier.satisfied ? (barrier.blockingObjects || []).length : 0;
+    const latest = latestEventByGroup.get(taskGroup.id);
+    const tone = blockedDispatches || barrierBlocks ? "red" : activeDispatches || activeSessions ? "blue" : taskGroup.status === "closed" ? "gray" : "green";
+    const details = [
+      `进度 ${Number(taskGroup.progress || 0)}%`,
+      `派发 ${activeDispatches}/${dispatches.length}`,
+      `会话 ${activeSessions}/${sessions.length}`,
+      barrier ? `关闭门 ${barrier.satisfied ? "可关闭" : `${barrierBlocks} 项阻塞`}` : "关闭门未计算",
+      latest ? `最近事件 ${sinceText(latest.createdAt)}` : "暂无事件"
+    ];
+    return `
+      <button class="module-card tone-${tone}" data-action="monitor-scope" data-scope="taskGroup:${esc(taskGroup.id)}">
+        <span class="module-title">${esc(taskGroup.name || taskGroup.id)}</span>
+        <strong>${esc(activeDispatches || activeSessions || barrierBlocks || Number(taskGroup.progress || 0))}</strong>
+        <span class="module-detail">${esc(details.join(" · "))}</span>
+        <span class="module-action">切到该任务组</span>
+      </button>
+    `;
+  }).join("");
+  return panel("任务组监控矩阵", `
+    <div class="module-grid action-grid">${cards || `<div class="notice">当前项目还没有任务组。</div>`}</div>
+    <div class="small muted">每张卡对应一个任务组，汇总进度、活跃派发、工作会话、关闭门和最近事件；点击后实时事件流切换到该任务组范围。</div>
+  `, {wide: true});
 }
 
 /* ---------------- 成员：人工审核 ---------------- */
@@ -7185,6 +7358,7 @@ function renderMonitor() {
       nodes: state.agentRuntimeNodes || [],
       barriersInScope
     }),
+    renderTaskGroupMonitorMatrix(groups, {dispatchesAll, sessionsAll, barriersInScope}),
     canOrchestrate ? panel("自治控制", `
       <div class="button-row">
         <button class="primary-button" data-action="orchestrator-run">运行自治循环</button>
@@ -8498,6 +8672,16 @@ document.addEventListener("click", async (event) => {
       const original = target.textContent;
       target.textContent = ok ? "已复制" : "复制失败，请手动选择";
       setTimeout(() => { target.textContent = original; }, 1600);
+      return;
+    }
+    if (action === "monitor-scope") {
+      const [type, ...rest] = String(target.dataset.scope || "").split(":");
+      execScope = {type, id: rest.join(":")};
+      execEvents = [];
+      execCursor = 0;
+      await loadExecEvents({reset: true});
+      startExecPolling();
+      render();
       return;
     }
     if (action === "logout") {
