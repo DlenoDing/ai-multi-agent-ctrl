@@ -31,8 +31,7 @@
   const SYSTEM_MENU = [
     {id: "sys-overview", label: "系统概览"},
     {id: "sys-orgs", label: "组织管理"},
-    {id: "sys-settings", label: "系统设置"},
-    {id: "sys-accounts", label: "账号与授权"}
+    {id: "sys-settings", label: "系统设置"}
   ];
 
   const ORG_MENU = [
@@ -52,7 +51,7 @@
     "sys-overview": ["系统概览", "服务器信息、资源占用、能耗估算、存储体量与运行指标"],
     "sys-orgs": ["组织管理", "组织列表、配额与用量、创建组织并签发初始组织管理员账号"],
     "sys-settings": ["系统设置", "运行参数只读展示、模型能力注册、技能源与指令协议"],
-    "sys-accounts": ["账号与授权", "系统账号、访问授权、服务账号与跨项目授权边界"],
+    "sys-accounts": ["账号与授权", "历史兼容入口：日常账号、项目和 Agent 管理应进入组织或项目空间"],
     "org-overview": ["组织概览", "配额用量、活跃项目与任务组统计"],
     "org-members": ["成员管理", "创建成员、权限分配、停用与一次性登录令牌"],
     "org-agents": ["AI 智能体", "组织内智能体节点：运行状态、健康度、令牌审计与吊销"],

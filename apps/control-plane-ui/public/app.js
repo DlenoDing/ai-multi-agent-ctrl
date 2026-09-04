@@ -1159,7 +1159,9 @@ async function loadPage() {
       state = systemState;
       if (overviewFailure) throw overviewFailure;
     } else if (page === "sys-orgs") {
-      organizations = (await api("/api/orgs")).organizations || [];
+      const [orgsResult, systemState] = await Promise.all([api("/api/orgs"), fetchState("system")]);
+      organizations = orgsResult.organizations || [];
+      state = systemState;
     } else if (page === "sys-settings") {
       [state, instructionState] = await Promise.all([fetchState("runtime"), fetchState("instructions")]);
     } else if (page === "sys-accounts") {
@@ -1724,7 +1726,8 @@ function renderSystemManagementHub(overview) {
   const healthyServices = services.filter(isServiceHealthy).length;
   const orgCount = overview?.runtime?.organizations ?? (organizations.length || (state.organizations || []).length);
   const projectCount = overview?.runtime?.projects ?? (state.projects || []).length;
-  const activeAccounts = (state.accounts || []).filter((account) => !["retired", "suspended", "disabled"].includes(account.status)).length;
+  const orgAdmins = (state.accounts || []).filter((account) =>
+    account.accountType === "org_admin" && !["retired", "suspended", "disabled"].includes(account.status)).length;
   const mcpToolCount = state.runtime?.mcp?.toolCount ?? "—";
   return spaceHubHtml({
     title: "系统管理总览",
@@ -1738,7 +1741,7 @@ function renderSystemManagementHub(overview) {
     ],
     modules: [
       {pageId: "sys-orgs", title: "组织与配额", metric: `${orgCount}`, detail: "创建组织、调整配额、启停组织", action: "管理组织", tone: "blue"},
-      {pageId: "sys-accounts", title: "账号与授权", metric: `${activeAccounts}`, detail: "系统账号、访问授权与服务账号边界", action: "管理授权", tone: "blue"},
+      {pageId: "sys-orgs", title: "默认组织管理员", metric: `${orgAdmins}`, detail: "组织创建时签发初始管理员账号；子账户由组织管理员维护", action: "查看管理员", tone: orgAdmins ? "blue" : "orange"},
       {pageId: "sys-settings", title: "模型与技能源", metric: `${mcpToolCount}`, detail: "模型能力、技能源同步、指令压缩指标", action: "查看设置", tone: "blue"},
       {pageId: "proj-overview", title: "项目空间", metric: `${projectCount}`, detail: "进入当前项目的任务组、审核、指令和监控", action: "进入项目", tone: projectCount ? "blue" : "gray"}
     ]
@@ -1949,13 +1952,13 @@ function renderSysOrgsLifecycleGuide({orgs, activeOrgs, suspendedOrgs, quotaPres
         tone: quotaPressure ? "orange" : "green",
         action: "看配额"
       })}
-      ${projectModuleCard({
-        pageId: "sys-accounts",
+      ${jumpModuleCard({
         title: "3 交付管理员",
         metric: "账号",
-        detail: "系统管理员只完成开通和审计；日常成员、项目和 Agent 管理由组织管理员承接",
+        detail: "系统管理员只签发初始组织管理员；日常子账户、项目和 Agent 管理由组织管理员承接",
+        panelTitle: "组织列表",
         tone: "blue",
-        action: "看账号"
+        action: "看管理员"
       })}
       ${projectModuleCard({
         pageId: "proj-overview",
@@ -1982,7 +1985,7 @@ function renderSysOrgsLifecycleGuide({orgs, activeOrgs, suspendedOrgs, quotaPres
         action: "看说明"
       })}
     </div>
-    <div class="small muted">组织管理页只负责租户开通、配额和启停治理；组织创建不是执行终点，后续项目、Agent、任务组和监控必须进入对应管理空间处理。</div>
+    <div class="small muted">组织管理页只负责租户开通、初始组织管理员、配额和启停治理；组织创建不是执行终点，后续子账户、项目、Agent、任务组和监控必须进入组织或项目管理空间处理。</div>
   `, {wide: true});
 }
 
@@ -2000,6 +2003,7 @@ function renderSysOrgs() {
   }).length;
   const orgRows = organizations.map((org) => row([
     `<strong>${esc(org.name)}</strong><div class="small muted mono">${esc(org.orgId)}</div>`,
+    `<strong>${esc(accountName(org.initialAdminAccountId))}</strong><div class="small muted mono">${esc(org.initialAdminAccountId || "-")}</div>`,
     statusBadge("organization", org.status),
     quotaLine(org.usage?.members, org.quotas?.maxMembers),
     quotaLine(org.usage?.projects, org.quotas?.maxProjects),
@@ -2026,7 +2030,7 @@ function renderSysOrgs() {
     `, {wide: true}),
     renderSysOrgsActionBoard({orgs: organizations, activeOrgs, suspendedOrgs, quotaPressure}),
     renderSysOrgsLifecycleGuide({orgs: organizations, activeOrgs, suspendedOrgs, quotaPressure}),
-    panel("组织列表", table(["组织", "状态", "成员", "项目", "任务组", "智能体", "创建时间", "操作"], orgRows,
+    panel("组织列表", table(["组织", "初始管理员", "状态", "子账户", "项目", "任务组", "智能体", "创建时间", "操作"], orgRows,
       {emptyText: listEmptyText("组织列表")}), {wide: true, headerSide: filterInput("按组织名过滤…", "orgs")}),
     panel("创建组织", `
       <form class="form-grid" data-form="org-create">
@@ -2047,7 +2051,7 @@ function renderSysOrgs() {
     `),
     panel("说明", `
       <div class="stack">
-        <div class="record"><div class="record-title"><strong>三级职责边界</strong></div><div class="record-meta"><span>系统管理员负责组织与配额；组织管理员负责成员、智能体与项目；组织成员在被授权的项目内工作。</span></div></div>
+        <div class="record"><div class="record-title"><strong>三级职责边界</strong></div><div class="record-meta"><span>系统管理员只负责组织、配额、启停和初始组织管理员；组织管理员负责子账户、组织级 Agent、项目与授权；组织成员在被授权的项目和任务组内工作。</span></div></div>
         <div class="record"><div class="record-title"><strong>配额强制</strong></div><div class="record-meta"><span>成员、项目、任务组、智能体创建时校验配额，超限将返回“组织配额超限”。</span></div></div>
       </div>
     `)
@@ -4027,7 +4031,7 @@ function renderOrgProjects() {
 function noVisibleProjectNotice() {
   const perspective = perspectiveOf(currentAccount);
   const next = perspective === "system"
-    ? "切到「系统管理」→「账号与授权」，用「创建项目（系统级）」新建一个；创建后进入「项目管理」→「成员权限」授权。"
+    ? "切到「系统管理」→「组织管理」开通组织并交付初始组织管理员；项目由对应组织管理员在「组织管理」→「项目列表」创建。"
     : perspective === "org"
       ? "切到「组织管理」→「项目列表」创建项目，或把已有项目授权给成员。"
       : "请联系组织管理员为你分配项目。";
