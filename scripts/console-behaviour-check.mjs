@@ -4122,6 +4122,11 @@ function runPendingTruncationCase() {
       modelCapabilities: [{modelId: "gpt-5.5", providerClass: "openai", availability: "available", strengths: ["implementation"]}],
       roleSkillOverlays: [{overlayId: "ov_1", status: "active", roleSkillRef: "reviewer", projectId: "p1",
         patch: {allowedCapabilityAdds: ["repo_read"], forbiddenCapabilityAdds: ["schema_change"]}, createdAt: "2026-08-12T00:00:00Z"}],
+      repositoryOutputs: [
+        {targetId: "rot1", projectId: "p1", taskGroupId: "tg1", workItemId: "w1", repositoryId: "repo_api", branch: "main", status: "lease_bound", pathAllowlist: ["apps/**", "docs/**"]},
+        {targetId: "rot2", projectId: "p1", taskGroupId: "tg1", workItemId: "w1", repositoryId: "repo_api", branch: "main", status: "superseded", supersededReason: "rework_started", pathAllowlist: ["apps/**", "docs/**"]},
+        {targetId: "rot3", projectId: "p1", taskGroupId: "tg1", workItemId: "w1", repositoryId: "repo_docs", branch: "release", status: "pushed", pathAllowlist: ["docs/**"]}
+      ],
       agentDispatches: [{dispatchId: "adp1", taskGroupId: "tg1", workItemId: "w1", status: "queued"}],
       humanConfirmationRequests: [{requestId: "hcr1", taskGroupId: "tg1", workItemId: "w1", status: "pending",
         decisionClass: "major", blocking: true, createdAt: "2026-08-12T00:00:00Z", question: {summary: "是否定稿方案"}, options: []}],
@@ -4552,6 +4557,19 @@ function runPendingTruncationCase() {
         && /角色 Skill 定制/u.test(overviewHtml)
         && /仓库、角色 Skill、规则等配置类调整统一回到项目设置/u.test(overviewHtml),
       "角色 Skill 定制已经是项目/任务组级配置，但项目概览仍没有把它纳入配置调整路径");
+    check("项目概览要先显示仓库产出归属概览，再保留完整仓库明细表",
+      panelAt(overviewHtml, "最新执行事件") >= 0
+        && panelAt(overviewHtml, "最新执行事件") < panelAt(overviewHtml, "仓库产出归属概览")
+        && panelAt(overviewHtml, "仓库产出归属概览") < panelAt(overviewHtml, "仓库产出归属")
+        && /仓库数/u.test(overviewHtml)
+        && /仓库分支/u.test(overviewHtml)
+        && /生效目标/u.test(overviewHtml)
+        && /已被取代/u.test(overviewHtml)
+        && /允许路径组/u.test(overviewHtml)
+        && /完整任务组、仓库、分支、状态和允许路径仍保留在下方表格/u.test(overviewHtml)
+        && /data-jump-panel="仓库产出归属"/u.test(overviewHtml)
+        && /多仓库、多任务组的完整记录仍以 Git 仓库产出和下方明细为准/u.test(overviewHtml),
+      "项目概览仍直接把仓库产出明细堆在底部，没有先给仓库、分支、状态和允许路径的归纳层");
     const orgProjectsRoot = el("div");
     loadConsole(orgProjectsRoot, {realI18n: true}).renderFullPageWith(overviewState, orgAdmin, "p1", "org-projects");
     const orgProjectsHtml = String(orgProjectsRoot.innerHTML || "").replace(/<!--[\s\S]*?-->/gu, "");

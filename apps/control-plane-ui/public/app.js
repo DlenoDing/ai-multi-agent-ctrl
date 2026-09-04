@@ -4545,6 +4545,32 @@ function renderProjectOperationPath(project, groups, openGroups, eventsInScope, 
   `, {wide: true});
 }
 
+function renderRepositoryOutputOverview(repoTargets) {
+  const repoIds = new Set(repoTargets.map((target) => target.repositoryId || "-"));
+  const effectiveTargets = repoTargets.filter((target) => !["superseded", "rejected"].includes(target.status));
+  const supersededTargets = repoTargets.filter((target) => target.status === "superseded");
+  const pathGroups = new Set(repoTargets.map((target) => (target.pathAllowlist || []).join("、") || "-"));
+  const branches = new Set(repoTargets.map((target) => `${target.repositoryId || "-"}@${target.branch || "-"}`));
+  return panel("仓库产出归属概览", `
+    <div class="module-grid action-grid">
+      ${summaryMetric("仓库数", repoIds.size, `${repoTargets.length} 条明细记录`)}
+      ${summaryMetric("仓库分支", branches.size, "按仓库和分支去重")}
+      ${summaryMetric("生效目标", effectiveTargets.length, "未被取代或驳回的写入边界")}
+      ${summaryMetric("已被取代", supersededTargets.length, "原因仍在下面明细表查看")}
+      ${summaryMetric("允许路径组", pathGroups.size, "同一组允许路径按配置去重")}
+      ${jumpModuleCard({
+        title: "查看明细",
+        metric: repoTargets.length,
+        detail: "完整任务组、仓库、分支、状态和允许路径仍保留在下方表格",
+        panelTitle: "仓库产出归属",
+        tone: repoTargets.length ? "blue" : "gray",
+        action: "看表格"
+      })}
+    </div>
+    <div class="small muted">这只是阅读概览，不改变总控选择仓库、绑定写入边界和 agent 写仓库的执行逻辑；多仓库、多任务组的完整记录仍以 Git 仓库产出和下方明细为准。</div>
+  `, {wide: true});
+}
+
 function renderProjectOverview() {
   const project = currentProject();
   if (!project) {
@@ -4661,6 +4687,7 @@ function renderProjectOverview() {
     panel("任务组一览", table(["任务组", "状态", "阶段", "进度", "健康度", {label: "受阻数", c: "num"}], groupRows), {wide: true}),
     panel("最新执行事件", table([{label: "时间", c: "nowrap"}, "事件", "状态", {label: "摘要", c: "text-clip"}], events,
       {moreText: moreText(eventsInScope.length, 10, "agentExecutionEvents")})),
+    renderRepositoryOutputOverview(repoTargets),
     panel("仓库产出归属", table(["任务组", "仓库", "分支", "状态", "允许路径"], repoRows))
   ].join("");
 }
