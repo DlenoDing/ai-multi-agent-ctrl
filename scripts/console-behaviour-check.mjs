@@ -1305,9 +1305,14 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         && /角色回退/u.test(settingsHtml)
         && /执行规则/u.test(settingsHtml)
         && /Agent 接入/u.test(settingsHtml)
-        && /Agent 节点和注册脚本不在本页处理/u.test(settingsHtml)
-        && /一次性 join token.+安装脚本.+远程 MCP/u.test(settingsHtml),
+        && /Agent 节点、注册脚本和远程 MCP 确认不在本页处理/u.test(settingsHtml)
+        && /一次性 join token.+安装脚本.+远程 MCP/u.test(settingsHtml)
+        && /项目管理.+AI 智能体/u.test(settingsHtml),
       "项目设置页仍把配置、规则和 Agent 接入混成一个长页面，没有先给普通用户职责分区");
+    check("项目设置里的 Agent 入口要说明注册脚本只来自项目 AI 智能体页",
+      /注册脚本只在签发成功弹窗显示|需要新节点时进入「AI 智能体」→「注册 agent」签发/u.test(settingsHtml)
+        && /Agent 节点、注册脚本和远程 MCP 确认不在本页处理/u.test(settingsHtml),
+      "项目设置仍像 Agent 注册页的附属表单，用户会继续在这里找注册脚本");
     check("项目设置操作看板要提供能直接跳到各配置模块的入口",
       /data-jump-panel="项目基础配置"/u.test(settingsHtml)
         && /data-menu="proj-agents"/u.test(settingsHtml)
@@ -3516,6 +3521,32 @@ function runNoVisibleProjectCase() {
       /共 1 项等待你处理/u.test(scopedText) && !/共 2 项等待你处理/u.test(scopedText),
       "控制台判权用的是跨资源的并集，而后端按资源判 —— 只在 tg1 上有评审权的人会看到 tg2 的待办，"
         + "点进去必然 403，而这块面板明写着「别人负责的部分不会出现在这里」");
+    check("当前项目待办不要重复提示先进入当前项目",
+      /按当前项目视图统计/u.test(scopedText) && !/先进入项目：项目/u.test(scopedText),
+      "服务端 tasks 视图已经按当前项目过滤，当前项目内待办再写「先进入项目」只会误导用户以为这里是跨项目总览");
+    const crossProjectRoot = el("div");
+    const crossProjectState = structuredClone(scopedState);
+    crossProjectState.projects = [
+      {id: "p1", name: "当前项目", organizationId: "org_default", status: "active", members: []},
+      {id: "p2", name: "待办项目", organizationId: "org_default", status: "active", members: []}
+    ];
+    crossProjectState.taskGroups = [
+      {id: "tg2_only", projectId: "p2", name: "待办组", status: "development", workItems: []}
+    ];
+    crossProjectState.humanConfirmationRequests = [
+      {requestId: "hcr_p2", projectId: "p2", taskGroupId: "tg2_only", status: "pending", round: 1,
+        question: {title: "跨项目定稿", detail: "跨项目定稿"}, options: [{optionId: "a", summary: "甲"}]}
+    ];
+    crossProjectState.taskGroupPermissions = {tg2_only: ["task_group:read", "task_group:review"]};
+    loadConsole(crossProjectRoot, {realI18n: true}).renderFullPageWith(crossProjectState, {
+      accountId: "u_reviewer", accountType: "member", displayName: "评审人", organizationId: "org_default",
+      effectivePermissions: ["project:view", "task_group:read", "task_group:review"]
+    }, "p1", "review");
+    const crossProjectHtml = String(crossProjectRoot.innerHTML || "").replace(/<!--[\s\S]*?-->/gu, "");
+    check("跨项目待办入口必须先切到待办所在项目",
+      /处置入口：人工审核 · 先进入项目：待办项目/u.test(crossProjectHtml)
+        && /data-action="open-project-page" data-project="p2" data-target-menu="review"/u.test(crossProjectHtml),
+      "待你处理面板说跨全部可见项目统计，但按钮只进当前项目，用户点进去可能看不到待办");
   }
   // 「受阻项」数的是任务组身上的 blockers；而【被挡住的派发】是另一回事，只在执行监控页上说。
   // 真实运行态上实测过：概览显示「受阻项 0」，同一份数据里有 2 个 blocked 派发、
@@ -4097,6 +4128,8 @@ function runPendingTruncationCase() {
     };
     const orgAdmin = {accountId: "acct_a", accountType: "org_admin", displayName: "组织管理员", email: "a@example.com", organizationId: "org_default",
       roles: ["org_admin"], permissions: ["project:create", "project:grant", "member:invite", "agent:activate", "task_group:control", "task_group:review"]};
+    const systemAdmin = {accountId: "acct_sys", accountType: "system_admin", displayName: "系统管理员", email: "sys@example.com", organizationId: "org_default",
+      roles: ["system-owner"], permissions: ["system:*"]};
     const panelAt = (html, title) => html.indexOf(`<h2>${title}</h2>`);
     const sysOrgsHtml = probe.renderSysOrgsWith(overviewState, admin, overviewState.organizations).replace(/<!--[\s\S]*?-->/gu, "");
     check("系统组织页先显示总览和操作看板，再显示列表、创建表单和说明",
@@ -4226,6 +4259,21 @@ function runPendingTruncationCase() {
         && /data-jump-panel="(智能体派发|工作会话)"/u.test(monitorHtml)
         && /data-jump-panel="关闭门禁"/u.test(monitorHtml),
       "执行监控页没有把派发、关闭门、节点、质量门等问题汇成可跳转的处置看板");
+    const monitorNoNodeState = structuredClone(overviewState);
+    monitorNoNodeState.agentRuntimeNodes = [];
+    const monitorNoNodeHtml = probe.renderMonitorWith(monitorNoNodeState, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
+    check("执行监控无节点卡片必须给完整项目注册路径",
+      /先到「项目管理」→「AI 智能体」→「注册 agent」签发加入令牌并复制服务端安装脚本/u.test(monitorNoNodeHtml),
+      "监控页节点卡片只写去 AI 智能体页，用户不知道注册脚本来自项目级一次性令牌弹窗");
+    const monitorAbnormalState = structuredClone(overviewState);
+    monitorAbnormalState.agentRuntimeNodes = [{nodeId: "node_bad", nodeName: "异常节点", status: "degraded",
+      admission: "read_only", lastHeartbeatAt: "2099-01-01T00:00:00Z", selfCheckMissing: ["mcp_remote"]}];
+    const monitorAbnormalHtml = probe.renderMonitorWith(monitorAbnormalState, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
+    check("执行监控异常节点卡片必须指向项目智能体刷新自检",
+      /先恢复 agent 主机\/进程心跳/u.test(monitorAbnormalHtml)
+        && /项目管理.+AI 智能体.+项目智能体节点.+刷新自检/u.test(monitorAbnormalHtml)
+        && /data-jump-panel="运行时节点"/u.test(monitorAbnormalHtml),
+      "监控页能看到异常节点，却没有把用户带回真实的项目节点自检操作");
     const sysSettingsHtml = probe.renderSysSettingsWith(overviewState, {sharedDefinitions: [{contractId: "def_1", definitionType: "api_contract", canonicalOwnerRole: "integration_owner", producerRole: "architect", status: "active"}]}).replace(/<!--[\s\S]*?-->/gu, "");
     check("系统设置页先显示总览，再显示运行参数",
       panelAt(sysSettingsHtml, "系统设置总览") >= 0
@@ -4261,24 +4309,27 @@ function runPendingTruncationCase() {
     const agentsHtml = probe.renderOrgAgentsWith(overviewState, orgAdmin, [
       {nodeId: "node1", nodeName: "节点", status: "online", display: {health: "ok", currentDispatchIds: ["adp1"]}, lastHeartbeatAt: "2099-01-01T00:00:00Z"}
     ]).replace(/<!--[\s\S]*?-->/gu, "");
-    check("AI 智能体页先显示运行总览、接入看板和管理边界，再显示节点列表",
+    check("AI 智能体页先显示运行总览、治理看板和管理边界，再显示节点列表",
       panelAt(agentsHtml, "智能体运行总览") >= 0
-        && panelAt(agentsHtml, "智能体运行总览") < panelAt(agentsHtml, "智能体接入操作看板")
-        && panelAt(agentsHtml, "智能体接入操作看板") < panelAt(agentsHtml, "智能体管理边界")
+        && panelAt(agentsHtml, "智能体运行总览") < panelAt(agentsHtml, "智能体治理操作看板")
+        && panelAt(agentsHtml, "智能体治理操作看板") < panelAt(agentsHtml, "智能体管理边界")
         && panelAt(agentsHtml, "智能体管理边界") < panelAt(agentsHtml, "智能体节点")
         && panelAt(agentsHtml, "智能体节点") < panelAt(agentsHtml, "加入令牌审计"),
       "AI 智能体页没有把在线率、异常节点、负载、令牌审计和组织/项目边界排成可点击操作看板");
-    check("AI 智能体操作看板要提供节点、令牌审计和项目注册跳转入口",
+    check("组织 AI 智能体治理看板要提供节点、令牌审计和项目注册跳转入口",
       /data-jump-panel="智能体节点"/u.test(agentsHtml)
         && /data-jump-panel="加入令牌审计"/u.test(agentsHtml)
         && /data-menu="proj-agents"/u.test(agentsHtml)
+        && /进入后先用顶部项目选择器确认目标项目/u.test(agentsHtml)
         && !/data-form="join-token"/u.test(agentsHtml),
-      "智能体接入操作看板只显示指标，或仍把组织页当作常规 agent 注册入口");
+      "组织智能体治理看板只显示指标，或仍把组织页当作常规 agent 注册入口");
     check("组织 AI 智能体节点操作要提供刷新自检入口",
       /data-command="refresh_profile"/u.test(agentsHtml) && /刷新自检/u.test(agentsHtml),
       "阻塞处置提示会要求到组织 AI 智能体页刷新自检，但节点行没有这个按钮");
     check("组织 AI 智能体危险按钮不能粘连成一段",
-      !/吊销立即切断/u.test(agentsHtml),
+      /data-action="revoke-agent-node"/u.test(agentsHtml)
+        && /data-action="force-revoke-agent-node"/u.test(agentsHtml)
+        && !/吊销立即切断/u.test(agentsHtml),
       "节点控制区把两个危险按钮粘成「吊销立即切断」，普通用户会读不清这是两个动作");
     const projectAgentsState = {
       ...overviewState,
@@ -4289,7 +4340,7 @@ function runPendingTruncationCase() {
         status: "issued", useCount: 0, maxUses: 1, expiresAt: "2099-01-01T00:00:00Z"}],
       agentDispatches: [{dispatchId: "adp1", taskGroupId: "tg1", status: "running"}]
     };
-    const projectAgentHtml = probe.renderProjectAgentsWith(projectAgentsState, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
+    const projectAgentHtml = probe.renderProjectAgentsWith(projectAgentsState, systemAdmin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
     check("项目 AI 智能体页要先显示总览、操作看板和注册流程，再显示节点与注册入口",
       panelAt(projectAgentHtml, "项目智能体总览") >= 0
         && panelAt(projectAgentHtml, "项目智能体总览") < panelAt(projectAgentHtml, "项目智能体操作看板")
@@ -4315,7 +4366,7 @@ function runPendingTruncationCase() {
       /data-action="agent-view-mode" data-mode="table"/u.test(projectAgentHtml)
         && /data-action="agent-view-mode" data-mode="cards"/u.test(projectAgentHtml),
       "项目智能体页只有长表，普通用户不能用卡片方式快速扫读节点状态");
-    const projectAgentCardsHtml = probe.renderProjectAgentsWith(projectAgentsState, admin, "p1", "cards").replace(/<!--[\s\S]*?-->/gu, "");
+    const projectAgentCardsHtml = probe.renderProjectAgentsWith(projectAgentsState, systemAdmin, "p1", "cards").replace(/<!--[\s\S]*?-->/gu, "");
     check("项目 AI 智能体卡片视图要显示准入、健康、任务、心跳和节点控制操作",
       /class="agent-card"/u.test(projectAgentCardsHtml)
         && /准入：/u.test(projectAgentCardsHtml)
@@ -4323,9 +4374,18 @@ function runPendingTruncationCase() {
         && /当前任务数：1/u.test(projectAgentCardsHtml)
         && /最近心跳：/u.test(projectAgentCardsHtml)
         && /data-action="agent-control"/u.test(projectAgentCardsHtml)
-        && /data-command="refresh_profile"/u.test(projectAgentCardsHtml)
-        && /data-action="revoke-agent-node"/u.test(projectAgentCardsHtml),
+        && /data-command="refresh_profile"/u.test(projectAgentCardsHtml),
       "项目智能体卡片视图没有承载关键管理字段或节点控制按钮");
+    check("系统管理员在项目 AI 智能体页仍够得到服务端允许的危险治理操作",
+      /data-action="revoke-agent-node"/u.test(projectAgentHtml)
+        && /data-action="force-revoke-agent-node"/u.test(projectAgentHtml),
+      "服务端按项目作用域 agent:activate 允许吊销/立即切断，系统管理员若只能看项目页，界面不能把这两个杠杆藏到组织页");
+    const orgProjectAgentHtml = probe.renderProjectAgentsWith(projectAgentsState, orgAdmin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
+    check("组织管理员在项目 AI 智能体页看到组织治理出口而不是重复危险按钮",
+      !/data-action="revoke-agent-node"/u.test(orgProjectAgentHtml)
+        && !/data-action="force-revoke-agent-node"/u.test(orgProjectAgentHtml)
+        && /吊销和立即切断在「组织管理」→「AI 智能体」处理/u.test(orgProjectAgentHtml),
+      "组织管理员已有组织级智能体治理页，项目页再放吊销/立即切断会弱化职责边界");
     check("项目 AI 智能体节点危险按钮不能粘连成一段",
       !/吊销立即切断/u.test(projectAgentHtml) && !/吊销立即切断/u.test(projectAgentCardsHtml),
       "项目节点操作区把「吊销」和「立即切断」粘在一起，危险操作边界不清晰");
@@ -4335,6 +4395,16 @@ function runPendingTruncationCase() {
     check("项目概览要有 AI 智能体模块卡片，不能只靠项目设置里的隐藏入口",
       /data-menu="proj-agents"/u.test(overviewHtml) && /AI 智能体/u.test(overviewHtml) && /注册 agent|管理节点/u.test(overviewHtml),
       "项目概览缺少通往项目智能体管理的一跳入口，用户看到无在线 agent 时仍要自己猜去哪里注册");
+    const noAgentOverviewRoot = el("div");
+    const noAgentOverviewState = structuredClone(projectAgentsState);
+    noAgentOverviewState.agentRuntimeNodes = [];
+    loadConsole(noAgentOverviewRoot, {realI18n: true}).renderFullPageWith(noAgentOverviewState, admin, "p1", "proj-overview");
+    const noAgentOverviewHtml = String(noAgentOverviewRoot.innerHTML || "").replace(/<!--[\s\S]*?-->/gu, "");
+    check("项目概览无节点时必须说清注册脚本来源",
+      /进入「项目管理」→「AI 智能体」→「注册 agent」签发加入令牌并复制服务端安装脚本/u.test(noAgentOverviewHtml)
+        && /签发加入令牌、复制服务端安装脚本/u.test(noAgentOverviewHtml)
+        && /远程 MCP 和 Skill 工作集/u.test(noAgentOverviewHtml),
+      "项目概览虽然有 AI 智能体入口，但没有把一次性令牌、服务端安装脚本和 MCP/Skill 生效串成闭环");
     check("项目概览要先给普通用户一条跨模块操作路径",
       overviewHtml.indexOf("project-hub wide") >= 0
         && panelAt(overviewHtml, "项目操作路径") > overviewHtml.indexOf("project-hub wide")

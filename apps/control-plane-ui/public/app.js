@@ -265,7 +265,11 @@ function heartbeatStaleHint(node) {
 function pendingForMe() {
   const groups = (state.taskGroups || []);
   const groupIds = new Set(groups.map((taskGroup) => taskGroup.id));
+  const projectByGroup = new Map(groups.map((taskGroup) => [taskGroup.id, taskGroup.projectId]));
   const inScope = (item) => item && groupIds.has(item.taskGroupId);
+  const projectIdsForItems = (items) => [...new Set(items
+    .map((item) => item.projectId || projectByGroup.get(item.taskGroupId))
+    .filter(Boolean))];
   // 任务组级的权限按【每个任务组】判：只在 tg1 上有评审权的人，不该把 tg2 的待办算成自己的
   //（这块面板明写着「只统计你有权处置的」）。项目级的两个仍按项目判 —— 这一屏本来就只看一个项目。
   const canReviewGroup = (item) => hasGroupPerm(item?.taskGroupId, "task_group:review");
@@ -283,7 +287,8 @@ function pendingForMe() {
   const add = (id, label, page, items, allowed, sourceField) => {
     const mine = typeof allowed === "function" ? items.filter(allowed) : (allowed ? items : []);
     if (!mine.length) return;
-    buckets.push({id, label, page, count: mine.length, capped: scopeTruncated || truncated.has(sourceField), items: mine.slice(0, 5)});
+    buckets.push({id, label, page, count: mine.length, capped: scopeTruncated || truncated.has(sourceField),
+      items: mine.slice(0, 5), projectIds: projectIdsForItems(mine)});
   };
   add("confirmations", "待你定稿的核心决策", "review",
     (state.humanConfirmationRequests || []).filter((item) => inScope(item) && item.status === "pending"), canReviewGroup, "humanConfirmationRequests");
@@ -323,6 +328,12 @@ function pendingForMe() {
   const known = Array.isArray(state.taskGroups);
   const partial = buckets.some((bucket) => bucket.capped);
   return {buckets, total: buckets.reduce((sum, bucket) => sum + bucket.count, 0), known, partial};
+}
+
+function bucketNeedsProjectJump(bucket) {
+  const projectIds = bucket.projectIds || [];
+  if (!projectIds.length) return false;
+  return projectIds.length > 1 || (currentProjectId && projectIds[0] !== currentProjectId) || (!currentProjectId && projectIds[0]);
 }
 
 const MENUS = {
@@ -2750,9 +2761,9 @@ function renderSysAccountsBoundaryGuide() {
         pageId: "proj-agents",
         title: "项目 Agent 注册",
         metric: "项目页",
-        detail: "常规接新 agent 到目标项目的 AI 智能体页签发",
+        detail: "进入后先用顶部项目选择器确认目标项目，再在 AI 智能体页签发",
         tone: "green",
-        action: "去注册"
+        action: "确认后注册"
       }) : jumpModuleCard({
         title: "项目 Agent 注册",
         metric: "先选项目",
@@ -3373,16 +3384,25 @@ function agentHoverPop(node) {
   `;
 }
 
-function agentActions(node) {
+function agentActions(node, options = {}) {
   if (node.status === "revoked") return "-";
-  return [
+  const scope = options.scope || "org";
+  const showDanger = scope === "org" || options.showDanger === true;
+  const buttons = [
     `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="refresh_profile" title="让节点重新探测模型执行器、远程 MCP、文件系统和 Git 能力">刷新自检</button>`,
     `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="pause_dispatch">暂停</button>`,
     `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="resume_dispatch">恢复</button>`,
-    `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="shutdown">关停</button>`,
-    `<button class="danger-button" data-action="revoke-agent-node" data-node-id="${esc(node.nodeId)}">吊销</button>`,
-    `<button class="danger-button" data-action="force-revoke-agent-node" data-node-id="${esc(node.nodeId)}" title="不等节点确认，当场作废其凭据">立即切断</button>`
-  ].join(" ");
+    `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="shutdown">关停</button>`
+  ];
+  if (showDanger) {
+    buttons.push(
+      `<button class="danger-button" data-action="revoke-agent-node" data-node-id="${esc(node.nodeId)}">吊销</button>`,
+      `<button class="danger-button" data-action="force-revoke-agent-node" data-node-id="${esc(node.nodeId)}" title="不等节点确认，当场作废其凭据">立即切断</button>`
+    );
+  } else {
+    buttons.push(`<span class="small muted">吊销和立即切断在「组织管理」→「AI 智能体」处理</span>`);
+  }
+  return buttons.join(" ");
 }
 
 function orgAgentStats(nodes) {
@@ -3418,7 +3438,7 @@ function projectAgentStats(projectId = currentProjectId, nodes = projectAgentNod
   return {aliveNodes, onlineNodes, busyNodes, runningDispatches, abnormalNodes, liveTokens};
 }
 
-function projectAgentCards(nodes, canControlNodes) {
+function projectAgentCards(nodes, canControlNodes, options = {}) {
   return nodes.length ? `
     <div class="agent-cards">
       ${nodes.map((node) => {
@@ -3435,7 +3455,7 @@ function projectAgentCards(nodes, canControlNodes) {
             </div>
             ${timedOut ? `<div class="small warn-text">上次状态仍为「${esc(t(node.status) || node.status)}」，但心跳已超过判死阈值。</div>` : ""}
             ${claimMissHint(node)}${selfCheckFailureHint(node)}${heartbeatStaleHint(node)}
-            <div class="button-row" style="margin-top:10px;">${canControlNodes ? agentActions(node) : `<span class="small muted">当前账号无节点控制权限</span>`}</div>
+            <div class="button-row" style="margin-top:10px;">${canControlNodes ? agentActions(node, {scope: "project", showDanger: options.showDanger === true}) : `<span class="small muted">当前账号无节点控制权限</span>`}</div>
           </div>
         `;
       }).join("")}
@@ -3458,7 +3478,7 @@ function renderOrgAgentsBoundaryGuide() {
         pageId: "proj-agents",
         title: "项目注册入口",
         metric: "项目",
-        detail: "进入当前项目 AI 智能体页签发一次性令牌",
+        detail: "进入后先确认当前项目就是目标项目，再签发一次性令牌",
         tone: "green",
         action: "去项目注册"
       })}
@@ -3549,7 +3569,7 @@ function renderOrgAgentsSummary(nodes) {
 
 function renderOrgAgentsActionBoard(nodes) {
   const stats = orgAgentStats(nodes);
-  return panel("智能体接入操作看板", `
+  return panel("智能体治理操作看板", `
     <div class="module-grid action-grid">
       ${jumpModuleCard({
         title: "在线节点",
@@ -3593,11 +3613,11 @@ function renderOrgAgentsActionBoard(nodes) {
       })}
       ${projectModuleCard({
         pageId: "proj-agents",
-        title: "项目接入入口",
+        title: "当前项目接入入口",
         metric: "项目",
-        detail: "常规接新 agent 到当前项目页签发脚本",
+        detail: "进入后先用顶部项目选择器确认目标项目，再到项目 AI 智能体页签发脚本",
         tone: "blue",
-        action: "去项目注册"
+        action: "确认后注册"
       })}
     </div>
     <div class="small muted">处理顺序：先核对在线率、异常和负载，再进入目标项目签发加入令牌接入新节点；本页可查看或撤销待用令牌。</div>
@@ -3716,6 +3736,7 @@ function renderProjectAgents() {
   if (!project) return panel("AI 智能体", noVisibleProjectNotice(), {wide: true});
   const nodes = projectAgentNodes(project.id);
   const canControlNodes = hasPerm("agent:activate");
+  const preferOrgGovernance = perspectiveOf(currentAccount) === "org";
   const toggle = `
     <div class="button-row">
       <button class="${agentViewMode === "table" ? "primary-button" : "secondary-button"}" data-action="agent-view-mode" data-mode="table">列表视图</button>
@@ -3734,14 +3755,16 @@ function renderProjectAgents() {
       badge(node.display?.health),
       {v: String((node.display?.currentDispatchIds || []).length), c: "num"},
       {v: `${fmtTime(node.lastHeartbeatAt)}${heartbeatStaleHint(node)}`, c: "nowrap"},
-      canControlNodes ? agentActions(node) : "-"
+      canControlNodes ? agentActions(node, {scope: "project", showDanger: !preferOrgGovernance}) : "-"
     ]);
   }).join("");
   const nodeNotice = nodes.length
     ? `<div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>`
-    : `<div class="notice warn-notice">当前项目还没有任何 agent 节点。要让任务实际执行，请在下面“注册 agent”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 agent 主机执行。</div>`;
+    : agentViewMode === "cards"
+      ? ""
+      : `<div class="notice warn-notice">当前项目还没有任何 agent 节点。要让任务实际执行，请在下面“注册 agent”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 agent 主机执行。</div>`;
   const bodyHtml = agentViewMode === "cards"
-    ? projectAgentCards(nodes, canControlNodes)
+    ? projectAgentCards(nodes, canControlNodes, {showDanger: !preferOrgGovernance})
     : table(["名称", "运行状态", "准入", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"], nodeRows, {emptyText: "当前项目暂无智能体节点"});
   return [
     renderProjectAgentsSummary(project, nodes),
@@ -3948,7 +3971,7 @@ function projectHubHtml(project, groups, openGroups, eventsInScope, repoTargets)
           metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : `${agentStats.liveTokens}`,
           detail: agentStats.aliveNodes.length
             ? "项目节点、加入令牌、注册脚本与控制操作"
-            : "还没有项目节点，先签发令牌注册 agent",
+            : "进入「项目管理」→「AI 智能体」→「注册 agent」签发加入令牌并复制服务端安装脚本",
           action: agentStats.aliveNodes.length ? "管理节点" : "注册 agent",
           tone: agentStats.onlineNodes ? "green" : agentStats.aliveNodes.length ? "orange" : "red"
         })}
@@ -3983,8 +4006,8 @@ function renderProjectOperationPath(project, groups, openGroups, eventsInScope, 
         title: "1 执行准备",
         metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : "无节点",
         detail: agentStats.aliveNodes.length
-          ? "先确认 Agent 在线、准入和远程 MCP 生效"
-          : `没有项目节点时先注册 agent，再核对仓库落点（${repoTargets.length} 条）`,
+          ? "先确认 Agent 在线、准入、远程 MCP 和 Skill 工作集生效"
+          : `先到「项目管理」→「AI 智能体」→「注册 agent」签发加入令牌、复制服务端安装脚本，再确认远程 MCP 和 Skill 工作集生效并核对仓库落点（${repoTargets.length} 条）`,
         tone: agentStats.onlineNodes ? "green" : "orange",
         action: "检查 Agent"
       })}
@@ -5518,13 +5541,17 @@ function renderPendingForMePanel() {
       ? `<div class="notice">这一页没有加载待办所需的数据，因此这里不做统计（这不表示没有待办）。到「人工审核」或「执行监控」页查看。</div>`
       : todo.total === 0
       ? `<div class="notice">当前没有需要你处置的项。（只统计你有权处置的；别人负责的部分不会出现在这里。）</div>`
-      : `<div class="notice warn-notice">共 ${todo.total}${todo.partial ? "+" : ""} 项等待你处理，跨你可见的全部项目统计。等人拍板的东西分布在两个页面上，这里是唯一的汇总入口。${todo.partial ? "<br><strong>带 + 的类别数据量超过本页加载上限，实际项数只多不少 —— 处置完这里列出的也未必清空。</strong>" : ""}</div>
+      : `<div class="notice warn-notice">共 ${todo.total}${todo.partial ? "+" : ""} 项等待你处理，按当前项目视图统计。等人拍板的东西分布在两个页面上，这里是当前项目的汇总入口。${todo.partial ? "<br><strong>带 + 的类别数据量超过本页加载上限，实际项数只多不少 —— 处置完这里列出的也未必清空。</strong>" : ""}</div>
          <div class="stack">
            ${todo.buckets.map((bucket) => `
              <div class="record">
                <div class="record-title"><strong>${esc(bucket.label)}</strong> ${customBadge(`${bucket.count}${bucket.capped ? "+" : ""}`, "red")}</div>
-               <div class="record-meta"><span>处置入口：${esc(PAGE_META[bucket.page]?.[0] || bucket.page)}</span></div>
-               <div class="button-row"><button class="secondary-button" data-menu="${esc(bucket.page)}">前往处置</button></div>
+               <div class="record-meta"><span>处置入口：${esc(PAGE_META[bucket.page]?.[0] || bucket.page)}${bucketNeedsProjectJump(bucket)
+                 ? ` · 先进入项目：${bucket.projectIds.slice(0, 3).map(projectNameOf).map(esc).join("、")}${bucket.projectIds.length > 3 ? "…" : ""}`
+                 : ""}</span></div>
+               <div class="button-row">${bucketNeedsProjectJump(bucket)
+                 ? `<button class="secondary-button" data-action="open-project-page" data-project="${esc(bucket.projectIds[0])}" data-target-menu="${esc(bucket.page)}">${bucket.projectIds.length > 1 ? "前往首个项目处置" : "前往处置"}</button>`
+                 : `<button class="secondary-button" data-menu="${esc(bucket.page)}">前往处置</button>`}</div>
              </div>`).join("")}
          </div>`}
   `, {wide: true});
@@ -6026,8 +6053,10 @@ function renderMonitorActionBoard({
     || !["ok", "healthy", "normal", undefined, ""].includes(node.display?.health)).length;
   const nodeMetric = nodes.length ? `${abnormalNodes}/${nodes.length}` : "0";
   const nodeDetail = nodes.length
-    ? (abnormalNodes ? "存在离线、心跳过旧、自检缺项或运行时过旧节点" : "可见节点当前正常")
-    : "当前项目没有可见运行时节点；需要执行时先到 AI 智能体页注册 agent";
+    ? (abnormalNodes
+      ? "存在离线、心跳过旧、自检缺项或运行时过旧节点；先恢复 agent 主机/进程心跳，能力修好后到「项目管理」→「AI 智能体」→「项目智能体节点」点「刷新自检」"
+      : "可见节点当前正常")
+    : "当前项目没有可见运行时节点；先到「项目管理」→「AI 智能体」→「注册 agent」签发加入令牌并复制服务端安装脚本";
   const nodeTone = nodes.length ? (abnormalNodes ? "orange" : "green") : "gray";
   const orchestrator = state.runtime?.autonomousOrchestrator || {};
   const orchestratorIssues = Number(orchestrator.consecutiveErrors || 0);
@@ -6770,7 +6799,7 @@ function renderProjectSettingsActionBoard(project, repos, baselineData, defaultR
         pageId: "proj-agents",
         title: "智能体入网",
         metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : `${liveTokens}`,
-        detail: liveTokens ? "有待用的一次性 agent 加入令牌" : "需要新节点时进入独立页面签发",
+        detail: liveTokens ? "有待用加入令牌；注册脚本只在签发成功弹窗显示" : "需要新节点时进入「AI 智能体」→「注册 agent」签发",
         tone: agentStats.onlineNodes ? "green" : liveTokens ? "blue" : "orange",
         action: "去接入页"
       })}
@@ -6846,12 +6875,12 @@ function renderProjectSettingsBoundaryGuide(project, repos, baselineData, defaul
         pageId: "proj-agents",
         title: "Agent 接入",
         metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : "项目页",
-        detail: "Agent 节点和注册脚本不在本页处理，进入 AI 智能体页",
+        detail: "Agent 节点、注册脚本和远程 MCP 确认不在本页处理，进入项目 AI 智能体页",
         tone: agentStats.onlineNodes ? "green" : "orange",
         action: "去注册"
       })}
     </div>
-    <div class="small muted">职责分区：项目设置只维护会影响派发和产出落地的配置；运行节点、一次性 join token、安装脚本、远程 MCP 生效确认统一进入「AI 智能体」页。</div>
+    <div class="small muted">职责分区：项目设置只维护会影响派发和产出落地的配置；运行节点、一次性 join token、安装脚本、远程 MCP 和 Skill 工作集生效确认统一进入「项目管理」→「AI 智能体」。</div>
   `, {wide: true});
 }
 
