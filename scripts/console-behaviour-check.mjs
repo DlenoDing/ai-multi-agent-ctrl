@@ -4190,7 +4190,8 @@ function runPendingTruncationCase() {
         && /真正让用户或 agent 参与某个项目/u.test(accountHtml)
         && /data-jump-panel="智能体入网审计"/u.test(accountHtml)
         && /data-jump-panel="编排智能体档案"/u.test(accountHtml)
-        && /data-menu="org-projects"/u.test(accountHtml),
+        && /data-jump-panel="项目成员授权"/u.test(accountHtml)
+        && /data-menu="proj-agents"/u.test(accountHtml),
       "账号与授权页没有把系统身份治理和项目级落位讲成可操作流程");
     check("系统账号页不能承载常规 Agent 注册表单，项目页才保留注册脚本入口",
       !/data-form="join-token"/u.test(accountHtml)

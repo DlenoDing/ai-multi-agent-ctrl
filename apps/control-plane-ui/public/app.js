@@ -2912,13 +2912,13 @@ function renderSysAccountsLifecycleGuide() {
         tone: activeAgents ? "blue" : "gray",
         action: "看档案"
       })}
-      ${projectModuleCard({
-        pageId: "org-projects",
+      ${jumpModuleCard({
         title: "6 项目级落位",
         metric: assignableProjects().length,
-        detail: "成员加入项目、项目 Agent 注册、任务组执行都回到目标项目空间完成",
+        detail: "先在本页把成员加入项目；项目 Agent 注册和任务组执行再回目标项目空间完成",
+        panelTitle: "项目成员授权",
         tone: assignableProjects().length ? "green" : "orange",
-        action: "去项目治理"
+        action: "去授权"
       })}
     </div>
     <div class="small muted">账号授权页是系统身份和授权治理入口：先确认账号，再审计授权和令牌；真正让用户或 agent 参与某个项目，必须回到项目管理完成成员授权、Agent 注册和任务组执行。</div>
