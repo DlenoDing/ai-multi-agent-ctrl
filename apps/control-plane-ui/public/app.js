@@ -138,10 +138,11 @@ let execTimer = null;
 
 /* ---------------- 视角与菜单 ---------------- */
 
-const PROJECT_PAGES = new Set(["proj-overview", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"]);
+const PROJECT_PAGES = new Set(["proj-overview", "proj-members", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"]);
 
 const PROJECT_MENU_TAIL = [
   {id: "proj-overview", label: "项目概览"},
+  {id: "proj-members", label: "成员权限"},
   {id: "proj-agents", label: "AI 智能体"},
   {id: "tg", label: "任务组"},
   {id: "monitor", label: "执行监控"},
@@ -352,6 +353,7 @@ const PAGE_META = {
   "org-agents": ["AI 智能体", "组织内智能体节点：运行状态、健康度、令牌审计与吊销"],
   "org-projects": ["项目列表", "创建项目、基础配置与成员授权"],
   "proj-overview": ["项目概览", "总进度、健康度、任务组平均进度与待人工确认数"],
+  "proj-members": ["成员权限", "当前项目成员、角色授权、任务组控制与审核权限入口"],
   "tg": ["任务组", "事项清单、角色、配置继承与执行控制"],
   "review": ["人工审核", "集中处理执行过程中提交的人工确认请求"],
   "directives": ["人工指令", "通过独立通道向系统下达结构化指令"],
@@ -1573,6 +1575,15 @@ async function loadPage() {
       state = await fetchState("tasks", {projectId: currentProjectId});
       ensureProjectSelection();
       loadPendingConfirmCount();
+    } else if (page === "proj-members") {
+      const shouldLoadGrantDirectory = hasPerm("project:grant");
+      const [tasksState, membersResult] = await Promise.all([
+        fetchState("tasks", {projectId: currentProjectId}),
+        shouldLoadGrantDirectory ? api("/api/org/members").catch(() => ({members: []})) : Promise.resolve({members: []})
+      ]);
+      state = tasksState;
+      orgMembers = membersResult.members || [];
+      ensureProjectSelection();
     } else if (page === "tg") {
       // 建工作项表单里的「指定模型」下拉要读 modelCapabilities，而 tasks 视图不含它。
       // 用轻量的 /api/model-registry（只回模型清单，不是整份 runtime 视图）并回补 —— 取不到就只显示「自动」，不挡建工作项。
@@ -2063,6 +2074,7 @@ function renderContent() {
   else if (page === "org-agents") body = renderOrgAgents();
   else if (page === "org-projects") body = renderOrgProjects();
   else if (page === "proj-overview") body = renderProjectOverview();
+  else if (page === "proj-members") body = renderProjectMembers();
   else if (page === "tg") body = renderTaskGroups();
   else if (page === "review") body = renderReview();
   else if (page === "directives") body = renderDirectives();
@@ -3097,22 +3109,28 @@ const DEFAULT_ORGANIZATION_ID = "org_default";
 let memberGrantProjectId = "";
 const organizationOf = (record) => String(record?.organizationId || DEFAULT_ORGANIZATION_ID);
 
-function renderProjectMemberForm() {
+function renderProjectMemberForm(options = {}) {
   if (!(state.projects || []).length) return noProjectYetNotice("项目成员授权");
   // 已归档的项目不能再发成员授权（后端拒 project_archived）。这里原先列的是【全部项目】——
   // 与上面 assignableProjects 那段注释说的是同一件事，而它点名的两处之外还漏了这第三处：
   // 选中一个归档项目提交，回执是 409，人只看到一个按不动的杠杆。
-  const openProjects = assignableProjects();
+  const scopedProjectId = options.projectId || "";
+  const openProjects = scopedProjectId
+    ? assignableProjects().filter((project) => project.id === scopedProjectId)
+    : assignableProjects();
   if (!openProjects.length) {
-    return `<div class="notice warn-notice">你能看到的项目【全部已归档】（共 `
-      + `${(state.projects || []).length} 个）：归档是终态、不可撤销，发不进成员授权。`
-      + "要继续这条线，请先新建一个项目。</div>";
+    const scopedProject = scopedProjectId ? (state.projects || []).find((project) => project.id === scopedProjectId) : null;
+    return `<div class="notice warn-notice">${scopedProject
+      ? `当前项目「${esc(scopedProject.name || scopedProject.id)}」已归档：归档是终态、不可撤销，发不进成员授权。要继续这条线，请另建一个项目。`
+      : `你能看到的项目【全部已归档】（共 ${esc((state.projects || []).length)} 个）：归档是终态、不可撤销，发不进成员授权。要继续这条线，请先新建一个项目。`}</div>`;
   }
   // 账号下拉此前列的是【全部账号】。而服务端对项目成员授权是无条件按组织判的
   //（cross_org_member_not_allowed，系统管理员也一样）—— 于是别的组织的人就摆在那里，
   // 选中提交必然被拒：一个按不动的杠杆。按【所选项目所属的组织】过滤，口径与服务端同一份。
   const projects = openProjects;
-  const chosen = projects.find((project) => project.id === memberGrantProjectId) || projects[0];
+  const chosen = scopedProjectId
+    ? projects[0]
+    : projects.find((project) => project.id === memberGrantProjectId) || projects[0];
   const selectedOrg = organizationOf(chosen);
   const candidates = (orgMembers && orgMembers.length ? orgMembers : (state.accounts || []));
   // 已注销是终态：给它发授权后端会拒（grant_subject_account_retired），摆在这里就是把人往死路上引。
@@ -3124,8 +3142,10 @@ function renderProjectMemberForm() {
       + " —— 先在上面的「邀请账号」把人邀进这个组织，再回来授权。</div>"}
     <form class="form-grid" data-form="project-member">
       <div class="form-row"><label>项目</label>
-        <select name="projectId">${projects.map((project) =>
-          `<option value="${esc(project.id)}"${project.id === chosen?.id ? " selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}</select>
+        ${scopedProjectId
+          ? `<input name="projectId" value="${esc(chosen?.id || scopedProjectId)}" readonly><div class="small muted">当前项目：${esc(chosen?.name || scopedProjectId)}。要给别的项目授权，请先切换顶部项目。</div>`
+          : `<select name="projectId">${projects.map((project) =>
+            `<option value="${esc(project.id)}"${project.id === chosen?.id ? " selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}</select>`}
       </div>
       <div class="form-row"><label>账号</label>
         ${decisionSelect("accountId",
@@ -4399,6 +4419,164 @@ function projectModuleCard({pageId, title, metric, detail, action, tone = "blue"
   `;
 }
 
+function projectMemberRoleStats(project) {
+  const members = project?.members || [];
+  const countRole = (role) => members.filter((member) => member.role === role).length;
+  return {
+    total: members.length,
+    admins: countRole("project_owner") + countRole("project_admin"),
+    owners: countRole("task_group_owner"),
+    reviewers: countRole("reviewer"),
+    agentOperators: countRole("agent_operator"),
+    viewers: countRole("viewer")
+  };
+}
+
+function renderProjectMembersSummary(project, stats) {
+  return panel("成员权限总览", `
+    <div class="metric-grid">
+      ${summaryMetric("项目成员", stats.total, "已授权进入当前项目的账号")}
+      ${summaryMetric("项目管理员", stats.admins, "可管理项目配置和成员授权")}
+      ${summaryMetric("任务组负责人", stats.owners, "可控制任务组与工作项推进")}
+      ${summaryMetric("评审人", stats.reviewers, "可处理人工审核、定稿和验收")}
+      ${summaryMetric("智能体操作员", stats.agentOperators, "可签发 agent 加入令牌并操作节点")}
+      ${summaryMetric("观察者", stats.viewers, "只读查看项目执行状态")}
+    </div>
+    <div class="small muted">本页只管理当前项目的成员角色；组织账号的创建、停用和邀请重发仍在「组织管理」→「成员管理」。Agent 注册仍在「项目管理」→「AI 智能体」。</div>
+  `, {wide: true});
+}
+
+function renderProjectMembersActionBoard(project, stats) {
+  return panel("成员权限操作看板", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "当前成员",
+        metric: stats.total,
+        detail: "查看本项目已有成员和角色",
+        panelTitle: "项目成员列表",
+        tone: stats.total ? "blue" : "orange",
+        action: "看成员"
+      })}
+      ${jumpModuleCard({
+        title: "补授权",
+        metric: hasPerm("project:grant") ? "可操作" : "只读",
+        detail: hasPerm("project:grant") ? "给组织成员授予当前项目角色" : "当前账号没有项目授权管理权限",
+        panelTitle: "项目成员授权",
+        tone: hasPerm("project:grant") ? "blue" : "gray",
+        action: "去授权"
+      })}
+      ${projectModuleCard({
+        pageId: "proj-agents",
+        title: "Agent 操作",
+        metric: stats.agentOperators,
+        detail: "需要智能体操作员或项目管理员来签发加入令牌",
+        tone: stats.agentOperators || stats.admins ? "blue" : "orange",
+        action: "看 Agent"
+      })}
+      ${projectModuleCard({
+        pageId: "review",
+        title: "人工审核",
+        metric: stats.reviewers,
+        detail: "需要评审人处理定稿、验收和审批",
+        tone: stats.reviewers ? "blue" : "orange",
+        action: "看审核"
+      })}
+      ${projectModuleCard({
+        pageId: "tg",
+        title: "任务组控制",
+        metric: stats.owners,
+        detail: "需要任务组负责人推进任务组和工作项",
+        tone: stats.owners ? "blue" : "orange",
+        action: "看任务组"
+      })}
+      ${projectModuleCard({
+        pageId: "monitor",
+        title: "执行回看",
+        metric: "实时",
+        detail: "授权后到执行监控确认按钮、派发和事件是否按角色生效",
+        tone: "green",
+        action: "看监控"
+      })}
+    </div>
+    <div class="small muted">处理顺序：先看当前成员，再补项目角色；授权不会直接启动任务，后续按钮是否出现仍由项目、任务组和角色权限共同决定。</div>
+  `, {wide: true});
+}
+
+function renderProjectMembersLifecycleGuide(project, stats) {
+  return panel("成员协作流程", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "1 组织成员入网",
+        metric: "组织",
+        detail: "没有账号时先由组织管理员邀请成员，项目页不创建组织账号",
+        panelTitle: "项目成员授权",
+        tone: "gray",
+        action: "看边界"
+      })}
+      ${jumpModuleCard({
+        title: "2 项目角色授权",
+        metric: stats.total,
+        detail: "在当前项目授予项目管理员、任务组负责人、评审人、智能体操作员或观察者",
+        panelTitle: "项目成员授权",
+        tone: stats.total ? "blue" : "orange",
+        action: "去授权"
+      })}
+      ${projectModuleCard({
+        pageId: "proj-agents",
+        title: "3 Agent 权限",
+        metric: stats.agentOperators,
+        detail: "智能体操作员或项目管理员可以签发当前项目 agent 加入令牌",
+        tone: stats.agentOperators || stats.admins ? "blue" : "orange",
+        action: "看 Agent"
+      })}
+      ${projectModuleCard({
+        pageId: "tg",
+        title: "4 任务组权限",
+        metric: stats.owners,
+        detail: "任务组负责人获得任务组控制入口，评审人获得审核入口",
+        tone: stats.owners || stats.reviewers ? "blue" : "orange",
+        action: "看任务组"
+      })}
+      ${projectModuleCard({
+        pageId: "monitor",
+        title: "5 执行监控",
+        metric: "实时",
+        detail: "授权落位后通过监控页确认派发、事件、关闭门和控制 ACK",
+        tone: "green",
+        action: "看监控"
+      })}
+    </div>
+    <div class="small muted">成员权限是项目执行的入口条件之一：它不替代 Agent 注册、任务组配置或人工指令，只决定谁能在这些页面看到和执行对应操作。</div>
+  `, {wide: true});
+}
+
+function renderProjectMembers() {
+  const project = currentProject();
+  if (!project) return panel("成员权限", noVisibleProjectNotice(), {wide: true});
+  const stats = projectMemberRoleStats(project);
+  const memberRows = (project.members || []).map((member) => row([
+    `<strong>${esc(accountName(member.accountId))}</strong><div class="small muted mono">${esc(member.accountId)}</div>`,
+    esc(grantRoleLabel(member.role)),
+    member.role === "project_owner" || member.role === "project_admin" ? "项目配置、成员授权和管理入口"
+      : member.role === "task_group_owner" ? "任务组控制和工作项推进"
+        : member.role === "reviewer" ? "人工审核、定稿和验收"
+          : member.role === "agent_operator" ? "Agent 加入令牌和节点操作"
+            : "查看项目状态和执行记录"
+  ])).join("");
+  const grantPanel = hasPerm("project:grant")
+    ? renderProjectMemberForm({projectId: project.id})
+    : `<div class="notice warn-notice">当前账号没有“项目授权管理(project:grant)”权限，只能查看本项目成员角色。需要补授权时，请项目管理员或组织管理员处理。</div>`;
+  return [
+    renderProjectMembersSummary(project, stats),
+    renderProjectMembersActionBoard(project, stats),
+    renderProjectMembersLifecycleGuide(project, stats),
+    panel("项目成员列表", memberRows
+      ? table(["成员", "项目角色", "角色影响"], memberRows)
+      : `<div class="notice warn-notice">当前项目还没有成员授权。没有成员角色时，任务组控制、人工审核和 Agent 操作入口会缺少负责人。</div>`, {wide: true}),
+    panel("项目成员授权", grantPanel)
+  ].join("");
+}
+
 function projectHubHtml(project, groups, openGroups, eventsInScope, repoTargets) {
   const percent = Math.max(0, Math.min(100, Number(project.progress?.percent || 0)));
   const groupIds = new Set(groups.map((taskGroup) => taskGroup.id));
@@ -4429,6 +4607,14 @@ function projectHubHtml(project, groups, openGroups, eventsInScope, repoTargets)
           detail: groups.length ? "管理目标、角色、工作项与执行控制" : "先创建任务组，再分配工作项",
           action: "查看任务组",
           tone: openGroups.length ? "blue" : "gray"
+        })}
+        ${projectModuleCard({
+          pageId: "proj-members",
+          title: "成员权限",
+          metric: `${(project.members || []).length}`,
+          detail: "查看本项目成员角色，补项目管理、任务组控制、审核和 Agent 操作权限",
+          action: "管理权限",
+          tone: (project.members || []).length ? "blue" : "orange"
         })}
         ${projectModuleCard({
           pageId: "review",
@@ -4491,8 +4677,16 @@ function renderProjectOperationPath(project, groups, openGroups, eventsInScope, 
   return panel("项目操作路径", `
     <div class="module-grid action-grid">
       ${projectModuleCard({
+        pageId: "proj-members",
+        title: "1 权限落位",
+        metric: `${(project.members || []).length}`,
+        detail: "先确认项目管理员、任务组负责人、评审人和智能体操作员是否已经授权",
+        tone: (project.members || []).length ? "blue" : "orange",
+        action: "看成员"
+      })}
+      ${projectModuleCard({
         pageId: "proj-agents",
-        title: "1 执行准备",
+        title: "2 执行准备",
         metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : "无节点",
         detail: agentStats.aliveNodes.length
           ? "先确认 Agent 在线、准入、远程 MCP 和 Skill 工作集生效"
@@ -4502,7 +4696,7 @@ function renderProjectOperationPath(project, groups, openGroups, eventsInScope, 
       })}
       ${projectModuleCard({
         pageId: "tg",
-        title: "2 任务组织",
+        title: "3 任务组织",
         metric: `${openGroups.length}/${groups.length}`,
         detail: "管理任务组、目标、角色、工作项和统一语言",
         tone: openGroups.length ? "blue" : "orange",
@@ -4510,7 +4704,7 @@ function renderProjectOperationPath(project, groups, openGroups, eventsInScope, 
       })}
       ${projectModuleCard({
         pageId: "monitor",
-        title: "3 实时监控",
+        title: "4 实时监控",
         metric: `${activeDispatches}`,
         detail: blockedDispatches ? `${blockedDispatches} 个派发被挡，先定位卡点` : "查看派发、会话、节点、事件和关闭门",
         tone: blockedDispatches ? "red" : activeDispatches ? "blue" : "green",
@@ -4518,7 +4712,7 @@ function renderProjectOperationPath(project, groups, openGroups, eventsInScope, 
       })}
       ${projectModuleCard({
         pageId: "review",
-        title: "4 人工介入",
+        title: "5 人工介入",
         metric: `${todo.total}`,
         detail: todo.total ? "先处理定稿、授权、审批和发现项" : "暂无等待你处理的审核项",
         tone: todo.total ? "orange" : "green",
@@ -4526,7 +4720,7 @@ function renderProjectOperationPath(project, groups, openGroups, eventsInScope, 
       })}
       ${projectModuleCard({
         pageId: "directives",
-        title: "5 控制补充",
+        title: "6 控制补充",
         metric: `${directives}`,
         detail: directives ? "有指令等待消费或确认" : "需要改变执行方向时向总控下达结构化指令",
         tone: directives ? "orange" : "blue",
@@ -4534,14 +4728,14 @@ function renderProjectOperationPath(project, groups, openGroups, eventsInScope, 
       })}
       ${projectModuleCard({
         pageId: "proj-settings",
-        title: "6 配置调整",
+        title: "7 配置调整",
         metric: `${repoTargets.length}/${ruleCount}`,
         detail: "维护仓库、基线、默认角色、角色 Skill 定制和规则",
         tone: repoTargets.length ? "blue" : "orange",
         action: "改设置"
       })}
     </div>
-    <div class="small muted">推荐顺序：先确认执行准备，再组织任务；运行中主要看执行监控，只有需要定稿、授权或改方向时才进入人工审核和人工指令；仓库、角色 Skill、规则等配置类调整统一回到项目设置。</div>
+    <div class="small muted">推荐顺序：先确认成员权限，再确认执行准备，然后组织任务；运行中主要看执行监控，只有需要定稿、授权或改方向时才进入人工审核和人工指令；仓库、角色 Skill、规则等配置类调整统一回到项目设置。</div>
   `, {wide: true});
 }
 

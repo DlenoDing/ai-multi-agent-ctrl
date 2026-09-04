@@ -304,6 +304,10 @@ globalThis.__probe = {
     if (viewMode) agentViewMode = viewMode;
     return renderProjectAgents();
   },
+  renderProjectMembersWith: (nextState, account, projectId, members) => {
+    state = nextState; currentAccount = account; currentProjectId = projectId; orgMembers = members || [];
+    return renderProjectMembers();
+  },
   renderProjectSettingsWith: (nextState, account, projectId, config) => {
     state = nextState; currentAccount = account; currentProjectId = projectId;
     projConfig = config || {repositories: [], baselineData: [], defaultRoles: [], systemRules: [], businessRules: []};
@@ -575,7 +579,7 @@ if (process.env.AIMAC_RENDER_REAL) {
   // 页面清单要与 app.js 里【登记过的那 15 页】对齐。原先这里只列了 8 页 + 上面两页 ——
   // 组织管理员那四页（概览/项目/成员/智能体）从来没有被读过一次，而"没读过"与"读过没问题"
   // 在这份输出上长得一模一样。下面那条自证会把漏掉的页点名。
-  const SURVEY_PAGES = ["proj-overview", "review", "directives", "sys-orgs", "sys-accounts",
+  const SURVEY_PAGES = ["proj-overview", "proj-members", "review", "directives", "sys-orgs", "sys-accounts",
     "sys-settings", "sys-overview", "proj-agents", "proj-settings",
     "org-overview", "org-projects", "org-members", "org-agents"];
   {
@@ -2164,12 +2168,53 @@ async function runErrorGuidanceCase() {
   assertMenuDescriptions("组织管理", orgNav, ["org-overview", "org-members", "org-agents", "org-projects"]);
   const projectNav = renderedNav({accountId: "user", email: "user@local", displayName: "项目成员",
     accountType: "user_account", roles: ["workspace_owner"], permissions: ["project:view", "project:update", "task_group:control", "task_group:review"], organizationId: "org_default"}, "p1", "proj-overview");
-  const projectMenuOrder = ["proj-overview", "proj-agents", "tg", "monitor", "review", "directives", "proj-settings"];
+  const projectMenuOrder = ["proj-overview", "proj-members", "proj-agents", "tg", "monitor", "review", "directives", "proj-settings"];
   assertMenuDescriptions("项目管理", projectNav, projectMenuOrder);
   check("项目管理侧栏顺序要贴合执行路径",
     projectMenuOrder.every((pageId, index) => index === 0
       || projectNav.indexOf(`data-menu="${pageId}"`) > projectNav.indexOf(`data-menu="${projectMenuOrder[index - 1]}"`)),
     "项目菜单顺序没有按概览、Agent 准备、任务组织、实时监控、人工介入、控制补充、配置调整排列");
+  const membersRoot = el("div");
+  const membersProbe = loadConsole(membersRoot, {realI18n: true});
+  const projectMemberState = {
+    ...navState,
+    projects: [{id: "p1", name: "项目一", organizationId: "org_default", status: "active", members: [
+      {accountId: "acct_admin", role: "project_admin"},
+      {accountId: "acct_reviewer", role: "reviewer"},
+      {accountId: "acct_agent", role: "agent_operator"},
+      {accountId: "acct_viewer", role: "viewer"}
+    ]}],
+    accountDirectory: {acct_admin: "项目管理员", acct_reviewer: "评审人甲", acct_agent: "Agent 操作员", acct_viewer: "观察者甲"},
+    taskGroups: [], agentDispatches: [], humanDirectives: []
+  };
+  const projectMembersHtml = membersProbe.renderProjectMembersWith(projectMemberState,
+    {accountId: "acct_admin", email: "admin@local", displayName: "项目管理员",
+      accountType: "user_account", roles: ["project_admin"],
+      effectivePermissions: ["project:view", "project:update", "project:grant", "agent:activate", "task_group:read", "task_group:control", "task_group:review"],
+      organizationId: "org_default"}, "p1",
+    [{accountId: "acct_new", displayName: "待授权成员", accountType: "user_account", status: "active", organizationId: "org_default"}]);
+  const projectMembersPanelAt = (title) => projectMembersHtml.indexOf(`<h2>${title}</h2>`);
+  check("项目成员权限页要先总览、再看板、再流程、再成员列表、最后授权表单",
+    projectMembersPanelAt("成员权限总览") >= 0
+      && projectMembersPanelAt("成员权限总览") < projectMembersPanelAt("成员权限操作看板")
+      && projectMembersPanelAt("成员权限操作看板") < projectMembersPanelAt("成员协作流程")
+      && projectMembersPanelAt("成员协作流程") < projectMembersPanelAt("项目成员列表")
+      && projectMembersPanelAt("项目成员列表") < projectMembersPanelAt("项目成员授权"),
+    "项目成员权限页没有按普通用户先看现状、再看动作、再看流程、最后操作的顺序组织");
+  check("项目成员权限页必须说明成员角色如何影响 Agent、任务组、审核和监控",
+    /智能体操作员/u.test(projectMembersHtml)
+      && /任务组负责人/u.test(projectMembersHtml)
+      && /评审人/u.test(projectMembersHtml)
+      && /Agent 加入令牌/u.test(projectMembersHtml)
+      && /执行监控/u.test(projectMembersHtml)
+      && /授权不会直接启动任务/u.test(projectMembersHtml),
+    "项目成员权限页仍只是成员表或授权表单，没有说明角色与 Agent、任务组、审核、监控之间的关系");
+  check("项目成员权限页的授权表单要锁定当前项目，避免跨项目误授权",
+    /data-form="project-member"/u.test(projectMembersHtml)
+      && /name="projectId" value="p1" readonly/u.test(projectMembersHtml)
+      && /当前项目：项目一/u.test(projectMembersHtml)
+      && !/<select name="projectId">/u.test(String(projectMembersHtml).slice(projectMembersPanelAt("项目成员授权"))),
+    "项目内授权表单仍允许在同一页切到别的项目，用户以为在当前项目授权但实际可能提交到别处");
   const styles = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/styles.css"), "utf8");
   check("侧栏空间名要有明确 brand-section 类，不许再靠 .brand span 误伤图形标识",
     /<span class="brand-section">/u.test(systemNav)
@@ -3727,9 +3772,9 @@ function runNoVisibleProjectCase() {
       /没有开自治周期/u.test(off),
       "自治关着，界面还在说「会按固定周期自动跑编排」—— 人会一直等下去");
   }
-  const pages = ["proj-overview", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"];
+  const pages = ["proj-overview", "proj-members", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"];
   const silent = pages.filter((pageId) => !/当前账号暂无可见项目/u.test(renderAs(member, baseState([], []), pageId)));
-  check("一个项目都没有时，七个项目页都要说清是【没有项目】而不是项目空着",
+  check("一个项目都没有时，八个项目页都要说清是【没有项目】而不是项目空着",
     silent.length === 0,
     `这些页没说：${silent.join("、")} —— 说"当前项目暂无任务组"会让人去找是哪个项目空着`);
   check("这句话要按视角给出下一步（成员去找组织管理员，自己建不了项目）",
@@ -4552,21 +4597,23 @@ function runPendingTruncationCase() {
       overviewHtml.indexOf("project-hub wide") >= 0
         && panelAt(overviewHtml, "项目操作路径") > overviewHtml.indexOf("project-hub wide")
         && panelAt(overviewHtml, "项目操作路径") < panelAt(overviewHtml, "关键指标")
-        && /1 执行准备/u.test(overviewHtml)
-        && /2 任务组织/u.test(overviewHtml)
-        && /3 实时监控/u.test(overviewHtml)
-        && /4 人工介入/u.test(overviewHtml)
-        && /5 控制补充/u.test(overviewHtml)
-        && /6 配置调整/u.test(overviewHtml)
+        && /1 权限落位/u.test(overviewHtml)
+        && /2 执行准备/u.test(overviewHtml)
+        && /3 任务组织/u.test(overviewHtml)
+        && /4 实时监控/u.test(overviewHtml)
+        && /5 人工介入/u.test(overviewHtml)
+        && /6 控制补充/u.test(overviewHtml)
+        && /7 配置调整/u.test(overviewHtml)
+        && /data-menu="proj-members"/u.test(overviewHtml)
         && /data-menu="tg"/u.test(overviewHtml)
         && /data-menu="monitor"/u.test(overviewHtml)
         && /data-menu="review"/u.test(overviewHtml)
         && /data-menu="directives"/u.test(overviewHtml)
         && /data-menu="proj-agents"/u.test(overviewHtml)
         && /data-menu="proj-settings"/u.test(overviewHtml),
-      "项目概览仍是模块卡片和指标堆叠，没有按执行准备、任务组织、监控、人工介入和配置调整给出操作路径");
+      "项目概览仍是模块卡片和指标堆叠，没有按权限落位、执行准备、任务组织、监控、人工介入和配置调整给出操作路径");
     check("项目概览配置调整路径要包含角色 Skill 定制",
-      /6 配置调整/u.test(overviewHtml)
+      /7 配置调整/u.test(overviewHtml)
         && /角色 Skill 定制/u.test(overviewHtml)
         && /仓库、角色 Skill、规则等配置类调整统一回到项目设置/u.test(overviewHtml),
       "角色 Skill 定制已经是项目/任务组级配置，但项目概览仍没有把它纳入配置调整路径");
@@ -6217,7 +6264,7 @@ await runCodedApiErrorCase();
   const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
   const loadAt = appSource.indexOf("async function loadPage()");
   const loadBody = loadAt < 0 ? "" : appSource.slice(loadAt, appSource.indexOf("\nasync function loadTaskGroupDetail", loadAt));
-  const projectScopedPages = new Set(["proj-overview", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"]);
+  const projectScopedPages = new Set(["proj-overview", "proj-members", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"]);
   const calls = [];
   let currentPage = null;
   for (const line of loadBody.split("\n")) {
@@ -7368,7 +7415,7 @@ await runCodedApiErrorCase();
   }, {accountId: "acct_system_owner", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"}, "prj_control_plane"]);
   const scanned = [];
   const pages = ["sys-overview", "sys-orgs", "sys-settings", "sys-accounts", "org-overview", "org-members",
-    "org-agents", "org-projects", "proj-overview", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"];
+    "org-agents", "org-projects", "proj-overview", "proj-members", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"];
   for (const [label, state, account, projectId] of i18nScanStates) {
     scanned.push(...scanState(label, state, account, projectId, pages));
   }

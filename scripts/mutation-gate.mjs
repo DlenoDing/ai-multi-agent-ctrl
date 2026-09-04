@@ -5348,7 +5348,7 @@ const MUTATIONS = [
     name: "换了项目就要换成那个组织的人",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "  const chosen = projects.find((project) => project.id === memberGrantProjectId) || projects[0];",
+    from: "  const chosen = scopedProjectId\n    ? projects[0]\n    : projects.find((project) => project.id === memberGrantProjectId) || projects[0];",
     to: "  const chosen = projects[0];",
     expect: "换到别组织的项目之后，下拉里换成那个组织的人"
   },
