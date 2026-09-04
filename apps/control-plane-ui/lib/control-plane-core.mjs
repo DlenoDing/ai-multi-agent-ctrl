@@ -651,6 +651,17 @@ export function normalizePinnedModelId(state, raw) {
   return {pinnedModelId: match.modelId};
 }
 
+// 截断窗口要保留【最新】的那几条：工作项按插入序存（最旧在前），界面按时间倒序展示（最新在前）。
+// 若截断取的是最前 N 条，超上限时人看到的"最新"其实是最旧的一批、真正最新的被切掉——与展示顺序自相矛盾。
+// 两处下发（列表内嵌 / 进度接口）都经这一个函数，不许各写一份。上限 0 要返回空（slice(-0) 会返回整份）。
+export function newestWindow(items, cap) {
+  const list = Array.isArray(items) ? items : [];
+  const limit = Math.max(0, Number(cap) || 0);
+  if (limit <= 0) return [];
+  return list.length <= limit ? list : list.slice(-limit);
+}
+
+
 function defaultModelSelectionPolicies() {
   const common = {
     schemaVersion: "model-selection-policy/v1",

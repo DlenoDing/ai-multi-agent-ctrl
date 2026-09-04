@@ -141,7 +141,7 @@ import {
   STRING_LIST_MAX_ITEM_LENGTH,
   projectRepositories,
   isSafeGitRef,
-  noteWorkItemExecutionFailure, normalizePinnedModelId} from "./lib/control-plane-core.mjs";
+  noteWorkItemExecutionFailure, normalizePinnedModelId, newestWindow} from "./lib/control-plane-core.mjs";
 import { isTerminalDispatchStatus } from "./lib/lifecycle-states.mjs";
 
 // 真正绑上的端口（listen 回调写入）；localEndpoint 用它。放在模块顶部：读状态的路径在 listen 之前就会调它。
@@ -1899,7 +1899,7 @@ function projectTaskGroupsForView(taskGroups) {
     const projected = {...(slimAnalysis === analysis ? taskGroup : {...taskGroup, taskAnalysis: slimAnalysis}),
       roles: undefined, roleCount: roles.length, ...(policy ? {languagePolicy: slimPolicy} : {})};
     if (items.length <= embeddedWorkItemCap) return {...projected, workItemCount: items.length};
-    return {...projected, workItems: items.slice(0, embeddedWorkItemCap),
+    return {...projected, workItems: newestWindow(items, embeddedWorkItemCap),
       workItemCount: items.length, workItemsTruncated: true};
   });
 }
@@ -3852,7 +3852,7 @@ async function handleApi(req, res) {
       // 明细页此前把【全部】工作项一次发下来，而界面把每一条都渲染成一行、每 5 秒轮询重建一次：
       // 4000 单元时是约 1.1MB 载荷 + 4000 个 DOM 节点。给上限，并把真实总数一起给出去 ——
       // 截断后的长度当总数，是这套系统反复栽过的坑。
-      workItems: (taskGroup.workItems || []).slice(0, progressWorkItemCap),
+      workItems: newestWindow(taskGroup.workItems, progressWorkItemCap),
       workItemCount: (taskGroup.workItems || []).length,
       ...((taskGroup.workItems || []).length > progressWorkItemCap ? {workItemsTruncated: true} : {}),
       blockers: taskGroup.blockers,

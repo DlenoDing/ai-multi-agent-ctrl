@@ -549,6 +549,15 @@ const MUTATIONS = [
     expect: "规则文本框没有随内容自动撑高"
   },
   {
+    // 截断窗口把 slice(-limit) 改回 slice(0, limit) → 超上限时下发的是最旧的一批、真正最新的被切掉，与"最新在前"自相矛盾。
+    name: "截断窗口必须保留最新的那几条",
+    check: "verifyAgentGatewayContracts",
+    file: CORE,
+    from: "  return list.length <= limit ? list : list.slice(-limit);",
+    to: "  return list.length <= limit ? list : list.slice(0, limit);",
+    expect: "截断窗口没有保留最新的那几条"
+  },
+  {
     // 项目设置的配置行（仓库/基线/角色）对只读成员必须收起「删除」：cfg-del 是本地暂存，保存已禁用，
     // 只读成员点了删本地行却存不下＝按了看不到效果的死动作。去掉 cfgRepoRow 的 readOnly 门即让删除对只读成员出现。
     name: "只读成员的配置行不许摆删除按钮",

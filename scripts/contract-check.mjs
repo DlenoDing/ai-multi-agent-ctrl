@@ -145,6 +145,7 @@ import {
   ROOM_SENDER_KEY,
   selectModel,
   normalizePinnedModelId,
+  newestWindow,
   updateTaskGroupLanguagePolicy,
   createCommand,
   dispatchCommand,
@@ -6359,6 +6360,15 @@ function verifyAgentGatewayContracts(output) {
   const rejectedDecision = selectModel(unavailableState, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", roleId: "ui-console-service"});
   if (rejectedDecision.status !== "rejected" || !rejectedDecision.candidateRankings.some((item) => String(item.rejectionReason || "").includes("availability_unavailable"))) {
     output.push("Model selection did not fail closed when all models were unavailable");
+  }
+  // 截断窗口必须保留最新的那几条（与界面"最新在前"自洽）：5 条取 3 → 最后 3 条；不超上限原样返回同一数组；
+  // 上限 0 → 空（slice(-0) 会返回整份，这是个真坑）。把 slice(-limit) 改回 slice(0, limit) 即红。
+  {
+    const five = [1, 2, 3, 4, 5].map((n) => ({id: `w${n}`}));
+    const win = newestWindow(five, 3).map((item) => item.id).join(",");
+    if (win !== "w3,w4,w5") output.push(`截断窗口没有保留最新的那几条：期望 w3,w4,w5，实际 ${win}`);
+    if (newestWindow(five, 9) !== five) output.push("截断窗口在不超上限时应原样返回同一个数组");
+    if (newestWindow(five, 0).length !== 0) output.push("截断窗口上限为 0 时应返回空，而不是整份");
   }
   // 精确钉模型：pinnedModelId 指定后，选型必须选中被钉的那个模型（哪怕它本来排不到第一），且决策上留痕。
   // 钉的对象特意选一个"合格但不是自动首选"的模型，这样只有真的按 modelId 拦截才会改变结果 ——

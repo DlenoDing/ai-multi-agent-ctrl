@@ -4951,8 +4951,8 @@ function runPendingTruncationCase() {
       /data-section-title="工作项（共 4000 个，当前展示 300 个）"/.test(detailHtml)
         && /data-jump-panel="工作项"/.test(detailHtml),
       "工作项标题带真实总数后没有稳定小节锚点，详情路径卡片会找不到这一节");
-    check("提示里要写清只加载了前多少个",
-      /只加载了前 300 个/.test(detailHtml),
+    check("提示里要写清只加载了最新的多少个",
+      /只加载了最新的 300 个/.test(detailHtml),
       "截断了却没说只加载了一部分 —— 人会以为只有这些");
     check("要说清筛选只覆盖已加载的部分",
       /筛选只在已加载的这些里找/.test(detailHtml),
