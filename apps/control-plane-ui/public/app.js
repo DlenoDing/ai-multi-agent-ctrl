@@ -3862,6 +3862,64 @@ function renderProjectAgentExecutionLoop(project, nodes) {
   `, {wide: true});
 }
 
+function renderProjectAgentNodeGovernanceGuide(project, nodes) {
+  const stats = projectAgentStats(project.id, nodes);
+  const availableNodes = stats.aliveNodes.filter((node) => node.status === "online" && node.admission === "full").length;
+  return panel("Agent 节点处置流程", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "1 判断可派发",
+        metric: `${availableNodes}/${stats.aliveNodes.length}`,
+        detail: "先确认在线且准入为完整的节点数量，不足时先恢复节点或注册新 agent",
+        panelTitle: "项目智能体节点",
+        tone: availableNodes ? "green" : stats.aliveNodes.length ? "orange" : "red",
+        action: "看节点"
+      })}
+      ${jumpModuleCard({
+        title: "2 离线恢复",
+        metric: stats.abnormalNodes,
+        detail: stats.abnormalNodes ? "离线先恢复目标 agent 主机、Runtime 进程和心跳，再刷新自检" : "当前没有异常节点；离线先恢复目标 agent 主机、Runtime 进程和心跳",
+        panelTitle: "项目智能体节点",
+        tone: stats.abnormalNodes ? "orange" : "green",
+        action: "定位"
+      })}
+      ${jumpModuleCard({
+        title: "3 刷新自检",
+        metric: "profile",
+        detail: "执行器、远程 MCP、文件系统或 Git 能力修好后，点节点行“刷新自检”重新上报",
+        panelTitle: "项目智能体节点",
+        tone: "blue",
+        action: "看按钮"
+      })}
+      ${projectModuleCard({
+        pageId: "monitor",
+        title: "4 运行监控",
+        metric: stats.runningDispatches,
+        detail: "运行中异常先回执行监控看实时事件、派发状态和控制 ACK",
+        tone: stats.runningDispatches ? "blue" : "gray",
+        action: "看监控"
+      })}
+      ${jumpModuleCard({
+        title: "5 暂停恢复",
+        metric: "控制",
+        detail: "暂停、恢复和关停在节点行执行，用于冻结后续领活或让节点排空退出",
+        panelTitle: "项目智能体节点",
+        tone: "blue",
+        action: "看控制"
+      })}
+      ${jumpModuleCard({
+        title: "6 吊销切断",
+        metric: "凭据",
+        detail: "吊销或立即切断会废止 node token 和 MCP grant，属于高影响动作",
+        panelTitle: "项目智能体节点",
+        tone: "red",
+        action: "看风险"
+      })}
+    </div>
+    <div class="small muted">节点处置顺序：先恢复可派发能力，再刷新自检；运行中问题先看执行监控，确认影响面后再暂停、恢复、关停、吊销或立即切断。重新注册只用于新 agent 接入，不用于修复已有节点的普通自检问题。</div>
+  `, {wide: true});
+}
+
 function renderOrgAgentsSummary(nodes) {
   const stats = orgAgentStats(nodes);
   return panel("智能体运行总览", `
@@ -4139,6 +4197,7 @@ function renderProjectAgents() {
     renderProjectAgentsActionBoard(project, nodes),
     renderProjectAgentRegistrationFlow(project, nodes),
     renderProjectAgentExecutionLoop(project, nodes),
+    renderProjectAgentNodeGovernanceGuide(project, nodes),
     panel("项目智能体节点", `<div class="stack">${nodeNotice}${bodyHtml}</div>`,
       {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "project-nodes")}${toggle}`}),
     panel("注册 agent", renderJoinTokenSection({projectId: project.id, context: "project"}), {wide: true})

@@ -4441,12 +4441,13 @@ function runPendingTruncationCase() {
       agentDispatches: [{dispatchId: "adp1", taskGroupId: "tg1", status: "running"}]
     };
     const projectAgentHtml = probe.renderProjectAgentsWith(projectAgentsState, systemAdmin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
-    check("项目 AI 智能体页要先显示总览、操作看板、注册流程和运行闭环，再显示节点与注册入口",
+    check("项目 AI 智能体页要先显示总览、操作看板、注册流程、运行闭环和节点处置流程，再显示节点与注册入口",
       panelAt(projectAgentHtml, "项目智能体总览") >= 0
         && panelAt(projectAgentHtml, "项目智能体总览") < panelAt(projectAgentHtml, "项目智能体操作看板")
         && panelAt(projectAgentHtml, "项目智能体操作看板") < panelAt(projectAgentHtml, "Agent 注册流程")
         && panelAt(projectAgentHtml, "Agent 注册流程") < panelAt(projectAgentHtml, "Agent 接入与运行闭环")
-        && panelAt(projectAgentHtml, "Agent 接入与运行闭环") < panelAt(projectAgentHtml, "项目智能体节点")
+        && panelAt(projectAgentHtml, "Agent 接入与运行闭环") < panelAt(projectAgentHtml, "Agent 节点处置流程")
+        && panelAt(projectAgentHtml, "Agent 节点处置流程") < panelAt(projectAgentHtml, "项目智能体节点")
         && panelAt(projectAgentHtml, "项目智能体节点") < panelAt(projectAgentHtml, "注册 agent"),
       "项目级智能体入口仍可能藏在项目设置里，项目负责人不能直接按项目查看节点、注册流程、运行闭环和注册脚本");
     check("项目 AI 智能体页要提供注册脚本来源和节点控制入口",
@@ -4468,6 +4469,19 @@ function runPendingTruncationCase() {
         && /撤销 MCP grant，再等待节点 ACK/u.test(projectAgentHtml)
         && /data-menu="monitor"/u.test(projectAgentHtml),
       "项目智能体页仍只讲安装步骤，没有把集中 MCP、Skill 工作集、实时回送和服务端控制画成闭环");
+    check("项目 AI 智能体页要把节点查看、离线恢复、自检、监控和高影响控制串成处置流程",
+      /Agent 节点处置流程/u.test(projectAgentHtml)
+        && /先确认在线且准入为完整的节点数量/u.test(projectAgentHtml)
+        && /离线先恢复目标 agent 主机、Runtime 进程和心跳/u.test(projectAgentHtml)
+        && /执行器、远程 MCP、文件系统或 Git 能力修好后/u.test(projectAgentHtml)
+        && /点节点行“刷新自检”重新上报/u.test(projectAgentHtml)
+        && /运行中异常先回执行监控看实时事件、派发状态和控制 ACK/u.test(projectAgentHtml)
+        && /暂停、恢复和关停在节点行执行/u.test(projectAgentHtml)
+        && /吊销或立即切断会废止 node token 和 MCP grant/u.test(projectAgentHtml)
+        && /重新注册只用于新 agent 接入/u.test(projectAgentHtml)
+        && /data-jump-panel="项目智能体节点"/u.test(projectAgentHtml)
+        && /data-menu="monitor"/u.test(projectAgentHtml),
+      "项目 AI 智能体页没有把注册完成后的节点治理做成普通用户能顺着处理的流程");
     check("项目 AI 智能体页要说明加入令牌命令只显示一次且不能从列表还原",
       /安装命令和明文 join token 只在签发成功弹窗里显示一次/u.test(projectAgentHtml)
         && /不能还原明文 join token/u.test(projectAgentHtml)
