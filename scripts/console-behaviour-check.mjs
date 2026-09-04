@@ -1297,7 +1297,8 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         && settingsPanelAt("项目设置职责分区") < settingsPanelAt("项目配置生效流程")
         && settingsPanelAt("项目配置生效流程") < settingsPanelAt("项目基础配置")
         && settingsPanelAt("项目基础配置") < settingsPanelAt("AI 智能体")
-        && settingsPanelAt("AI 智能体") < settingsPanelAt("系统规则")
+        && settingsPanelAt("AI 智能体") < settingsPanelAt("规则治理概览")
+        && settingsPanelAt("规则治理概览") < settingsPanelAt("系统规则")
         && settingsPanelAt("系统规则") < settingsPanelAt("业务规则"),
       "项目设置页仍然把长表单直接推到前面，用户要向下找才知道仓库、规则和 agent 管理在哪里");
     check("项目设置页必须先说明配置、规则和 Agent 接入的职责分区",
@@ -1331,6 +1332,18 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         && /data-jump-panel="系统规则"/u.test(settingsHtml)
         && /data-jump-panel="业务规则"/u.test(settingsHtml),
       "项目设置看板只显示指标，没有接上基础配置、AI 智能体页面和规则面板的跳转");
+    check("项目设置页要在长规则列表前提供规则治理概览",
+      /规则治理概览/u.test(settingsHtml)
+        && /默认系统规则/u.test(settingsHtml)
+        && /项目级系统规则/u.test(settingsHtml)
+        && /已停用系统规则/u.test(settingsHtml)
+        && /已改写默认规则/u.test(settingsHtml)
+        && /系统规则先守执行安全、流程边界、证据和 AI-native 纪律/u.test(settingsHtml)
+        && /业务规则再表达项目业务约束/u.test(settingsHtml)
+        && /完整正文和保存动作仍在下方规则明细里/u.test(settingsHtml)
+        && /data-jump-panel="系统规则"/u.test(settingsHtml)
+        && /data-jump-panel="业务规则"/u.test(settingsHtml),
+      "项目设置页仍让用户直接进入长系统规则列表，没有先给规则来源、覆盖和停用状态的治理概览");
     check("没配仓库时要说清空着会怎样（而不是只剩一个「添加仓库」按钮）",
       /还没有配置仓库/.test(settingsText) && /落不了地|没有产出目标/.test(settingsText),
       "人分不清「这个项目没配」和「配置没加载出来」，也不知道空着会卡在哪一步");

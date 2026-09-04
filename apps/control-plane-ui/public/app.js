@@ -7706,6 +7706,45 @@ function renderProjectSettingsLifecycleGuide(project, repos, baselineData, defau
   `, {wide: true});
 }
 
+function renderProjectRuleGovernanceOverview(resolved) {
+  const systemRules = resolved.systemRules || [];
+  const businessRules = resolved.businessRules || [];
+  const systemDefaultRules = systemRules.filter((rule) => String(rule.source || "").split("+").includes("default")).length;
+  const systemProjectRules = systemRules.filter((rule) => ruleOwnedAtLayer(rule.source, "project")).length;
+  const systemDisabledRules = systemRules.filter((rule) => rule.enabled === false || (rule.status && rule.status !== "active")).length;
+  const systemRewrittenDefaults = systemRules.filter((rule) => {
+    const source = String(rule.source || "").split("+");
+    return source.includes("default") && source.includes("project");
+  }).length;
+  return panel("规则治理概览", `
+    <div class="module-grid action-grid">
+      ${summaryMetric("系统规则", systemRules.length, "执行安全、流程边界和 AI-native 纪律")}
+      ${summaryMetric("业务规则", businessRules.length, "项目自己的业务约束，可由任务组继续覆盖")}
+      ${summaryMetric("默认系统规则", systemDefaultRules, "来自系统内置规则集")}
+      ${summaryMetric("项目级系统规则", systemProjectRules, "本项目新增、停用或改写的系统规则")}
+      ${summaryMetric("已停用系统规则", systemDisabledRules, "停用后不进入后续派发")}
+      ${summaryMetric("已改写默认规则", systemRewrittenDefaults, "默认规则在项目层已有内容覆盖")}
+      ${jumpModuleCard({
+        title: "系统规则明细",
+        metric: systemRules.length,
+        detail: "查看、停用或改写执行纪律和安全边界",
+        panelTitle: "系统规则",
+        tone: systemRules.length ? "blue" : "red",
+        action: "看系统规则"
+      })}
+      ${jumpModuleCard({
+        title: "业务规则明细",
+        metric: businessRules.length,
+        detail: "新增或维护项目自己的业务约束",
+        panelTitle: "业务规则",
+        tone: businessRules.length ? "blue" : "gray",
+        action: "看业务规则"
+      })}
+    </div>
+    <div class="small muted">规则治理顺序：系统规则先守执行安全、流程边界、证据和 AI-native 纪律；业务规则再表达项目业务约束；任务组特殊要求继续在任务组详情覆盖。这里是概览，完整正文和保存动作仍在下方规则明细里。</div>
+  `, {wide: true});
+}
+
 function renderProjectSettings() {
   const project = currentProject();
   if (!project) return panel("项目设置", noVisibleProjectNotice(), {wide: true});
@@ -7790,6 +7829,7 @@ function renderProjectSettings() {
       ${roleSkillOverlayTable(projectRoleSkillOverlays(project.id), {showScope: true})}
       ${roleSkillOverlayForm({scope: "project", projectId: project.id, readOnly: !canEdit || archived})}
     `, {wide: true}),
+    rulesLoaded ? renderProjectRuleGovernanceOverview(resolved) : "",
     !rulesLoaded
       ? panel("规则配置", projConfigStatus === "failed"
         ? `<div class="notice warn-notice">暂时无法读取项目规则配置（配置接口这一次没取到：${esc(projConfigError || "原因未记下")}），已隐藏规则编辑器以避免误保存清空规则。请点击右上角刷新重试。</div>`
