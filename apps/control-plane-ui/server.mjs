@@ -898,6 +898,7 @@ function ruleFragmentsRejection(value) {
 // 否则"校验放过的"与"净化认得的"会分叉。
 const AGENT_STATUSES = ["active", "inactive"];
 const RULE_STATUSES = ["active", "draft", "disabled"];
+const REPOSITORY_CREDENTIAL_MODES = ["none", "account_password", "api_key"];
 
 function sanitizeRuleFragments(value) {
   if (!Array.isArray(value)) return [];
@@ -911,6 +912,77 @@ function sanitizeRuleFragments(value) {
     if (rule.enabled !== undefined) clean.enabled = rule.enabled !== false;
     return clean;
   });
+}
+
+function repositoryKey(repo = {}) {
+  return String(repo.id || repo.repositoryId || repo.url || "").trim();
+}
+
+function sanitizeRepositoryCredential(inputCredential = {}, mode, previousCredential = {}) {
+  if (mode === "account_password") {
+    const password = inputCredential.password !== undefined && inputCredential.password !== ""
+      ? String(inputCredential.password).slice(0, 8192)
+      : String(previousCredential.password || "");
+    return {
+      mode,
+      username: String(inputCredential.username || previousCredential.username || "").slice(0, 512),
+      ...(password ? {password} : {})
+    };
+  }
+  if (mode === "api_key") {
+    const apiKey = inputCredential.apiKey !== undefined && inputCredential.apiKey !== ""
+      ? String(inputCredential.apiKey).slice(0, 8192)
+      : String(previousCredential.apiKey || previousCredential.password || "");
+    return {mode, ...(apiKey ? {apiKey} : {})};
+  }
+  return {mode: "none"};
+}
+
+function sanitizeRepositoryConfigs(value, previous = []) {
+  if (!Array.isArray(value)) return [];
+  const previousByKey = new Map((previous || []).map((repo) => [repositoryKey(repo), repo]).filter(([key]) => key));
+  return value.slice(0, 200).filter((repo) => repo && typeof repo === "object").map((repo) => {
+    const key = repositoryKey(repo);
+    const previousRepo = previousByKey.get(key) || {};
+    const modeCandidate = String(repo.credentialMode || repo.credential?.mode || previousRepo.credentialMode || previousRepo.credential?.mode || "none");
+    const mode = REPOSITORY_CREDENTIAL_MODES.includes(modeCandidate) ? modeCandidate : "none";
+    const clean = {
+      id: String(repo.id || repo.repositoryId || "").slice(0, 128),
+      url: String(repo.url || "").slice(0, 2048),
+      defaultBranch: String(repo.defaultBranch || "main").slice(0, 256),
+      credentialMode: mode,
+      credential: sanitizeRepositoryCredential(repo.credential || repo, mode, previousRepo.credential || previousRepo)
+    };
+    return clean;
+  }).filter((repo) => repo.id || repo.url);
+}
+
+function redactRepositoryConfigs(value = []) {
+  if (!Array.isArray(value)) return [];
+  return value.map((repo) => {
+    if (!repo || typeof repo !== "object") return repo;
+    const credential = repo.credential || {};
+    const redacted = {...repo, credential: {...credential}};
+    if (redacted.credential.password) {
+      redacted.credential.password = "";
+      redacted.credential.passwordSet = true;
+    }
+    if (redacted.credential.apiKey) {
+      redacted.credential.apiKey = "";
+      redacted.credential.apiKeySet = true;
+    }
+    delete redacted.credentialSecretRef;
+    return redacted;
+  });
+}
+
+function redactProjectConfig(config = {}) {
+  if (!config || typeof config !== "object") return config;
+  return {...config, repositories: redactRepositoryConfigs(config.repositories)};
+}
+
+function publicProjectRecord(project = {}) {
+  return {...project, config: redactProjectConfig(project.config || {})};
 }
 
 function sanitizeMemberPermissions(value, fallback = ["project:view"]) {
@@ -1626,6 +1698,7 @@ function scopedStateForAccount(state, account, session) {
   cloned.authSessions = (state.authSessions || [])
     .filter((item) => isSystem || item.sessionId === session.sessionId)
     .map((item) => ({sessionId: item.sessionId, accountId: item.accountId, status: item.status, expiresAt: item.expiresAt, createdAt: item.createdAt, updatedAt: item.updatedAt}));
+  cloned.projects = (state.projects || []).map(publicProjectRecord);
   cloned.agentRuntimeNodes = (state.agentRuntimeNodes || []).map(publicAgentNode);
   cloned.agentJoinTokens = listAgentJoinTokens(state);
   // 系统账号此前拿到的是【原始账号记录】：里面有 passwordDigest（口令的 scrypt 哈希）和
@@ -6366,7 +6439,7 @@ async function handleApi(req, res) {
     const resolved = readableProjectOr403(req, state, projectConfigMatch[1]);
     if (resolved.denial) return json(res, resolved.denial.status, resolved.denial.payload);
     const project = resolved.project;
-    json(res, 200, {projectId: project.id, config: effectiveProjectConfig(project),
+    json(res, 200, {projectId: project.id, config: redactProjectConfig(effectiveProjectConfig(project)),
       configVersion: configLayerVersion(project.config)});
     return;
   }
@@ -6395,7 +6468,7 @@ async function handleApi(req, res) {
     if (unknownProjectDefaultRoles.length) return json(res, 400, defaultRoleRefusal(unknownProjectDefaultRoles));
     project.config = {
       ...(project.config || {}),
-      ...(body.repositories !== undefined ? {repositories: Array.isArray(body.repositories) ? body.repositories : []} : {}),
+      ...(body.repositories !== undefined ? {repositories: sanitizeRepositoryConfigs(body.repositories, project.config?.repositories || [])} : {}),
       ...(body.baselineData !== undefined ? {baselineData: Array.isArray(body.baselineData) ? body.baselineData : []} : {}),
       ...(body.businessRules !== undefined ? {businessRules: sanitizeRuleFragments(body.businessRules)} : {}),
       ...(body.systemRules !== undefined ? {systemRules: sanitizeRuleFragments(body.systemRules)} : {}),
@@ -6403,9 +6476,10 @@ async function handleApi(req, res) {
     };
     project.updatedAt = now();
     audit(state, guard.actor, "project_config_update", `Project:${project.id}`);
-    finishGuardedWrite(state, guard, 200, project.config);
+    const publicConfig = redactProjectConfig(project.config);
+    finishGuardedWrite(state, guard, 200, publicConfig);
     writeState(state);
-    json(res, 200, {projectId: project.id, config: project.config, configVersion: configLayerVersion(project.config)});
+    json(res, 200, {projectId: project.id, config: publicConfig, configVersion: configLayerVersion(project.config)});
     return;
   }
 
@@ -6415,7 +6489,7 @@ async function handleApi(req, res) {
     if (reader.status) return json(res, reader.status, reader.payload);
     const taskGroup = state.taskGroups.find((item) => item.id === taskGroupConfigMatch[1]);
     if (!taskGroup) return json(res, 404, {error: "task_group_not_found"});
-    json(res, 200, {taskGroupId: taskGroup.id, config: effectiveTaskGroupConfig(state, taskGroup),
+    json(res, 200, {taskGroupId: taskGroup.id, config: redactProjectConfig(effectiveTaskGroupConfig(state, taskGroup)),
       configVersion: configLayerVersion(taskGroup.configOverrides)});
     return;
   }

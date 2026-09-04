@@ -7278,12 +7278,27 @@ function renderMonitor() {
 // 是「按了看不到效果」的死动作。与 ruleRow 同规：输入加 readonly、删除按钮 readOnly 时干脆不渲染。
 function cfgRepoRow(repo = {}, readOnly = false) {
   const ro = readOnly ? "readonly" : "";
+  const disabled = readOnly ? "disabled" : "";
+  const credential = repo.credential || {};
+  const mode = repo.credentialMode || credential.mode || (repo.credentialSecretRef ? "api_key" : "none");
+  const username = repo.username || credential.username || "";
+  const password = repo.password || credential.password || "";
+  const apiKey = repo.apiKey || credential.apiKey || repo.credentialSecretRef || "";
+  const passwordPlaceholder = credential.passwordSet ? "已配置密码；留空保留原值" : "密码（账号密码模式）";
+  const apiKeyPlaceholder = credential.apiKeySet ? "已配置 API Key；留空保留原值" : "API Key / Token";
   return `
-    <div class="cfg-row" data-cfg-kind="repo">
+    <div class="cfg-row cfg-row-repo" data-cfg-kind="repo">
       <input name="repoId" placeholder="仓库 ID" value="${esc(repo.id || "")}" ${ro}>
       <input name="repoUrl" placeholder="仓库地址（git@... / https://...）" value="${esc(repo.url || "")}" ${ro}>
       <input name="repoBranch" placeholder="默认分支" value="${esc(repo.defaultBranch || "main")}" ${ro}>
-      <input name="repoCred" placeholder="凭证引用（如 env:AIMAC_REPO_TOKEN_X）" value="${esc(repo.credentialSecretRef || "")}" ${ro}>
+      <select name="repoCredentialMode" ${disabled}>
+        <option value="none"${mode === "none" ? " selected" : ""}>无凭据 / 公共仓库</option>
+        <option value="account_password"${mode === "account_password" ? " selected" : ""}>账号密码</option>
+        <option value="api_key"${mode === "api_key" ? " selected" : ""}>API Key / Token</option>
+      </select>
+      <input name="repoUsername" placeholder="账号（账号密码模式）" value="${esc(username)}" ${ro}>
+      <input name="repoPassword" type="password" placeholder="${esc(passwordPlaceholder)}" value="${esc(password)}" ${ro} autocomplete="new-password">
+      <input name="repoApiKey" type="password" placeholder="${esc(apiKeyPlaceholder)}" value="${esc(apiKey)}" ${ro} autocomplete="new-password">
       ${readOnly ? "" : `<button type="button" class="danger-button" data-action="cfg-del">删除</button>`}
     </div>
   `;
@@ -7495,7 +7510,7 @@ function renderProjectSettingsBoundaryGuide(project, repos, baselineData, defaul
       ${jumpModuleCard({
         title: "产出与基线",
         metric: `${repos.length}/${baselineData.length}`,
-        detail: "仓库、凭证引用和基线材料在“项目基础配置”维护",
+        detail: "仓库、访问凭据和基线材料在“项目基础配置”维护",
         panelTitle: "项目基础配置",
         tone: repos.length ? "blue" : "red",
         action: "看配置"
@@ -7548,7 +7563,7 @@ function renderProjectSettingsLifecycleGuide(project, repos, baselineData, defau
       ${jumpModuleCard({
         title: "1 产出落点",
         metric: `${repos.length}`,
-        detail: "先配置 Git 仓库和凭证引用，所有任务产出仍落到项目仓库",
+        detail: "先配置 Git 仓库和项目级访问凭据，所有任务产出仍落到项目仓库",
         panelTitle: "项目基础配置",
         tone: repos.length ? "blue" : "red",
         action: "看仓库"
@@ -7688,8 +7703,8 @@ function renderProjectSettings() {
       ${archivedNotice}
       ${readOnlyNotice}
       <form class="form-grid" data-form="project-config" data-project="${esc(project.id)}">
-        <div class="form-row"><label>仓库与凭证引用（凭证只存引用，不落明文）</label>
-          <div class="cfg-rows" data-cfg-list="proj-repos">${repos.map((repo) => cfgRepoRow(repo, Boolean(editDisabled))).join("")}${cfgEmpty(repos, "还没有配置仓库：执行方没有可提交的目标，产出会卡在「没有产出目标」而落不了地。点下面的「添加仓库」配一个（凭证只填引用名，不填明文）。")}</div>
+        <div class="form-row"><label>仓库与访问凭据（按项目保存，不使用全局环境变量）</label>
+          <div class="cfg-rows" data-cfg-list="proj-repos">${repos.map((repo) => cfgRepoRow(repo, Boolean(editDisabled))).join("")}${cfgEmpty(repos, "还没有配置仓库：执行方没有可提交的目标，产出会卡在「没有产出目标」而落不了地。点下面的「添加仓库」配置仓库地址，并按需要选择账号密码或 API Key。")}</div>
 
           <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="repo" data-target="proj-repos" ${editDisabled}>添加仓库</button></div>
         </div>
@@ -7978,7 +7993,13 @@ document.addEventListener("submit", async (event) => {
         id: rowEl.querySelector("input[name='repoId']")?.value?.trim() || "",
         url: rowEl.querySelector("input[name='repoUrl']")?.value?.trim() || "",
         defaultBranch: rowEl.querySelector("input[name='repoBranch']")?.value?.trim() || "main",
-        credentialSecretRef: rowEl.querySelector("input[name='repoCred']")?.value?.trim() || ""
+        credentialMode: rowEl.querySelector("select[name='repoCredentialMode']")?.value || "none",
+        credential: {
+          mode: rowEl.querySelector("select[name='repoCredentialMode']")?.value || "none",
+          username: rowEl.querySelector("input[name='repoUsername']")?.value?.trim() || "",
+          password: rowEl.querySelector("input[name='repoPassword']")?.value || "",
+          apiKey: rowEl.querySelector("input[name='repoApiKey']")?.value || ""
+        }
       })).filter((repo) => repo.id || repo.url);
       const baselineData = [...form.querySelectorAll("[data-cfg-kind='baseline']")].map((rowEl) => ({
         name: rowEl.querySelector("input[name='blName']")?.value?.trim() || "",

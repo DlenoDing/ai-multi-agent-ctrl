@@ -268,7 +268,7 @@
 
 ```json
 {
-  "repositories": [{"id": "...", "url": "...", "defaultBranch": "main", "credentialSecretRef": "env:AIMAC_REPO_TOKEN_xxx"}],
+  "repositories": [{"id": "...", "url": "...", "defaultBranch": "main", "credentialMode": "api_key", "credential": {"mode": "api_key", "apiKey": "project-scoped-token"}}],
   "baselineData": [{"name": "...", "locator": "git:docs/baseline/...", "digest": "sha256:..."}],
   "systemRules": [{"ruleId": "sys.time-semantics", "enabled": false}, {"ruleId": "sys.custom-1", "title": "...", "content": "..."}],
   "businessRules": [{"ruleId": "biz.acceptance", "title": "验收标准", "content": "..."}],
@@ -337,7 +337,7 @@
 - 人工审核（待确认问题列表：问题、AI 选项单选 + "不选择（自定义输入）"、确认输入框、提交；历史已答列表）
 - 人工指令（指令输入 + 类型选择；指令流水与执行结果）
 - 执行监控（会话/派发/执行事件流，中文状态）
-- 项目设置（仓库与凭证引用、基线数据、业务规则、默认角色与技能规则——按权限显示）
+- 项目设置（仓库与访问凭据、基线数据、业务规则、默认角色与技能规则——按权限显示）
 
 ### 6.3 中英映射字典（节选，实施时置于 `public/i18n-zh.js`，全量覆盖所有出现的枚举）
 

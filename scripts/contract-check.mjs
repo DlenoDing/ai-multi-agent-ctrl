@@ -5197,7 +5197,7 @@ function verifyHumanAndOrganizationContracts(output) {
         output.push("a project with no registered repository still dispatched work — its output silently falls back to the control plane's own repository, which the person never configured");
       }
       // 反向：登记了仓库就必须能派发，否则这条判据是把项目整个卡死。
-      // 【要按人真的走的那条路配】：界面上"项目设置 → 仓库与凭证引用"写的是 config.repositories，
+      // 【要按人真的走的那条路配】：界面上"项目设置 → 仓库与访问凭据"写的是 config.repositories，
       // 建项目接口写的也是它。这条对照原先直接设顶层 project.repositories —— 那个字段
       // 全仓没有任何写入点，于是"配好了就能派发"从来没被真正验过，而实际情况是：
       // 人在界面上加了仓库，挡他的那道判定一动不动（实测）。
@@ -10174,7 +10174,7 @@ function verifySeedLooksLikeSomethingTheProductMade(output) {
   // 记录上任何没被渲染的字段都会在人点一次"保存项目配置"之后悄悄消失。
   // 实测种子里的仓库带着一个 purpose 字段：全仓没人读、也不在任何 schema 里，
   // 却摆在数据里等着被一次无关的保存抹掉。字段要么有人读，要么别摆在那。
-  const formFields = new Set(["id", "url", "defaultBranch", "credentialSecretRef"]);
+  const formFields = new Set(["id", "url", "defaultBranch", "credentialMode", "credential", "credentialSecretRef"]);
   const strayed = [];
   for (const project of seed.projects || []) {
     const repos = [...(project.repositories || []), ...((project.config || {}).repositories || [])];
@@ -17564,7 +17564,7 @@ function verifyDocumentedEnvVarsAreRealKnobs(output) {
   // 文档里那个更长的名字用 includes 仍然命中不到、用它反过来查却会命中 —— 结果是
   // 被截短的改名整个逃掉，判据照绿（实测撞到）。
   // 注意这里【不举具体变量名为例】：本判据扫的就是 scripts/**，注释里写下的名字会把自己喂饱。
-  // 以下划线结尾的是【前缀】而不是完整变量名（文档里写成 env:AIMAC_REPO_TOKEN_X 这类示例，
+  // 以下划线结尾的是【前缀】而不是完整变量名（老文档曾写过按项目扩展的示例，
   // 真实变量由运维自己接后缀）。这类按前缀匹配，其余按词边界 —— 混作一谈会两头误报。
   const ghosts = [...documented]
     .filter(([name]) => (name.endsWith("_")
@@ -21352,7 +21352,7 @@ function verifyRecordSpecsHaveProducers(output) {
       "放置【决策】有记录（sessionPlacementDecisions，受 spec/session-placement-decision.schema.json 约束），"
       + "而策略本身没有独立记录：判定写在代码里（持续性信号那段），不落库",
     "git-automation-policy":
-      "未实现：今天约束 git 的是 RepositoryOutputTarget（允许路径/分支/凭证引用）＋推送被拒分类那条链，"
+      "未实现：今天约束 git 的是 RepositoryOutputTarget（允许路径/分支/项目级访问凭据）＋推送被拒分类那条链，"
       + "不是一份独立的自动化策略记录",
     "git-command":
       "未实现：git 动作today由 agent 侧执行并以 commitRefs/pushRefs＋检查点证据回传，"

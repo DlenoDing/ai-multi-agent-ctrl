@@ -63,7 +63,7 @@
     "directives": ["人工指令", "通过独立通道向系统下达结构化指令"],
     "monitor": ["执行监控", "会话、派发、控制通道与实时执行事件流"],
     "proj-agents": ["AI 智能体", "当前项目的 agent 节点、加入令牌、注册脚本与运行控制"],
-    "proj-settings": ["项目设置", "仓库与凭证引用、基线数据、规则与默认角色"]
+    "proj-settings": ["项目设置", "仓库与访问凭据、基线数据、规则与默认角色"]
   };
 
   function perspectiveOf(account) {

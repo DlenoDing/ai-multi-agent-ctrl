@@ -609,6 +609,13 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .cfg-row input, .cfg-row textarea { flex: 1; min-width: 120px; }
 .cfg-row textarea { min-height: 48px; }
 .cfg-row .danger-button { flex: 0 0 auto; }
+.cfg-row-repo {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.8fr) minmax(240px, 1.8fr) minmax(110px, 0.6fr) minmax(150px, 0.9fr);
+  align-items: start;
+}
+.cfg-row-repo input, .cfg-row-repo select { width: 100%; min-width: 0; }
+.cfg-row-repo .danger-button { width: max-content; }
 
 .status-line { display: flex; gap: 12px; flex-wrap: wrap; padding: 14px 24px 0; }
 .status-line .metric { min-width: 140px; }
@@ -616,6 +623,7 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 /* 关键字过滤输入 */
 .filter-input { min-width: 200px; }
 @media (max-width: 640px) { .filter-input { min-width: 130px; } }
+@media (max-width: 900px) { .cfg-row-repo { grid-template-columns: 1fr; } }
 
 /* 规则管理编辑器 */
 .rule-list { display: flex; flex-direction: column; gap: 10px; }
@@ -658,7 +666,7 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .rule-head .rule-id-input { flex: 0 0 auto; width: 200px; }
 .rule-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-sub); white-space: nowrap; }
 .rule-toggle input { accent-color: var(--brand-accent); }
-.rule-row textarea[name="ruleContent"] { min-height: 112px; }
+.rule-row textarea[name="ruleContent"] { width: 100%; min-height: 220px; }
 .rule-row .rule-content-view {
   font-size: 12px;
   color: var(--text-main);

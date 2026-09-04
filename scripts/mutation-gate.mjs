@@ -536,8 +536,8 @@ const MUTATIONS = [
     name: "只读成员的配置行不许摆删除按钮",
     file: APP,
     gate: "console",
-    from: "      <input name=\"repoCred\" placeholder=\"凭证引用（如 env:AIMAC_REPO_TOKEN_X）\" value=\"${esc(repo.credentialSecretRef || \"\")}\" ${ro}>\n      ${readOnly ? \"\" : `<button type=\"button\" class=\"danger-button\" data-action=\"cfg-del\">删除</button>`}",
-    to: "      <input name=\"repoCred\" placeholder=\"凭证引用（如 env:AIMAC_REPO_TOKEN_X）\" value=\"${esc(repo.credentialSecretRef || \"\")}\" ${ro}>\n      <button type=\"button\" class=\"danger-button\" data-action=\"cfg-del\">删除</button>",
+    from: "      <input name=\"repoApiKey\" type=\"password\" placeholder=\"${esc(apiKeyPlaceholder)}\" value=\"${esc(apiKey)}\" ${ro} autocomplete=\"new-password\">\n      ${readOnly ? \"\" : `<button type=\"button\" class=\"danger-button\" data-action=\"cfg-del\">删除</button>`}",
+    to: "      <input name=\"repoApiKey\" type=\"password\" placeholder=\"${esc(apiKeyPlaceholder)}\" value=\"${esc(apiKey)}\" ${ro} autocomplete=\"new-password\">\n      <button type=\"button\" class=\"danger-button\" data-action=\"cfg-del\">删除</button>",
     expect: "不许有「删除」按钮"
   },
   {

@@ -997,7 +997,8 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
       try {
         probe.setProjConfigVersion("cv_7");
         const repoRow = el("div", {dataset: {cfgKind: "repo"}}, [
-          el("input", {name: "repoId", value: "repo_a"}), el("input", {name: "repoBranch", value: "main"}), el("input", {name: "repoCred", value: "secret://a"})
+          el("input", {name: "repoId", value: "repo_a"}), el("input", {name: "repoBranch", value: "main"}),
+          el("select", {name: "repoCredentialMode", value: "api_key"}, []), el("input", {name: "repoApiKey", value: "secret://a"})
         ]);
         const form = el("form", {dataset: {form: "project-config", project: "p1"}}, [repoRow, el("button", {type: "submit"})]);
         await probe.submit({target: form, submitter: form.children[1], preventDefault: () => {}});
@@ -1338,7 +1339,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         + "同一屏的「仓库产出归属」列着它、状态是已推送，而这里催人再登记一遍");
     }
     check("项目设置页真的渲染出来了（不是空壳）",
-      settingsText.includes("仓库与凭证引用"), settingsText.slice(0, 120));
+      settingsText.includes("仓库与访问凭据"), settingsText.slice(0, 120));
     const settingsPanelAt = (title) => settingsHtml.indexOf(`<h2>${title}</h2>`);
     check("项目设置页先显示总览和操作看板，再进入基础配置与规则明细",
       settingsPanelAt("项目设置总览") >= 0
@@ -1649,7 +1650,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     `失败原因在屏幕上${failed.includes("503") ? "有" : "没有"}`);
   check("配置没取过与取失败要分开说，且都不许说「还没有配置」",
     /配置还没取回来/.test(unloaded) && !/还没有配置仓库/.test(unloaded) && !/还没有配置仓库/.test(failed),
-    `未取过时三块空态说的是：${(unloaded.match(/仓库与凭证引用[^添]*/u) || ["（没渲染出来）"])[0].slice(0, 60)}`);
+    `未取过时三块空态说的是：${(unloaded.match(/仓库与访问凭据[^添]*/u) || ["（没渲染出来）"])[0].slice(0, 60)}`);
   // 上面两条是【渲染分支】：它们直接设置状态，因此证明不了"真失败时真的会置成 failed"。
   // 少了这一条，把置位逻辑改成永远 unloaded 也照样全绿（变异验出来的）。
   // 接线只能从源码看：取配置那一段之后必须有一处把状态置成 failed。按语句边界切，不按行数猜。
@@ -7596,8 +7597,8 @@ await runCodedApiErrorCase();
       "/api/orgs": {organizations: []},
       "/api/system/overview": {server: {}, runtime: {}},
       "/api/projects/prj_control_plane/config": {config: {
-        repositories: [{repositoryId: "repo_main", url: "https://example.invalid/repo.git", defaultBranch: "main",
-          credentialRef: "env:GIT_TOKEN"}],
+        repositories: [{id: "repo_main", url: "https://example.invalid/repo.git", defaultBranch: "main",
+          credentialMode: "api_key", credential: {mode: "api_key", apiKey: "fixture-token"}}],
         baselineData: [{name: "订单基线", locator: "git:baseline/orders.json"}],
         businessRules: [{ruleId: "br_1", title: "对外接口必须有中文错误信息", content: "…", status: "active"}],
         systemRules: [], defaultRoles: ["implementer"]}, configVersion: 3}
