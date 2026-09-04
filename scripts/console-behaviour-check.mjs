@@ -4324,14 +4324,25 @@ function runPendingTruncationCase() {
     check("成员管理页先显示总览和列表，再显示创建表单",
       panelAt(membersHtml, "成员管理总览") >= 0
         && panelAt(membersHtml, "成员管理总览") < panelAt(membersHtml, "成员管理操作看板")
-        && panelAt(membersHtml, "成员管理操作看板") < panelAt(membersHtml, "成员列表")
+        && panelAt(membersHtml, "成员管理操作看板") < panelAt(membersHtml, "成员授权流程")
+        && panelAt(membersHtml, "成员授权流程") < panelAt(membersHtml, "成员列表")
         && panelAt(membersHtml, "成员列表") < panelAt(membersHtml, "创建成员"),
-      "成员管理页没有把邀请、停用、注销、授权边界和创建入口排成可点击操作看板");
+      "成员管理页没有把邀请、停用、注销、授权边界和创建入口排成可点击操作看板与流程图");
     check("成员管理操作看板要提供成员列表、创建成员和说明的跳转入口",
       /data-jump-panel="成员列表"/u.test(membersHtml)
         && /data-jump-panel="创建成员"/u.test(membersHtml)
         && /data-jump-panel="说明"/u.test(membersHtml),
       "成员管理操作看板只显示指标，没有接上成员列表、创建成员和说明面板的跳转");
+    check("成员授权流程要说明组织成员、项目授权和任务组权限边界",
+      /成员授权流程/u.test(membersHtml)
+        && /创建成员只完成账号入网，不等于已经能参与某个项目/u.test(membersHtml)
+        && /项目协作授权在「组织管理」→「项目列表」→「项目成员授权」里完成/u.test(membersHtml)
+        && /任务组控制和人工审核通过项目角色落位/u.test(membersHtml)
+        && /回项目概览检查任务组、AI 智能体、监控和审核入口是否可用/u.test(membersHtml)
+        && /成员管理只处理组织账号生命周期/u.test(membersHtml)
+        && /data-menu="org-projects"/u.test(membersHtml)
+        && /data-menu="proj-overview"/u.test(membersHtml),
+      "成员管理页没有把账号入网、项目授权、任务组权限和回项目操作讲成闭环");
     const agentsHtml = probe.renderOrgAgentsWith(overviewState, orgAdmin, [
       {nodeId: "node1", nodeName: "节点", status: "online", display: {health: "ok", currentDispatchIds: ["adp1"]}, lastHeartbeatAt: "2099-01-01T00:00:00Z"}
     ]).replace(/<!--[\s\S]*?-->/gu, "");

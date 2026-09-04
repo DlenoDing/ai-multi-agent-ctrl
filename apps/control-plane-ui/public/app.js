@@ -3297,6 +3297,65 @@ function renderOrgMembersActionBoard(members) {
   `, {wide: true});
 }
 
+function renderOrgMembersLifecycleGuide(members) {
+  const stats = memberStats(members);
+  const activeProjects = assignableProjects().length;
+  return panel("成员授权流程", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "1 邀请成员",
+        metric: members.length || "创建",
+        detail: "创建成员只完成账号入网，不等于已经能参与某个项目",
+        panelTitle: "创建成员",
+        tone: members.length ? "blue" : "orange",
+        action: "创建成员"
+      })}
+      ${jumpModuleCard({
+        title: "2 等待登录",
+        metric: stats.invitedMembers,
+        detail: stats.invitedMembers ? "待接受邀请需要重发或等待首次登录" : "当前没有待接受邀请",
+        panelTitle: "成员列表",
+        tone: stats.invitedMembers ? "orange" : "green",
+        action: "看邀请"
+      })}
+      ${projectModuleCard({
+        pageId: "org-projects",
+        title: "3 分配项目",
+        metric: activeProjects,
+        detail: "项目协作授权在「组织管理」→「项目列表」→「项目成员授权」里完成",
+        tone: activeProjects ? "blue" : "orange",
+        action: "去授权"
+      })}
+      ${projectModuleCard({
+        pageId: "org-projects",
+        title: "4 授任务组角色",
+        metric: "角色",
+        detail: "任务组控制和人工审核通过项目角色落位，不能只写在组织成员权限里",
+        tone: "blue",
+        action: "看角色"
+      })}
+      ${projectModuleCard({
+        pageId: "proj-overview",
+        title: "5 回项目操作",
+        metric: "项目",
+        detail: "授权后回项目概览检查任务组、AI 智能体、监控和审核入口是否可用",
+        tone: activeProjects ? "blue" : "gray",
+        action: "进项目"
+      })}
+      ${jumpModuleCard({
+        title: "6 审计收口",
+        metric: stats.suspendedMembers + stats.retiredMembers,
+        detail: "停用、注销和重发邀请都保留审计；异常账号先在成员列表处理",
+        panelTitle: "成员列表",
+        tone: stats.suspendedMembers + stats.retiredMembers ? "orange" : "green",
+        action: "看成员"
+      })}
+    </div>
+    <div class="small muted">成员管理只处理组织账号生命周期；项目协作、Agent 操作、任务组控制和人工审核权限必须回到具体项目和任务组作用域。</div>
+    <div class="small muted">推荐闭环：邀请成员 → 首次登录 → 项目成员授权 → 回项目检查按钮是否出现 → 后续在成员列表停用、注销或重发邀请。</div>
+  `, {wide: true});
+}
+
 function renderOrgMembers() {
   const members = (orgMembers || []).filter((account) => account.accountType !== "service_account");
   const memberRows = members.map((account) => {
@@ -3336,6 +3395,7 @@ function renderOrgMembers() {
   return [
     renderOrgMembersSummary(members),
     renderOrgMembersActionBoard(members),
+    renderOrgMembersLifecycleGuide(members),
     panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows,
       {emptyText: listEmptyText("成员列表")}), {wide: true, headerSide: filterInput("按姓名、邮箱过滤…", "members")}),
     panel("创建成员", `
