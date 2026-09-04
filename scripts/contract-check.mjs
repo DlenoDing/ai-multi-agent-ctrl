@@ -508,7 +508,7 @@ const PREDICATE_NOT_PROBED_CEILING = 1;
 const ARCHIVED_PROJECT_WRITE_POLICY = {
   task_group_create: {blocked: "建新工作。归档前那次逐个关闭白做了，新组也不在任何人的视野里"},
   agent_join_token_create: {blocked: "接入新的干活能力：agent 会绑在一个不能再建任何工作的项目上"},
-  agent_create: {blocked: "同上，逻辑智能体那一侧"},
+  agent_create: {blocked: "项目级逻辑智能体会往终结态项目里接入新的干活能力；组织级逻辑智能体按组织作用域，不在归档项目策略里"},
   agent_join_token_revoke: {allowed: "收尾：归档之后还得撤得掉已经发出去的票"},
   agent_node_revoke: {allowed: "收尾：把还挂着的节点摘掉"},
   agent_control_command_create: {allowed: "收尾：停掉还在跑的东西这件事，任何时候都不该被挡"},
@@ -9032,6 +9032,13 @@ function verifyArchivedProjectWritePolicyIsAnswered(output) {
   const actions = [...new Set([...server.matchAll(
     /beginGuardedWrite\(req, state, ("[a-z_]+"|`[^`]+`), [^,]+, projectScope\(/gu)]
     .map((hit) => hit[1].replace(/["`]/gu, "")))];
+  if (
+    server.includes("const agentGuardScope = requestedProjectId")
+    && server.includes("? projectScope(requestedProjectId)")
+    && /beginGuardedWrite\(req, state, "agent_create", [^,]+, agentGuardScope\)/u.test(server)
+  ) {
+    actions.push("agent_create");
+  }
   if (actions.length < 8) {
     output.push(`以项目为作用域的写动作只提取到 ${actions.length} 个 —— 提取脱节，本条在空转`);
     return;
@@ -10131,7 +10138,7 @@ function verifyWholesaleFieldListMatchesTheWrites(output) {
   const listed = new Set((/const REPLACING_CONFIG_FIELDS = \[([^\]]+)\]/u.exec(server)?.[1] || "")
     .split(",").map((item) => item.replace(/["\s]/gu, "")).filter(Boolean));
   const replaced = new Set([...server.matchAll(
-    /\.\.\.\(body\.(\w+) !== undefined \? \{\1: (?:Array\.isArray|sanitizeRuleFragments)/gu)].map((hit) => hit[1]));
+    /\.\.\.\(body\.(\w+) !== undefined \? \{\1: (?:Array\.isArray|sanitizeRuleFragments|sanitizeRepositoryConfigs)/gu)].map((hit) => hit[1]));
   if (listed.size < 4 || replaced.size < 4) {
     output.push(`清单 ${listed.size} 项 / 源码里认出 ${replaced.size} 处整份替换 —— 提取脱节，本条在空转`);
     return;
@@ -11547,7 +11554,13 @@ function verifyGatesDoNotCloneFromTheNetwork(output) {
 function verifyWholesaleConfigWritesArePreconditioned(output) {
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8")
     .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
-  const writes = [...server.matchAll(/\{(\w+): Array\.isArray\(body\.(\w+)\) \? body\.\2 : \[\]\}/gu)];
+  const writes = [...server.matchAll(/\.\.\.\(body\.(\w+) !== undefined \? \{\1: ([^}]+)\} : \{\}\)/gu)]
+    .filter((hit) => {
+      const expression = hit[2];
+      return expression.includes(`Array.isArray(body.${hit[1]})`)
+        || expression.includes(`sanitizeRuleFragments(body.${hit[1]})`)
+        || expression.includes(`sanitizeRepositoryConfigs(body.${hit[1]},`);
+    });
   // 提取形状与代码脱节时必须报出来：第一版正则按 `X = Array.isArray(...)` 写，
   // 而真实写法是对象展开，于是扫出 0 处 —— 那会被读成"没有这种写入点"。
   if (writes.length < 6) {

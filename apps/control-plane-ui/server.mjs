@@ -2404,7 +2404,8 @@ function hasPermission(state, actor, requiredPermission, resourceScope) {
 function directPermissionApplies(account, permission, requiredPermission, resourceScope = {}) {
   if (isSystemAccount(account)) return true;
   if (resourceScope.resourceType === "organization") {
-    return account.organizationId === resourceScope.resourceId && permission.startsWith("org:");
+    return account.organizationId === resourceScope.resourceId
+      && (permission.startsWith("org:") || permission === "agent:activate");
   }
   // Organization admins manage every resource in their own organization; the org-boundary
   // gate in hasPermission has already confirmed the resource belongs to their organization.
@@ -4473,7 +4474,8 @@ async function handleApi(req, res) {
       json(res, denial.status, denial.payload);
       return;
     }
-    const guard = beginGuardedWrite(req, state, "agent_activation_update", `AgentNode:${agent.id}`, agent.projectId ? projectScope(agent.projectId) : {resourceType: "project", resourceId: "prj_control_plane"});
+    const guard = beginGuardedWrite(req, state, "agent_activation_update", `AgentNode:${agent.id}`,
+      agent.projectId ? projectScope(agent.projectId) : {resourceType: "organization", resourceId: agent.organizationId || DEFAULT_ORGANIZATION_ID});
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
@@ -4495,7 +4497,15 @@ async function handleApi(req, res) {
 
   if (req.method === "POST" && url.pathname === "/api/agents") {
     if (requireBodyFields(res, body, ["role"], "agent_role_required")) return;
-    const guard = beginGuardedWrite(req, state, "agent_create", `AgentNode:${body.role || "custom"}`, projectScope(body.projectId || "prj_control_plane"));
+    const authenticated = accountFromRequest(req, state);
+    if (!authenticated) return json(res, 401, {error: "auth_required"});
+    const requestedProjectId = String(body.projectId || "").trim();
+    const requestedProject = requestedProjectId ? state.projects.find((item) => item.id === requestedProjectId) : null;
+    if (requestedProjectId && !requestedProject) return json(res, 404, {error: "project_not_found"});
+    const agentGuardScope = requestedProjectId
+      ? projectScope(requestedProjectId)
+      : {resourceType: "organization", resourceId: authenticated.account.organizationId || DEFAULT_ORGANIZATION_ID};
+    const guard = beginGuardedWrite(req, state, "agent_create", `AgentNode:${body.role || "custom"}`, agentGuardScope);
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
@@ -4510,7 +4520,7 @@ async function handleApi(req, res) {
       return json(res, 400, {error: "agent_role_not_registered", unknownRoles: unknownAgentRoles, supported: REGISTERED_OWNER_ROLES,
         message: `智能体角色「${unknownAgentRoles.join("、")}」不在已登记的执行角色里 —— 可用：${REGISTERED_OWNER_ROLES.join("、")}`});
     }
-    const agentProject = (state.projects || []).find((item) => item.id === (body.projectId || "prj_control_plane"));
+    const agentProject = requestedProject || (requestedProjectId ? null : undefined);
     if (agentProject?.status === "archived") {
       return json(res, 409, {error: "project_archived",
         message: "该项目已归档，不能再往里接入智能体。要继续这条线，请先另建一个项目"});
@@ -4543,9 +4553,9 @@ async function handleApi(req, res) {
       status: agentStatus,
       trustScore,
       capacity: agentStatus === "inactive" ? "standby" : "ready",
-      projectId: body.projectId,
-      organizationId: (body.projectId ? state.projects.find((item) => item.id === body.projectId)?.organizationId : null)
-        || accountFromRequest(req, state)?.account?.organizationId
+      projectId: requestedProjectId || undefined,
+      organizationId: (requestedProjectId ? requestedProject?.organizationId : null)
+        || authenticated.account.organizationId
         || DEFAULT_ORGANIZATION_ID,
       roleSkillRef: body.roleSkillRef,
       createdAt: now(),

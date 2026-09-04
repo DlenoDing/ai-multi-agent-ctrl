@@ -1175,9 +1175,17 @@ async function loadPage() {
       orgMembers = membersResult.members || [];
       state = projectState;
     } else if (page === "org-agents") {
-      const [agentsResult, projectState] = await Promise.all([api("/api/org/agents"), fetchState("projects")]);
+      const [agentsResult, projectState, skillRegistry] = await Promise.all([
+        api("/api/org/agents"),
+        fetchState("projects"),
+        api("/api/skill-registry").catch(() => ({roleSkillIndex: [], roleSkillOverlays: []}))
+      ]);
       orgAgentNodes = agentsResult.agentRuntimeNodes || [];
-      state = projectState;
+      state = {
+        ...projectState,
+        roleSkillIndex: skillRegistry.roleSkillIndex || [],
+        roleSkillOverlays: skillRegistry.roleSkillOverlays || []
+      };
     } else if (page === "org-projects") {
       const [projectState, membersResult] = await Promise.all([fetchState("projects"), api("/api/org/members")]);
       state = projectState;
@@ -1188,11 +1196,16 @@ async function loadPage() {
       loadPendingConfirmCount();
     } else if (page === "proj-members") {
       const shouldLoadGrantDirectory = hasPerm("project:grant");
-      const [tasksState, membersResult] = await Promise.all([
+      const [tasksState, projectState, membersResult] = await Promise.all([
         fetchState("tasks", {projectId: currentProjectId}),
+        fetchState("projects", {projectId: currentProjectId}),
         shouldLoadGrantDirectory ? api("/api/org/members").catch(() => ({members: []})) : Promise.resolve({members: []})
       ]);
-      state = tasksState;
+      state = {
+        ...tasksState,
+        accessGrants: projectState.accessGrants || [],
+        accounts: projectState.accounts || []
+      };
       orgMembers = membersResult.members || [];
       ensureProjectSelection();
     } else if (page === "tg") {
@@ -1240,15 +1253,18 @@ async function loadPage() {
       ensureProjectSelection();
       ensureExecScope();
     } else if (page === "proj-agents") {
-      const [tasksState, runtimeState] = await Promise.all([
+      const [tasksState, runtimeState, skillRegistry] = await Promise.all([
         fetchState("tasks", {projectId: currentProjectId}),
-        fetchState("runtime", {projectId: currentProjectId})
+        fetchState("runtime", {projectId: currentProjectId}),
+        api("/api/skill-registry").catch(() => ({roleSkillIndex: [], roleSkillOverlays: []}))
       ]);
       state = {
         ...tasksState,
         agentRuntimeNodes: runtimeState.agentRuntimeNodes || [],
         agentJoinTokens: runtimeState.agentJoinTokens || [],
-        agentDispatches: runtimeState.agentDispatches || []
+        agentDispatches: runtimeState.agentDispatches || [],
+        roleSkillIndex: skillRegistry.roleSkillIndex || [],
+        roleSkillOverlays: skillRegistry.roleSkillOverlays || []
       };
       ensureProjectSelection();
     } else if (page === "proj-settings") {
@@ -3410,6 +3426,68 @@ function projectAgentStats(projectId = currentProjectId, nodes = projectAgentNod
   return {aliveNodes, onlineNodes, busyNodes, runningDispatches, abnormalNodes, liveTokens};
 }
 
+function orgScopedAgents() {
+  const orgId = currentAccount?.organizationId || DEFAULT_ORGANIZATION_ID;
+  return (state.agents || []).filter((agent) => (agent.organizationId || DEFAULT_ORGANIZATION_ID) === orgId && !agent.projectId);
+}
+
+function projectScopedAgents(projectId) {
+  const project = (state.projects || []).find((item) => item.id === projectId);
+  const orgId = project?.organizationId || currentAccount?.organizationId || DEFAULT_ORGANIZATION_ID;
+  return (state.agents || []).filter((agent) =>
+    (agent.projectId === projectId) || (!agent.projectId && (agent.organizationId || DEFAULT_ORGANIZATION_ID) === orgId));
+}
+
+function agentScopeText(agent) {
+  return agent.projectId
+    ? `项目级：${projectNameOf(agent.projectId)}`
+    : `组织级：${(state.organizations || []).find((org) => org.orgId === agent.organizationId)?.name || agent.organizationId || "当前组织"}`;
+}
+
+function agentProfileRows(agents, {showScope = true} = {}) {
+  return agents.map((agent) => row([
+    `<strong>${esc(agent.name || agent.id)}</strong><div class="small muted mono">${esc(agent.id)}</div>`,
+    esc(t(agent.role)),
+    `<span class="mono">${esc(agent.model || "auto_best")}</span>`,
+    showScope ? esc(agentScopeText(agent)) : esc(agent.projectId ? "项目级" : "组织级"),
+    statusBadge("agent", agent.status),
+    {v: Number.isFinite(Number(agent.trustScore)) ? `${Math.round(Number(agent.trustScore) * 100)}%` : "-", c: "num"},
+    agent.roleSkillRef ? `<span class="mono">${esc(agent.roleSkillRef)}</span>` : "-",
+    hasPerm("agent:activate")
+      ? `<button class="${agent.status === "active" ? "danger-button" : "secondary-button"}" data-action="agent-activate" data-agent="${esc(agent.id)}">${agent.status === "active" ? "停用档案" : "启用档案"}</button>`
+      : "-"
+  ])).join("");
+}
+
+function modelOptionsHtml() {
+  const common = ["auto_best", "auto_fast", "cost_aware", "gpt-5.5", "gpt-5.6-sol",
+    "claude-sonnet-4.5", "claude-opus-4.1", "gemini-2.5-pro", "gemini-2.5-flash",
+    "grok-4", "deepseek-v3.1", "deepseek-r1"];
+  const ids = [...common, ...(state.modelCapabilities || []).map((profile) => profile.modelId)].filter(Boolean);
+  return [...new Set(ids)].map((id) => `<option value="${esc(id)}">${esc(t(id) || id)}</option>`).join("");
+}
+
+function renderAgentProfileForm({projectId = "", title = "创建 Agent 档案", readOnly = false} = {}) {
+  if (readOnly) return `<div class="notice warn-notice">当前账号没有智能体管理权限，只能查看 Agent 档案。</div>`;
+  return `
+    <form class="form-grid" data-form="agent-create">
+      ${projectId ? `<input type="hidden" name="projectId" value="${esc(projectId)}">` : ""}
+      <div class="form-row-inline">
+        <div class="form-row"><label>${esc(title)}名称</label><input name="name" placeholder="例如：后端实现 Agent"></div>
+        <div class="form-row"><label>执行角色</label><input name="role" list="agent-role-options" required placeholder="例如：implementer">
+          <datalist id="agent-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
+        <div class="form-row"><label>默认模型</label><input name="model" list="agent-model-options" value="auto_best" placeholder="auto_best 或实际模型 ID">
+          <datalist id="agent-model-options">${modelOptionsHtml()}</datalist></div>
+        <div class="form-row"><label>信任分</label><input name="trustScore" type="number" step="0.01" min="0" max="1" value="0.85"></div>
+      </div>
+      <div class="form-row"><label>角色 Skill 引用（可选）</label><input name="roleSkillRef" list="agent-role-skill-options" placeholder="默认使用技能源内匹配角色">
+        ${roleSkillChoiceList("agent-role-skill-options")}</div>
+      <div class="notice">${projectId ? "项目级 Agent 只服务当前项目；任务组派发时可同时调配当前项目级 Agent 和组织级 Agent。" : "组织级 Agent 可被本组织内项目调配；项目有特殊要求时再在项目页创建项目级 Agent。"}</div>
+      <button class="primary-button" type="submit">${esc(title)}</button>
+    </form>
+  `;
+}
+
 function projectAgentCards(nodes, canControlNodes, options = {}) {
   return nodes.length ? `
     <div class="agent-cards">
@@ -3765,6 +3843,7 @@ function renderOrgAgentsLifecycleGuide(nodes) {
 
 function renderOrgAgents() {
   const nodes = orgAgentNodes;
+  const scopedAgents = orgScopedAgents();
   const toggle = `
     <div class="button-row">
       <button class="${agentViewMode === "table" ? "primary-button" : "secondary-button"}" data-action="agent-view-mode" data-mode="table">列表视图</button>
@@ -3808,6 +3887,14 @@ function renderOrgAgents() {
     renderOrgAgentsActionBoard(nodes),
     renderOrgAgentsBoundaryGuide(),
     renderOrgAgentsLifecycleGuide(nodes),
+    panel("组织级 Agent 档案", `
+      <div class="stack">
+        <div class="notice">组织级 Agent 是可被本组织内项目调配的角色能力档案，不等于已经在线的运行时节点。节点注册仍需要进入具体项目签发一次性 join token。</div>
+        ${table(["档案", "角色", "默认模型", "作用域", "状态", {label: "信任分", c: "num"}, "Skill", "操作"],
+          agentProfileRows(scopedAgents), {emptyText: "当前组织还没有组织级 Agent 档案。可先创建通用角色档案，项目特殊角色再到项目页创建。"})}
+        ${renderAgentProfileForm({title: "创建组织级 Agent 档案", readOnly: !hasPerm("agent:activate")})}
+      </div>
+    `, {wide: true, headerSide: filterInput("按档案、角色、模型过滤…", "org-agent-profiles")}),
     panel("智能体节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "org-nodes")}${toggle}`}),
     panel("加入令牌审计", renderJoinTokenSection({auditOnly: true, context: "org"}), {wide: true})
   ].join("");
@@ -3917,6 +4004,7 @@ function renderProjectAgents() {
   const project = currentProject();
   if (!project) return panel("AI 智能体", noVisibleProjectNotice(), {wide: true});
   const nodes = projectAgentNodes(project.id);
+  const scopedAgents = projectScopedAgents(project.id);
   const canControlNodes = hasPerm("agent:activate");
   const preferOrgGovernance = perspectiveOf(currentAccount) === "org";
   const toggle = `
@@ -3955,6 +4043,14 @@ function renderProjectAgents() {
     renderProjectAgentScriptHub(project, nodes),
     renderProjectAgentExecutionLoop(project, nodes),
     renderProjectAgentNodeGovernanceGuide(project, nodes),
+    panel("可调配 Agent 档案", `
+      <div class="stack">
+        <div class="notice">任务组执行时，总控可在当前项目级 Agent 和本组织级 Agent 中选择合适角色；项目级档案只服务当前项目，组织级档案可跨本组织项目复用。</div>
+        ${table(["档案", "角色", "默认模型", "作用域", "状态", {label: "信任分", c: "num"}, "Skill", "操作"],
+          agentProfileRows(scopedAgents), {emptyText: "当前项目还没有可调配 Agent 档案。可在这里创建项目级档案，或到组织页创建组织级档案。"})}
+        ${renderAgentProfileForm({projectId: project.id, title: "创建项目级 Agent 档案", readOnly: !hasPerm("agent:activate")})}
+      </div>
+    `, {wide: true, headerSide: filterInput("按档案、角色、模型过滤…", "project-agent-profiles")}),
     panel("项目智能体节点", `<div class="stack">${nodeNotice}${bodyHtml}</div>`,
       {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "project-nodes")}${toggle}`}),
     panel("注册 agent", renderJoinTokenSection({projectId: project.id, context: "project"}), {wide: true})

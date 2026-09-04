@@ -4480,7 +4480,7 @@ const MUTATIONS = [
     // 红在别处（实测）。这里要证的是"账本漏一条就会被抓到"。
     file: "scripts/contract-check.mjs",
     check: "verifyArchivedProjectWritePolicyIsAnswered",
-    from: '  agent_create: {blocked: "同上，逻辑智能体那一侧"},',
+    from: '  agent_create: {blocked: "项目级逻辑智能体会往终结态项目里接入新的干活能力；组织级逻辑智能体按组织作用域，不在归档项目策略里"},',
     to: "",
     expect: "没有回答「项目归档之后还让不让做」"
   },
@@ -9965,8 +9965,8 @@ const MUTATIONS = [
     name: "整份替换的提取形状失效必须报空转（不得静静少查）",
     file: "scripts/contract-check.mjs",
     check: "verifyWholesaleConfigWritesArePreconditioned",
-    from: "const writes = [...server.matchAll(/\\{(\\w+): Array\\.isArray\\(body\\.(\\w+)\\) \\? body\\.\\2 : \\[\\]\\}/gu)];",
-    to: "const writes = [...server.matchAll(/\\{(\\w+): ArrayX\\.isArray\\(body\\.(\\w+)\\) \\? body\\.\\2 : \\[\\]\\}/gu)];",
+    from: "const writes = [...server.matchAll(/\\.\\.\\.\\(body\\.(\\w+) !== undefined \\? \\{\\1: ([^}]+)\\} : \\{\\}\\)/gu)]",
+    to: "const writes = [...server.matchAll(/\\.\\.\\.\\(bodyX\\.(\\w+) !== undefined \\? \\{\\1: ([^}]+)\\} : \\{\\}\\)/gu)]",
     expect: "只提取到 0 处"
   },
   {

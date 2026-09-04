@@ -1269,7 +1269,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         check("配置编辑器点击探针要真的能插行（repo）", false, `夹具没插出 repo 行（${repoRows}）—— 下面那条什么也没验`);
       } else {
         await cfgProbe.click({target: mkButton("business"), preventDefault: () => {}});
-        const extra = (list()?.innerHTML.match(/class="cfg-row"/gu) || []).length - 1;
+        const extra = (list()?.innerHTML.match(/class="cfg-row/gu) || []).length - 1;
         check("认不出的 kind 不许插一行保存时会被丢掉的行", extra === 0, `未知 kind 插了 ${extra} 行 —— 人填了保存就丢`);
       }
     }
@@ -1473,8 +1473,8 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     return String(emptyRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
   };
   const asSystem = renderFor("system_admin");
-  check("全新部署时，系统管理员看到的是他自己能做的下一步（而不是去找别人）",
-    /创建项目（系统级）/.test(asSystem) && !/请联系组织管理员/.test(asSystem),
+  check("全新部署时，系统管理员看到的是系统侧能做的下一步（而不是去找成员管理员）",
+    /组织管理/u.test(asSystem) && /初始组织管理员/u.test(asSystem) && !/请联系组织管理员/.test(asSystem),
     `系统管理员看到：${(asSystem.match(/当前账号暂无可见项目。[^ ]*/u) || ["（没有空态提示）"])[0]}`);
   const asOrgAdmin = renderFor("org_admin");
   check("组织管理员看到的是「项目列表」入口，而不是去找组织管理员（他自己就是）",
@@ -1611,21 +1611,21 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     accessGrants: [], agentJoinTokens: [], taskGroups: [], truncatedCollections: [], fleet: {online: 0, total: 0}
   };
   const pickerAdmin = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
-  pickerProbe.renderFullPageWith(pickerState, pickerAdmin, "p1", "sys-accounts");
+  pickerProbe.renderFullPageWith(pickerState, pickerAdmin, "p1", "proj-members");
   // 只看【下拉】：账号列表那张表本来就该把已注销的账号列出来（人要看得到它被注销了），
   // 搜整页会把那张表也算进去 —— 第一版就是这么误报的。
   const pickerHtml = String(pickerRoot.innerHTML || "");
   const selects = pickerHtml.match(/<select[\s\S]*?<\/select>/gu) || [];
   const selectText = selects.join("\n");
   check("授权下拉里列得出在用账号（否则下面那条在空转）",
-    selects.length >= 2 && selectText.includes("在用探针账号"),
-    `渲染出的账号与授权页里只有 ${selects.length} 个下拉、且找不到在用账号`);
-  check("已注销的账号不出现在「账号与授权」页的下拉里",
+    selects.length >= 1 && selectText.includes("在用探针账号"),
+    `渲染出的项目成员页里只有 ${selects.length} 个下拉、且找不到在用账号`);
+  check("已注销的账号不出现在项目成员授权下拉里",
     !selectText.includes(retiredName),
     "后端已经拒（grant_subject_account_retired），界面还摆着它就是把人往死路上引");
-  check("账号列表里仍然看得到已注销的账号（否则人不知道它被注销了）",
-    pickerHtml.includes(retiredName),
-    "整页都不显示已注销账号 —— 那是把「不许再授权」做成了「查不到这个人」");
+  check("项目成员页仍然看得到项目授权入口（否则上面两条在空转）",
+    /项目成员授权/u.test(pickerHtml),
+    "整页没有项目成员授权入口 —— 那是在别的页上验下拉");
 }
 
   const admin = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
@@ -2209,7 +2209,7 @@ async function runErrorGuidanceCase() {
   };
   const systemNav = renderedNav({accountId: "sys", email: "sys@local", displayName: "系统管理员",
     accountType: "system_admin", roles: ["system_owner"], permissions: ["system:*"], organizationId: null}, null, "sys-overview");
-  assertMenuDescriptions("系统管理", systemNav, ["sys-overview", "sys-orgs", "sys-settings", "sys-accounts"]);
+  assertMenuDescriptions("系统管理", systemNav, ["sys-overview", "sys-orgs", "sys-settings"]);
   const orgNav = renderedNav({accountId: "org", email: "org@local", displayName: "组织管理员",
     accountType: "org_admin", roles: ["org_admin"], permissions: ["org:*", "project:create", "member:invite", "agent:activate"], organizationId: "org_default"}, "p1", "org-overview");
   assertMenuDescriptions("组织管理", orgNav, ["org-overview", "org-members", "org-agents", "org-projects"]);
@@ -3007,8 +3007,8 @@ function runNoVisibleProjectCase() {
     return String(root.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
   };
   // 指路要指【这个人自己菜单里有的那一页】。刚装完的第一屏最容易犯这个错：监控页那条
-  // "还没有任何执行记录"的横幅原先一律写「AI 智能体」页 —— 而那一页只在【组织管理员】的菜单里，
-  // 刚 npm run init 完、最可能读到这句话的系统管理员根本点不到它（他的入口在「账号与授权」页）。
+  // "还没有任何执行记录"的横幅原先一律写「AI 智能体」页 —— 而那一页只在项目空间里，
+  // 刚 npm run init 完、最可能读到这句话的系统管理员只能先开通组织并交付初始组织管理员。
   // 这条判据不盯那一句文案，而是核【一般性质】：横幅里点名的页，必须出现在这一屏的导航里。
   {
     const emptyState = {
@@ -4058,7 +4058,7 @@ function runPendingTruncationCase() {
       `实得：${(emptyGrant.replace(/<[^>]+>/gu, " ").match(/还没有任何项目[^<]{0,40}/u) || ["（照旧摆出了表单）"])[0]}`);
     // 提示必须说清第一步在哪一页，否则人还是不知道往哪走。
     check("这条提示要指出该去哪一页创建项目",
-      /项目列表/u.test(emptyGrant) && /账号与授权/u.test(emptyGrant),
+      /项目列表/u.test(emptyGrant) && /组织管理/u.test(emptyGrant),
       "提示没有点名创建项目的入口页");
     const withProjects = [{id: "p1", name: "探针项目", organizationId: "org_probe", status: "active"}];
     const orgAgentsWithProject = renderOrg(withProjects, "org-agents", "p1");
@@ -4302,11 +4302,10 @@ function runPendingTruncationCase() {
       /组织开通治理流程/u.test(sysOrgsHtml)
         && /一次性令牌只在创建成功弹窗显示/u.test(sysOrgsHtml)
         && /成员、项目、任务组和智能体配额在组织列表里调整/u.test(sysOrgsHtml)
-        && /日常成员、项目和 Agent 管理由组织管理员承接/u.test(sysOrgsHtml)
+        && /日常子账户、项目和 Agent 管理由组织管理员承接/u.test(sysOrgsHtml)
         && /项目配置、Agent 注册、任务组执行和监控都在项目管理空间完成/u.test(sysOrgsHtml)
         && /停用组织会影响成员、项目、任务组和 Agent 准入/u.test(sysOrgsHtml)
         && /组织创建不是执行终点/u.test(sysOrgsHtml)
-        && /data-menu="sys-accounts"/u.test(sysOrgsHtml)
         && /data-menu="proj-overview"/u.test(sysOrgsHtml),
       "系统组织页没有把租户开通后的交接和治理顺序讲成流程");
     const accountHtml = probe.renderSysAccountsWith(overviewState, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
@@ -5241,47 +5240,24 @@ function runCloseBarrierScopeCase() {
 // 而人正是照着账号/授权名单判断"谁有权限"。少列一条就是漏掉一个人。
 function runWholeListCapCase() {
   const admin = {accountId: "acct_a", accountType: "system_admin"};
-  const base = {accounts: [{accountId: "acct_x", displayName: "某人", accountType: "user_account", status: "active"}], accessGrants: [], agents: []};
-  // 截断提示从"每张表各自调一次"改成了整屏报一次（逐表调用要靠每次新增表时都记得，
-  // 而界面上 23 张表里此前只有 5 张接了）。所以这里要按【整页】渲染，narrow probe 看不到外壳。
+  const base = {
+    accounts: [{accountId: "acct_x", displayName: "某人", accountType: "user_account", status: "active", organizationId: "org_default"}],
+    projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [{id: "tg1", name: "任务组", projectId: "p1", status: "development"}],
+    accessGrants: [], agents: []
+  };
   const fullRoot = el("div");
-  loadConsole(fullRoot).renderFullPageWith({...base}, admin, null, "sys-accounts");
-  // 【邀请表单要给出账号角色词表】。服务端按枚举拒认不出的角色（account_role_unknown），
-  // 表单却是自由文本 —— 词表必须来自服务端下发的 runtime.accountRoles，界面自己那张标签表里混着授权模板的角色名。
-  {
-    const vocabRoot = el("div");
-    loadConsole(vocabRoot).renderFullPageWith({...base, runtime: {...(base.runtime || {}), accountRoles: ["member", "viewer", "reviewer"]}}, admin, null, "sys-accounts");
-    const html = vocabRoot.innerHTML;
-    const hasList = /<datalist id="account-role-options">/u.test(html);
-    {
-      const permRoot = el("div");
-      loadConsole(permRoot).renderFullPageWith({...base, runtime: {...(base.runtime || {}), knownPermissions: ["project:view", "task_group:review"]}}, admin, null, "sys-accounts");
-      const permHtml = permRoot.innerHTML;
-      check("邀请与授权表单要列出服务端下发的权限词表（拼错一个字母的权限现在会被拒）",
-        (permHtml.match(/<datalist id="known-permission-options">/gu) || []).length === 2 && permHtml.includes('<option value="task_group:review">'),
-        "两个权限输入框没有各自的 datalist，或 datalist 里少了服务端下发的权限");
-    }
-    {
-      const grantRoot = el("div");
-      loadConsole(grantRoot).renderFullPageWith({...base, runtime: {...(base.runtime || {}), grantRoleTemplates: {project: ["viewer", "editor"], task_group: ["viewer", "operator"]}}}, admin, null, "sys-accounts");
-      const grantHtml = grantRoot.innerHTML;
-      check("授权表单的「角色」要列出服务端下发的权限模板名（套不出模板就 400）",
-        /<input name="role" value="viewer" list="grant-role-options">/u.test(grantHtml) && /<datalist id="grant-role-options">/u.test(grantHtml)
-          && ["viewer", "editor", "operator"].every((role) => grantHtml.includes(`<option value="${role}">`)),
-        "授权表单的角色输入框没挂词表，或 datalist 里少了服务端下发的模板名");
-    }
-    check("邀请表单要列出服务端下发的账号角色词表（自由文本配枚举校验＝拼错一次就 400）",
-      hasList && ["member", "viewer", "reviewer"].every((role) => html.includes(`<option value="${role}">`)),
-      hasList ? "datalist 里少了服务端下发的角色" : "邀请表单没有账号角色的 datalist —— 人只能凭记忆打，打错一个字母就被拒");
-  }
-  check("名单完整时不加多余提示",
-    !String(fullRoot.innerHTML || "").includes("不要据此判断"),
-    "名单没有被截断也提示了不完整 —— 误报会让人不再相信这个提示");
-  const cappedRoot = el("div");
-  loadConsole(cappedRoot).renderFullPageWith({...base, truncatedCollections: ["accounts"]}, admin, null, "sys-accounts");
-  check("整表铺开的名单被截断时必须说出来",
-    String(cappedRoot.innerHTML || "").includes("不要据此判断"),
-    "账号名单被视图截断了，页面上却没有任何痕迹 —— 人会把它当成完整名单，据此判断谁有权限");
+  loadConsole(fullRoot).renderFullPageWith({...base}, admin, "p1", "sys-overview");
+  check("系统管理菜单不再暴露账号与授权混合入口",
+    !String(fullRoot.innerHTML || "").includes('data-menu="sys-accounts"'),
+    "系统侧栏仍暴露账号、授权、项目和 Agent 混合入口，边界会再次被打散");
+  const projectRoot = el("div");
+  loadConsole(projectRoot).renderFullPageWith({...base}, admin, "p1", "proj-members");
+  const projectHtml = String(projectRoot.innerHTML || "");
+  check("项目成员页提供任务组级授权入口",
+    /任务组权限授权/u.test(projectHtml) && /data-form="grant-create"/u.test(projectHtml)
+      && /task_group_owner/u.test(projectHtml) && /reviewer/u.test(projectHtml),
+    "项目成员页没有任务组级授权入口，子账户只能拿项目角色，不能按任务组控制或审核");
 }
 
 // 项目成员授权的账号下拉此前列的是【全部账号】，而服务端对这条路是无条件按组织判的
