@@ -4321,7 +4321,7 @@ function renderTaskGroupsSummary(groups) {
       ${summaryMetric("受阻提示", blockedCount, "需要查看或处置的阻塞信号")}
       ${summaryMetric("统一语言", languages.size || 0, "任务组级协作语言种类")}
     </div>
-    <div class="small muted">语言分布：${esc(languageText)}。先看下面的任务组卡片，再决定是否创建新任务组或追加工作项。</div>
+    <div class="small muted">语言分布：${esc(languageText)}。先看处置看板和生命周期，再决定是否创建新任务组、追加工作项或进入 Agent/监控/审核模块。</div>
   `, {wide: true});
 }
 
@@ -4388,6 +4388,68 @@ function renderTaskGroupAttentionBoard(groups) {
       `).join("")}
     </div>
     <div class="small muted">按“关闭门阻塞、派发阻塞、人工待办、工作项阻塞、无在线 agent”排序；只展示最需要先看的前 ${displayed.length} 个任务组。</div>
+  `, {wide: true});
+}
+
+function renderTaskGroupLifecycleGuide(groups) {
+  const activeGroups = groups.filter((taskGroup) => !["closed", "cancelled", "archived", "superseded"].includes(taskGroup.status));
+  const workItemCount = groups.reduce((sum, taskGroup) =>
+    sum + Number(taskGroup.workItemCount ?? (taskGroup.workItems || []).length), 0);
+  const languageKinds = new Set(groups.map((taskGroup) => languageLabel(taskGroup.languagePolicy))).size;
+  const canControl = hasPerm("task_group:control");
+  return panel("任务组生命周期", `
+    <div class="module-grid action-grid">
+      ${jumpModuleCard({
+        title: "1 创建任务组",
+        metric: groups.length || "创建",
+        detail: canControl ? "设定目标、统一语言和初始角色；后续角色 Skill 可在详情中覆盖" : "查看任务组目标、统一语言、初始角色和执行边界",
+        panelTitle: canControl ? "创建任务组" : "任务组",
+        tone: groups.length ? "green" : "orange",
+        action: canControl ? "去创建" : "看列表"
+      })}
+      ${jumpModuleCard({
+        title: "2 拆工作项",
+        metric: workItemCount || "拆分",
+        detail: canControl ? "工作项绑定执行角色、要求和可选指定模型，进入就绪后由总控派发" : "工作项承载具体执行要求、角色、模型约束和验收条件",
+        panelTitle: canControl ? "创建工作项" : "任务组",
+        tone: workItemCount ? "blue" : "gray",
+        action: canControl ? "加工作项" : "看工作项"
+      })}
+      ${projectModuleCard({
+        pageId: "proj-agents",
+        title: "3 确认 Agent",
+        metric: "注册",
+        detail: "注册入口在「项目管理」→「AI 智能体」；没有准入节点时，工作项不会真正执行",
+        tone: "blue",
+        action: "看智能体"
+      })}
+      ${projectModuleCard({
+        pageId: "monitor",
+        title: "4 运行监控",
+        metric: activeGroups.length || "实时",
+        detail: "派发、会话、事件流和控制 ACK 在执行监控页实时回送，便于总控和监测角色纠偏",
+        tone: activeGroups.length ? "blue" : "gray",
+        action: "看监控"
+      })}
+      ${projectModuleCard({
+        pageId: "review",
+        title: "5 人工定稿",
+        metric: "审核",
+        detail: "核心决策、授权、审批和发现项进入人工审核；AI 不在运行中自行升级系统",
+        tone: "orange",
+        action: "看审核"
+      })}
+      ${projectModuleCard({
+        pageId: "monitor",
+        title: "6 关闭收口",
+        metric: "门禁",
+        detail: "关闭门清零后才能关闭任务组；阻塞对象、质量门和回送记录在监控页处置",
+        tone: groups.length ? "green" : "gray",
+        action: "看门禁"
+      })}
+    </div>
+    <div class="small muted">这张图只使用当前项目已加载数据，不新增接口或轮询；任务组仍是 AI-native 执行单元，人只负责目标、权限、语言、定稿和必要控制。</div>
+    <div class="small muted">统一语言：${esc(languageKinds || 0)} 类；运行主线：任务组目标 → 工作项 → Agent Runtime → 实时回送 → 人工审核 → 关闭门。</div>
   `, {wide: true});
 }
 
@@ -4508,7 +4570,7 @@ function renderTaskGroups() {
 
   if (hasNoVisibleProject()) return panel("任务组", noVisibleProjectNotice(), {wide: true});
   return cellsWaitingWithNoAgentNotice(groups) + wipCapacityNotice(groups) + renderTaskGroupsSummary(groups)
-    + renderTaskGroupAttentionBoard(groups) + createPanels.join("")
+    + renderTaskGroupAttentionBoard(groups) + renderTaskGroupLifecycleGuide(groups) + createPanels.join("")
     + (groupPanels || panel("任务组", `<div class="notice">当前项目暂无任务组。</div>`, {wide: true}));
 }
 

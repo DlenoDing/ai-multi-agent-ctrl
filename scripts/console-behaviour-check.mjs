@@ -4185,6 +4185,21 @@ function runPendingTruncationCase() {
         && panelAt(taskGroupHtml, "任务组处置看板") < panelAt(taskGroupHtml, "创建任务组")
         && /data-action="tg-detail"/u.test(taskGroupHtml),
       "任务组页没有把需要先处理的任务组排成可点击看板，用户仍要逐个读大面板");
+    check("任务组页要在创建表单前给出 AI-native 生命周期路径",
+      panelAt(taskGroupHtml, "任务组生命周期") >= 0
+        && panelAt(taskGroupHtml, "任务组处置看板") < panelAt(taskGroupHtml, "任务组生命周期")
+        && panelAt(taskGroupHtml, "任务组生命周期") < panelAt(taskGroupHtml, "创建任务组")
+        && /设定目标、统一语言和初始角色/u.test(taskGroupHtml)
+        && /工作项绑定执行角色、要求和可选指定模型/u.test(taskGroupHtml)
+        && /注册入口在「项目管理」→「AI 智能体」/u.test(taskGroupHtml)
+        && /控制 ACK 在执行监控页实时回送/u.test(taskGroupHtml)
+        && /核心决策、授权、审批和发现项进入人工审核/u.test(taskGroupHtml)
+        && /关闭门清零后才能关闭任务组/u.test(taskGroupHtml)
+        && /任务组仍是 AI-native 执行单元/u.test(taskGroupHtml)
+        && /data-menu="proj-agents"/u.test(taskGroupHtml)
+        && /data-menu="monitor"/u.test(taskGroupHtml)
+        && /data-menu="review"/u.test(taskGroupHtml),
+      "任务组页仍缺少从创建、拆分、Agent 注册、实时监控、人工审核到关闭门的图形化主线");
     const detailTaskGroup = {...overviewState.taskGroups[0], languagePolicy: {languageTag: "zh-CN"}};
     const detailState = {...overviewState, taskGroups: [detailTaskGroup]};
     const taskGroupDetailHtml = probe.renderTaskGroupsWith(detailState, admin, "p1", detailTaskGroup.id, {
