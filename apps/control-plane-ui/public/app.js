@@ -2820,6 +2820,7 @@ function renderSysAccountsActionBoard() {
   const accounts = state.accounts || [];
   const grants = state.accessGrants || [];
   const agents = state.agents || [];
+  const selectedProject = currentProject();
   const invited = accounts.filter((account) => account.status === "invited" || account.invitationWithdrawn).length;
   const activeAccounts = accounts.filter((account) => !["retired", "suspended", "disabled"].includes(account.status)).length;
   const systemAdmins = accounts.filter((account) => account.accountType === "system_admin" && account.status !== "retired").length;
@@ -2828,6 +2829,8 @@ function renderSysAccountsActionBoard() {
   const revokedGrants = grants.filter((grant) => grant.status !== "active").length;
   const activeAgents = agents.filter((agent) => agent.status === "active").length;
   const projects = state.projects || [];
+  const assignableCount = assignableProjects().length;
+  const selectedAssignableProject = selectedProject && selectedProject.status !== "archived";
   return panel("账号与授权操作看板", `
     <div class="module-grid action-grid">
       ${jumpModuleCard({
@@ -2865,15 +2868,32 @@ function renderSysAccountsActionBoard() {
         panelTitle: "编排智能体档案",
         tone: activeAgents ? "blue" : "gray"
       })}
-      ${jumpModuleCard({
-        title: "可授权项目",
-        metric: assignableProjects().length,
-        detail: projects.length ? "先核对项目归属，再补成员授权" : "还没有项目，需先创建项目",
-        panelTitle: "项目成员授权",
-        tone: assignableProjects().length ? "blue" : "gray"
+      ${selectedAssignableProject ? projectModuleCard({
+        pageId: "proj-members",
+        title: "项目成员权限",
+        metric: "当前",
+        detail: `${selectedProject.name || selectedProject.id}：成员角色和任务组权限回「成员权限」处理`,
+        tone: "green",
+        action: "去项目授权"
+      }) : assignableCount ? projectModuleCard({
+        pageId: "proj-overview",
+        title: "项目成员权限",
+        metric: assignableCount,
+        detail: selectedProject?.status === "archived"
+          ? "当前项目已归档；进入「项目管理」选择其他可用项目，再回「成员权限」处理"
+          : "进入「项目管理」后选择目标项目，再回「成员权限」处理",
+        tone: "orange",
+        action: "选项目"
+      }) : jumpModuleCard({
+        title: "项目成员权限",
+        metric: assignableCount,
+        detail: projects.length ? "现有项目已归档，需先创建新项目" : "还没有项目，需先创建项目",
+        panelTitle: "创建项目（系统级）",
+        tone: "gray",
+        action: "建项目"
       })}
     </div>
-    <div class="small muted">处理顺序：先核对账号与授权现状，再查看入网令牌审计和 agent 档案；常规项目接入从项目页发起。</div>
+    <div class="small muted">处理顺序：先核对账号与授权现状，再查看入网令牌审计和 agent 档案；项目成员角色、Agent 注册和任务组执行都从目标项目页发起。</div>
   `, {wide: true});
 }
 
@@ -2935,6 +2955,10 @@ function renderSysAccountsLifecycleGuide() {
   const accounts = state.accounts || [];
   const grants = state.accessGrants || [];
   const agents = state.agents || [];
+  const selectedProject = currentProject();
+  const projects = state.projects || [];
+  const assignableCount = assignableProjects().length;
+  const selectedAssignableProject = selectedProject && selectedProject.status !== "archived";
   const serviceAccounts = accounts.filter((account) => account.accountType === "service_account" && account.status !== "retired").length;
   const activeGrants = grants.filter((grant) => grant.status === "active").length;
   const activeAgents = agents.filter((agent) => agent.status === "active").length;
@@ -2981,16 +3005,32 @@ function renderSysAccountsLifecycleGuide() {
         tone: activeAgents ? "blue" : "gray",
         action: "看档案"
       })}
-      ${jumpModuleCard({
+      ${selectedAssignableProject ? projectModuleCard({
+        pageId: "proj-members",
         title: "6 项目级落位",
-        metric: assignableProjects().length,
-        detail: "先在本页把成员加入项目；项目 Agent 注册和任务组执行再回目标项目空间完成",
-        panelTitle: "项目成员授权",
-        tone: assignableProjects().length ? "green" : "orange",
+        metric: "当前",
+        detail: `${selectedProject.name || selectedProject.id}：进入「成员权限」完成成员角色，再去 AI 智能体和任务组执行`,
+        tone: "green",
         action: "去授权"
+      }) : assignableCount ? projectModuleCard({
+        pageId: "proj-overview",
+        title: "6 项目级落位",
+        metric: assignableCount,
+        detail: selectedProject?.status === "archived"
+          ? "当前项目已归档；先进入项目管理选择其他可用项目，再到「成员权限」处理"
+          : "先进入项目管理选择目标项目，再到项目「成员权限」处理",
+        tone: "orange",
+        action: "选项目"
+      }) : jumpModuleCard({
+        title: "6 项目级落位",
+        metric: assignableCount,
+        detail: projects.length ? "现有项目已归档；先创建新项目，再到项目「成员权限」处理" : "系统页不做项目成员授权；先创建项目，再到项目「成员权限」处理",
+        panelTitle: "创建项目（系统级）",
+        tone: "gray",
+        action: "建项目"
       })}
     </div>
-    <div class="small muted">账号授权页是系统身份和授权治理入口：先确认账号，再审计授权和令牌；真正让用户或 agent 参与某个项目，必须回到项目管理完成成员授权、Agent 注册和任务组执行。</div>
+    <div class="small muted">账号授权页是系统身份和授权治理入口：先确认账号，再审计授权和令牌；真正让用户或 agent 参与某个项目，必须回到项目管理完成成员权限、Agent 注册和任务组执行。</div>
   `, {wide: true});
 }
 
@@ -3082,8 +3122,7 @@ function renderSysAccounts() {
         </div>
         <button class="primary-button" type="submit">创建项目</button>
       </form>
-    `),
-    panel("项目成员授权", renderProjectMemberForm())
+    `)
   ].join("");
 }
 
@@ -3092,7 +3131,7 @@ function renderSysAccounts() {
 // 与其让人填完再撞一个错误，不如当场说清第一步是什么。
 function noProjectYetNotice(what) {
   return `<div class="notice">还没有任何项目，而${what}必须落在具体项目上。`
-    + "先创建一个项目：组织管理员切到「组织管理」→「项目列表」创建项目，系统管理员切到「系统管理」→「账号与授权」创建或授权项目。</div>";
+    + "先创建一个项目：组织管理员切到「组织管理」→「项目列表」创建项目，系统管理员切到「系统管理」→「账号与授权」创建项目；创建后再进入「项目管理」→「成员权限」授权。</div>";
 }
 
 // 归属为空的账号（历史上经 MCP 建的那批）服务端按「默认组织」处理，界面必须用同一个口径 ——
@@ -3139,7 +3178,7 @@ function renderProjectMemberForm(options = {}) {
   return `
     ${grantable.length ? "" : `<div class="notice warn-notice">「${esc(chosen?.name || chosen?.id || "")}」`
       + `所属的组织下还没有可授权的账号${elsewhere ? `（另有 ${elsewhere} 个账号属于别的组织，授不进来）` : ""}`
-      + " —— 先在上面的「邀请账号」把人邀进这个组织，再回来授权。</div>"}
+      + " —— 先到「组织管理」→「成员管理」邀请账号，把人邀进这个组织，再回来授权。</div>"}
     <form class="form-grid" data-form="project-member">
       <div class="form-row"><label>项目</label>
         ${scopedProjectId
@@ -4396,7 +4435,7 @@ function renderOrgProjects() {
 function noVisibleProjectNotice() {
   const perspective = perspectiveOf(currentAccount);
   const next = perspective === "system"
-    ? "切到「系统管理」→「账号与授权」，用「创建项目（系统级）」新建一个，或把已有项目授权给某个账号。"
+    ? "切到「系统管理」→「账号与授权」，用「创建项目（系统级）」新建一个；创建后进入「项目管理」→「成员权限」授权。"
     : perspective === "org"
       ? "切到「组织管理」→「项目列表」创建项目，或把已有项目授权给成员。"
       : "请联系组织管理员为你分配项目。";

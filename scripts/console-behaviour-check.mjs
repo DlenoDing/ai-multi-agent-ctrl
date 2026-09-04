@@ -292,7 +292,11 @@ globalThis.__probe = {
   renderSysOverviewWith: (nextState, account, overviewData) => { state = nextState; currentAccount = account; systemOverview = overviewData; return renderSysOverview(); },
   renderSysSettingsWith: (nextState, instructions) => { state = nextState; if (instructions !== undefined) instructionState = instructions; return renderSysSettings(); },
   renderSysOrgsWith: (nextState, account, orgList) => { state = nextState; currentAccount = account; organizations = orgList || []; return renderSysOrgs(); },
-  renderSysAccountsWith: (nextState, account) => { state = nextState; currentAccount = account; return renderSysAccounts(); },
+  renderSysAccountsWith: (nextState, account, projectId) => {
+    state = nextState; currentAccount = account;
+    if (projectId !== undefined) currentProjectId = projectId;
+    return renderSysAccounts();
+  },
   renderOrgOverviewWith: (nextState, account, members, nodes) => {
     state = nextState; currentAccount = account; orgMembers = members || []; orgAgentNodes = nodes || [];
     return renderOrgOverview();
@@ -301,6 +305,10 @@ globalThis.__probe = {
     state = nextState; currentAccount = account; orgMembers = members || [];
     if (projectId !== undefined) currentProjectId = projectId;
     return renderOrgMembers();
+  },
+  renderOrgProjectsWith: (nextState, account, projectId, members) => {
+    state = nextState; currentAccount = account; currentProjectId = projectId; orgMembers = members || [];
+    return renderOrgProjects();
   },
   renderOrgAgentsWith: (nextState, account, nodes) => { state = nextState; currentAccount = account; orgAgentNodes = nodes || []; return renderOrgAgents(); },
   renderProjectAgentsWith: (nextState, account, projectId, viewMode) => {
@@ -2663,8 +2671,10 @@ function runReviewAxisCase() {
   //（project_archived / member_default_project_archived），而「项目成员授权」那个下拉
   // 原先列的是全部项目 —— 选中一个归档项目提交，回执是 409，人只看到一个按不动的杠杆。
   {
-    const grantProbe = loadConsole(el("div"), {realI18n: true});
-    const mixedHtml = grantProbe.renderSysAccountsWith({
+    const grantRoot = el("div");
+    const orgAdmin = {accountId: "u1", accountType: "org_admin", displayName: "组织管理员", organizationId: "org_default",
+      roles: ["org_admin"], permissions: ["org:*", "project:create", "project:grant"]};
+    loadConsole(grantRoot, {realI18n: true}).renderFullPageWith({
       accounts: [{accountId: "u1", displayName: "管理员", email: "a@x", accountType: "system_admin",
         status: "active", roles: [], organizationId: "org_default"}],
       projects: [
@@ -2672,19 +2682,22 @@ function runReviewAxisCase() {
         {id: "p_arch", name: "老项目", organizationId: "org_default", status: "archived"}
       ],
       accessGrants: [], mcpGrants: [], auditLog: [], agents: [], agentJoinTokens: []
-    }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"});
-    const memberSection = String(mixedHtml).split("<h2>项目成员授权</h2>")[1] || "";
+    }, orgAdmin,
+      "p_live", "org-projects");
+    const memberSection = String(grantRoot.innerHTML || "").split("<h2>项目成员授权</h2>")[1] || "";
     check("「项目成员授权」的项目下拉里不许出现已归档的项目（后端会拒）",
       /在用项目/u.test(memberSection) && !/老项目/u.test(memberSection),
       memberSection.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 120) || "（这一块没渲染出来）");
-    const allArchivedHtml = grantProbe.renderSysAccountsWith({
+    const allArchivedRoot = el("div");
+    loadConsole(allArchivedRoot, {realI18n: true}).renderFullPageWith({
       accounts: [{accountId: "u1", displayName: "管理员", email: "a@x", accountType: "system_admin",
         status: "active", roles: [], organizationId: "org_default"}],
       projects: [{id: "p_arch", name: "老项目", organizationId: "org_default", status: "archived"}],
       accessGrants: [], mcpGrants: [], auditLog: [], agents: [], agentJoinTokens: []
-    }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"});
+    }, orgAdmin,
+      "p_arch", "org-projects");
     check("全部项目都已归档时要说清是「都归档了」，而不是渲染一个空下拉或「还没有项目」",
-      /全部已归档/u.test(String(allArchivedHtml).split("<h2>项目成员授权</h2>")[1] || ""),
+      /全部已归档/u.test(String(allArchivedRoot.innerHTML || "").split("<h2>项目成员授权</h2>")[1] || ""),
       "人分不清这个组织没有项目、还是有但都归档了 —— 这两件事的下一步不同");
   }
 
@@ -4242,7 +4255,7 @@ function runPendingTruncationCase() {
         && /data-menu="sys-accounts"/u.test(sysOrgsHtml)
         && /data-menu="proj-overview"/u.test(sysOrgsHtml),
       "系统组织页没有把租户开通后的交接和治理顺序讲成流程");
-    const accountHtml = probe.renderSysAccountsWith(overviewState, admin).replace(/<!--[\s\S]*?-->/gu, "");
+    const accountHtml = probe.renderSysAccountsWith(overviewState, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
     check("账号与授权页先显示总览，再显示邀请表单",
       panelAt(accountHtml, "账号与授权总览") >= 0
         && panelAt(accountHtml, "账号与授权总览") < panelAt(accountHtml, "邀请账号"),
@@ -4256,9 +4269,15 @@ function runPendingTruncationCase() {
         && panelAt(accountHtml, "账号列表") < panelAt(accountHtml, "访问授权列表")
         && panelAt(accountHtml, "访问授权列表") < panelAt(accountHtml, "邀请账号")
         && panelAt(accountHtml, "邀请账号") < panelAt(accountHtml, "新增访问授权")
+        && panelAt(accountHtml, "新增访问授权") < panelAt(accountHtml, "创建项目（系统级）")
         && /data-jump-panel="账号列表"/u.test(accountHtml)
         && /data-jump-panel="访问授权列表"/u.test(accountHtml),
       "账号与授权页仍然是先给邀请/授权表单，系统管理员没先核对现有账号与授权就被推去操作");
+    check("系统账号页不得再内嵌项目成员授权表单",
+      panelAt(accountHtml, "项目成员授权") < 0
+        && !/data-form="project-member"/u.test(accountHtml)
+        && !/data-jump-panel="项目成员授权"/u.test(accountHtml),
+      "系统账号页仍把项目成员授权表单混在系统管理里，和项目成员权限页形成双入口");
     check("账号与授权页必须把项目 Agent 注册入口和系统令牌审计分开",
       /账号与授权职责边界/u.test(accountHtml)
         && /项目 Agent 注册/u.test(accountHtml)
@@ -4276,9 +4295,36 @@ function runPendingTruncationCase() {
         && /真正让用户或 agent 参与某个项目/u.test(accountHtml)
         && /data-jump-panel="智能体入网审计"/u.test(accountHtml)
         && /data-jump-panel="编排智能体档案"/u.test(accountHtml)
-        && /data-jump-panel="项目成员授权"/u.test(accountHtml)
+        && /[^<：]+：进入「成员权限」完成成员角色/u.test(accountHtml)
+        && /data-menu="proj-members"/u.test(accountHtml)
         && /data-menu="proj-agents"/u.test(accountHtml),
       "账号与授权页没有把系统身份治理和项目级落位讲成可操作流程");
+    const accountNoSelectedProjectHtml = probe.renderSysAccountsWith(overviewState, admin, "").replace(/<!--[\s\S]*?-->/gu, "");
+    check("系统账号页有可见项目但未选中时要去项目管理选项目，而不是跳创建项目",
+      /进入「项目管理」后选择目标项目，再回「成员权限」处理/u.test(accountNoSelectedProjectHtml)
+        && /先进入项目管理选择目标项目，再到项目「成员权限」处理/u.test(accountNoSelectedProjectHtml)
+        && /data-menu="proj-overview"/u.test(accountNoSelectedProjectHtml),
+      "系统账号页在有项目但未选中时仍把用户带到创建项目或给出旧的先选项目按钮");
+    const accountArchivedProjectHtml = probe.renderSysAccountsWith({...overviewState,
+      projects: [{id: "p_old", name: "已归档项目", organizationId: "org_default", status: "archived", members: []}]
+    }, admin, "p_old").replace(/<!--[\s\S]*?-->/gu, "");
+    check("系统账号页当前项目已归档时不得显示绿色项目成员授权直达",
+      /现有项目已归档/u.test(accountArchivedProjectHtml)
+        && /data-jump-panel="创建项目（系统级）"/u.test(accountArchivedProjectHtml)
+        && !/去项目授权/u.test(accountArchivedProjectHtml),
+      "当前项目已归档时系统账号页仍给出可授权的直达入口");
+    const accountArchivedWithFallbackHtml = probe.renderSysAccountsWith({...overviewState,
+      projects: [
+        {id: "p_old", name: "已归档项目", organizationId: "org_default", status: "archived", members: []},
+        {id: "p2", name: "可用项目", organizationId: "org_default", status: "active", members: []}
+      ]
+    }, admin, "p_old").replace(/<!--[\s\S]*?-->/gu, "");
+    check("系统账号页当前项目已归档但还有可用项目时，要说清改去选其他项目",
+      /当前项目已归档/u.test(accountArchivedWithFallbackHtml)
+        && /选择其他可用项目/u.test(accountArchivedWithFallbackHtml)
+        && /data-menu="proj-overview"/u.test(accountArchivedWithFallbackHtml)
+        && !/去项目授权/u.test(accountArchivedWithFallbackHtml),
+      "当前项目已归档但还有可用项目时，系统账号页没有解释为何不能直达成员权限");
     check("系统账号页不能承载常规 Agent 注册表单，项目页才保留注册脚本入口",
       !/data-form="join-token"/u.test(accountHtml)
         && /智能体入网审计/u.test(accountHtml)
@@ -5165,7 +5211,8 @@ function runWholeListCapCase() {
 
 // 项目成员授权的账号下拉此前列的是【全部账号】，而服务端对这条路是无条件按组织判的
 //（cross_org_member_not_allowed —— 系统管理员也一样）。于是别的组织的人就摆在下拉里，
-// 选中提交必然被拒：一个按不动的杠杆。实测在系统管理员视角的「账号与授权」页上看见了「别组织的人」。
+// 选中提交必然被拒：一个按不动的杠杆。系统账号页已不再承载项目成员授权表单，
+// 所以这条必须钉在项目「成员权限」主入口上。
 function runCrossOrgGrantSelectCase() {
   const admin = {accountId: "acct_a", accountType: "system_admin"};
   const state = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
@@ -5181,10 +5228,8 @@ function runCrossOrgGrantSelectCase() {
     accessGrants: [], agents: [], agentRuntimeNodes: [], agentJoinTokens: [],
     taskGroups: [], truncatedCollections: []};
   const accountsRoot = el("div");
-  loadConsole(accountsRoot).renderFullPageWith(state, admin, "p_default", "sys-accounts");
-  const html = String(accountsRoot.innerHTML || "");
-  // 只看【项目成员授权】那张表单：同一页上「创建项目」的负责人下拉也列账号，
-  // 整页找会匹到它 —— 第一版就是这么绿的（而它根本没被改）。
+  const html = String(loadConsole(accountsRoot).renderProjectMembersWith(state, admin, "p_default", state.accounts) || "");
+  // 只看【项目成员授权】那张表单：其它页面也可能有负责人/账号下拉，整页找会假绿。
   const formAt = html.indexOf(`data-form="project-member"`);
   const formHtml = formAt < 0 ? "" : html.slice(formAt, html.indexOf("</form>", formAt));
   // 别在这里 throw：整跑变异门时，另一条变异会把这两个入口整块摘掉，
@@ -5208,28 +5253,40 @@ function runCrossOrgGrantSelectCase() {
   // 一个可授权的人都没有时，表单看着完整、点下去必然失败 —— 要当场说清第一步是什么。
   const emptyRoot = el("div");
   // 第三个组织：它名下一个账号都没有 —— 这才是「表单看着完整、点下去必然失败」那一屏。
-  loadConsole(emptyRoot).renderFullPageWith({...state,
+  const emptyHtml = String(loadConsole(emptyRoot).renderProjectMembersWith({...state,
     organizations: [...state.organizations, {orgId: "org_empty", name: "空组织", status: "active"}],
     projects: [{id: "p_empty", name: "空组织的项目", organizationId: "org_empty", status: "active", members: []}]},
-    admin, "p_empty", "sys-accounts");
-  const emptyHtml = String(emptyRoot.innerHTML || "").replace(/<[^>]+>/gu, " ");
+    admin, "p_empty", state.accounts) || "").replace(/<[^>]+>/gu, " ");
   check("这个组织下一个可授权的账号都没有时要说清，而不是给一个空下拉",
-    /还没有可授权的账号/u.test(emptyHtml) && /属于别的组织/u.test(emptyHtml),
+    /还没有可授权的账号/u.test(emptyHtml) && /属于别的组织/u.test(emptyHtml)
+      && /组织管理.+成员管理/u.test(emptyHtml) && !/上面的「邀请账号」/u.test(emptyHtml),
     `空的时候说的是：${(emptyHtml.match(/[^ ]*所属的组织[^。]*。/u) || ["（什么都没说）"])[0]}`);
   // 换项目那条路：处理器就两行（记下选的项目 + 重渲染），效果全在渲染函数里 —— 这里直接验效果。
   const switchedRoot = el("div");
-  const switchedProbe = loadConsole(switchedRoot);
-  switchedProbe.setMemberGrantProjectId("p_other_org");
-  switchedProbe.renderFullPageWith({...state,
+  const switchedHtml = String(loadConsole(switchedRoot).renderProjectMembersWith({...state,
     projects: [...state.projects,
       {id: "p_other_org", name: "别组织的项目", organizationId: "org_other", status: "active", members: []}]},
-    admin, "p_default", "sys-accounts");
-  const switchedHtml = String(switchedRoot.innerHTML || "");
+    admin, "p_other_org", state.accounts) || "");
   const switchedAt = switchedHtml.indexOf(`data-form="project-member"`);
   const switchedForm = switchedAt < 0 ? "" : switchedHtml.slice(switchedAt, switchedHtml.indexOf("</form>", switchedAt));
   check("换到别组织的项目之后，下拉里换成那个组织的人",
     switchedForm.includes(`<option value="acct_other"`) && !switchedForm.includes(`<option value="acct_same"`),
     `切过去之后下拉里是：${(switchedForm.match(/<option value="acct[^"]*"/gu) || []).join("、") || "（一项都没有）"}`);
+
+  // 组织「项目列表」仍保留集中项目成员授权入口；那里不是 scoped 当前项目输入框，
+  // 而是靠 projectId 下拉切换，必须单独覆盖 memberGrantProjectId 这条状态线。
+  const orgSwitchRoot = el("div");
+  const orgSwitchProbe = loadConsole(orgSwitchRoot);
+  orgSwitchProbe.setMemberGrantProjectId("p_other_org");
+  const orgSwitchHtml = String(orgSwitchProbe.renderOrgProjectsWith({...state,
+    projects: [...state.projects,
+      {id: "p_other_org", name: "别组织的项目", organizationId: "org_other", status: "active", members: []}]},
+    admin, "p_default", state.accounts) || "");
+  const orgSwitchAt = orgSwitchHtml.indexOf(`data-form="project-member"`);
+  const orgSwitchForm = orgSwitchAt < 0 ? "" : orgSwitchHtml.slice(orgSwitchAt, orgSwitchHtml.indexOf("</form>", orgSwitchAt));
+  check("组织项目页切换授权项目后，下拉也要跟着换成目标项目组织的人",
+    orgSwitchForm.includes(`<option value="acct_other"`) && !orgSwitchForm.includes(`<option value="acct_same"`),
+    `组织项目页切过去之后下拉里是：${(orgSwitchForm.match(/<option value="acct[^"]*"/gu) || []).join("、") || "（一项都没有）"}`);
 
   // 界面这个默认组织常量与 core 那份必须是同一个值：不一致时，归属为空的账号会在
   // 一边算作「默认组织」、另一边算作别的组织 —— 屏幕能选的正是后端要拒的。
