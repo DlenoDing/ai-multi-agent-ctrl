@@ -11838,7 +11838,7 @@ const MUTATIONS = [
   },
   {
     name: "Agent 档案列表必须进入对象详情",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/agent-profile-workspace.js",
     gate: "console",
     from: '<button class="primary-button" data-action="open-agent-profile" data-agent="${esc(agent.id)}">查看与管理</button>',
     to: '<button data-action="agent-activate" data-agent="${esc(agent.id)}">启停</button>',
@@ -11926,10 +11926,10 @@ const MUTATIONS = [
   },
   {
     name: "项目运行统计索引必须按状态快照复用",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/operational-stats.js",
     gate: "console",
-    from: "  if (operationalStatsCache?.source === state) return operationalStatsCache;",
-    to: "  if (false && operationalStatsCache?.source === state) return operationalStatsCache;",
+    from: "    if (cachedState === state && cachedIndex) return cachedIndex;",
+    to: "    if (false && cachedState === state && cachedIndex) return cachedIndex;",
     expect: "项目与任务组运行统计必须一次建索引后复用"
   },
   {

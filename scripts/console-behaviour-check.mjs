@@ -32,6 +32,7 @@ const consoleModuleFiles = [
   "modules/time-format.js",
   "modules/ui-config.js",
   "modules/ui-primitives.js",
+  "modules/operational-stats.js",
   "modules/workspaces.js",
   "modules/workspace-location.js",
   "modules/workspace-route.js",
@@ -290,7 +291,7 @@ globalThis.__probe = {
     statsFor: (group) => group.stats || {tasks: group.workItemCount || 0, runs: 0, reviews: 0, blocked: 0}}),
   projectCommandHtml: (project, decision) => window.AIMAC_PROJECT_COMMAND_CENTER.render(project, decision),
   projectRepositoryConfigs: (project) => projectRepositoryConfigs(project),
-  operationalStatsSources: () => ({index: String(operationalStatsIndex), group: String(taskGroupOperationalStats)}),
+  operationalStatsSources: () => ({index: String(window.AIMAC_OPERATIONAL_STATS.indexFor), group: String(window.AIMAC_OPERATIONAL_STATS.forGroup)}),
   grantRoleLabel: (role) => grantRoleLabel(role),
   joinTokenTargetProjects: (nextState) => { state = nextState; return joinTokenTargetProjects(); },
   canResumeTaskGroupAs: (taskGroup, accountType) => {
@@ -2804,7 +2805,7 @@ async function runErrorGuidanceCase() {
     "按钮写着查看，实际却进入无权限账号看不到的创建栏目");
   const statsSources = objectProbe.operationalStatsSources();
   check("项目与任务组运行统计必须一次建索引后复用",
-    /if \(operationalStatsCache\?\.source === state\) return operationalStatsCache;/u.test(statsSources.index)
+    /if \(cachedState === state && cachedIndex\) return cachedIndex;/u.test(statsSources.index)
       && /for \(const dispatch of state\.agentDispatches/u.test(statsSources.index)
       && /indexed\.runs\.get\(group\.id\)/u.test(statsSources.group)
       && !/state\.agentDispatches[\s\S]*\.filter/u.test(statsSources.group),

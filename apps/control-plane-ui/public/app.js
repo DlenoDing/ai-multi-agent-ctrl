@@ -1792,36 +1792,8 @@ function renderLogin() {
 
 /* ---------------- 框架渲染 ---------------- */
 
-let operationalStatsCache = null;
-function operationalStatsIndex() {
-  if (operationalStatsCache?.source === state) return operationalStatsCache;
-  const runs = new Map();
-  const blockedRuns = new Map();
-  const reviews = new Map();
-  const bump = (map, id) => { if (id) map.set(id, Number(map.get(id) || 0) + 1); };
-  for (const dispatch of state.agentDispatches || []) {
-    if (!terminalDispatchStatuses.has(dispatch.status)) bump(runs, dispatch.taskGroupId);
-    if (dispatch.status === "blocked") bump(blockedRuns, dispatch.taskGroupId);
-  }
-  for (const item of [...(state.humanConfirmationRequests || []), ...(state.permissionRequests || []), ...(state.approvalRequests || [])]) {
-    if (["pending", "requested", "pending_approval"].includes(item.status)) bump(reviews, item.taskGroupId);
-  }
-  operationalStatsCache = {source: state, runs, blockedRuns, reviews};
-  return operationalStatsCache;
-}
-
 function taskGroupOperationalStats(group) {
-  if (!group) return {tasks: 0, runs: 0, reviews: 0, blocked: 0};
-  const taskItems = tgDetail?.taskGroupId === group.id && tgDetail?.progress?.workItems
-    ? tgDetail.progress.workItems : group.workItems || [];
-  const indexed = operationalStatsIndex();
-  const blockedWork = taskItems.filter((item) => item.blockedReason || String(item.status || "").startsWith("blocked")).length;
-  return {
-    tasks: group.workItemCount ?? taskItems.length,
-    runs: Number(indexed.runs.get(group.id) || 0),
-    reviews: Number(indexed.reviews.get(group.id) || 0),
-    blocked: Number(group.blockerCount ?? group.blockers?.length ?? 0) + blockedWork + Number(indexed.blockedRuns.get(group.id) || 0)
-  };
+  return window.AIMAC_OPERATIONAL_STATS.forGroup(state, group, {terminalStatuses: terminalDispatchStatuses, detail: tgDetail});
 }
 
 function sidebarContextHtml(perspective) {
@@ -4000,43 +3972,21 @@ function agentModelCell(model) {
 }
 
 function agentProfileRows(agents, {showScope = true} = {}) {
-  return agents.map((agent) => row([
-    `<strong>${esc(agent.name || agent.id)}</strong><div class="small muted mono">${esc(agent.id)}</div>`,
-    esc(t(agent.role)),
-    agentModelCell(agent.model),
-    showScope ? esc(agentScopeText(agent)) : esc(agent.projectId ? "项目级" : "组织级"),
-    statusBadge("agent", agent.status),
-    {v: Number.isFinite(Number(agent.trustScore)) ? `${Math.round(Number(agent.trustScore) * 100)}%` : "-", c: "num"},
-    agent.roleSkillRef ? `<span class="mono">${esc(agent.roleSkillRef)}</span>` : "-",
-    `<button class="primary-button" data-action="open-agent-profile" data-agent="${esc(agent.id)}">查看与管理</button>`
-  ])).join("");
-}
-
-function renderAgentProfileUpdateForm(agent) {
-  return `<form class="form-grid" data-form="agent-profile-update" data-agent="${esc(agent.id)}">
-    <div class="form-row-inline">
-      <div class="form-row"><label>档案名称</label><input name="name" required value="${esc(agent.name || "")}"></div>
-      <div class="form-row"><label>执行角色</label><input name="role" list="agent-profile-role-options" required value="${esc(agent.role || "")}">
-        <datalist id="agent-profile-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
-      <div class="form-row"><label>模型偏好</label><input name="model" list="agent-profile-model-options" required value="${esc(agent.model || "auto_best")}">
-        <datalist id="agent-profile-model-options">${modelOptionsHtml()}</datalist></div>
-      <div class="form-row"><label>信任分</label><input name="trustScore" type="number" step="0.01" min="0" max="1" required value="${esc(Number.isFinite(Number(agent.trustScore)) ? agent.trustScore : "")}"></div>
-    </div>
-    <div class="form-row"><label>角色 Skill 引用（留空则按角色集中解析）</label><input name="roleSkillRef" list="agent-profile-skill-options" value="${esc(agent.roleSkillRef || "")}">
-      ${roleSkillChoiceList("agent-profile-skill-options")}</div>
-    <button class="primary-button" type="submit">保存 Agent 档案</button>
-  </form>`;
+  return window.AIMAC_AGENT_PROFILE_WORKSPACE.rows(agents, {showScope,
+    helpers: {row, t, modelCell: agentModelCell, scopeText: agentScopeText, statusBadge}});
 }
 
 function renderAgentProfileDetail(agent, {editable, scopeLabel}) {
-  return window.AIMAC_AGENT_PROFILE_WORKSPACE.detail({
+  return window.AIMAC_AGENT_PROFILE_WORKSPACE.workspace({
     agent,
     scopeLabel,
     editable,
-    formHtml: editable ? renderAgentProfileUpdateForm(agent) : "",
-    activationHtml: editable
-      ? `<button class="${agent.status === "active" ? "danger-button" : "secondary-button"}" data-action="toggle-agent" data-agent="${esc(agent.id)}">${agent.status === "active" ? "停用档案" : "启用档案"}</button>` : "",
-    helpers: {statusBadge, t, modelCell: agentModelCell, fmtTime}
+    helpers: {
+      statusBadge, t, modelCell: agentModelCell, fmtTime,
+      roleOptions: WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join(""),
+      modelOptions: modelOptionsHtml(),
+      skillOptions: roleSkillChoiceList("agent-profile-skill-options")
+    }
   });
 }
 
