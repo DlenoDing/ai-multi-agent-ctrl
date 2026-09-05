@@ -217,7 +217,7 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
 const terminalDispatchLookups = [];
 const isTerminalDispatch = (status) => {
   terminalDispatchLookups.push(status);
-  return status === "completed";
+  return ["completed", "failed", "cancelled"].includes(status);
 };
 
 const helpers = {
