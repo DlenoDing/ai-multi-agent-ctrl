@@ -10,6 +10,13 @@ import { cancelPendingConfirmationsForDispatch, createId, digestOf, effectiveTas
 import { openSecret, isSealed } from "./credential-seal.mjs";
 import { projectRepositories } from "./path-policy.mjs";
 import { isTerminalDispatchStatus } from "./lifecycle-states.mjs";
+import {
+  activeProjectIdsForOrganization,
+  normalizeRegistrationScope,
+  runtimeNodeCanAccessProject,
+  runtimeNodeProjectIds,
+  uniqueProjectIds
+} from "./runtime-node-scope.mjs";
 
 const DEFAULT_AGENT_MCP_TOOLS = [
   "agent-control-mcp.node_probe",
@@ -77,22 +84,30 @@ export function ensureAgentGatewayCollections(state) {
 
 export function createAgentJoinToken(state, input = {}, options = {}) {
   ensureAgentGatewayCollections(state);
+  const registrationScope = normalizeRegistrationScope(input.registrationScope || input.scope, "project");
+  if (!registrationScope) throw gatewayError("permission_unknown", 400, {field: "registrationScope", supported: ["project", "organization"]});
   const projectId = String(input.projectId || "").trim();
-  const tokenProject = state.projects.find((project) => project.id === projectId);
+  const tokenProject = registrationScope === "project" ? state.projects.find((project) => project.id === projectId) : null;
   // 带上状态码：不带的话它落进通用出口，成了 500 server_error —— 而这是【调用方少填了一个字段】，
   // 不是系统坏了。实测空 body 打这条路由就是 500，真实原因埋在 message 里；
   // 监控看到 5xx 会当成事故，人看到 server_error 会去查服务端日志，而他要做的只是补上 projectId。
   // （下面配额那条早就用了 gatewayError，同一个函数里两种写法 —— 这一条是漏掉的那个。）
-  if (!tokenProject) throw gatewayError("join_token_project_not_found", 404, {projectId: projectId || null});
+  if (registrationScope === "project" && !tokenProject) throw gatewayError("join_token_project_not_found", 404, {projectId: projectId || null});
+  const requestedOrganizationId = String(input.organizationId || tokenProject?.organizationId || "").trim();
+  const tokenOrgId = registrationScope === "organization"
+    ? requestedOrganizationId
+    : (tokenProject.organizationId || "org_default");
+  const tokenOrganization = (state.organizations || []).find((organization) => organization.orgId === tokenOrgId);
+  if (!tokenOrganization) throw gatewayError("organization_not_found", 404, {organizationId: tokenOrgId || null});
+  if (tokenOrganization.status !== "active") throw gatewayError("not_active", 409, {organizationId: tokenOrgId, status: tokenOrganization.status});
   // 归档的含义是「移出可建新工作的范围」，而此前只有建任务组那一处判了它 ——
   // 给已归档项目签出来的加入令牌，接进去的 agent 会绑在一个不能再建任何工作的项目上，
   // 两边都不报错；而控制台的「加入令牌」下拉里就摆着这些项目。锁落在决策点上，
   // 界面那份清单也一并收窄（只藏选项不锁门＝改个请求就绕过去了）。
-  if (tokenProject.status === "archived") {
+  if (registrationScope === "project" && tokenProject.status === "archived") {
     throw gatewayError("project_archived", 409, {projectId,
       hint: "该项目已归档（终态，不可撤销），不能再往里接入 agent。要继续这条线，请另建一个项目"});
   }
-  const tokenOrgId = tokenProject.organizationId || "org_default";
   const quota = organizationQuotaCheck(state, tokenOrgId, "agents");
   // 已签发未用的令牌占位数【从配额检查那一处取】（quota.reserved 就是 recompute 的 usage.agentsReserved）——
   // 不再在这里各写一份 filter：页面显示的那格与这里的强制从此是同一个数，不会再漂成「页面 2/3、签发说 3/3」。
@@ -122,8 +137,9 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
   const record = {
     schemaVersion: "agent-join-token/v1",
     joinTokenId: createId("ajt"),
-    projectId,
-    organizationId: tokenProject.organizationId || "org_default",
+    projectId: registrationScope === "project" ? projectId : null,
+    organizationId: tokenOrgId,
+    registrationScope,
     // 节点名是人在表单里填的，而且会被嵌进【给人复制执行的安装命令】里 —— 超长要拒，不能截断
     // （截断后人复制到的命令与他填的不是一回事）。机器自报的字段走截断，见下面 runtimeVersion。
     expectedNodeName: assertHumanTextWithinLimit(
@@ -145,7 +161,7 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
   const nodeNameArg = record.expectedNodeName ? ` --node-name ${shellArg(record.expectedNodeName)}` : "";
   const tokenFileCommand = `umask 077; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT HUP INT TERM; cat > "$tmp/aimac.join" <<'AIMAC_JOIN_TOKEN'\n${token}\nAIMAC_JOIN_TOKEN\ncurl -fsSL ${shellUrl(`${serverUrl}/install-agent.sh`)} | sh -s -- --server ${shellArg(serverUrl)} --join-token-file "$tmp/aimac.join"${nodeNameArg}`;
   const verifiedTokenFileCommand = `umask 077; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT HUP INT TERM; cat > "$tmp/aimac.join" <<'AIMAC_JOIN_TOKEN'\n${token}\nAIMAC_JOIN_TOKEN\ncd "$tmp" && curl -fsSLO ${shellUrl(`${serverUrl}/install-agent.sh`)} && curl -fsSLO ${shellUrl(`${serverUrl}/install-agent.sh.sha256`)} && ( if command -v sha256sum >/dev/null 2>&1; then sha256sum -c install-agent.sh.sha256; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 -c install-agent.sh.sha256; else printf '%s\\n' 'sha256sum or shasum is required' >&2; exit 1; fi ) || { printf '%s\\n' '安装脚本校验失败：下载可能被篡改或不完整 —— 别继续装；重新执行这条命令，仍失败就找控制面管理员' >&2; exit 1; } && sh install-agent.sh --server ${shellArg(serverUrl)} --join-token-file "$tmp/aimac.join"${nodeNameArg}`;
-  appendGatewayEvent(state, "join_token_issued", record.joinTokenId, {projectId, allowedRoles});
+  appendGatewayEvent(state, "join_token_issued", record.joinTokenId, {projectId: record.projectId, organizationId: record.organizationId, registrationScope, allowedRoles});
   return {
     joinToken: token,
     joinTokenRecord: publicJoinToken(record),
@@ -188,7 +204,7 @@ export function registerAgentNode(state, input = {}, options = {}) {
     // 正文被抹掉之后不能再当作可重放：返回一份没有 nodeToken 的注册结果，节点会拿到一个
     // 看起来成功、实际无法认证的响应，而它已经把这次注册当成完成了。宁可让它显式失败。
     if (existingNode && replay.result?.nodeToken && Date.now() - new Date(replay.at || 0).getTime() <= replayWindowMs) {
-      return {...replay.result, node: publicAgentNode(existingNode), replayed: true};
+      return {...replay.result, node: publicAgentNode(existingNode, {state}), replayed: true};
     }
   }
   // 状态要照实说。原先这四种状态一律回 join_token_not_active（"加入令牌不处于可用状态"）——
@@ -239,7 +255,10 @@ export function registerAgentNode(state, input = {}, options = {}) {
     nodeId,
     nodeName,
     organizationId: record.organizationId || "org_default",
-    projectIds: [record.projectId],
+    registrationScope: record.registrationScope || "project",
+    projectIds: (record.registrationScope || "project") === "organization"
+      ? activeProjectIdsForOrganization(state, record.organizationId || "org_default")
+      : uniqueProjectIds([record.projectId]),
     allowedRoles: requestedRoles,
     allowedMcpTools: record.allowedMcpTools,
     status: "initializing",
@@ -263,10 +282,10 @@ export function registerAgentNode(state, input = {}, options = {}) {
   record.useCount += 1;
   record.status = record.useCount >= record.maxUses ? "consumed" : "issued";
   record.updatedAt = at;
-  appendGatewayEvent(state, "node_registered", nodeId, {projectId: record.projectId, profileDigest: node.profileDigest});
+  appendGatewayEvent(state, "node_registered", nodeId, {projectId: record.projectId || null, organizationId: node.organizationId, registrationScope: node.registrationScope, profileDigest: node.profileDigest});
   const publicUrl = trimTrailingSlash(options.publicUrl || "http://127.0.0.1:4317");
   const registration = {
-    node: publicAgentNode(node),
+    node: publicAgentNode(node, {state}),
     nodeToken,
     gateway: {
       serverUrl: publicUrl,
@@ -380,7 +399,7 @@ export function heartbeatAgentNode(state, node, input = {}, options = {}) {
     (node.activeDispatchIds || []).length > 0;
   appendGatewayEvent(state, "node_heartbeat", node.nodeId, {profileDigest: node.profileDigest, credentialRotated: Boolean(rotatedNodeToken)});
   const queuedCommands = (state.agentControlCommands || []).filter((command) => command.nodeId === node.nodeId && command.status === "queued").length;
-  return {ok: true, accepted: true, commandsAvailable: queuedCommands, node: publicAgentNode(node), serverTime: at, persistRequired, ...(rotatedNodeToken ? {nodeToken: rotatedNodeToken} : {})};
+  return {ok: true, accepted: true, commandsAvailable: queuedCommands, node: publicAgentNode(node, {state}), serverTime: at, persistRequired, ...(rotatedNodeToken ? {nodeToken: rotatedNodeToken} : {})};
 }
 
 // Keep dispatch-bound MCP grants alive as long as the claim is renewed, so a long-running dispatch
@@ -595,7 +614,7 @@ export function selfCheckAgentNode(state, node, input = {}) {
   }
   node.updatedAt = at;
   appendGatewayEvent(state, "node_self_check", node.nodeId, {status: node.status, missing});
-  return {ok: missing.length === 0, admission: node.admission, missingChecks: missing, node: publicAgentNode(node)};
+  return {ok: missing.length === 0, admission: node.admission, missingChecks: missing, node: publicAgentNode(node, {state})};
 }
 
 // 只对 /mcp 有效的执行器凭据。刻意不复用 authenticateAgentNode：那一条同时给网关端点放行，
@@ -619,6 +638,8 @@ export function claimNextDispatch(state, node, options = {}) {
   if (node.status !== "online" || node.admission !== "full") return {dispatch: null, reason: "node_not_admitted", missDetail: {admission: node.admission, status: node.status}};
   recycleExpiredClaims(state);
   expireStaleQueuedDispatches(state);
+  const eligibleProjectIds = runtimeNodeProjectIds(state, node);
+  const eligibleProjectIdSet = new Set(eligibleProjectIds);
   // 治理动作必须挡住【已经排队】的派发，不只是挡住新建。
   //
   // 编排周期跳过被暂停的任务组、也跳过被停用组织名下的任务组 —— 但那只防住"再造新的"。
@@ -640,7 +661,7 @@ export function claimNextDispatch(state, node, options = {}) {
   const dispatch = state.agentDispatches.find((item) => {
     if (item.status !== "queued") return false;
     if (haltedTaskGroupIds.has(item.taskGroupId)) { haltedCandidates += 1; return false; }
-    if (!node.projectIds.includes(item.projectId)) return false;
+    if (!eligibleProjectIdSet.has(item.projectId)) return false;
     if (item.assignedNodeId && item.assignedNodeId !== node.nodeId) return false;
     const contract = state.agentTaskContracts.find((candidate) => candidate.sessionId === item.sessionId && candidate.runId === item.runId);
     if (!contract || (contract.expiresAt && new Date(contract.expiresAt).getTime() <= Date.now())) return false;
@@ -661,7 +682,7 @@ export function claimNextDispatch(state, node, options = {}) {
       return {dispatch: null, reason: "execution_halted", stateChanged: haltedChanged, missDetail: {queuedCount: haltedCandidates}};
     }
     // 未命中的摘要（排队几个、每个为什么轮不到本节点）原先只落到节点记录给控制台看；agent 自己的终端上一个字没有。一并回给它。
-    const miss = summarizeClaimMiss(state, node);
+    const miss = summarizeClaimMiss(state, node, eligibleProjectIdSet);
     const missChanged = recordClaimMiss(node, miss);
     return {dispatch: null, reason: "no_compatible_dispatch", stateChanged: missChanged, missDetail: miss};
   }
@@ -1586,7 +1607,7 @@ export function getSkillWorkset(state, node, worksetId, options = {}) {
     item.runId === dispatch.runId &&
     item.roleSkill?.worksetId === worksetId
   );
-  if (!contract || !node.projectIds.includes(contract.projectId)) throw gatewayError("skill_workset_not_found", 404);
+  if (!contract || !runtimeNodeCanAccessProject(state, node, contract.projectId)) throw gatewayError("skill_workset_not_found", 404);
   return buildSkillWorkset(state, contract, options);
 }
 
@@ -1616,7 +1637,7 @@ export function agentRuntimeOutdated(node) {
 }
 
 const PUBLIC_AGENT_NODE_FIELDS = [
-  "schemaVersion", "nodeId", "nodeName", "organizationId", "projectIds",
+  "schemaVersion", "nodeId", "nodeName", "organizationId", "registrationScope", "projectIds",
   "allowedRoles", "allowedMcpTools", "status", "admission",
   "profile", "profileDigest", "runtimeVersion", "runtimeOutdated",
   "lastHeartbeatAt", "lastSelfCheckAt", "selfCheckDigest", "selfCheckMissing", "selfCheckFailures",
@@ -1626,14 +1647,44 @@ const PUBLIC_AGENT_NODE_FIELDS = [
   "createdAt", "updatedAt"
 ];
 
-export function publicAgentNode(node) {
+export function publicAgentNode(node, options = {}) {
   const safe = {};
   for (const field of PUBLIC_AGENT_NODE_FIELDS) {
     if (node[field] !== undefined) safe[field] = node[field];
   }
   // 派生字段：每次投影时算，不落库 —— 要求版本会随契约变化，持久化下来的判定必然过期。
   safe.runtimeOutdated = agentRuntimeOutdated(node);
+  safe.registrationScope ||= "project";
+  const projectIdSet = options.projectIdSet ? new Set([...options.projectIdSet].map((item) => String(item))) : null;
+  if (options.state) {
+    safe.effectiveProjectIds = runtimeNodeProjectIds(options.state, node);
+    if (projectIdSet) {
+      safe.effectiveProjectIds = safe.effectiveProjectIds.filter((projectId) => projectIdSet.has(projectId));
+      safe.projectIds = (safe.projectIds || []).filter((projectId) => projectIdSet.has(projectId));
+      const active = new Set((options.state.agentDispatches || [])
+        .filter((dispatch) => dispatch.assignedNodeId === node.nodeId && projectIdSet.has(dispatch.projectId))
+        .map((dispatch) => dispatch.dispatchId));
+      safe.activeDispatchIds = (safe.activeDispatchIds || []).filter((dispatchId) => active.has(dispatchId));
+    }
+  }
+  if (options.profileMode === "project") safe.profile = projectVisibleNodeProfile(safe.profile || {});
   return safe;
+}
+
+function projectVisibleNodeProfile(profile = {}) {
+  return {
+    platform: profile.platform,
+    arch: profile.arch,
+    cpuCount: profile.cpuCount,
+    memoryBytes: profile.memoryBytes,
+    diskFreeBytes: profile.diskFreeBytes,
+    tools: (profile.tools || []).map((tool) => ({name: tool.name, version: tool.version, available: tool.available})),
+    models: (profile.models || []).map((model) => ({providerClass: model.providerClass, available: model.available})),
+    capabilityFlags: profile.capabilityFlags || [],
+    region: profile.region,
+    networkSpeedMbps: profile.networkSpeedMbps,
+    observedAt: profile.observedAt
+  };
 }
 
 // 「这次派发用哪份仓库凭证」：按产出目标的 repositoryId 在项目仓库配置里找，密文只在这一刻解开、只进
@@ -1889,9 +1940,9 @@ function recordClaimMiss(node, miss) {
 }
 
 // 逐条说清"这个排队中的派发为什么这个节点接不了"。只留前几条：人要的是原因，不是清单。
-function summarizeClaimMiss(state, node) {
+function summarizeClaimMiss(state, node, projectIdSet = new Set(runtimeNodeProjectIds(state, node))) {
   const queued = (state.agentDispatches || []).filter((item) => item.status === "queued"
-    && node.projectIds.includes(item.projectId)
+    && projectIdSet.has(item.projectId)
     && (!item.assignedNodeId || item.assignedNodeId === node.nodeId));
   const reasons = [];
   for (const item of queued.slice(0, 5)) {
@@ -2006,7 +2057,7 @@ function normalizeChecks(checks) {
 // 领派发、报执行事件、按 allowedMcpTools 调 MCP、拉取该租户数据；而令牌要到剩余不足 7 天才轮换，
 // 注册时给的是 30 天，也就是约 23 天内一直有效。
 // 改为白名单：只放行确定安全的字段，将来新增的字段默认不外泄 —— 这类泄露必须默认关闭。
-const PUBLIC_JOIN_TOKEN_FIELDS = ["schemaVersion", "joinTokenId", "projectId", "organizationId",
+const PUBLIC_JOIN_TOKEN_FIELDS = ["schemaVersion", "joinTokenId", "projectId", "organizationId", "registrationScope",
   "expectedNodeName", "allowedRoles", "allowedMcpTools", "status", "maxUses", "useCount",
   "expiresAt", "createdBy", "createdAt", "updatedAt", "consumedAt", "revokedAt", "revokedBy"];
 

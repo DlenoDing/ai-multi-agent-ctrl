@@ -10,7 +10,7 @@
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 
-  const PROJECT_PAGES = new Set(["proj-overview", "proj-members", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"]);
+  const PROJECT_PAGES = new Set(["proj-overview", "proj-members", "tg", "tasks", "review", "directives", "monitor", "proj-agents", "proj-settings"]);
 
   const PROJECT_MENU_TAIL = [
     {divider: "项目总览"},
@@ -20,6 +20,7 @@
     {id: "proj-agents", label: "AI 智能体"},
     {divider: "执行推进"},
     {id: "tg", label: "任务组"},
+    {id: "tasks", label: "任务工作台"},
     {id: "monitor", label: "执行监控"},
     {divider: "人工控制"},
     {id: "review", label: "人工审核"},
@@ -59,6 +60,7 @@
     "proj-overview": ["项目概览", "总进度、健康度、任务组平均进度与待人工确认数"],
     "proj-members": ["成员权限", "当前项目成员、角色授权、任务组控制与审核权限入口"],
     "tg": ["任务组", "事项清单、角色、配置继承与执行控制"],
+    "tasks": ["任务工作台", "任务列表、执行过程、角色规则与结果证据"],
     "review": ["人工审核", "集中处理执行过程中提交的人工确认请求"],
     "directives": ["人工指令", "通过独立通道向系统下达结构化指令"],
     "monitor": ["执行监控", "会话、派发、控制通道与实时执行事件流"],

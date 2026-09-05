@@ -1,0 +1,137 @@
+/* Isolated rule textarea enhancements. Loaded after styles.css by the owner. */
+.rule-row .rule-editor-tools {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.rule-row .rule-editor-fullscreen-button {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.rule-row textarea[name="ruleContent"].rule-editor-textarea {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  resize: vertical;
+  overflow-y: hidden;
+  line-height: 1.5;
+}
+
+body.rule-editor-fullscreen-open {
+  overflow: hidden;
+}
+
+.rule-editor-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 420;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(15, 23, 42, 0.48);
+}
+
+.rule-editor-fullscreen-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(1180px, 100%);
+  min-width: 0;
+  max-height: calc(100vh - 36px);
+  padding: 16px;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 22px 70px rgba(15, 23, 42, 0.28);
+}
+
+.rule-editor-fullscreen-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rule-editor-fullscreen-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.rule-editor-title-text {
+  color: var(--text-main);
+  font-size: 16px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.rule-editor-state,
+.rule-editor-context {
+  color: var(--text-sub);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.rule-editor-fullscreen-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.rule-editor-fullscreen-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.rule-editor-fullscreen textarea[name="ruleContent"].rule-editor-textarea {
+  width: 100%;
+  min-height: 320px;
+  max-height: calc(100vh - 180px);
+}
+
+.rule-editor-fullscreen textarea[name="ruleContent"].rule-editor-textarea[readonly],
+.rule-editor-fullscreen textarea[name="ruleContent"].rule-editor-textarea:disabled {
+  background: #f8fafc;
+  color: var(--text-main);
+}
+
+@media (max-width: 860px) {
+  .rule-editor-fullscreen {
+    padding: 10px;
+  }
+
+  .rule-editor-fullscreen-panel {
+    max-height: calc(100vh - 20px);
+    padding: 12px;
+  }
+
+  .rule-editor-fullscreen-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .rule-editor-fullscreen-actions {
+    justify-content: flex-end;
+  }
+
+  .rule-editor-fullscreen textarea[name="ruleContent"].rule-editor-textarea {
+    min-height: 260px;
+    max-height: calc(100vh - 210px);
+  }
+}

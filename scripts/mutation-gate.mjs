@@ -40,6 +40,14 @@ const CONSOLE_GATE = "scripts/console-behaviour-check.mjs";
 
 // 每条 mutation：把守卫改坏，期望 contract-check 失败且输出里出现 expect 片段。
 const MUTATIONS = [
+  {
+    name: "任务详情权限投影不得把观察者当成控制者",
+    file: SERVER,
+    check: "verifyTaskGroupDetailPermissionProjection",
+    from: "function hasTaskGroupPermission(state, account, taskGroup, permission) {",
+    to: "function hasTaskGroupPermission(state, account, taskGroup, permission) { return true;",
+    expect: "任务详情权限投影错误"
+  },
   // ── 本段会话新加的守卫：手工变异验过一次不算数，要每次全量 doctor 都重验 ─────────────
   {
     name: "取消/回收必须了结格子名下的资源",
@@ -3047,8 +3055,8 @@ const MUTATIONS = [
     name: "没有项目时不摆出必然失败的表单",
     file: APP,
     gate: "console",
-    from: "  if (!(state.projects || []).length) {",
-    to: "  if (false && !(state.projects || []).length) {",
+    from: "  if (!(state.projects || []).length && !scopedTokens.length) {",
+    to: "  if (false && !(state.projects || []).length && !scopedTokens.length) {",
     expect: "点了必然失败的加入令牌表单"
   },
   {
@@ -3525,7 +3533,7 @@ const MUTATIONS = [
     name: "容量快照：节点计数不得按不存在的字段过滤（那会恒为 0）",
     file: MCP,
     check: "verifyCapacitySnapshotCountsAreNotAlwaysZero",
-    from: "? state.agentRuntimeNodes.filter((item) => (item.projectIds || []).some((id) => filter.has(id))).length",
+    from: "? state.agentRuntimeNodes.filter((item) => runtimeNodeVisibleForProjectSet(state, item, filter)).length",
     to: "? state.agentRuntimeNodes.filter((item) => item.projectId && filter.has(item.projectId)).length",
     expect: "调度方据此判定没有容量"
   },
@@ -3533,7 +3541,7 @@ const MUTATIONS = [
     name: "视图作用域：agent 节点按复数 projectIds 归属（否则舰队计数会串项目）",
     file: CORE,
     check: "verifyProjectScopePredicateResolvesOwnership",
-    from: "    if (Array.isArray(item.projectIds)) return item.projectIds.includes(scopeProjectId);",
+    from: "    if (Array.isArray(nodeProjectIds)) return nodeProjectIds.includes(scopeProjectId);",
     to: "",
     expect: "节点只服务别的项目"
   },
@@ -4859,7 +4867,7 @@ const MUTATIONS = [
     name: "归档挡住的是新工作，不是收尾（别把在用项目一起挡死）",
     file: "apps/control-plane-ui/lib/agent-gateway.mjs",
     gate: "doctor",
-    from: '  if (tokenProject.status === "archived") {',
+    from: '  if (registrationScope === "project" && tokenProject.status === "archived") {',
     to: "  if (true) {",
     expect: "在用项目里签不出加入令牌了"
   },
@@ -4877,7 +4885,7 @@ const MUTATIONS = [
     name: "已归档的项目不许再接入 agent（后端这道锁）",
     file: "apps/control-plane-ui/lib/agent-gateway.mjs",
     gate: "doctor",
-    from: '  if (tokenProject.status === "archived") {',
+    from: '  if (registrationScope === "project" && tokenProject.status === "archived") {',
     to: "  if (false) {",
     expect: "已归档的项目还能签发 agent 加入令牌"
   },
@@ -6340,8 +6348,8 @@ const MUTATIONS = [
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
     // 锚点跟着改到「暂停/恢复」二选一之后那一处（2026-08-26 把两个常驻按钮改成按状态出一个）。
-    from: '          ${hasGroupPerm(taskGroup.id, "task_group:control") ? (',
-    to: "          ${canControl ? (",
+    from: '          ${activeGroup && hasGroupPerm(taskGroup.id, "task_group:control") ? (',
+    to: "          ${activeGroup && canControl ? (",
     expect: "别人那段也有"
   },
   {
@@ -6439,8 +6447,8 @@ const MUTATIONS = [
     name: "缺 projectId 的加入令牌请求不得报成 500",
     file: "apps/control-plane-ui/lib/agent-gateway.mjs",
     gate: "doctor",
-    from: '  if (!tokenProject) throw gatewayError("join_token_project_not_found", 404, {projectId: projectId || null});',
-    to: '  if (!tokenProject) throw new Error("join_token_project_not_found");',
+    from: '  if (registrationScope === "project" && !tokenProject) throw gatewayError("join_token_project_not_found", 404, {projectId: projectId || null});',
+    to: '  if (registrationScope === "project" && !tokenProject) throw new Error("join_token_project_not_found");',
     expect: "收到空 body 就 5xx"
   },
   {
@@ -8369,8 +8377,8 @@ const MUTATIONS = [
     name: "只读成员不许按得动项目配置的写按钮",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '        <button class="primary-button" type="submit" ${editDisabled}>保存项目配置</button>',
-    to: '        <button class="primary-button" type="submit">保存项目配置</button>',
+    from: '  const editDisabled = canEdit && !archived && rulesLoaded ? "" : "disabled";',
+    to: '  const editDisabled = !archived && rulesLoaded ? "" : "disabled";',
     expect: "这些写按钮对只读成员仍然可按"
   },
   {
@@ -9862,8 +9870,8 @@ const MUTATIONS = [
     name: "已吊销的节点必须离开舰队分母（否则叫人去修一台不存在的机器）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "agent",
-    from: 'total: (scopeCollection(scoped.agentRuntimeNodes) || []).filter((node) => node.status !== "revoked").length',
-    to: "total: (scopeCollection(scoped.agentRuntimeNodes) || []).length",
+    from: 'total: (scopeAgentRuntimeNodes(scoped.agentRuntimeNodes) || []).filter((node) => node.status !== "revoked").length',
+    to: "total: (scopeAgentRuntimeNodes(scoped.agentRuntimeNodes) || []).length",
     expect: "舰队分母把已吊销的节点也算了进去"
   },
   {
@@ -11327,7 +11335,7 @@ const MUTATIONS = [
     name: "建工作项的下拉里不许出现他没权限的任务组",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '            const addable = groups.filter((taskGroup) => hasGroupPerm(taskGroup.id, "task_group:control"));',
+    from: '            const addable = addableGroups;',
     to: "            const addable = groups;",
     expect: "选了也只会被后端拒掉"
   },
@@ -11380,8 +11388,8 @@ const MUTATIONS = [
     name: "已归档项目的设置页不许摆一个按不动的保存按钮",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '  const editDisabled = canEdit && !archived ? "" : "disabled";',
-    to: '  const editDisabled = canEdit ? "" : "disabled";',
+    from: '  const editDisabled = canEdit && !archived && rulesLoaded ? "" : "disabled";',
+    to: '  const editDisabled = canEdit && rulesLoaded ? "" : "disabled";',
     expect: "不能摆一个按不动的保存按钮"
   },
   {
@@ -11912,8 +11920,8 @@ const MUTATIONS = [
     name: "项目配置保存要带并发令牌 expectedConfigVersion",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "body: JSON.stringify({repositories, baselineData, defaultRoles, expectedConfigVersion: projConfigVersion})",
-    to: "body: JSON.stringify({repositories, baselineData, defaultRoles})",
+    from: "      payload.expectedConfigVersion = form.dataset.configVersion || projConfigVersion;\n      await api(`/api/projects/${encodeURIComponent(form.dataset.project)}/config`, {method: \"POST\", body: JSON.stringify(payload)});\n      formTouched = false;\n      await loadPage();\n      return;\n    }\n    if (kind === \"project-rules\")",
+    to: "      await api(`/api/projects/${encodeURIComponent(form.dataset.project)}/config`, {method: \"POST\", body: JSON.stringify(payload)});\n      formTouched = false;\n      await loadPage();\n      return;\n    }\n    if (kind === \"project-rules\")",
     expect: "发出去的 expectedConfigVersion=undefined"
   },
   {
@@ -12021,7 +12029,7 @@ const MUTATIONS = [
     file: "apps/agent-runtime/runtime.mjs",
     gate: "contract",
     check: "verifyAgentctlUnknownCommandListsCommands",
-    from: "    throw new Error(`这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <加入令牌文件>，令牌由项目管理员在目标项目「项目管理」→「AI 智能体」→「注册 agent」签发`);",
+    from: "    throw new Error(`这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <加入令牌文件>，令牌由项目管理员（项目节点）或组织管理员（组织共享节点）在控制台签发`);",
     to: "    throw new Error(`agent is not initialized: ${configPath}`);",
     expect: "没注册的节点跑 status，报文没说「还没注册」"
   },

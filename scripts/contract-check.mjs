@@ -12,6 +12,7 @@ import { mcpServiceAllowedTools ,
   mcpServiceAllowlistNotice
 } from "../apps/control-plane-ui/lib/mcp-service-allowlist.mjs";
 import { createHash } from "node:crypto";
+import {runInNewContext} from "node:vm";
 import { describePendingWreckage } from "./lib/mutation-wreckage.mjs";
 import { sweepStaleDoctorRuntimeDirs } from "./lib/stale-runtime-dirs.mjs";
 import { KNOWN_SECOND_DOORS } from "./lib/known-second-doors.mjs";
@@ -493,6 +494,7 @@ const PREDICATE_COVERAGE = {
   canReadResource: {probedOnly: "2026-08-27 探过：改成「有账号就能读」，doctor 当场红 —— 跨租户存在性那条接住了（写路由会变成一台「别处有没有这个 id」的探针）"},
   canReadProject: {probedOnly: "2026-08-27 探过：改成「有账号就能读」，doctor 当场红 —— 组织管理员的整份状态载荷里出现了别的租户的 29 个对象"},
   hasPermission: {probedOnly: "改成永远为真，控制面 e2e 红"},
+  hasTaskGroupPermission: {proven: "任务详情权限投影不得把观察者当成控制者"},
   isReadOnlyTool: {probedOnly: "2026-08-27 探过：改成「全是只读」，doctor-mcp 当场红 —— 「写工具没有幂等键必须拒」那条接住了（写工具从此不再要求幂等键，重放会造出重复记录）"},
   isWriteTool: {probedOnly: "改成永远为假（写工具被当成只读），契约门红"},
   schemaTypeMatches: {probedOnly: "2026-08-27 探过：改成恒真，doctor-mcp 当场红 —— 类型不符的值会被当成合法参数往下传"},
@@ -517,11 +519,11 @@ const ARCHIVED_PROJECT_WRITE_POLICY = {
   agent_join_token_revoke: {allowed: "收尾：归档之后还得撤得掉已经发出去的票"},
   agent_node_revoke: {allowed: "收尾：把还挂着的节点摘掉"},
   agent_control_command_create: {allowed: "收尾：停掉还在跑的东西这件事，任何时候都不该被挡"},
-  project_member_grant: {allowed: "历史记录保留，就得有人看得到 —— 授只读访问是正当需求"},
+  project_member_grant: {blocked: "项目成员路由对归档项目拒绝新授权，既有授权与历史读取保留"},
   shared_definition_contract_create: {allowed: "规则层记录，归档项目上它不驱动任何工作；挡它只是多一道没必要的门"},
   contract_publish: {allowed: "把【已经存在】的定义推到生效，属收尾而非新建"},
   project_archive: {allowed: "对已归档项目再归档一次直接回 200（幂等），不算新工作"},
-  project_config_update: {allowed: "改的是配置不是工作；归档项目上它不驱动任何东西，挡它会让写错的配置永远留在那里"}
+  project_config_update: {blocked: "项目配置路由对归档项目只读，不再允许修改执行配置"}
 };
 
 const DOCKER_FAILURE_SAMPLES = [
@@ -1045,6 +1047,7 @@ run(verifyArchivedProjectWritePolicyIsAnswered);
 run(verifySurveyRendersEveryRegisteredPage);
 run(verifyDockerEnvironmentFailuresSayWhatToDo);
 run(verifyProjectAdminAndOwnerStayOnePerson);
+run(verifyTaskGroupDetailPermissionProjection);
 run(verifyHealthReadDoesNotCloneEveryRequest);
 run(verifyGetReadPathReusesSharedSnapshot);
 run(verifyCallerChosenIdsCannotShadow);
@@ -9208,6 +9211,13 @@ function verifyArchivedProjectWritePolicyIsAnswered(output) {
   ) {
     actions.push("agent_create");
   }
+  // 共享节点引入组织／项目两种注册作用域；共用 helper 的项目分支仍须登记归档策略。
+  for (const match of server.matchAll(/beginGuardedWrite\(req, state, "([a-z_]+)", ((?:(?!beginGuardedWrite)[^;])+)\);/gu)) {
+    if (match[2].includes("agentRegistrationResourceScope(")
+      || (match[2].endsWith(", tokenScope") && server.includes("const tokenScope = agentRegistrationResourceScope("))) {
+      if (!actions.includes(match[1])) actions.push(match[1]);
+    }
+  }
   if (actions.length < 8) {
     output.push(`以项目为作用域的写动作只提取到 ${actions.length} 个 —— 提取脱节，本条在空转`);
     return;
@@ -9272,6 +9282,34 @@ function verifyDockerEnvironmentFailuresSayWhatToDo(output) {
     output.push("docker 门把一个认不出来的失败也当成环境问题了 —— 真有代码缺陷时那句话会把它盖住");
   }
   console.log(`docker 环境故障报文：${DOCKER_FAILURE_SAMPLES.length} 句真实原话逐个核过，认不出的照旧原样抛`);
+}
+
+function verifyTaskGroupDetailPermissionProjection(output) {
+  const source = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const body = source.match(/function hasTaskGroupPermission\([^]*?\n\}/u)?.[0];
+  if (!body) { output.push("任务详情权限投影函数不存在"); return; }
+  const project = {id: "project_detail", ownerAccountId: "owner"};
+  const group = {id: "group_detail", projectId: project.id};
+  const calls = [];
+  const predicate = runInNewContext(`(${body})`, {
+    isSystemAccount: (account) => account.accountType === "system_admin",
+    hasPermission: (_state, actor, permission, scope) => {
+      calls.push(scope);
+      return actor === "reviewer" && permission === "task_group:review" && scope.resourceType === "task_group" && scope.resourceId === group.id && scope.projectId === project.id;
+    }
+  });
+  const state = {projects: [project]};
+  for (const [accountId, accountType, permission, expected] of [
+    ["system", "system_admin", "task_group:control", true],
+    ["owner", "user_account", "task_group:control", true],
+    ["viewer", "user_account", "task_group:control", false],
+    ["viewer", "user_account", "task_group:review", false],
+    ["reviewer", "user_account", "task_group:review", true],
+    ["reviewer", "user_account", "task_group:control", false]
+  ]) {
+    if (predicate(state, {accountId, accountType}, group, permission) !== expected) output.push(`任务详情权限投影错误：${accountId}/${permission}`);
+  }
+  if (!calls.length || calls.some((scope) => scope.resourceId !== group.id || scope.projectId !== project.id)) output.push("任务详情权限投影没有委托到正确任务组作用域");
 }
 
 function verifyProjectAdminAndOwnerStayOnePerson(output) {
@@ -12476,7 +12514,11 @@ function verifyMessagesDoNotPointAtInvisibleFields(output) {
 
 function verifyServerFieldsReachThePerson(output) {
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
-  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8").replace(/\/\/[^\n]*/gu, "");
+  const publicDir = join(root, "apps/control-plane-ui/public");
+  const entry = readFileSync(join(publicDir, "index.html"), "utf8");
+  const loadedScripts = [...entry.matchAll(/<script\s+src="\/([^"<>]+\.js)"/gu)].map((match) => match[1]).filter((file) => file !== "i18n-zh.js");
+  if (!loadedScripts.includes("app.js")) { output.push("控制台入口未加载 app.js，字段消费检查无法成立"); return; }
+  const app = loadedScripts.map((file) => readFileSync(join(publicDir, file), "utf8")).join("\n").replace(/\/\/[^\n]*/gu, "");
   // 这些字段确实只发给机器（agent 运行时、装机脚本、MCP 客户端、健康探针），界面不该显示，
   // 逐个写明是谁在读 —— 登记不是免检，是把"为什么不用显示"钉住。
   const MACHINE_FACING_FIELDS = {
@@ -13056,7 +13098,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 连带撤销它全部的会话与授权，而它原先一道门都没有 —— 只锁一边等于没锁）。可达性与上面
   // 两条完全相同：identity-mcp.* 整族被工具白名单挡着，编不出走到它的用例，已登记进
   // KNOWN_SECOND_DOORS。够得着的那一侧（REST 的 org_member_status_update）本来就是真人专属。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 20;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 19;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -13294,6 +13336,7 @@ function verifyOperatorCliRejectsUnknownFlags(output) {
     "scripts/mutation-gate.mjs": "验证代码（--anchors-only 只给门链自己用）",
     "scripts/mutate-probe.mjs": "验证代码（判别力探针）",
     "scripts/org-agent-dispatch-check.mjs": "端到端验证代码（--keep-runtime 仅保留隔离测试运行态供浏览器复验，不操作生产运行态）",
+    "scripts/org-node-scope-check.mjs": "端到端验证代码（--keep-runtime 仅保留共享节点隔离测试现场）",
     "scripts/run-with-env.mjs": "透传壳，自己不解析参数",
     "scripts/concurrent-writer-gate.mjs": "门；argv[2] 是工作目录，不是具名参数",
     "scripts/crash-consistency-gate.mjs": "门；同上",
@@ -13350,7 +13393,7 @@ function verifyOperatorCliRejectsUnknownFlags(output) {
   const argvUsers = readdirSync(resolve(root, "scripts")).filter((name) => name.endsWith(".mjs"))
     .map((name) => `scripts/${name}`)
     .filter((path) => path !== "scripts/contract-check.mjs")
-    .filter((path) => /process\.argv/u.test(readFileSync(resolve(root, path), "utf8")));
+    .filter((path) => /process\.argv|import\s*\{[^}]*\bargv\b[^}]*\}\s*from\s*["']node:process/u.test(readFileSync(resolve(root, path), "utf8")));
   if (argvUsers.length < 8) {
     output.push(`运维入口核对：只扫到 ${argvUsers.length} 个读 argv 的脚本 —— 提取与目录脱节，本条在空转`);
     return;
@@ -20623,6 +20666,10 @@ function verifyWipCapacityBackpressure(output) {
 // 但这个快照存在的意义就是让调度方据此判断"还有没有容量"，报 0 等于让它判定没有容量。
 function verifyCapacitySnapshotCountsAreNotAlwaysZero(output) {
   const probe = {
+    projects: [
+      {id: "prj_mine", organizationId: "org_default", status: "active"},
+      {id: "prj_other", organizationId: "org_default", status: "active"}
+    ],
     agents: [{id: "agent_a"}, {id: "agent_b"}],
     agentRuntimeNodes: [
       {nodeId: "n_mine", projectIds: ["prj_mine"], status: "online"},
@@ -20686,9 +20733,10 @@ function verifyQuietProjectsDoNotHoardSlots(output) {
   try {
     const base = {agentRuntimeNodes: []};
     const quiet = wipCapacityForProject(base, "prj_quiet");
-    const offlineNode = {agentRuntimeNodes: [{projectIds: ["prj_p"], status: "offline", admission: "full"}]};
+    const projects = [{id: "prj_p", organizationId: "org_default", status: "active"}];
+    const offlineNode = {projects, agentRuntimeNodes: [{projectIds: ["prj_p"], status: "offline", admission: "full"}]};
     const withOffline = wipCapacityForProject(offlineNode, "prj_p");
-    const onlineNode = {agentRuntimeNodes: [{projectIds: ["prj_p"], status: "online", admission: "full"}]};
+    const onlineNode = {projects, agentRuntimeNodes: [{projectIds: ["prj_p"], status: "online", admission: "full"}]};
     const withOnline = wipCapacityForProject(onlineNode, "prj_p");
     if (!(quiet > 0 && quiet <= 4)) {
       output.push(`在制品上限·安静项目：一个节点都没注册过的项目拿到 ${quiet} 个名额 —— `
@@ -20703,7 +20751,7 @@ function verifyQuietProjectsDoNotHoardSlots(output) {
         + "在线节点没有换来任何额度，界面上'多接入几台节点'那句话就是空头承诺");
     }
     // 吊销是终态：这样的节点永远不会再来领活，不该再撑着完整队头。
-    const revokedNode = {agentRuntimeNodes: [{projectIds: ["prj_p"], status: "revoked", admission: "full"}]};
+    const revokedNode = {projects, agentRuntimeNodes: [{projectIds: ["prj_p"], status: "revoked", admission: "full"}]};
     const withRevoked = wipCapacityForProject(revokedNode, "prj_p");
     if (withRevoked !== quiet) {
       output.push(`在制品上限·安静项目：唯一的节点已被吊销，却还拿着 ${withRevoked} 个名额（无节点时是 ${quiet}）—— `

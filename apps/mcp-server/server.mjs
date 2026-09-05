@@ -91,10 +91,15 @@ import {
   requiredRoomId, ACCOUNT_ROLES, unknownAccountRoles, unknownOwnerRoles, normalizePinnedModelId} from "../control-plane-ui/lib/control-plane-core.mjs";
 import {
   createAgentControlCommand,
+  publicAgentNode,
   revokeDispatchMcpGrants
 } from "../control-plane-ui/lib/agent-gateway.mjs";
 import { isTerminalDispatchStatus } from "../control-plane-ui/lib/lifecycle-states.mjs";
 import { mcpToolGroups, mcpToolNames, mcpToolInputKeys } from "../control-plane-ui/lib/mcp-tool-catalog.mjs";
+import {
+  runtimeNodeProjectIds,
+  runtimeNodeVisibleForProjectSet
+} from "../control-plane-ui/lib/runtime-node-scope.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const runtimeDir = resolve(root, process.env.AIMAC_RUNTIME_DIR || ".runtime");
@@ -1267,7 +1272,7 @@ export function inferMcpArgumentProjectIds(state, args = {}) {
   if (args.nodeId) {
     // 一台节点可以同时服务多个项目：全部算进去，受限主体只要在其中任一个上无权就会被挡。
     const node = (state.agentRuntimeNodes || []).find((item) => item.nodeId === args.nodeId);
-    for (const projectId of node?.projectIds || []) if (projectId) projectIds.add(projectId);
+    for (const projectId of node ? runtimeNodeProjectIds(state, node) : []) if (projectId) projectIds.add(projectId);
   }
   return projectIds;
 }
@@ -2083,7 +2088,9 @@ function finalizeScopedMcpState(scoped, projectIdSet, visibleTaskGroupIds) {
   scoped.roomParticipants = (scoped.roomParticipants || []).filter((participant) => visibleRoomIds.has(participant.roomId));
   scoped.roomAcks = (scoped.roomAcks || []).filter((ack) => visibleRoomIds.has(ack.roomId));
   scoped.roomSequenceByRoom = Object.fromEntries(Object.entries(scoped.roomSequenceByRoom || {}).filter(([roomId]) => visibleRoomIds.has(roomId)));
-  scoped.agentRuntimeNodes = (scoped.agentRuntimeNodes || []).filter((node) => (node.projectIds || []).some((projectId) => projectIdSet.has(projectId)));
+  scoped.agentRuntimeNodes = (scoped.agentRuntimeNodes || [])
+    .filter((node) => runtimeNodeVisibleForProjectSet(scoped, node, projectIdSet))
+    .map((node) => publicAgentNode(node, {state: scoped, projectIdSet, profileMode: "project"}));
   scoped.agents = (scoped.agents || []).filter((agent) => !agent.projectId || projectIdSet.has(agent.projectId));
   scoped.instructionMetrics = {
     ...scoped.instructionMetrics,
@@ -2430,7 +2437,7 @@ export function capacitySnapshot(state, filter) {
     // agents 与 modelProviderCount 同类（全局注册表、计数不含租户数据），按同一规矩全局上报。
     agentCount: state.agents.length,
     nodeCount: filter
-      ? state.agentRuntimeNodes.filter((item) => (item.projectIds || []).some((id) => filter.has(id))).length
+      ? state.agentRuntimeNodes.filter((item) => runtimeNodeVisibleForProjectSet(state, item, filter)).length
       : state.agentRuntimeNodes.length,
     modelProviderCount: state.modelCapabilities.length
   };

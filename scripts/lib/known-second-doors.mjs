@@ -48,8 +48,6 @@ export const KNOWN_SECOND_DOORS = {
     "给【将来新增的工具/参数】留的 fail-closed 兜底（源码注释里明写着 defends future-added tools）。"
     + "2026-08-27 核过一次：地址键清单后加的六个键里有五个没跟上解析分支，受限主体只传 reviewPlanId 就会撞它 ——"
     + " 已补齐并立门（契约门按清单逐键喂样例）。现有每个键都能解析，所以今天仍走不到；将来加键忘了加解析，那道门先红",
-  mcp_dispatch_bound_grant_required:
-    "受限节点调没被授予的工具时，mcp_tool_not_granted_to_principal 先拒（工具白名单在授权检查之前）",
   project_id_required:
     "入参 schema 里 task_group_create 的 projectId 就是必填，"
     + "不给会先被 mcp_required_argument_missing 拒掉（e2e 里那条用例撞的正是它）",

@@ -727,6 +727,7 @@
     human_directive_cancel: "人工指令取消",
     human_directive: "人工指令",
     active_paused_by_control: "已被控制暂停",
+    human_directive_pause: "人工暂停",
     active_paused_by_freeze: "已被冻结暂停",
     independent_review_changes_requested: "独立评审要求返工",
     independent_review_backfill_failed: "补评审未通过待决策",

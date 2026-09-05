@@ -26,6 +26,7 @@ import { defaultManagementSurfaces } from "./management-surface-catalog.mjs";
 import { defaultSkillSource } from "./skill-source-catalog.mjs";
 import { unique } from "./collection-utils.mjs";
 import { clone, digestOf } from "./digest-utils.mjs";
+import { runtimeNodeCanAccessProject } from "./runtime-node-scope.mjs";
 import {
   capIdempotencyRecords,
   idempotentReplayOutcome,
@@ -194,6 +195,15 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.agentRuntimeNodes ||= [];
   state.mcpProbeNodes ||= [];
   state.agentJoinTokens ||= [];
+  for (const node of state.agentRuntimeNodes || []) {
+    node.organizationId ||= DEFAULT_ORGANIZATION_ID;
+    node.registrationScope ||= "project";
+    node.projectIds ||= [];
+  }
+  for (const token of state.agentJoinTokens || []) {
+    token.organizationId ||= DEFAULT_ORGANIZATION_ID;
+    token.registrationScope ||= "project";
+  }
   state.agentGatewayEvents ||= [];
   state.organizations ||= [];
   state.humanConfirmationRequests ||= [];
@@ -1695,7 +1705,8 @@ export function makeProjectScopePredicate(taskGroups, scopeProjectId) {
     // 视图基底里的 fleet 计数取的是下发的节点，于是 A 项目一个节点都没有、B 项目有一个在线时，
     // A 的页面显示"舰队在线"，那条"没有在线 agent、这些活不会动"的提示就永远不出现 ——
     // 而在制品额度那边算的是正确的 0。同一份状态，两处结论相反，人看到的是错的那个。
-    if (Array.isArray(item.projectIds)) return item.projectIds.includes(scopeProjectId);
+    const nodeProjectIds = Array.isArray(item.effectiveProjectIds) ? item.effectiveProjectIds : item.projectIds;
+    if (Array.isArray(nodeProjectIds)) return nodeProjectIds.includes(scopeProjectId);
     return true;
   };
 }
@@ -1705,7 +1716,7 @@ export function wipCapacityForProject(state, projectId) {
   let online = 0;
   let registered = 0;
   for (const node of state.agentRuntimeNodes || []) {
-    if (!(node.projectIds || []).includes(projectId)) continue;
+    if (!runtimeNodeCanAccessProject(state, node, projectId)) continue;
     if (!RETIRED_NODE_STATUSES.has(node.status)) registered += 1;
     if (node.status === "online" && node.admission === "full") online += 1;
   }
@@ -5896,6 +5907,12 @@ export function projectArchivedRefusal(project, whatCannotBeDone) {
 // 作用域取第一个是为了让审计/命令记录有确定落点 —— 那没问题，问题是【判权也只判了它】。
 // 判定放在 core 且只依赖 state：路由那层只做接线，这样它能被真正压一遍（而不是只核源码形状）。
 export function nodeProjectsBeyondPermission(state, accountId, node, hasPermissionFn) {
+  if (node?.registrationScope === "organization") {
+    const organizationId = node.organizationId || DEFAULT_ORGANIZATION_ID;
+    return hasPermissionFn(state, accountId, "agent:activate", {resourceType: "organization", resourceId: organizationId})
+      ? []
+      : [`Organization:${organizationId}`];
+  }
   const projectIds = (node?.projectIds || []).slice(1);
   if (!projectIds.length) return [];
   return projectIds.filter((projectId) =>

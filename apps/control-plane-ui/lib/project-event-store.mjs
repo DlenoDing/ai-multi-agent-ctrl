@@ -47,11 +47,17 @@ export function appendProjectExecutionEvent(runtimeDir, event) {
 export function readProjectExecutionEvents(runtimeDir, projectId, filters = {}) {
   const afterSequence = Number(filters.afterSequence || 0);
   const limit = Math.max(1, Math.min(500, Number(filters.limit || 120)));
+  const latest = filters.latest === true || filters.latest === "1";
+  if (Array.isArray(filters.allowedTaskGroupIds) && !filters.allowedTaskGroupIds.length) return {events: [], nextCursor: afterSequence, total: 0, returnedCount: 0, hasMore: false, historyTruncated: false, totalExact: true, storage: storageInfo(projectId)};
   const paths = projectExecutionEventReadPaths(runtimeDir, projectId);
-  if (!paths.length) return {events: [], nextCursor: afterSequence, storage: storageInfo(projectId)};
+  if (!paths.length) return {events: [], nextCursor: afterSequence, total: 0, returnedCount: 0, hasMore: false, historyTruncated: false, totalExact: true, storage: storageInfo(projectId)};
   const sources = paths.map((path) => ({path, source: readEventSource(path, filters)}));
   const source = sources.map((item) => item.source).join("\n");
-  const events = source
+  const historyTruncated = sources.some((item) => Buffer.byteLength(item.source, "utf8") < statSync(item.path).size);
+  const allowedTaskGroupIds = Array.isArray(filters.allowedTaskGroupIds)
+    ? new Set(filters.allowedTaskGroupIds.map((id) => String(id)))
+    : null;
+  const scannedEvents = source
     .split(/\r?\n/u)
     .filter(Boolean)
     .map((line) => {
@@ -63,19 +69,32 @@ export function readProjectExecutionEvents(runtimeDir, projectId, filters = {}) 
     })
     .filter(Boolean)
     .filter((event) => Number(event.sequence || 0) > afterSequence)
-    .filter((event) => !filters.dispatchId || event.dispatchId === filters.dispatchId)
+    .sort((left, right) => Number(left.sequence || 0) - Number(right.sequence || 0));
+  const scopedEvents = scannedEvents
     .filter((event) => !filters.taskGroupId || event.taskGroupId === filters.taskGroupId)
-    .filter((event) => !filters.sessionId || event.sessionId === filters.sessionId)
-    .sort((left, right) => Number(left.sequence || 0) - Number(right.sequence || 0))
-    .slice(0, limit);
+    .filter((event) => !allowedTaskGroupIds || allowedTaskGroupIds.has(event.taskGroupId));
+  // 游标是项目日志扫描位置；已过滤的记录不应使安静任务反复重扫同一段日志。
+  const highestScannedSequence = scannedEvents.reduce((max, event) => Math.max(max, Number(event.sequence || 0)), afterSequence);
+  const matchingEvents = scopedEvents
+    .filter((event) => !filters.dispatchId || event.dispatchId === filters.dispatchId)
+    .filter((event) => !filters.workItemId || event.workItemId === filters.workItemId)
+    .filter((event) => !filters.sessionId || event.sessionId === filters.sessionId);
+  const events = latest ? matchingEvents.slice(-limit) : matchingEvents.slice(0, limit);
+  const hasMore = latest ? false : matchingEvents.length > events.length;
+  const totalExact = !historyTruncated;
   return {
     events,
-    nextCursor: events.at(-1)?.sequence || afterSequence,
+    nextCursor: hasMore ? (events.at(-1)?.sequence || afterSequence) : highestScannedSequence,
+    total: totalExact ? matchingEvents.length : null,
+    returnedCount: events.length,
+    hasMore,
+    historyTruncated: historyTruncated || (latest && matchingEvents.length > events.length),
+    totalExact,
     storage: {
       ...storageInfo(projectId),
       // Compare BYTES to bytes: source.length is UTF-16 code units, so any multibyte content (the
       // console is Chinese) would otherwise report a fully-read file as a truncated "tail-window".
-      readMode: sources.some((item) => Buffer.byteLength(item.source, "utf8") < statSync(item.path).size) ? "tail-window" : "full"
+      readMode: historyTruncated ? "tail-window" : "full"
     }
   };
 }
@@ -224,10 +243,11 @@ function readEventSource(path, filters = {}) {
   const maxBytes = clampEnvNumber(process.env.AIMAC_PROJECT_EVENT_TAIL_BYTES, 64 * 1024, 2 * 1024 * 1024);
   const size = statSync(path).size;
   if (size <= maxBytes) return readFileSync(path, "utf8");
+  if (filters.latest === true || filters.latest === "1") return readFileTail(path, maxBytes);
   const afterSequence = Number(filters.afterSequence || 0);
   const tail = readFileTail(path, maxBytes);
   const firstTailSequence = firstSequenceInSource(tail);
-  if (!afterSequence || (firstTailSequence && afterSequence >= firstTailSequence - 1)) return tail;
+  if (afterSequence && firstTailSequence && afterSequence >= firstTailSequence - 1) return tail;
   return readFileSync(path, "utf8");
 }
 

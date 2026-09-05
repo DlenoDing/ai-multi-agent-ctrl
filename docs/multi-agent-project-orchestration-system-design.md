@@ -628,6 +628,7 @@ AgentNode 可能位于公网不同主机。接入方式：
 2. runtime 通过 TLS 连接公网控制平面的 Agent Gateway 和集中式 `/mcp`。
 3. Gateway 先执行 Agent 初始化，不直接分配业务任务。
 4. 节点注册能力：模型执行器、工具、语言、平台、可访问项目、Docker、本地路径、并发容量和远程 MCP 可达性；不注册本地 MCP server。
+   节点可以是组织共享或项目专属。组织节点由组织管理员在组织管理界面签发加入令牌，服务端根据本组织当前有效项目重算 `effectiveProjectIds`；项目节点只服务注册项目。空作用域、跨组织、归档项目均不授予任务或 MCP 能力，项目管理员不能因此取得组织节点管控权。
 5. 心跳上报：CPU、内存、磁盘、GPU、网络、任务数、session 状态、工具可用性、远程 MCP 健康和配额画像。
 6. Scheduler 根据资源状态、可用额度、项目权限、写入面 lease 和任务风险分配 work session，传入最小任务契约。
 7. session 通过 Room Broker 通信，通过 Evidence Metadata Registry 登记证据 locator 和 digest，通过 MCP Control Plane 使用被授权工具；项目交付文件仍以 Git 仓库 commit/push 为准。

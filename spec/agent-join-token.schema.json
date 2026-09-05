@@ -4,9 +4,20 @@
   "title": "AgentJoinToken",
   "type": "object",
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {"properties": {"registrationScope": {"const": "project"}}},
+      "then": {"properties": {"projectId": {"type": "string", "minLength": 1}}}
+    },
+    {
+      "if": {"properties": {"registrationScope": {"const": "organization"}}},
+      "then": {"properties": {"organizationId": {"type": "string", "minLength": 1}}}
+    }
+  ],
   "required": [
     "schemaVersion",
     "joinTokenId",
+    "registrationScope",
     "projectId",
     "allowedRoles",
     "allowedMcpTools",
@@ -29,8 +40,13 @@
       "minLength": 1
     },
     "projectId": {
-      "type": "string",
+      "type": ["string", "null"],
       "minLength": 1
+    },
+    "registrationScope": {
+      "type": "string",
+      "enum": ["project", "organization"],
+      "default": "project"
     },
     "expectedNodeName": {
       "type": [

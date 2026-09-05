@@ -13,7 +13,7 @@ const RUNTIME_VERSION = "0.3.0";
 const runtimeFilePath = fileURLToPath(import.meta.url);
 const args = parseArgs(process.argv.slice(2));
 const command = args._[0] || "run";
-const JOIN_TOKEN_ORIGIN = "加入令牌由项目管理员在目标项目「项目管理」→「AI 智能体」→「注册 agent」签发，保存成文件后用 --join-token-file 指过来";
+const JOIN_TOKEN_ORIGIN = "AI 智能体加入令牌由控制台签发：项目节点找项目管理员，组织共享节点找组织管理员；保存成文件后传 --join-token-file";
 // 认不出的命令要把可用的命令列出来：装机的人打错一个词（agentctl start）时，原先只看到
 // "unknown command: start"，既不知道有哪几个命令、也不知道旋钮在哪儿查。
 const USAGE = [
@@ -172,7 +172,9 @@ async function bootstrap() {
     nodeToken: registration.nodeToken,
     nodeName: registration.node.nodeName,
     organizationId: registration.node.organizationId || "org_default",
+    registrationScope: registration.node.registrationScope || "project",
     projectIds: registration.node.projectIds,
+    effectiveProjectIds: registration.node.effectiveProjectIds || registration.node.projectIds || [],
     allowedRoles: registration.node.allowedRoles,
     gateway: registration.gateway,
     controlCursor: 0,
@@ -347,8 +349,18 @@ async function run(config) {
     if (Date.now() - lastHeartbeat >= config.heartbeatIntervalSeconds * 1000) {
       const currentProfile = probeProfile(config.executorCommand);
       const heartbeat = await retryableAgentRequest(() => jsonRequest(config.gateway.heartbeatUrl, {method: "POST", token: config.nodeToken, body: {nodeId: config.nodeId, status: "online", profile: currentProfile, runtimeVersion: RUNTIME_VERSION, capturedAt: new Date().toISOString()}}), "heartbeat");
-      if (heartbeat.nodeToken) {
-        config.nodeToken = heartbeat.nodeToken;
+      const scopeChanged = heartbeat.node && (
+        heartbeat.node.registrationScope !== config.registrationScope ||
+        JSON.stringify(heartbeat.node.projectIds || []) !== JSON.stringify(config.projectIds || []) ||
+        JSON.stringify(heartbeat.node.effectiveProjectIds || []) !== JSON.stringify(config.effectiveProjectIds || [])
+      );
+      if (heartbeat.nodeToken || scopeChanged) {
+        if (heartbeat.nodeToken) config.nodeToken = heartbeat.nodeToken;
+        if (heartbeat.node) {
+          config.registrationScope = heartbeat.node.registrationScope || "project";
+          config.projectIds = heartbeat.node.projectIds || [];
+          config.effectiveProjectIds = heartbeat.node.effectiveProjectIds || config.projectIds || [];
+        }
         writeSecretJson(configPath, config);
         writeAgentScopedMcpConfig(config, currentProfile);
         if (globalClientConfigurationEnabled()) configureGlobalRemoteMcpClients(config, currentProfile);
@@ -1892,7 +1904,9 @@ function writeAgentScopedMcpConfig(config, profile) {
     transport: "streamable-http",
     hostedBy: config.serverUrl,
     nodeId: config.nodeId,
+    registrationScope: config.registrationScope || "project",
     projectIds: config.projectIds,
+    effectiveProjectIds: config.effectiveProjectIds || config.projectIds || [],
     allowedRoles: config.allowedRoles,
     detectedClients: (profile.tools || []).filter((tool) => ["codex", "claude", "cursor"].includes(tool.name) && tool.available).map((tool) => tool.name),
     mcpServers: {ai_multi_agent_ctrl: remote}
@@ -2257,7 +2271,7 @@ function loadConfig() {
   // 还没注册就跑 status / self-check / run，是新节点最先撞到的一句话：要说清"没注册"和下一步该跑什么，
   // 而不是一句英文加一个路径（路径留着，那是这台机器上自己的文件）。
   if (!existsSync(configPath)) {
-    throw new Error(`这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <加入令牌文件>，令牌由项目管理员在目标项目「项目管理」→「AI 智能体」→「注册 agent」签发`);
+    throw new Error(`这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <加入令牌文件>，令牌由项目管理员（项目节点）或组织管理员（组织共享节点）在控制台签发`);
   }
   const text = readFileSync(configPath, "utf8");
   try {

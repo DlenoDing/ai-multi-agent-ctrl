@@ -101,7 +101,9 @@ https://control.example.com/mcp
 
 MCP 请求必须携带节点 token、系统管理员 session 或服务 token；Agent 节点只能看到并调用 join token 所授予的工具，服务 token 默认只绑定 `prj_control_plane`，生产环境用 `AIMAC_MCP_SERVICE_PROJECT_IDS` 明确配置可见项目。生产 MCP 不提供服务端代执行 Agent 任务的工具，任务必须由已注册节点从 Agent Gateway claim。
 
-Agent 加入必须在管理界面完成：系统管理员或有项目 `agent:activate` 权限的账号登录后，进入「项目管理」→「AI 智能体」→「注册 agent」，生成绑定该项目、角色范围、MCP allowlist、有效期和一次使用次数的 join token。界面返回直接执行命令和 SHA256 校验版命令，典型形式如下：
+Agent 加入必须在管理界面完成。项目专属节点由系统管理员或有项目 `agent:activate` 权限的账号进入「项目管理」→「AI 智能体」→「注册 agent」（“注册项目节点”栏目），生成绑定该项目的 join token。组织共享节点由组织管理员进入「组织管理」→「AI 智能体」→「注册共享节点」，生成绑定本组织的 join token；即使组织尚无项目也可接入，之后自动覆盖本组织有效项目。项目管理员不能签发组织级令牌或控制共享节点本身。
+
+两种令牌都绑定角色范围、MCP allowlist、有效期、使用次数和创建者审计记录。注册时的 `projectIds` 是快照，服务端返回的 `effectiveProjectIds` 才是当前可调配范围；组织节点不会因空项目列表而获得全局权限。界面返回直接执行命令和 SHA256 校验版命令，典型形式如下：
 
 ```bash
 curl -fsSL https://control.example.com/install-agent.sh | sh -s -- \

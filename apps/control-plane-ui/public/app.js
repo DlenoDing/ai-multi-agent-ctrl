@@ -46,7 +46,9 @@ const {
   durationText
 } = window.AIMAC_CONSOLE_TIME;
 const {uuid, copyText, esc} = window.AIMAC_CONSOLE_DOM_UTILS;
-const {progressBar, progressLine, quotaLine, panel, row} = window.AIMAC_CONSOLE_UI_PRIMITIVES;
+const {progressBar, progressLine, quotaLine, panel: renderPanel, row} = window.AIMAC_CONSOLE_UI_PRIMITIVES;
+const workspaces = window.AIMAC_WORKSPACES;
+function panel(title, body, options) { return workspaces.allows(title) ? renderPanel(title, body, options) : ""; }
 const {
   WORK_ITEM_OWNER_ROLE_CHOICES,
   DEFAULT_ORGANIZATION_ID,
@@ -67,6 +69,23 @@ let authToken = sessionStorage.getItem("aimac.sessionToken") || "";
 let currentAccount = JSON.parse(sessionStorage.getItem("aimac.account") || "null");
 let page = sessionStorage.getItem("aimac.page") || "";
 let currentProjectId = sessionStorage.getItem("aimac.projectId") || "";
+let managementGroupId = "";
+let selectedWork = null;
+let workListGroupId = "";
+let workListState = null;
+let taskSearch = "";
+let taskStatus = "";
+let taskPageData = null;
+let taskWorkDetail = null;
+let taskPageCursor = "";
+let taskCursorStack = [];
+let taskPageLoading = false;
+let taskRequestGeneration = 0;
+let taskSearchTimer = null;
+let ruleEditorDirtySnapshot = null;
+let workEventHistoryMode = false;
+let workEventCursor = 0;
+let workEventCursorStack = [];
 
 let state = emptyState();
 let systemOverview = null;
@@ -175,6 +194,11 @@ let execEvents = [];
 let execEventsDropped = false;
 let execCursor = 0;
 let execTimer = null;
+let execRevision = 0;
+let execHistoryMode = false;
+let execHistoryStart = 0;
+let execHistoryStack = [];
+let execHasMore = false;
 
 /* ---------------- 视角与菜单 ---------------- */
 
@@ -382,6 +406,11 @@ function emptyState() {
 // 服务端在 tasks 视图里按任务组算好了真实权限；拿不到那份映射时（别的视图）退回并集，
 // 那时宁可多显示一个按钮，也不要把人自己的活藏起来。
 function hasGroupPerm(taskGroupId, perm) {
+  const detail = taskWorkDetail?.taskGroup;
+  if (detail?.projectId === currentProjectId && detail.id === taskGroupId) {
+    if (perm === "task_group:control") return detail.canControl === true;
+    if (perm === "task_group:review") return detail.canReview === true;
+  }
   const map = state.taskGroupPermissions;
   // 服务端只列【与默认集不同】的那些组（系统账号在每组上都是全权限，逐组重复要 8.4KB）。
   // 拿不到整份映射时才退回并集；拿得到、但这一组没列出来 = 它就是默认集。
@@ -395,6 +424,14 @@ function hasPerm(perm) {
   const account = currentAccount;
   if (!account) return false;
   if (account.accountType === "system_admin" || account.accountType === "org_admin") return true;
+  const scoped = state.projectPermissions;
+  if (PROJECT_PAGES.has(page) && scoped?.projectId === currentProjectId && Array.isArray(scoped.permissions)) {
+    if (scoped.permissions.includes(perm)) return true;
+    if (["task_group:read", "task_group:review", "task_group:control"].includes(perm)) {
+      return [...(state.taskGroupPermissionsDefault || []), ...Object.values(state.taskGroupPermissions || {}).flat()].includes(perm);
+    }
+    if (perm.startsWith("project:") || perm.startsWith("task_group:") || perm === "agent:activate") return false;
+  }
   // effectivePermissions is the backend-resolved union of direct + granted (incl. project-owner) permissions.
   const permissions = account.effectivePermissions || account.permissions || [];
   if (permissions.includes("system:*") || permissions.includes("org:*")) return true;
@@ -403,6 +440,11 @@ function hasPerm(perm) {
   const family = `${String(perm).split(":")[0]}:*`;
   if (permissions.includes(family)) return true;
   return false;
+}
+
+function hasProjectPermission(perm) {
+  return state.projectPermissions?.projectId === currentProjectId
+    ? Array.isArray(state.projectPermissions.permissions) && state.projectPermissions.permissions.includes(perm) : hasPerm(perm);
 }
 
 function accountName(accountId) {
@@ -574,7 +616,7 @@ function scheduleFilterRerender(inputEl) {
     // filter box itself is focused (they skip on any focused input) — so allow it only when this filter
     // box is still the active element (focus/caret restored below) or focus has settled somewhere safe.
     const active = document.activeElement;
-    if (modalHtml || formTouched) return;
+    if (modalHtml || formTouched || window.AIMAC_RULE_EDITOR?.isOpen?.()) return;
     const filterStillFocused = active === inputEl;
     const focusIsSafe = !(active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName));
     if (!filterStillFocused && !focusIsSafe) return;
@@ -769,6 +811,7 @@ function requestFailureHint(payload) {
 }
 
 async function api(path, options = {}) {
+  const requestToken = authToken;
   const method = (options.method || "GET").toUpperCase();
   const headers = {"content-type": "application/json", ...(options.headers || {})};
   if (authToken) headers.authorization = `Bearer ${authToken}`;
@@ -795,7 +838,7 @@ async function api(path, options = {}) {
       detail = payload.error || "";
       hint = requestFailureHint(payload);
     } catch {}
-    if (response.status === 401 && authToken) {
+    if (response.status === 401 && authToken && authToken === requestToken) {
       // 会话是【绝对过期】的（登录时定死，不续期）。而人在打字时轮询是暂停的，
       // 于是典型路径是：写了一大段说明、点提交，才发现会话早就过期了 ——
       // 此前这一刻会直接跳回登录页，内容、所在页面、所选项目一起没了，人只能凭记忆重写。
@@ -854,6 +897,7 @@ async function fetchState(view, options = {}) {
 }
 
 function saveSession(sessionToken, account) {
+  resetTaskWorkbench();
   authToken = sessionToken;
   currentAccount = account;
   sessionStorage.setItem("aimac.sessionToken", sessionToken);
@@ -896,6 +940,7 @@ function restoreDraftAfterRelogin() {
 }
 
 function clearSession() {
+  resetTaskWorkbench();
   authToken = "";
   currentAccount = null;
   modalProtected = false;
@@ -1214,7 +1259,7 @@ async function loadPage() {
       };
       orgMembers = membersResult.members || [];
       ensureProjectSelection();
-    } else if (page === "tg") {
+    } else if (page === "tg" || page === "tasks") {
       // 建工作项表单里的「指定模型」下拉要读 modelCapabilities，而 tasks 视图不含它。
       // 用轻量的 /api/model-registry（只回模型清单，不是整份 runtime 视图）并回补 —— 取不到就只显示「自动」，不挡建工作项。
       const [tasksState, modelRegistry, skillRegistry] = await Promise.all([
@@ -1229,7 +1274,8 @@ async function loadPage() {
         roleSkillOverlays: skillRegistry.roleSkillOverlays || []
       };
       ensureProjectSelection();
-      if (expandedTaskGroupId) await loadTaskGroupDetail(expandedTaskGroupId);
+      if (page === "tasks" && workspaces.current("tasks")?.id !== "create") await loadTaskWorkbenchData();
+      else if (expandedTaskGroupId) await loadTaskGroupDetail(expandedTaskGroupId);
     } else if (page === "review") {
       state = await fetchState("tasks", {projectId: currentProjectId});
       ensureProjectSelection();
@@ -1400,6 +1446,7 @@ function loadPendingConfirmCount() {
 
 function ensureExecScope() {
   if (execScope.id) return;
+  if (currentProjectId) { execScope = {type: "project", id: currentProjectId}; return; }
   const first = projectTaskGroups()[0];
   if (first) {
     execScope = {type: "taskGroup", id: first.id};
@@ -1409,6 +1456,7 @@ function ensureExecScope() {
 }
 
 function execEventsPath(scope) {
+  if (scope.type === "project") return `/api/projects/${encodeURIComponent(scope.id)}/execution-events`;
   if (scope.type === "dispatch") return `/api/agent-dispatches/${encodeURIComponent(scope.id)}/events`;
   if (scope.type === "session") return `/api/work-sessions/${encodeURIComponent(scope.id)}/execution-events`;
   return `/api/task-groups/${encodeURIComponent(scope.id)}/execution-events`;
@@ -1416,11 +1464,23 @@ function execEventsPath(scope) {
 
 async function loadExecEvents(options = {}) {
   if (!execScope.id || !authToken) return;
-  const after = options.reset ? 0 : execCursor;
+  const scope = execScope;
+  const token = authToken;
+  const historyMode = execHistoryMode;
+  if (options.reset) execRevision += 1;
+  const revision = execRevision;
+  const after = options.afterSequence ?? (options.reset ? 0 : execCursor);
   const waitMs = options.longPoll ? 2000 : 0;
-  const result = await api(`${execEventsPath(execScope)}?afterSequence=${after}&limit=200&waitMs=${waitMs}`);
+  let result;
+  try {
+    result = await api(`${execEventsPath(scope)}?afterSequence=${after}&limit=${historyMode ? 120 : 200}&waitMs=${waitMs}${options.reset && !historyMode ? "&latest=1" : ""}`);
+  } catch (error) {
+    if (scope === execScope && token === authToken && historyMode === execHistoryMode && revision === execRevision) throw error;
+    return;
+  }
+  if (scope !== execScope || token !== authToken || historyMode !== execHistoryMode || revision !== execRevision) return;
   if (options.reset) execEvents = [];
-  if (options.reset) execEventsDropped = false;
+  if (options.reset) execEventsDropped = Boolean(result.historyTruncated || result.hasEarlierEvents);
   const known = new Set(execEvents.map((event) => event.eventId));
   for (const event of result.events || []) {
     if (!known.has(event.eventId)) execEvents.push(event);
@@ -1429,7 +1489,9 @@ async function loadExecEvents(options = {}) {
     execEventsDropped = true;
     execEvents = execEvents.slice(-300);
   }
-  execCursor = Number(result.nextCursor || execCursor || 0);
+  execCursor = Math.max(Number(result.nextCursor || after || 0), options.reset ? 0 : execCursor);
+  execHasMore = result.hasMore === true;
+  if (historyMode) execHistoryStart = after;
 }
 
 function stopExecPolling() {
@@ -1441,9 +1503,9 @@ function stopExecPolling() {
 
 function startExecPolling() {
   stopExecPolling();
-  if (page !== "monitor" || !execScope.id) return;
+  if (page !== "monitor" || !execScope.id || execHistoryMode || workspaces.current("monitor")?.id !== "events") return;
   execTimer = setInterval(async () => {
-    if (!authToken || page !== "monitor") {
+    if (!authToken || page !== "monitor" || execHistoryMode || workspaces.current("monitor")?.id !== "events") {
       stopExecPolling();
       return;
     }
@@ -1452,7 +1514,7 @@ function startExecPolling() {
       const active = document.activeElement;
       // Do not rebuild the DOM while the operator is typing in a filter box or has the scope select
       // open — a full innerHTML render would drop focus/caret and close the dropdown every tick.
-      if (!formTouched && !modalHtml && !(active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName))) render();
+      if (!formTouched && !modalHtml && !window.AIMAC_RULE_EDITOR?.isOpen?.() && !(active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName))) render();
     } catch (error) {
       // 这条长轮询是监控页事件流的唯一来源。原先整个吞掉：流悄悄停住，而屏幕上还摆着上一拍的事件，
       // 人会以为"这段时间真的什么都没发生"。
@@ -1579,6 +1641,7 @@ function renderLogin() {
 /* ---------------- 框架渲染 ---------------- */
 
 function render() {
+  if (window.AIMAC_RULE_EDITOR?.isOpen?.()) return;
   if (!authToken || !currentAccount) {
     renderLogin();
     return;
@@ -1605,7 +1668,7 @@ function render() {
     ? `<div class="nav-divider">${esc(item.divider)}</div>`
     : (() => {
         const todo = menuTodoCounts[item.id] || {count: 0, capped: false};
-        return menuItemHtml(item, item.id === page, todo);
+        return menuItemHtml(item, item.id === page, todo) + (item.id === page ? workspaces.navigation(page, false, workspaceOptions()) : "");
       })()
   ).join("");
   const switchHtml = sectionSwitchHtml(perspective, page);
@@ -1645,6 +1708,8 @@ function render() {
           </div>
           ${switchHtml}
           ${switcherHtml}
+          ${currentAccount.accountType === "user_account" && (state.accountCapabilities?.canCreateProject ?? (currentAccount.permissions || []).includes("project:create"))
+            ? `<button class="secondary-button" data-action="open-create-project">创建项目</button>` : ""}
           <div class="topbar-actions">
             <span class="account-chip">${esc(currentAccount.displayName || currentAccount.email)} ${badge(currentAccount.accountType)}</span>
             ${/* 界面上所有时间都按浏览器本机时区渲染，而服务端日志（audit-log.jsonl、执行事件）是 UTC。
@@ -1694,9 +1759,111 @@ function render() {
   reapplyFilters();
   associateFormLabels();
   restorePendingForm();
+  window.AIMAC_RULE_EDITOR?.enhance(app);
 }
 
 function renderContent() {
+  if (PROJECT_PAGES.has(page) && hasNoVisibleProject()) return renderPanel(PAGE_META[page]?.[0] || "项目管理", noVisibleProjectNotice(), {wide: true});
+  return workspaces.navigation(page, true, workspaceOptions()) + workspaces.heading(page, workspaceOptions()) + managementScopeBar() + workspaces.run(page, renderPageContent);
+}
+
+function workspaceOptions() {
+  return {canCreate: page === "tg" ? hasProjectPermission("task_group:control")
+    : page === "tasks" ? hasPerm("task_group:control")
+      : page === "proj-agents" ? hasPerm("agent:activate") : true};
+}
+
+function focusedTaskGroups() {
+  const groups = projectTaskGroups();
+  const detailGroup = taskWorkDetail?.taskGroup;
+  if (detailGroup?.projectId === currentProjectId && !groups.some((group) => group.id === detailGroup.id)) groups.push(detailGroup);
+  if (managementGroupId && !groups.some((group) => group.id === managementGroupId)) managementGroupId = "";
+  return managementGroupId ? groups.filter((group) => group.id === managementGroupId) : groups;
+}
+
+function managementScopeBar() {
+  if (!["tg", "tasks", "monitor", "review", "directives"].includes(page)) return "";
+  focusedTaskGroups();
+  const groups = projectTaskGroups();
+  if (taskWorkDetail?.taskGroup?.projectId === currentProjectId && !groups.some((group) => group.id === taskWorkDetail.taskGroup.id)) groups.push(taskWorkDetail.taskGroup);
+  return `<div class="workspace-scope"><label for="management-group">任务组范围</label><select id="management-group" data-management-group>
+    <option value="">整个项目</option>${groups.map((group) => `<option value="${esc(group.id)}"${managementGroupId === group.id ? " selected" : ""}>${esc(group.name || group.id)}</option>`).join("")}</select>
+    ${managementGroupId ? `<button class="secondary-button" data-focus-group="${esc(managementGroupId)}" data-focus-page="tg">任务组详情</button>` : ""}</div>`;
+}
+
+function renderTaskWorkbench() {
+  if (hasNoVisibleProject()) return panel("任务工作台", noVisibleProjectNotice(), {wide: true});
+  if (workspaces.current("tasks")?.id === "create") return renderTaskGroups();
+  if (selectedWork && (taskWorkDetail?.workItem?.id !== selectedWork.workItemId || taskWorkDetail?.taskGroup?.id !== selectedWork.taskGroupId)) {
+    return panel("任务详情", `<button class="secondary-button" data-close-work>返回任务列表</button><div class="notice">${taskPageLoading ? "正在加载完整任务详情…" : "任务详情尚未加载成功，请刷新重试。"}</div>`, {wide: true});
+  }
+  return panel(selectedWork ? "任务详情" : "任务工作台", window.AIMAC_TASK_WORKBENCH.render({
+    groups: focusedTaskGroups(), detail: tgDetail, state, selected: selectedWork, query: taskSearch, status: taskStatus,
+    pageData: taskPageData, workDetail: taskWorkDetail, pageNumber: taskCursorStack.length + 1, loading: taskPageLoading,
+    eventHistory: workEventHistoryMode, eventPage: workEventCursorStack.length + 1,
+    helpers: {badge, t, explainCoded, fmtTime, progressLine, humanTraceHtml, workItemExitHint, workItemResultHtml, repositoryFailureAction, dispatchRuleSummaries, ruleSummaryHtml,
+      isTerminalDispatch: (status) => terminalDispatchStatuses.has(status)}
+  }), {wide: true});
+}
+
+async function loadTaskWorkbenchData() {
+  if (!currentProjectId) return;
+  const generation = ++taskRequestGeneration;
+  const projectId = currentProjectId;
+  taskPageLoading = true;
+  try {
+    const query = new URLSearchParams({limit: "50"});
+    if (managementGroupId) query.set("taskGroupId", managementGroupId);
+    if (taskSearch) query.set("q", taskSearch);
+    if (taskStatus) query.set("status", taskStatus);
+    if (taskPageCursor) query.set("cursor", taskPageCursor);
+    const result = selectedWork
+      ? await api(`/api/task-groups/${encodeURIComponent(selectedWork.taskGroupId)}/work-items/${encodeURIComponent(selectedWork.workItemId)}?${workEventHistoryMode ? `afterSequence=${workEventCursor}` : "latest=1"}&eventLimit=120`)
+      : await api(`/api/projects/${encodeURIComponent(projectId)}/work-items?${query}`);
+    if (generation !== taskRequestGeneration || projectId !== currentProjectId || page !== "tasks") return;
+    if (selectedWork) {
+      taskWorkDetail = result;
+      for (const [key, id] of [["agentDispatches", "dispatchId"], ["workSessions", "sessionId"], ["repositoryOutputs", "targetId"], ["checkpoints", "runId"], ["agentRuntimeNodes", "nodeId"]]) {
+        if (!Array.isArray(result[key])) continue;
+        const incoming = new Set(result[key].map((item) => item[id]));
+        state[key] = [...result[key], ...(state[key] || []).filter((item) => !incoming.has(item[id]))];
+      }
+      if (Array.isArray(result.events)) state.agentExecutionEvents = result.events;
+    } else {
+      taskPageData = result;
+      taskWorkDetail = null;
+    }
+  } catch (error) {
+    if (generation === taskRequestGeneration && projectId === currentProjectId && page === "tasks") throw error;
+  } finally { if (generation === taskRequestGeneration) taskPageLoading = false; }
+}
+
+function resetTaskWorkbench() {
+  workEventHistoryMode = false;
+  workEventCursor = 0;
+  workEventCursorStack = [];
+  execHistoryMode = false;
+  execHistoryStack = [];
+  execHistoryStart = 0;
+  execHasMore = false;
+  execRevision += 1;
+  managementGroupId = "";
+  selectedWork = null;
+  workListGroupId = "";
+  workListState = null;
+  taskSearch = "";
+  taskStatus = "";
+  taskPageData = null;
+  taskWorkDetail = null;
+  taskPageCursor = "";
+  taskCursorStack = [];
+  taskPageLoading = false;
+  taskRequestGeneration += 1;
+  if (taskSearchTimer) clearTimeout(taskSearchTimer);
+  taskSearchTimer = null;
+}
+
+function renderPageContent() {
   let body = "";
   if (page === "sys-overview") body = renderSysOverview();
   else if (page === "sys-orgs") body = renderSysOrgs();
@@ -1709,6 +1876,7 @@ function renderContent() {
   else if (page === "proj-overview") body = renderProjectOverview();
   else if (page === "proj-members") body = renderProjectMembers();
   else if (page === "tg") body = renderTaskGroups();
+  else if (page === "tasks") body = renderTaskWorkbench();
   else if (page === "review") body = renderReview();
   else if (page === "directives") body = renderDirectives();
   else if (page === "monitor") body = renderMonitor();
@@ -1718,6 +1886,7 @@ function renderContent() {
 }
 
 function spaceHubHtml({title, score, scoreText, scoreLabel, meta = [], modules = []}) {
+  if (!workspaces.showHub()) return "";
   const normalizedScore = Math.max(0, Math.min(100, Number(score || 0)));
   return `
     <section class="project-hub space-hub wide">
@@ -2014,6 +2183,7 @@ function renderSysOrgsLifecycleGuide({orgs, activeOrgs, suspendedOrgs, quotaPres
 }
 
 function renderSysOrgs() {
+  const initialAdminById = new Map((state.accounts || []).map((account) => [account.accountId, account]));
   const activeOrgs = organizations.filter((org) => org.status === "active").length;
   const suspendedOrgs = organizations.filter((org) => org.status !== "active").length;
   const quotaPressure = organizations.filter((org) => {
@@ -2026,20 +2196,23 @@ function renderSysOrgs() {
     return pairs.some(([used, max]) => Number(max) > 0 && Number(used || 0) / Number(max) >= 0.8);
   }).length;
   const orgRows = organizations.map((org) => row([
-    `<strong>${esc(org.name)}</strong><div class="small muted mono">${esc(org.orgId)}</div>`,
-    `<strong>${esc(accountName(org.initialAdminAccountId))}</strong><div class="small muted mono">${esc(org.initialAdminAccountId || "-")}</div>`,
+    `<div class="org-name"><strong>${esc(org.name)}</strong><details><summary>组织编号</summary><code>${esc(org.orgId)}</code></details></div>`,
+    `<div class="org-admin"><strong>${esc(accountName(org.initialAdminAccountId))}</strong><div class="small muted">${esc(initialAdminById.get(org.initialAdminAccountId)?.email || "")}</div>
+      ${initialAdminById.get(org.initialAdminAccountId)?.status ? statusBadge("account", initialAdminById.get(org.initialAdminAccountId).status) : ""}
+      ${initialAdminById.get(org.initialAdminAccountId)?.status === "invited" ? `<button class="secondary-button" data-action="member-reissue-invite" data-account="${esc(org.initialAdminAccountId)}">重发管理员邀请</button>` : ""}
+      <details><summary>账号编号</summary><code>${esc(org.initialAdminAccountId || "-")}</code></details></div>`,
     statusBadge("organization", org.status),
-    quotaLine(org.usage?.members, org.quotas?.maxMembers),
-    quotaLine(org.usage?.projects, org.quotas?.maxProjects),
-    quotaLine(org.usage?.taskGroups, org.quotas?.maxTaskGroups),
-    quotaLine(org.usage?.agents, org.quotas?.maxAgents, org.usage?.agentsReserved),
-    fmtTime(org.createdAt),
-    [
+    `<div class="org-quota-grid"><div><label>成员（含管理员）</label>${quotaLine(org.usage?.members, org.quotas?.maxMembers)}</div>
+      <div><label>项目</label>${quotaLine(org.usage?.projects, org.quotas?.maxProjects)}</div>
+      <div><label>任务组</label>${quotaLine(org.usage?.taskGroups, org.quotas?.maxTaskGroups)}</div>
+      <div><label>Agent 节点</label>${quotaLine(org.usage?.agents, org.quotas?.maxAgents, org.usage?.agentsReserved)}</div></div>`,
+    {v: fmtTime(org.createdAt), c: "nowrap"},
+    `<div class="org-actions">` + [
       `<button class="secondary-button" data-action="org-quota" data-org="${esc(org.orgId)}">配额</button>`,
       org.status === "active"
         ? `<button class="danger-button" data-action="org-status" data-org="${esc(org.orgId)}" data-status="suspended">停用</button>`
         : `<button class="secondary-button" data-action="org-status" data-org="${esc(org.orgId)}" data-status="active">启用</button>`
-    ].join(" ")
+    ].join(" ") + "</div>"
   ])).join("");
 
   return [
@@ -2054,8 +2227,8 @@ function renderSysOrgs() {
     `, {wide: true}),
     renderSysOrgsActionBoard({orgs: organizations, activeOrgs, suspendedOrgs, quotaPressure}),
     renderSysOrgsLifecycleGuide({orgs: organizations, activeOrgs, suspendedOrgs, quotaPressure}),
-    panel("组织列表", table(["组织", "初始管理员", "状态", "子账户", "项目", "任务组", "智能体", "创建时间", "操作"], orgRows,
-      {emptyText: listEmptyText("组织列表")}), {wide: true, headerSide: filterInput("按组织名过滤…", "orgs")}),
+    panel("组织列表", `<div class="organization-table">` + table(["组织", "初始管理员", "状态", "配额用量", "创建时间", "操作"], orgRows,
+      {emptyText: listEmptyText("组织列表")}) + "</div>", {wide: true, headerSide: filterInput("按组织名过滤…", "orgs")}),
     panel("创建组织", `
       <form class="form-grid" data-form="org-create">
         <div class="form-row"><label>组织名称</label><input name="name" required placeholder="示例：华东研发中心"></div>
@@ -2866,7 +3039,7 @@ function renderTaskGroupGrantForm(project) {
           ["viewer", "观察者（只读查看）"]
         ], "请选择任务组角色…")}</div>
       </div>
-      <div class="notice">任务组授权只影响所选任务组，不会自动扩大到同项目其它任务组。项目级角色仍在上方“项目成员授权”里维护。</div>
+      <div class="notice">任务组授权只影响所选任务组，不会自动扩大到同项目其它任务组。项目级角色在“项目成员”栏目维护。</div>
       <button class="primary-button" type="submit">授予任务组权限</button>
     </form>
   `;
@@ -2945,7 +3118,7 @@ function renderJoinTokenSection(options = {}) {
   const auditContext = options.context === "system" ? "system" : "org";
   const auditNotice = auditContext === "system"
     ? "系统页只做跨项目令牌审计和撤销。常规注册请进入目标项目的「项目管理」→「AI 智能体」→「注册 agent」签发一次性令牌，并复制服务端安装脚本。"
-    : "组织页只做组织范围令牌审计和撤销。新增 agent 请先进入目标项目，再到「项目管理」→「AI 智能体」→「注册 agent」签发一次性令牌并复制服务端安装脚本。";
+    : "此栏目查看组织范围加入令牌与撤销记录。共享节点在组织“注册共享节点”接入；项目专属节点进入对应项目“注册项目节点”接入。";
   const tokens = scopedTokens.slice(0, 20).map((token) => {
     // 令牌过期只在【兑换时】才被标 expired（没人兑换就永停在 issued）。列表若按原始 status 显示，
     // 一张已过期的令牌会显示成「已签发」还带「撤销」按钮 —— 人以为它还在等 agent 来接，实际兑换必被拒。
@@ -2954,7 +3127,7 @@ function renderJoinTokenSection(options = {}) {
       && new Date(token.expiresAt).getTime() <= serverNow()) ? "expired" : token.status;
     return row([
       `<span class="mono">${esc(token.joinTokenId)}</span>`,
-      esc(projectNameOf(token.projectId)),
+      esc(token.registrationScope === "organization" ? "组织共享" : projectNameOf(token.projectId)),
       esc((token.allowedRoles || []).join("、")),
       statusBadge("joinToken", displayStatus),
       {v: `${token.useCount ?? 0}/${token.maxUses ?? 1}`, c: "num"},
@@ -2962,12 +3135,12 @@ function renderJoinTokenSection(options = {}) {
       displayStatus === "issued" ? `<button class="danger-button" data-action="revoke-join-token" data-token-id="${esc(token.joinTokenId)}">撤销</button>` : "-"
     ]);
   }).join("");
-  if (!(state.projects || []).length) {
+  if (!(state.projects || []).length && !scopedTokens.length) {
     return auditOnly
       ? `<div class="notice warn-notice">${auditNotice} 当前还没有任何项目，所以也没有可审计的 agent 加入令牌。</div>`
       : noProjectYetNotice("智能体加入令牌");
   }
-  if (!scopedProjects.length) {
+  if (!scopedProjects.length && !auditOnly) {
     return `<div class="notice warn-notice">${scopedProjectId
       ? "当前项目不可签发智能体加入令牌：项目可能已归档，或当前账号没有这个项目的管理权限。"
       : "你能看到的项目里没有可签发智能体加入令牌的目标。"}`
@@ -3016,6 +3189,19 @@ function renderJoinTokenSection(options = {}) {
 
 function projectNameOf(projectId) {
   return (state.projects || []).find((project) => project.id === projectId)?.name || projectId || "-";
+}
+
+function renderOrgNodeRegistration() {
+  const organizationId = currentAccount?.organizationId;
+  if (!organizationId || currentAccount.accountType !== "org_admin") return `<div class="notice">组织共享节点由组织管理员注册。</div>`;
+  return `<div class="stack"><div class="notice">共享节点可承接本组织当前及以后创建的有效项目；项目专属节点仍在项目内注册。MCP 和技能同步由服务端统一提供。</div>
+    <form class="form-grid" data-form="join-token">
+      <input type="hidden" name="registrationScope" value="organization"><input type="hidden" name="organizationId" value="${esc(organizationId)}">
+      <div class="form-row"><label>共享节点名称</label><input name="nodeName" placeholder="例如：研发公共执行节点"></div>
+      <div class="form-row"><label>执行角色范围</label><input name="allowedRoles" value="*" list="org-node-role-options"><datalist id="org-node-role-options"><option value="*">本组织全部机器执行角色</option>${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
+      <div class="form-row"><label>加入令牌有效期（秒）</label><input name="ttlSeconds" type="number" min="60" max="86400" value="1800"></div>
+      <button class="primary-button" type="submit">生成共享节点注册命令</button>
+    </form></div>`;
 }
 
 /* ---------------- 组织管理员：组织概览 ---------------- */
@@ -3075,7 +3261,7 @@ function renderOrgOverview() {
         pageId: "org-agents",
         title: "2 agent 节点",
         metric: aliveNodes.length ? `${onlineNodes}/${aliveNodes.length}` : "无节点",
-        detail: aliveNodes.length ? "查看在线率、自检、加入令牌和吊销" : "新增 agent 先进入目标项目注册",
+        detail: aliveNodes.length ? "查看在线率、自检、加入令牌和吊销" : "组织注册共享节点，项目注册专属节点",
         action: "管理节点",
         tone: onlineNodes ? "green" : "orange"
       })}
@@ -3137,9 +3323,8 @@ function resourceScopeLabel(resource) {
   return `${esc(typeLabel)}：<span class="mono">${esc(resource?.resourceId || "-")}</span>`;
 }
 
-function permissionCheckboxes(selected = ["project:view", "task_group:read"]) {
+function permissionCheckboxes(selected = []) {
   return `
-    <div class="notice">「人工审核（验收定稿）」「任务组控制」这类任务组级权限不在这里授予 —— 它们必须按具体项目/任务组落位，请到「项目管理」→「成员权限」→「项目成员授权」里选择相应角色（例如"评审人"）。</div>
     <div class="checkbox-grid">
       ${MEMBER_PERMISSION_OPTIONS.map(([value, label]) => `
         <label><input type="checkbox" name="perm" value="${esc(value)}" ${selected.includes(value) ? "checked" : ""}> ${esc(label)}</label>
@@ -3231,7 +3416,8 @@ function renderOrgMembers() {
       `${statusBadge("account", account.status)}${retiredNote(account)}`,
       esc((account.roles || []).map((role) => t(role)).join("、")),
       manageable ? [
-        `<button class="secondary-button" data-action="member-perms" data-account="${esc(account.accountId)}">权限</button>`,
+        `<button class="secondary-button" data-action="member-perms" data-account="${esc(account.accountId)}">账号能力</button>`,
+        `<button class="secondary-button" data-jump-panel="子账户项目 / 任务组权限矩阵">项目与任务组授权</button>`,
         // 邀请令牌只显示一次。丢了之后这一行原先只有「停用」——点它再点「启用」会撞 409，
         // 人会以为自己把账号弄坏了。真正需要的是重发。
         // 邀请被撤回（invited→停用）的账号同样从没接受过邀请：它唯一的出路也是重发，
@@ -3278,7 +3464,7 @@ function renderOrgMembers() {
             ${assignableProjects().map((project) => `<option value="${esc(project.id)}">${esc(project.name || project.id)}</option>`).join("")}
           </select>
         </div>
-        <div class="form-row"><label>权限分配</label>${permissionCheckboxes()}</div>
+        <div class="form-row"><label>账号能力</label>${permissionCheckboxes()}</div>
         <div class="notice">创建成功后将弹窗展示一次性登录令牌，请提示成员保存并尽快登录改密。</div>
         <button class="primary-button" type="submit">创建成员</button>
       </form>
@@ -3314,6 +3500,7 @@ function agentHoverPop(node) {
 
 function agentActions(node, options = {}) {
   if (node.status === "revoked") return "-";
+  if (node.registrationScope === "organization" && perspectiveOf(currentAccount) === "user") return `<span class="small muted">组织共享节点，由组织管理员维护</span>`;
   const scope = options.scope || "org";
   const showDanger = scope === "org" || options.showDanger === true;
   const buttons = [
@@ -3350,7 +3537,7 @@ function orgAgentStats(nodes) {
 
 function projectAgentNodes(projectId = currentProjectId) {
   if (!projectId) return [];
-  return (state.agentRuntimeNodes || []).filter((node) => (node.projectIds || []).includes(projectId));
+  return (state.agentRuntimeNodes || []).filter((node) => (Array.isArray(node.effectiveProjectIds) ? node.effectiveProjectIds : node.projectIds || []).includes(projectId));
 }
 
 function projectAgentStats(projectId = currentProjectId, nodes = projectAgentNodes(projectId)) {
@@ -3375,7 +3562,7 @@ function projectScopedAgents(projectId) {
   const project = (state.projects || []).find((item) => item.id === projectId);
   const orgId = project?.organizationId || currentAccount?.organizationId || DEFAULT_ORGANIZATION_ID;
   return (state.agents || []).filter((agent) =>
-    (agent.projectId === projectId) || (!agent.projectId && (agent.organizationId || DEFAULT_ORGANIZATION_ID) === orgId));
+    (agent.organizationId || DEFAULT_ORGANIZATION_ID) === orgId && (!agent.projectId || agent.projectId === projectId));
 }
 
 function agentScopeText(agent) {
@@ -3402,7 +3589,7 @@ function agentProfileRows(agents, {showScope = true} = {}) {
     statusBadge("agent", agent.status),
     {v: Number.isFinite(Number(agent.trustScore)) ? `${Math.round(Number(agent.trustScore) * 100)}%` : "-", c: "num"},
     agent.roleSkillRef ? `<span class="mono">${esc(agent.roleSkillRef)}</span>` : "-",
-    hasPerm("agent:activate")
+    hasPerm("agent:activate") && (agent.projectId || perspectiveOf(currentAccount) !== "user")
       ? `<button class="${agent.status === "active" ? "danger-button" : "secondary-button"}" data-action="agent-activate" data-agent="${esc(agent.id)}">${agent.status === "active" ? "停用档案" : "启用档案"}</button>`
       : "-"
   ])).join("");
@@ -3423,7 +3610,7 @@ function renderAgentProfileForm({projectId = "", title = "创建 Agent 档案", 
       ${projectId ? `<input type="hidden" name="projectId" value="${esc(projectId)}">` : ""}
       <div class="form-row-inline">
         <div class="form-row"><label>${esc(title)}名称</label><input name="name" placeholder="例如：后端实现 Agent"></div>
-        <div class="form-row"><label>执行角色</label><input name="role" list="agent-role-options" required placeholder="例如：implementer">
+        <div class="form-row"><label>执行角色</label><input name="role" list="agent-role-options" required placeholder="例如：agent-runtime">
           <datalist id="agent-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
         <div class="form-row"><label>默认模型</label><input name="model" list="agent-model-options" value="auto_best" placeholder="auto_best 或实际模型 ID">
           <datalist id="agent-model-options">${modelOptionsHtml()}</datalist></div>
@@ -3672,7 +3859,7 @@ function renderOrgAgentsSummary(nodes) {
       ${summaryMetric("待用加入令牌", stats.liveTokens, "可注册到本组织项目的令牌")}
       ${summaryMetric("异常节点", stats.abnormalNodes, "离线、非健康或需排查的节点")}
     </div>
-    <div class="small muted">查看顺序：先看节点在线率和异常节点，再在“agent 节点”里暂停、恢复、关停或吊销；新增机器从目标项目的「项目管理」→「AI 智能体」→「注册 agent」签发一次性令牌，本页只做组织范围令牌审计。</div>
+    <div class="small muted">组织共享节点在“注册共享节点”接入，项目专属节点从目标项目的「AI 智能体」接入。两种节点的控制、运行状态和加入令牌均按各自作用域管理。</div>
   `, {wide: true});
 }
 
@@ -3757,7 +3944,7 @@ function renderOrgAgentsLifecycleGuide(nodes) {
         pageId: "proj-agents",
         title: "3 项目注册",
         metric: "加入令牌",
-        detail: "新增节点必须回目标项目 AI 智能体页签发一次性令牌和 sh 安装命令",
+        detail: "项目专属节点在目标项目签发一次性令牌和 sh 安装命令；组织共享节点在组织注册栏目接入",
         tone: "blue",
         action: "去注册"
       })}
@@ -3816,10 +4003,10 @@ function renderOrgAgents() {
           </div>
         `).join("")}
       </div>
-    ` : `<div class="notice">当前组织暂无 agent 节点。新增 agent 请进入目标项目的「AI 智能体」页签发一次性加入令牌。</div>`;
+    ` : `<div class="notice">当前组织暂无 agent 节点。可注册组织共享节点，或在项目内注册专属节点。</div>`;
   } else {
     const nodeRows = nodes.map((node) => row([
-      `<span class="hover-wrap"><strong>${esc(node.nodeName || node.nodeId)}</strong>${agentHoverPop(node)}</span><div class="small muted mono">${esc(node.nodeId)}</div>`,
+      `<span class="hover-wrap"><strong>${esc(node.nodeName || node.nodeId)}</strong>${agentHoverPop(node)}</span><div class="small muted mono">${esc(node.nodeId)}</div>${customBadge(node.registrationScope === "organization" ? "组织共享" : "项目专属", node.registrationScope === "organization" ? "green" : "blue")}`,
       badge(node.status),
       esc(node.display?.region || "-"),
       badge(node.display?.health),
@@ -3832,13 +4019,14 @@ function renderOrgAgents() {
   }
 
   return [
+    panel("注册组织 agent", renderOrgNodeRegistration(), {wide: true}),
     renderOrgAgentsSummary(nodes),
     renderOrgAgentsActionBoard(nodes),
     renderOrgAgentsBoundaryGuide(),
     renderOrgAgentsLifecycleGuide(nodes),
     panel("组织级 Agent 档案", `
       <div class="stack">
-        <div class="notice">组织级 Agent 是可被本组织内项目调配的角色能力档案，不等于已经在线的 agent 节点。节点注册仍需要进入具体项目签发一次性加入令牌。</div>
+        <div class="notice">角色档案定义可承担的工作。组织共享节点在“注册共享节点”接入，项目专属节点在对应项目接入，两类节点可使用本组织的角色档案。</div>
         ${table(["档案", "角色", "默认模型", "作用域", "状态", {label: "信任分", c: "num"}, "Skill", "操作"],
           agentProfileRows(scopedAgents), {emptyText: "当前组织还没有组织级 Agent 档案。可先创建通用角色档案，项目特殊角色再到项目页创建。"})}
         ${renderAgentProfileForm({title: "创建组织级 Agent 档案", readOnly: !hasPerm("agent:activate")})}
@@ -3853,6 +4041,7 @@ function renderOrgAgents() {
 
 // 指引面板成组折叠：默认收起，摘要列出里面有哪几组；点开即展开，不丢任何内容。
 function guideBundle(title, panelsHtml, names) {
+  if (!workspaces.showGuide()) return "";
   return `<details class="guide-bundle"><summary class="guide-bundle-summary">${esc(title)}：${esc(names.join(" · "))} —— 默认收起，点这里展开</summary>`
     + `<div class="guide-bundle-body">${panelsHtml.join("")}</div></details>`;
 }
@@ -3971,7 +4160,7 @@ function renderProjectAgents() {
   const nodeRows = nodes.map((node) => {
     const timedOut = heartbeatTimedOut(node);
     return row([
-      `<span class="hover-wrap"><strong>${esc(node.nodeName || node.nodeId)}</strong>${agentHoverPop(node)}</span><div class="small muted mono">${esc(node.nodeId)}</div>`,
+      `<span class="hover-wrap"><strong>${esc(node.nodeName || node.nodeId)}</strong>${agentHoverPop(node)}</span><div class="small muted mono">${esc(node.nodeId)}</div>${customBadge(node.registrationScope === "organization" ? "组织共享" : "项目专属", node.registrationScope === "organization" ? "green" : "blue")}`,
       `${timedOut
         ? `${badge("heartbeat_timeout")}<div class="small warn-text">项目页提示：上次状态仍为「${esc(t(node.status) || node.status)}」，但心跳已超过判死阈值</div>`
         : badge(node.status)}${claimMissHint(node)}${selfCheckFailureHint(node)}`,
@@ -4833,10 +5022,11 @@ function renderTaskGroupLifecycleGuide(groups) {
 }
 
 function renderTaskGroups() {
-  const groups = projectTaskGroups();
+  const groups = focusedTaskGroups();
   const canControl = hasPerm("task_group:control");
+  const addableGroups = groups.filter((group) => group.status !== "closed" && group.status !== "aborted" && hasGroupPerm(group.id, "task_group:control"));
   const roleOptions = WORK_ITEM_OWNER_ROLE_CHOICES
-    .map((role) => `<option value="${esc(role)}">${esc(t(role))} (${esc(role)})</option>`).join("");
+    .map((role) => `<option value="${esc(role)}"${role === "agent-runtime" ? " selected" : ""}>${esc(role === "agent-runtime" ? "通用任务执行" : t(role))} (${esc(role)})</option>`).join("");
 
   // 当前项目已归档时，这两个创建表单后端一定拒（project_archived）—— 归档路由要求先把
   // 所有任务组关掉，归档之后还能往里建新组，那次收尾就白做了。摆着它们就是按不动的杠杆。
@@ -4846,17 +5036,18 @@ function renderTaskGroups() {
       + "建不了新的任务组或工作项，已有的记录只能看。要继续这条线，请在上方切换到一个在用的项目，"
       + "或新建一个项目。</div>", {wide: true})]
     : !canControl ? [] : [
-    panel("创建任务组", `
+    panel("创建任务组", hasProjectPermission("task_group:control") ? `
       <form class="form-grid" data-form="task-group-create">
         <div class="form-row"><label>任务组名称</label><input name="name" required></div>
         <div class="form-row"><label>目标描述</label><textarea name="objective" required placeholder="描述该任务组要达成的目标"></textarea></div>
         <div class="form-row"><label>统一语言</label><select name="languageTag">${languageSelectOptions("zh-CN")}</select></div>
+        <label><input type="checkbox" name="startPaused" value="true"> 创建后等待手动启动</label>
         <div class="form-row"><label>初始角色（逗号分隔；只认已登记的执行角色）</label><input name="roles" value="orchestrator,agent-runtime,reviewer" list="owner-role-options">
           <datalist id="owner-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
         ${currentProjectId ? "" : noVisibleProjectNotice()}
         <button class="primary-button" type="submit" ${currentProjectId ? "" : "disabled"}>创建任务组</button>
       </form>
-    `),
+    ` : `<div class="notice">创建任务组需要当前项目的任务组控制权限。仅获某个任务组授权时，可在已有任务组内创建任务。</div>`),
     panel("创建工作项", `
       <form class="form-grid" data-form="work-item-create">
         <div class="form-row"><label>所属任务组</label>
@@ -4864,7 +5055,7 @@ function renderTaskGroups() {
             // 【下拉里只放他真能往里加的组】。原先列的是项目下【全部】任务组，而建工作项
             // 后端是按任务组判 task_group:control 的 —— 只在 tg1 上有权的人能选中 tg2 提交，
             // 然后拿到一句拒绝。按组过滤，并在一个都没有时说清是"没有组"还是"都没权限"。
-            const addable = groups.filter((taskGroup) => hasGroupPerm(taskGroup.id, "task_group:control"));
+            const addable = addableGroups;
             if (!addable.length) {
               return `<select name="taskGroupId" disabled></select>`
                 + `<div class="small warn-text">${groups.length
@@ -4892,13 +5083,14 @@ function renderTaskGroups() {
         <div class="form-row"><label>机器可执行要求（每行一条）</label><textarea name="requirements" placeholder="每行一条约束或验收条件"></textarea></div>
         ${groups.length ? "" : `<div class="notice">先创建任务组后再追加工作项。</div>`}
         ${groups.length ? noOnlineAgentCreateNotice() : ""}
-        <button class="primary-button" type="submit" ${groups.length ? "" : "disabled"}>创建工作项</button>
+        <button class="primary-button" type="submit" ${addableGroups.length ? "" : "disabled"}>创建工作项</button>
       </form>
     `)
   ];
 
   const groupPanels = groups.map((taskGroup) => {
     const expanded = expandedTaskGroupId === taskGroup.id;
+    const activeGroup = taskGroup.status !== "closed" && taskGroup.status !== "aborted";
     const head = `
       <div class="stack">
         <div class="record-title">
@@ -4927,20 +5119,21 @@ function renderTaskGroups() {
         </details>` : ""}
         <div class="button-row">
           <button class="secondary-button" data-action="tg-detail" data-task="${esc(taskGroup.id)}">${expanded ? "收起详情" : "查看详情"}</button>
+          ${activeGroup && hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="primary-button" data-workspace-page="tasks" data-workspace="create" data-create-for-group="${esc(taskGroup.id)}">创建任务</button>` : ""}
           ${/* 暂停与恢复按【当前状态】二选一 —— 两个一直摆着的话，总有一个是按了什么都不会发生的：
                 对已经停下来的组点「暂停」、对在跑的组点「恢复」，回执都是 200，而屏幕一点没变。
                 成员那一行早就是二选一（启用 XOR 停用），这里是漏的。
                 人停下来的（停因以 human_directive 开头）后端只让真人恢复 —— 机器主体连按钮都不该看见，
                 否则按下去只会拿回一句 403，而人不知道自己为什么点不动。 */ ""}
-          ${hasGroupPerm(taskGroup.id, "task_group:control") ? (
+          ${activeGroup && hasGroupPerm(taskGroup.id, "task_group:control") ? (
             String(taskGroup.goalExecutionStatus || "").startsWith("active_paused")
               ? (canResumeTaskGroup(taskGroup)
-                ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="resume">恢复</button>`
+                ? `<button class="primary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="resume">启动执行</button>`
                 : `<span class="notice">这个任务组是人停下来的（停因：${esc(t(taskGroup.pauseReason))}），只有真人能恢复它</span>`)
               : `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="pause">暂停</button>`
           ) : ""}
-          ${hasGroupPerm(taskGroup.id, "task_group:review") || hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="request_review">请求评审</button>` : ""}
-          ${hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="danger-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="rebound_drift">纠偏</button>` : ""}
+          ${activeGroup && (hasGroupPerm(taskGroup.id, "task_group:review") || hasGroupPerm(taskGroup.id, "task_group:control")) ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="request_review">请求评审</button>` : ""}
+          ${activeGroup && hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="danger-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="rebound_drift">纠偏</button>` : ""}
         </div>
         ${expanded ? renderTaskGroupDetail(taskGroup) : ""}
       </div>
@@ -4955,6 +5148,10 @@ function renderTaskGroups() {
 }
 
 function renderTaskGroupDetail(taskGroup) {
+  return workspaces.navigation("group-detail", "inline") + workspaces.run("group-detail", () => renderTaskGroupDetailBody(taskGroup));
+}
+
+function renderTaskGroupDetailBody(taskGroup) {
   if (!tgDetail || tgDetail.taskGroupId !== taskGroup.id) {
     return `<div class="notice">正在加载任务组详情…</div>`;
   }
@@ -4999,7 +5196,7 @@ function renderTaskGroupDetail(taskGroup) {
 
   const config = tgDetail.config;
   // 这一页只对着一个任务组，按它判权（并集会让只在别的组上有权的人看到按不动的按钮）。
-  const canControl = hasGroupPerm(taskGroup.id, "task_group:control");
+  const canControl = hasGroupPerm(taskGroup.id, "task_group:control") && taskGroup.status !== "closed" && taskGroup.status !== "aborted";
   const canReviewWork = hasGroupPerm(taskGroup.id, "task_group:review");
   const editDisabled = canControl ? "" : "disabled";
   const configHtml = config ? `
@@ -5079,8 +5276,9 @@ function renderTaskGroupDetail(taskGroup) {
   // 任务按时间线倒序：最新建的排最前（服务端下发的是插入序＝最旧在前）。两条数据路径（进度接口/列表内嵌）经同一个排序；slice 不改原数组。
   const workItems = (progressData.workItems || taskGroup.workItems || []).slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))).map((workItem) => {
     return `
-      <div class="record">
-        <div class="record-title"><strong>${esc(workItem.title)}</strong>${badge(workItem.status)}</div>
+      <details class="record task-item">
+        <summary class="record-title"><strong>${esc(workItem.title)}</strong>${badge(workItem.status)}
+          <button class="secondary-button" data-open-work="${esc(workItem.id)}" data-work-group="${esc(taskGroup.id)}">查看任务</button></summary>
         ${progressLine(workItem.progress)}
         <div class="record-meta"><span>执行角色：${esc(t(workItem.ownerRole))}</span>${workItem.pinnedModelId ? `<span>指定模型：<span class="mono">${esc(workItem.pinnedModelId)}</span></span>` : ""}${workItem.blockedReason ? `<span>受阻原因：${esc(explainCoded(workItem.blockedReason))}</span>` : ""}${humanTraceHtml(workItem)}</div>
         <!-- 被阻塞的工作项：屏幕上要么给出【出口】，要么明说【系统会自清】。只写一句"受阻原因"
@@ -5138,7 +5336,7 @@ function renderTaskGroupDetail(taskGroup) {
           </div>`;
         })()}
         ${workItemResultHtml(taskGroup.id, workItem.id)}
-      </div>
+      </details>
     `;
   }).join("");
 
@@ -5352,6 +5550,7 @@ function decisionSelect(name, options, placeholder = "请选择处置方式…",
 }
 
 function sectionBlock(title, body) {
+  if (!workspaces.allows(title)) return "";
   return `<div class="record" data-section-title="${esc(title)}" style="background:#fff;"><div class="record-title"><strong>${esc(title)}</strong></div><div style="margin-top:8px;">${body}</div></div>`;
 }
 
@@ -5441,7 +5640,7 @@ function ruleEditorForm(opts) {
   const catLabel = category === "system" ? "系统" : "业务";
   const disabled = readOnly ? "disabled" : "";
   return `
-    <form class="form-grid" ${formAttr} data-category="${esc(category)}" data-list="${esc(listId)}">
+    <form class="form-grid" ${formAttr} data-category="${esc(category)}" data-list="${esc(listId)}" data-config-version="${esc(layer === "project" ? projConfigVersion || "" : tgDetail?.configVersion || "")}">
       ${opts.note ? `<div class="notice">${opts.note}</div>` : ""}
       <div class="rule-list" data-cfg-list="${esc(listId)}">
         ${/* 「暂无规则。」对这两类的含义完全相反：业务规则空是常态，系统规则空【不正常】——
@@ -6440,7 +6639,7 @@ function renderReview() {
   // 任务组】判（见下面的 hasGroupPerm）—— 后端就是按资源判的，并集会让人看到按不动的表单。
   const canReview = hasPerm("task_group:review");
   // 集中处理：汇总项目内全部任务组的人工确认（tasks 视角已按可见任务组下发），而非逐组切换
-  const projectTaskGroupIds = new Set(projectTaskGroups().map((taskGroup) => taskGroup.id));
+  const projectTaskGroupIds = new Set(focusedTaskGroups().map((taskGroup) => taskGroup.id));
   const allRequests = (state.humanConfirmationRequests || []).filter((request) => projectTaskGroupIds.has(request.taskGroupId)).slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   const pending = allRequests.filter((request) => request.status === "pending");
   const answered = allRequests.filter((request) => request.status !== "pending");
@@ -6804,26 +7003,27 @@ function renderDirectives() {
     esc(directive.rejectReason ? t(directive.rejectReason) : "-")
   ])).join("");
 
-  const canControl = hasPerm("task_group:control");
+  const canControl = managementGroupId ? hasGroupPerm(managementGroupId, "task_group:control") : hasPerm("task_group:control");
   const formHtml = canControl ? `
         <form class="form-grid" data-form="directive-create">
           <div class="form-row"><label>目标任务组</label>${taskGroupSelector(directiveTaskGroupId, "directive-tg", "task_group:control")}</div>
           <div class="form-row"><label>指令类型</label>
-            <select name="directiveType">${DIRECTIVE_TYPES.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("")}</select>
+            <select name="directiveType">${DIRECTIVE_TYPES.map(([value, label]) => `<option value="${esc(value)}"${value === "free_text" ? " selected" : ""}>${esc(label)}</option>`).join("")}</select>
           </div>
-          <div class="form-row"><label>决策处置方式</label>
+          <div class="form-row directive-fields" data-directive-types="resolve_decision" hidden><label>决策处置方式</label>
             <!-- 不带 required：这个下拉只对「决策处置」类型生效，而浏览器的约束校验不看类型 ——
                  带上就连提交「补充要求」也会被拦住，逼人选一个随后被丢掉的处置方式。空着提交由处理器按类型拒。 -->
             ${decisionSelect("resolution", [["reopen", "重开（返回就绪，重置返工计数）"], ["abandon", "放弃（置为已替代，解除关闭阻塞）"]], "请选择处置方式…", {required: false})}
             <span class="small muted">仅“决策处置”类型生效</span>
           </div>
-          <div class="form-row"><label>优先级档位</label>
+          <div class="form-row directive-fields" data-directive-types="adjust_priority" hidden><label>优先级档位</label>
             <!-- 仅「调整优先级」类型生效；不 required（浏览器约束不看类型）。空着提交由服务端拒：
                  调优先级落到调度器真读的 admissionPriorityClass，不选档位又不写关键词就是静默无效。 -->
             ${decisionSelect("priorityClass", [["p0_safety", t("p0_safety")], ["unblock_many", t("unblock_many")], ["available_window", t("available_window")], ["current_condition", t("current_condition")], ["capability_data", t("capability_data")], ["readiness_preflight", t("readiness_preflight")], ["formal_gate", t("formal_gate")]], "请选择优先级档位…", {required: false})}
             <span class="small muted">仅“调整优先级”类型生效；不选档位这条指令对执行顺序没有影响</span>
           </div>
-          <div class="form-row"><label>目标工作项 ID</label><input name="workItemId" placeholder="留空只处置该组处于“待人工决策”的格子；要放弃其它状态的工作项必须点名填写它的 ID" /></div>
+          <div class="form-row directive-fields" data-directive-types="adjust_priority resolve_decision" hidden><label>目标任务（可选）</label><input name="workItemId" list="directive-task-options" placeholder="选择任务，或输入任务编号；留空作用于任务组" />
+            <datalist id="directive-task-options">${(taskGroupById(directiveTaskGroupId)?.workItems || []).map((work) => `<option value="${esc(work.id)}">${esc(work.title || work.id)}</option>`).join("")}</datalist></div>
           <div class="form-row"><label>指令内容</label><textarea name="instruction" placeholder="补充要求 / 自由指令必填，其余类型可选"></textarea></div>
           <button class="primary-button" type="submit">提交指令</button>
         </form>
@@ -7038,11 +7238,12 @@ function renderMonitor() {
   if (hasNoVisibleProject() && !projectTaskGroups().length) {
     return panel("执行监控", noVisibleProjectNotice(), {wide: true});
   }
-  const groups = projectTaskGroups();
+  const groups = focusedTaskGroups();
   // 这一页整体以"当前项目"为抬头，因此页内每张表都必须按它过滤。
   // 此前七张表里有五张漏了，最严重的一张还挂着"关闭任务组"按钮。
   const inScope = (item) => groups.some((taskGroup) => taskGroup.id === item.taskGroupId);
   const scopeOptions = [
+    {value: `project:${currentProjectId}`, label: "整个项目"},
     ...groups.map((taskGroup) => ({value: `taskGroup:${taskGroup.id}`, label: `任务组 · ${taskGroup.name || taskGroup.id}`}))
   ];
   const scopeValue = execScope.id ? `${execScope.type}:${execScope.id}` : "";
@@ -7050,7 +7251,7 @@ function renderMonitor() {
     scopeOptions.unshift({value: scopeValue, label: `${execScope.type === "dispatch" ? "派发" : execScope.type === "session" ? "会话" : "任务组"} · ${execScope.id}`});
   }
 
-  const eventsShown = filterSource(execEvents.slice().reverse(), "events");
+  const eventsShown = filterSource(execEvents.filter((event) => !managementGroupId || event.taskGroupId === managementGroupId).slice().reverse(), "events");
   const eventRows = eventsShown.slice(0, 120).map((event) => row([
     {v: esc(event.sequence), c: "num"},
     badge(event.eventType, "blue"),
@@ -7141,7 +7342,9 @@ function renderMonitor() {
 
   const canControlNodes = hasPerm("agent:activate");
   const canOrchestrate = hasPerm("task_group:orchestrate");
-  const nodes = (state.agentRuntimeNodes || []).map((node) => row([
+  const involvedNodeIds = new Set([...dispatchesAll.map((dispatch) => dispatch.assignedNodeId), ...commandsInScope.map((command) => command.nodeId)].filter(Boolean));
+  const monitorNodes = (state.agentRuntimeNodes || []).filter((node) => !managementGroupId || involvedNodeIds.has(node.nodeId));
+  const nodes = monitorNodes.map((node) => row([
     `<strong>${esc(node.nodeName || node.nodeId)}</strong><div class="small muted mono">${esc(node.nodeId)}</div>`,
     // "降级/只读"此前不说原因：缺哪几项自检只进网关事件负载，而那条流没有任何界面。
     // 人看到一个黄色徽标，然后无从下手。
@@ -7334,11 +7537,11 @@ function renderMonitor() {
     nothingRanYetNotice,
     orchestratorStalledNotice(),
     fleetOfflineNotice(),
-    renderMonitorSummary({eventsShown, sessionsAll, dispatchesAll, lanesAll, nodes: state.agentRuntimeNodes || [], barriersInScope}),
+    renderMonitorSummary({eventsShown, sessionsAll, dispatchesAll, lanesAll, nodes: monitorNodes, barriersInScope}),
     renderMonitorActionBoard({
       dispatchesAll,
       sessionsAll,
-      nodes: state.agentRuntimeNodes || [],
+      nodes: monitorNodes,
       barriersInScope,
       stuckTopologies,
       downgradableTopologies,
@@ -7355,7 +7558,7 @@ function renderMonitor() {
       sessionsAll,
       dispatchesAll,
       commandsInScope,
-      nodes: state.agentRuntimeNodes || [],
+      nodes: monitorNodes,
       barriersInScope
     }),
     renderTaskGroupMonitorMatrix(groups, {dispatchesAll, sessionsAll, barriersInScope}),
@@ -7367,8 +7570,11 @@ function renderMonitor() {
     `) : "",
     panel("实时事件流", `
       <div class="stack">
+        <div class="button-row" role="group" aria-label="记录模式"><button class="${execHistoryMode ? "secondary-button" : "primary-button"}" data-exec-mode="live" aria-pressed="${!execHistoryMode}">实时记录</button>
+          <button class="${execHistoryMode ? "primary-button" : "secondary-button"}" data-exec-mode="history" aria-pressed="${execHistoryMode}">历史记录</button></div>
         <div class="record-meta"><span>监听范围：</span><select data-select="exec-scope" aria-label="执行监听范围">${scopeOptions.map((option) => `<option value="${esc(option.value)}" ${option.value === scopeValue ? "selected" : ""}>${esc(option.label)}</option>`).join("")}</select></div>
         ${table([{label: "序号", c: "num"}, "事件", {label: "进度", c: "num"}, "状态", {label: "摘要", c: "text-clip"}, {label: "时间", c: "nowrap"}], eventRows, {moreText: moreText(eventsShown.length, 120, execEventsDropped)})}
+        ${execHistoryMode ? `<div class="button-row"><button class="secondary-button" data-event-page="previous"${execHistoryStack.length ? "" : " disabled"}>上一页</button><span class="small muted">第 ${execHistoryStack.length + 1} 页</span><button class="secondary-button" data-event-page="next"${execHasMore ? "" : " disabled"}>下一页</button></div>` : ""}
       </div>
     `, {wide: true, headerSide: filterInput("按事件、摘要过滤…", "events")}),
     panel("可复用执行载体（Worker Lane）", table(["角色", "功能", "状态", {label: "复用代数", c: "num"}, "当前会话", {label: "更新时间", c: "nowrap"}], laneRows, {moreText: moreText(lanesAll.length, 20, "workerLanes")}), {wide: true, headerSide: filterInput("按角色、会话过滤…", "worker-lanes")}),
@@ -7381,7 +7587,7 @@ function renderMonitor() {
       // 死信队列：命令重试超限时产生，非终态会一直挡住关闭门（no_active_dlq）。此前它连下发都没有、
       // 更没有处置入口 —— 一条死信就能让任务组永远关不掉。这里列出待处置的，给出丢弃/重放的出口。
       const DLQ_TERMINAL = new Set(["replayed", "discarded", "superseded"]);
-      const dlqActive = (state.dlqEntries || []).filter((entry) => !DLQ_TERMINAL.has(entry.status));
+      const dlqActive = (state.dlqEntries || []).filter((entry) => !DLQ_TERMINAL.has(entry.status) && (!managementGroupId || inScope(entry)));
       const dlqRows = dlqActive.map((entry) => row([
         `<span class="mono">${esc(entry.entryId)}</span>`,
         `<span class="mono">${esc(entry.commandId || entry.sourceObjectRef || "-")}</span>`,
@@ -7975,12 +8181,12 @@ function renderProjectSettings() {
   // 归档是项目的终结态、且不可撤销：后端已经拒（project_archived），界面上这些写入口
   // 就不该还摆着 —— 摆着一个按不动的杠杆，人会以为是自己哪里填错了。
   const archived = project.status === "archived";
-  const editDisabled = canEdit && !archived ? "" : "disabled";
+  const editDisabled = canEdit && !archived && rulesLoaded ? "" : "disabled";
   const archivedNotice = archived
     ? `<div class="notice warn-notice">这个项目已归档（终态，不可撤销）：配置只能看、不能改，`
       + "成员授权也发不进去了。要继续这条线，请另建一个项目。</div>"
     : "";
-  const readOnlyNotice = canEdit ? "" : `<div class="notice warn-notice">当前账号无“项目授权管理”权限，项目配置为只读。</div>`;
+  const readOnlyNotice = canEdit ? "" : `<div class="notice warn-notice">当前账号无“项目配置修改”权限，项目配置为只读。</div>`;
   const agentStats = projectAgentStats(project.id);
 
   // 三块配置为空时，页面原先只剩一个"添加 X"按钮 —— 人分不清"这个项目没配"
@@ -8010,16 +8216,26 @@ function renderProjectSettings() {
       <div class="notice">当前项目：${esc(project.name || project.id)}。这里配置 agent 产出的仓库落点、可引用基线和任务组默认角色。</div>
       ${archivedNotice}
       ${readOnlyNotice}
-      <form class="form-grid" data-form="project-config" data-project="${esc(project.id)}">
+      <form class="form-grid" data-form="project-config" data-project="${esc(project.id)}" data-config-fields="repositories" data-config-version="${esc(projConfigVersion || "")}">
         <div class="form-row"><label>仓库与访问凭据（按项目保存，不使用全局环境变量）</label>
           <div class="cfg-rows" data-cfg-list="proj-repos">${repos.map((repo) => cfgRepoRow(repo, Boolean(editDisabled))).join("")}${cfgEmpty(repos, "还没有配置仓库：执行方没有可提交的目标，产出会卡在「没有产出目标」而落不了地。点下面的「添加仓库」配置仓库地址，并按需要选择账号密码或 API Key。")}</div>
 
           <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="repo" data-target="proj-repos" ${editDisabled}>添加仓库</button></div>
         </div>
+        <button class="primary-button" type="submit" ${editDisabled}>保存项目配置</button>
+      </form>
+    `, {wide: true}),
+    panel("基线资料", `
+      <form class="form-grid" data-form="project-config" data-project="${esc(project.id)}" data-config-fields="baselineData" data-config-version="${esc(projConfigVersion || "")}">
         <div class="form-row"><label>基线数据</label>
           <div class="cfg-rows" data-cfg-list="proj-baseline">${baselineData.map((item) => cfgBaselineRow(item, Boolean(editDisabled))).join("")}${cfgEmpty(baselineData, "还没有基线数据：这一项是可选的，空着不影响执行，只是 agent 少一份可对照的现状材料。")}</div>
           <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="baseline" data-target="proj-baseline" ${editDisabled}>添加基线</button></div>
         </div>
+        <button class="primary-button" type="submit" ${editDisabled}>保存项目配置</button>
+      </form>
+    `, {wide: true}),
+    panel("项目默认角色", `
+      <form class="form-grid" data-form="project-config" data-project="${esc(project.id)}" data-config-fields="defaultRoles" data-config-version="${esc(projConfigVersion || "")}">
         <div class="form-row"><label>默认角色</label>
           <datalist id="config-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist>
           <div class="cfg-rows" data-cfg-list="proj-roles">${defaultRoles.map((role) => cfgRoleRow(role, Boolean(editDisabled))).join("")}${cfgEmpty(defaultRoles, "还没有项目默认角色：任务组会各自指定角色，指定不到时回退到系统内置角色。")}</div>
@@ -8157,7 +8373,13 @@ document.addEventListener("submit", async (event) => {
       return;
     }
     if (kind === "member-perms") {
-      const permissions = [...form.querySelectorAll("input[name='perm']:checked")].map((input) => input.value);
+      const member = (orgMembers || []).find((account) => account.accountId === form.dataset.account);
+      if (!member) throw new Error("成员信息已变化，请刷新后重试");
+      const editablePermissions = new Set(MEMBER_PERMISSION_OPTIONS.map(([permission]) => permission));
+      const permissions = [...new Set([
+        ...(member.permissions || []).filter((permission) => !editablePermissions.has(permission)),
+        ...[...form.querySelectorAll("input[name='perm']:checked")].map((input) => input.value)
+      ])];
       await api(`/api/org/members/${encodeURIComponent(form.dataset.account)}/permissions`, {method: "POST", body: JSON.stringify({permissions})});
       closeModal();
       await loadPage();
@@ -8175,12 +8397,31 @@ document.addEventListener("submit", async (event) => {
       return;
     }
     if (kind === "project-create") {
-      await api("/api/projects", {method: "POST", body: JSON.stringify(data)});
+      const created = await api("/api/projects", {method: "POST", body: JSON.stringify(data)});
+      if (created.id) {
+        closeModal();
+        resetTaskWorkbench();
+        currentProjectId = created.id;
+        managementGroupId = "";
+        selectedWork = null;
+        page = "proj-overview";
+        sessionStorage.setItem("aimac.projectId", currentProjectId);
+        sessionStorage.setItem("aimac.page", page);
+      }
       await loadPage();
       return;
     }
     if (kind === "org-project-create") {
-      await api("/api/org/projects", {method: "POST", body: JSON.stringify({name: data.name})});
+      const created = await api("/api/org/projects", {method: "POST", body: JSON.stringify({name: data.name})});
+      if (created.id) {
+        resetTaskWorkbench();
+        currentProjectId = created.id;
+        managementGroupId = "";
+        selectedWork = null;
+        page = "proj-overview";
+        sessionStorage.setItem("aimac.projectId", currentProjectId);
+        sessionStorage.setItem("aimac.page", page);
+      }
       await loadPage();
       return;
     }
@@ -8191,6 +8432,7 @@ document.addEventListener("submit", async (event) => {
     }
     if (kind === "join-token") {
       const payload = {
+        ...(data.registrationScope ? {registrationScope: data.registrationScope, organizationId: data.organizationId} : {}),
         projectId: data.projectId,
         nodeName: data.nodeName || undefined,
         allowedRoles: String(data.allowedRoles || "agent-runtime").split(",").map((item) => item.trim()).filter(Boolean),
@@ -8232,10 +8474,14 @@ document.addEventListener("submit", async (event) => {
         objective: data.objective,
         languageTag: data.languageTag,
         languageName,
+        startPaused: data.startPaused === "true",
         roles: String(data.roles || "").split(/[\n,]/u).map((item) => item.trim()).filter(Boolean)
       };
       const result = await api("/api/task-groups", {method: "POST", body: JSON.stringify(payload)});
       expandedTaskGroupId = result.taskGroup?.id || expandedTaskGroupId;
+      managementGroupId = expandedTaskGroupId;
+      workspaces.select("tg", "list");
+      workspaces.select("group-detail", "tasks");
       formTouched = false;
       await loadPage();
       return;
@@ -8248,8 +8494,14 @@ document.addEventListener("submit", async (event) => {
         requirements: String(data.requirements || "").split(/\n/u).map((item) => item.trim()).filter(Boolean),
         ...(data.pinnedModelId ? {pinnedModelId: data.pinnedModelId} : {})
       };
-      await api(`/api/task-groups/${encodeURIComponent(taskGroupId)}/work-items`, {method: "POST", body: JSON.stringify(payload)});
+      const created = await api(`/api/task-groups/${encodeURIComponent(taskGroupId)}/work-items`, {method: "POST", body: JSON.stringify(payload)});
       expandedTaskGroupId = taskGroupId;
+      managementGroupId = taskGroupId;
+      workListGroupId = taskGroupId;
+      selectedWork = created.workItem?.id ? {taskGroupId, workItemId: created.workItem.id} : null;
+      page = "tasks";
+      workspaces.select("tasks", "list");
+      sessionStorage.setItem("aimac.page", page);
       formTouched = false;
       await loadPage();
       return;
@@ -8318,7 +8570,11 @@ document.addEventListener("submit", async (event) => {
         roleId: rowEl.querySelector("input[name='roleId']")?.value?.trim() || "",
         roleSkillRef: rowEl.querySelector("input[name='roleSkillRef']")?.value?.trim() || ""
       })).filter((role) => role.roleId);
-      await api(`/api/projects/${encodeURIComponent(form.dataset.project)}/config`, {method: "POST", body: JSON.stringify({repositories, baselineData, defaultRoles, expectedConfigVersion: projConfigVersion})});
+      const values = {repositories, baselineData, defaultRoles};
+      const fields = form.dataset.configFields ? form.dataset.configFields.split(",") : Object.keys(values);
+      const payload = Object.fromEntries(fields.filter((key) => Object.hasOwn(values, key)).map((key) => [key, values[key]]));
+      payload.expectedConfigVersion = form.dataset.configVersion || projConfigVersion;
+      await api(`/api/projects/${encodeURIComponent(form.dataset.project)}/config`, {method: "POST", body: JSON.stringify(payload)});
       formTouched = false;
       await loadPage();
       return;
@@ -8326,7 +8582,7 @@ document.addEventListener("submit", async (event) => {
     if (kind === "project-rules") {
       const fragments = assertRuleFragmentLengths(collectRuleFragments(form, "project"));
       const payload = form.dataset.category === "system" ? {systemRules: fragments} : {businessRules: fragments};
-      payload.expectedConfigVersion = projConfigVersion;
+      payload.expectedConfigVersion = form.dataset.configVersion || projConfigVersion;
       await api(`/api/projects/${encodeURIComponent(form.dataset.project)}/config`, {method: "POST", body: JSON.stringify(payload)});
       formTouched = false;
       await loadPage();
@@ -8335,7 +8591,7 @@ document.addEventListener("submit", async (event) => {
     if (kind === "tg-rules") {
       const fragments = assertRuleFragmentLengths(collectRuleFragments(form, "task_group"));
       const payload = form.dataset.category === "system" ? {systemRules: fragments} : {businessRules: fragments};
-      payload.expectedConfigVersion = tgDetail?.configVersion || null;
+      payload.expectedConfigVersion = form.dataset.configVersion || tgDetail?.configVersion || null;
       await api(`/api/task-groups/${encodeURIComponent(form.dataset.task)}/config`, {method: "POST", body: JSON.stringify(payload)});
       formTouched = false;
       await loadPage();
@@ -8523,12 +8779,79 @@ document.addEventListener("submit", async (event) => {
 
 /* ---------------- 点击与选择处理 ---------------- */
 
+document.addEventListener("aimac-rule-editor-opened", () => {
+  ruleEditorDirtySnapshot = {formTouched, dirty: [...dirtyFormKinds], page, projectId: currentProjectId, accountId: currentAccount?.accountId};
+});
+document.addEventListener("aimac-rule-editor-closed", (event) => {
+  const previous = ruleEditorDirtySnapshot;
+  ruleEditorDirtySnapshot = null;
+  if (event.detail?.apply === false && previous?.page === page && previous.projectId === currentProjectId && previous.accountId === currentAccount?.accountId) {
+    formTouched = previous.formTouched;
+    dirtyFormKinds.clear();
+    previous.dirty.forEach((key) => dirtyFormKinds.add(key));
+  }
+  if (!authToken) render();
+});
+
+async function focusManagementGroup(groupId, nextPage = page, options = {}) {
+  const listedGroup = taskPageData?.projectId === currentProjectId && taskPageData.workItems?.some((work) => work.taskGroupId === groupId);
+  const detailedGroup = taskWorkDetail?.taskGroup?.projectId === currentProjectId && taskWorkDetail.taskGroup.id === groupId;
+  if (groupId && !projectTaskGroups().some((group) => group.id === groupId) && !listedGroup && !detailedGroup) throw new Error("该任务组不在当前项目可见范围内");
+  if (!allowedMenuItemsFor(perspectiveOf(currentAccount)).some((item) => item.id === nextPage)) return false;
+  if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "切换任务组范围会丢失未保存的修改，确认继续？", danger: true, confirmText: "放弃并切换"}))) return false;
+  managementGroupId = groupId || "";
+  selectedWork = options.workItemId ? {taskGroupId: groupId, workItemId: options.workItemId} : null;
+  workEventHistoryMode = false;
+  workEventCursor = 0;
+  workEventCursorStack = [];
+  taskPageCursor = options.listState?.cursor || "";
+  taskCursorStack = options.listState?.stack || [];
+  expandedTaskGroupId = nextPage === "tg" ? managementGroupId : "";
+  directiveTaskGroupId = managementGroupId;
+  page = nextPage;
+  sessionStorage.setItem("aimac.page", page);
+  if (page === "tg") workspaces.select(page, "list");
+  if (page === "tasks") workspaces.select(page, "list");
+  execScope = managementGroupId ? {type: "taskGroup", id: managementGroupId} : {type: "project", id: currentProjectId};
+  execHistoryMode = false;
+  execHistoryStack = [];
+  execEvents = [];
+  execCursor = 0;
+  formTouched = false;
+  dirtyFormKinds.clear();
+  stopExecPolling();
+  await loadPage();
+  if (page === "monitor") { await loadExecEvents({reset: true}); startExecPolling(); render(); }
+  return true;
+}
+
 document.addEventListener("change", async (event) => {
   const target = event.target;
   try {
+    if (target.dataset.managementGroup !== undefined) {
+      if (!(await focusManagementGroup(target.value))) target.value = managementGroupId;
+      return;
+    }
+    if (target.dataset.workStatus !== undefined) {
+      taskStatus = target.value;
+      taskPageCursor = "";
+      taskCursorStack = [];
+      await loadTaskWorkbenchData();
+      render();
+      return;
+    }
     if (target.name === "ruleEnabled") {
       const rowEl = target.closest(".rule-row");
       if (rowEl) rowEl.classList.toggle("disabled", !target.checked);
+      formTouched = true;
+      return;
+    }
+    if (target.name === "directiveType") {
+      const form = target.closest("form[data-form]");
+      form?.querySelectorAll("[data-directive-types]").forEach((field) => {
+        field.hidden = !field.dataset.directiveTypes.split(" ").includes(target.value);
+        field.querySelectorAll("input,select").forEach((input) => { input.disabled = field.hidden; });
+      });
       formTouched = true;
       return;
     }
@@ -8539,6 +8862,9 @@ document.addEventListener("change", async (event) => {
       }
       formTouched = false;
       currentProjectId = target.value;
+      resetTaskWorkbench();
+      managementGroupId = "";
+      selectedWork = null;
       sessionStorage.setItem("aimac.projectId", currentProjectId);
       expandedTaskGroupId = "";
       tgDetail = null;
@@ -8569,6 +8895,8 @@ document.addEventListener("change", async (event) => {
     if (target.dataset.select === "exec-scope") {
       const [type, ...rest] = String(target.value).split(":");
       execScope = {type, id: rest.join(":")};
+      execHistoryStack = [];
+      managementGroupId = type === "taskGroup" ? execScope.id : type === "project" ? "" : managementGroupId;
       execEvents = [];
       execCursor = 0;
       await loadExecEvents({reset: true});
@@ -8582,6 +8910,25 @@ document.addEventListener("change", async (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  if (event.target.dataset.workSearch !== undefined) {
+    taskSearch = event.target.value;
+    taskPageCursor = "";
+    taskCursorStack = [];
+    if (taskSearchTimer) clearTimeout(taskSearchTimer);
+    taskSearchTimer = setTimeout(async () => {
+      taskSearchTimer = null;
+      if (page !== "tasks") return;
+      try {
+        await loadTaskWorkbenchData();
+        const position = document.querySelector("[data-work-search]")?.selectionStart;
+        render();
+        const input = document.querySelector("[data-work-search]");
+        input?.focus();
+        input?.setSelectionRange?.(position, position);
+      } catch (error) { showError(error); }
+    }, 220);
+    return;
+  }
   const filter = event.target.closest("[data-filter-input]");
   if (filter) {
     if (filter.dataset.filterKey) filterState[filter.dataset.filterKey] = filter.value;
@@ -8615,6 +8962,99 @@ document.addEventListener("mouseout", (event) => {
 });
 
 document.addEventListener("click", async (event) => {
+  const workEventMode = event.target.closest("[data-work-event-mode]");
+  if (workEventMode) {
+    workEventHistoryMode = workEventMode.dataset.workEventMode === "history";
+    workEventCursor = 0;
+    workEventCursorStack = [];
+    try { await loadTaskWorkbenchData(); render(); } catch (error) { showError(error); }
+    return;
+  }
+  const workEventPage = event.target.closest("[data-work-event-page]");
+  if (workEventPage) {
+    const previous = {cursor: workEventCursor, stack: [...workEventCursorStack]};
+    if (workEventPage.dataset.workEventPage === "next" && taskWorkDetail?.hasMoreEvents) { workEventCursorStack.push(workEventCursor); workEventCursor = taskWorkDetail.nextEventCursor; }
+    else if (workEventPage.dataset.workEventPage === "previous" && workEventCursorStack.length) workEventCursor = workEventCursorStack.pop();
+    else return;
+    try { await loadTaskWorkbenchData(); render(); } catch (error) { workEventCursor = previous.cursor; workEventCursorStack = previous.stack; showError(error); }
+    return;
+  }
+  const eventModeButton = event.target.closest("[data-exec-mode]");
+  if (eventModeButton) {
+    execHistoryMode = eventModeButton.dataset.execMode === "history";
+    execHistoryStack = [];
+    execHistoryStart = 0;
+    stopExecPolling();
+    try { await loadExecEvents({reset: true}); startExecPolling(); render(); } catch (error) { showError(error); }
+    return;
+  }
+  const eventPageButton = event.target.closest("[data-event-page]");
+  if (eventPageButton) {
+    const previous = {start: execHistoryStart, stack: [...execHistoryStack]};
+    let next = 0;
+    if (eventPageButton.dataset.eventPage === "next" && execHasMore) { execHistoryStack.push(execHistoryStart); next = execCursor; }
+    else if (eventPageButton.dataset.eventPage === "previous" && execHistoryStack.length) next = execHistoryStack.pop();
+    else return;
+    try { await loadExecEvents({reset: true, afterSequence: next}); render(); } catch (error) { execHistoryStart = previous.start; execHistoryStack = previous.stack; showError(error); }
+    return;
+  }
+  const taskPageButton = event.target.closest("[data-task-page]");
+  if (taskPageButton) {
+    if (taskPageLoading) return;
+    const previous = {cursor: taskPageCursor, stack: [...taskCursorStack]};
+    if (taskPageButton.dataset.taskPage === "next" && taskPageData?.nextCursor) {
+      taskCursorStack.push(taskPageCursor);
+      taskPageCursor = taskPageData.nextCursor;
+    } else if (taskPageButton.dataset.taskPage === "previous" && taskCursorStack.length) taskPageCursor = taskCursorStack.pop();
+    else return;
+    try { await loadTaskWorkbenchData(); render(); } catch (error) { taskPageCursor = previous.cursor; taskCursorStack = previous.stack; showError(error); }
+    return;
+  }
+  const focusGroupButton = event.target.closest("[data-focus-group]");
+  if (focusGroupButton) {
+    try { await focusManagementGroup(focusGroupButton.dataset.focusGroup, focusGroupButton.dataset.focusPage || page); } catch (error) { showError(error); }
+    return;
+  }
+  const workButton = event.target.closest("[data-open-work]");
+  if (workButton) {
+    try {
+      workListGroupId = page === "tasks" ? managementGroupId : workButton.dataset.workGroup;
+      workListState = {cursor: taskPageCursor, stack: [...taskCursorStack]};
+      await focusManagementGroup(workButton.dataset.workGroup, "tasks", {workItemId: workButton.dataset.openWork});
+    } catch (error) { showError(error); }
+    return;
+  }
+  if (event.target.closest("[data-close-work]")) {
+    try { await focusManagementGroup(workListGroupId, "tasks", {listState: workListState}); } catch (error) { showError(error); }
+    return;
+  }
+  const workspaceButton = event.target.closest("[data-workspace]");
+  if (workspaceButton) {
+    const nextPage = workspaceButton.dataset.workspacePage || page;
+    const nextSection = workspaceButton.dataset.workspace;
+    if (nextPage === "group-detail" && page === "tg" && expandedTaskGroupId) {
+      if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "任务组详情有未保存的修改，确认切换栏目？", danger: true, confirmText: "放弃并切换"}))) return;
+      if (!workspaces.select(nextPage, nextSection)) return;
+      formTouched = false;
+      dirtyFormKinds.clear();
+      render();
+      return;
+    }
+    if (!allowedMenuItemsFor(perspectiveOf(currentAccount)).some((item) => item.id === nextPage)) return;
+    if (nextPage === page && workspaces.current(page)?.id === nextSection) return;
+    if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前栏目有未保存的修改，确认切换？", danger: true, confirmText: "放弃并切换"}))) return;
+    if (!workspaces.select(nextPage, nextSection)) return;
+    if (workspaceButton.dataset.createForGroup && projectTaskGroups().some((group) => group.id === workspaceButton.dataset.createForGroup)) managementGroupId = workspaceButton.dataset.createForGroup;
+    const changedPage = nextPage !== page;
+    page = nextPage;
+    sessionStorage.setItem("aimac.page", page);
+    formTouched = false;
+    dirtyFormKinds.clear();
+    if (changedPage || !lastLoadedAt || Date.now() - lastLoadedAt > 2000) { stopExecPolling(); await loadPage(); } else render();
+    if (page === "monitor" && workspaces.current(page)?.id === "events") { await loadExecEvents({reset: execCursor === 0}); startExecPolling(); render(); }
+    window.scrollTo?.({top: 0});
+    return;
+  }
   const mask = event.target.closest("[data-modal-mask]");
   if (mask && event.target === mask) {
     await requestCloseModal();
@@ -8674,6 +9114,14 @@ document.addEventListener("click", async (event) => {
   const jumpButton = event.target.closest("[data-jump-panel]");
   if (jumpButton) {
     const title = jumpButton.dataset.jumpPanel || "";
+    const targetWorkspace = workspaces.owner(page, title);
+    if (targetWorkspace && targetWorkspace !== workspaces.current(page)?.id) {
+      if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前栏目有未保存的修改，确认切换？", danger: true, confirmText: "放弃并切换"}))) return;
+      workspaces.select(page, targetWorkspace);
+      formTouched = false;
+      dirtyFormKinds.clear();
+      render();
+    }
     const targetHeader = [...document.querySelectorAll(".panel-header h2")]
       .find((header) => header.textContent.trim() === title);
     const targetPanel = targetHeader?.closest(".panel");
@@ -8715,6 +9163,10 @@ document.addEventListener("click", async (event) => {
     if (action === "monitor-scope") {
       const [type, ...rest] = String(target.dataset.scope || "").split(":");
       execScope = {type, id: rest.join(":")};
+      execHistoryMode = false;
+      execHistoryStack = [];
+      managementGroupId = type === "taskGroup" ? execScope.id : "";
+      workspaces.select("monitor", "events");
       execEvents = [];
       execCursor = 0;
       await loadExecEvents({reset: true});
@@ -8757,10 +9209,12 @@ document.addEventListener("click", async (event) => {
       if (targetProjectId && targetProjectId !== currentProjectId && formTouched
         && !(await confirmDialog({title: "放弃未保存的修改", message: "切换项目将丢失当前页面未保存的修改，确认切换？", danger: true, confirmText: "放弃并切换"}))) return;
       if (targetProjectId) {
+        if (targetProjectId !== currentProjectId) resetTaskWorkbench();
         currentProjectId = targetProjectId;
         sessionStorage.setItem("aimac.projectId", currentProjectId);
       }
       page = targetPage;
+      if (targetPage === "proj-settings" && target.dataset.repoFocus !== undefined) workspaces.select(page, "repositories");
       sessionStorage.setItem("aimac.page", page);
       lastError = "";
       formTouched = false;
@@ -8869,14 +9323,21 @@ document.addEventListener("click", async (event) => {
       toast.success(status === "suspended" ? "已停用组织" : "已启用组织");
       return;
     }
+    if (action === "open-create-project") {
+      if (currentAccount?.accountType !== "user_account" || !(state.accountCapabilities?.canCreateProject ?? (currentAccount.permissions || []).includes("project:create"))) return;
+      openModal("创建项目", `<form class="form-grid" data-form="project-create">
+        <div class="form-row"><label>项目名称</label><input name="name" maxlength="200" required></div>
+        <button class="primary-button" type="submit">创建项目</button></form>`);
+      return;
+    }
     if (action === "member-perms") {
       const member = (orgMembers || []).find((account) => account.accountId === target.dataset.account);
       if (!member) return;
-      openModal(`调整权限 · ${member.displayName}`, `
+      openModal(`账号能力 · ${member.displayName}`, `
         <form class="form-grid" data-form="member-perms" data-account="${esc(member.accountId)}">
-          <div class="notice">提交后将以所选权限覆盖该成员当前权限集合。</div>
+          <div class="notice">本次仅调整创建项目能力，不改变已授予的项目和任务组角色。</div>
           ${permissionCheckboxes(member.permissions || [])}
-          <button class="primary-button" type="submit">保存权限</button>
+          <button class="primary-button" type="submit">保存账号能力</button>
         </form>
       `);
       return;
@@ -9182,6 +9643,10 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "show-dispatch-events") {
       execScope = {type: "dispatch", id: target.dataset.dispatchId || ""};
+      execHistoryMode = target.dataset.eventMode === "history";
+      execHistoryStack = [];
+      managementGroupId = (state.agentDispatches || []).find((item) => item.dispatchId === execScope.id)?.taskGroupId || "";
+      workspaces.select("monitor", "events");
       execEvents = [];
       execCursor = 0;
       if (page !== "monitor") {
@@ -9203,6 +9668,10 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "show-session-events") {
       execScope = {type: "session", id: target.dataset.sessionId || ""};
+      execHistoryMode = false;
+      execHistoryStack = [];
+      managementGroupId = (state.workSessions || []).find((item) => item.sessionId === execScope.id)?.taskGroupId || "";
+      workspaces.select("monitor", "events");
       execEvents = [];
       execCursor = 0;
       if (page !== "monitor") {
@@ -9260,7 +9729,7 @@ function realtimeWake() {
   if (realtimeWakeTimer) return;
   realtimeWakeTimer = setTimeout(() => {
     realtimeWakeTimer = null;
-    if (!authToken || loading || modalHtml || formTouched) return;
+    if (!authToken || loading || modalHtml || formTouched || window.AIMAC_RULE_EDITOR?.isOpen?.() || (page === "tasks" && workEventHistoryMode)) return;
     const active = document.activeElement;
     if (active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) return;
     loadPage().catch(reportBackgroundRefreshFailure);
@@ -9315,7 +9784,7 @@ function disconnectRealtime() {
 
 // Long-poll fallback keeps the console fresh if the WebSocket is unavailable or between reconnects.
 setInterval(() => {
-  if (!authToken || loading || modalHtml || formTouched) return;
+  if (!authToken || loading || modalHtml || formTouched || window.AIMAC_RULE_EDITOR?.isOpen?.() || (page === "tasks" && workEventHistoryMode)) return;
   const active = document.activeElement;
   if (active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) return;
   // 这一拍是【兜底】，注释一直这么写，而代码原先无条件跑：实时通道正常时也照样每 5 秒全量拉一遍。

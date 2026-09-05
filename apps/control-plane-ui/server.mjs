@@ -85,6 +85,7 @@ import {
   effectiveProjectConfig,
   effectiveTaskGroupConfig,
   ensureRuntimeCollections,
+  isHumanConfirmationActor,
   gitHead,
   gitRemoteUrl,
   organizationOf,
@@ -145,6 +146,12 @@ import {
 import { sealSecret, isSealed, openSecret } from "./lib/credential-seal.mjs";
 import { testRepositoryConnection } from "./lib/git-connection-test.mjs";
 import { isTerminalDispatchStatus } from "./lib/lifecycle-states.mjs";
+import { listProjectWorkItems, parseWorkItemListQuery } from "./lib/work-item-pagination.mjs";
+import {
+  agentRegistrationResourceScope,
+  runtimeNodeProjectIds,
+  runtimeNodeVisibleForProjectSet
+} from "./lib/runtime-node-scope.mjs";
 
 // 真正绑上的端口（listen 回调写入）；localEndpoint 用它。放在模块顶部：读状态的路径在 listen 之前就会调它。
 let boundPort = 0;
@@ -1001,12 +1008,18 @@ function publicProjectRecord(project = {}) {
 }
 
 function sanitizeMemberPermissions(value, fallback = ["project:view"]) {
-  const sanitized = normalizeStringList(value, fallback).filter((permission) =>
+  const normalized = normalizeStringList(value === undefined ? fallback : value, value === undefined ? fallback : []);
+  const unknown = unknownPermissions(normalized);
+  if (unknown.length) {
+    return {ok: false, status: 400, error: "permission_unknown",
+      unknownPermissions: unknown.slice(0, 10), supported: [...KNOWN_PERMISSIONS]};
+  }
+  const permissions = normalized.filter((permission) =>
     !permission.startsWith("system:") &&
     !permission.startsWith("org:") &&
-    !unsafeDelegatedGrantPermissions.has(permission) &&
+    (!unsafeDelegatedGrantPermissions.has(permission) || permission === "project:create") &&
     !permission.endsWith(":*"));
-  return sanitized.length ? sanitized : fallback;
+  return {ok: true, permissions};
 }
 
 // 邀请与授权是同一件事的两条路：都在把权限交给另一个主体。授权那条（sanitizeGrantRequest）
@@ -1551,8 +1564,9 @@ function mcpContextFromRequest(req, state) {
   if (!token) return null;
   const node = authenticateAgentNode(state, token);
   if (node) {
+    const projectIds = runtimeNodeProjectIds(state, node);
     return {
-      principal: {kind: "agent_node", id: node.nodeId, projectIds: node.projectIds, allowedMcpTools: node.allowedMcpTools},
+      principal: {kind: "agent_node", id: node.nodeId, projectIds, registrationScope: node.registrationScope || "project", organizationId: node.organizationId, allowedMcpTools: node.allowedMcpTools},
       allowedMcpTools: node.allowedMcpTools
     };
   }
@@ -1560,8 +1574,10 @@ function mcpContextFromRequest(req, state) {
   // 主体仍报成 agent_node（授权与 mcpGrants 的匹配逻辑一律不变），额外带上它被绑定的那条派发。
   const executor = authenticateExecutorPrincipal(state, token);
   if (executor) {
+    const projectIds = runtimeNodeProjectIds(state, executor.node);
     return {
-      principal: {kind: "agent_node", id: executor.node.nodeId, projectIds: executor.node.projectIds,
+      principal: {kind: "agent_node", id: executor.node.nodeId, projectIds,
+        registrationScope: executor.node.registrationScope || "project", organizationId: executor.node.organizationId,
         allowedMcpTools: executor.node.allowedMcpTools, dispatchId: executor.dispatch.dispatchId, credentialKind: "executor"},
       allowedMcpTools: executor.node.allowedMcpTools
     };
@@ -1714,7 +1730,7 @@ function scopedStateForAccount(state, account, session) {
     .filter((item) => isSystem || item.sessionId === session.sessionId)
     .map((item) => ({sessionId: item.sessionId, accountId: item.accountId, status: item.status, expiresAt: item.expiresAt, createdAt: item.createdAt, updatedAt: item.updatedAt}));
   cloned.projects = (state.projects || []).map(publicProjectRecord);
-  cloned.agentRuntimeNodes = (state.agentRuntimeNodes || []).map(publicAgentNode);
+  cloned.agentRuntimeNodes = (state.agentRuntimeNodes || []).map((node) => publicAgentNode(node, {state}));
   cloned.agentJoinTokens = listAgentJoinTokens(state);
   // 系统账号此前拿到的是【原始账号记录】：里面有 passwordDigest（口令的 scrypt 哈希）和
   // credentialDigest（一次性登录令牌的校验值）。控制台一个都不显示，把口令校验材料发进浏览器
@@ -1743,7 +1759,9 @@ function scopedStateForAccount(state, account, session) {
   cloned.workSessions = (state.workSessions || []).filter((sessionItem) => visibleTaskGroupIds.has(sessionItem.taskGroupId));
   cloned.workerLanes = (state.workerLanes || []).filter((lane) => lane.taskGroupId && visibleTaskGroupIds.has(lane.taskGroupId));
   cloned.agentDispatches = (state.agentDispatches || []).filter((dispatch) => visibleTaskGroupIds.has(dispatch.taskGroupId));
-  cloned.agentRuntimeNodes = (state.agentRuntimeNodes || []).filter((node) => (node.projectIds || []).some((projectId) => visibleProjectIds.has(projectId))).map(publicAgentNode);
+  cloned.agentRuntimeNodes = (state.agentRuntimeNodes || [])
+    .filter((node) => runtimeNodeVisibleToAccount(state, account, node, visibleProjectIds))
+    .map((node) => publicAgentNode(node, runtimeNodeProjectionOptionsForAccount(state, account, node, visibleProjectIds)));
   const visibleNodeIds = new Set(cloned.agentRuntimeNodes.map((node) => node.nodeId));
   // A task-group-attributed record must be gated on task-group visibility (same invariant as
   // checkpoints/admissionDecisions): a plain project member without a task-group grant must not see a
@@ -1751,7 +1769,7 @@ function scopedStateForAccount(state, account, session) {
   // node-level records that carry no taskGroupId (e.g. refresh_profile control commands).
   cloned.agentControlCommands = (state.agentControlCommands || []).filter((command) => command.taskGroupId ? visibleTaskGroupIds.has(command.taskGroupId) : visibleNodeIds.has(command.nodeId));
   cloned.agentExecutionEvents = (state.agentExecutionEvents || []).filter((event) => event.taskGroupId ? visibleTaskGroupIds.has(event.taskGroupId) : visibleNodeIds.has(event.nodeId));
-  cloned.agentJoinTokens = listAgentJoinTokens(state).filter((token) => visibleProjectIds.has(token.projectId));
+  cloned.agentJoinTokens = listAgentJoinTokens(state).filter((token) => joinTokenVisibleToAccount(state, account, token));
   cloned.agents = (state.agents || []).filter((agent) =>
     (agent.organizationId || DEFAULT_ORGANIZATION_ID) === account.organizationId &&
     (!agent.projectId || visibleProjectIds.has(agent.projectId)));
@@ -1980,6 +1998,11 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
   // 判据本身在 control-plane-core 里，那里造得出入参、两条分支都单测得到。
   const inRequestedProject = makeProjectScopePredicate(scoped.taskGroups, scopeProjectId);
   const scopeCollection = (value) => (scopeProjectId && Array.isArray(value) ? value.filter(inRequestedProject) : value);
+  const scopeAgentRuntimeNodes = (nodes) => (scopeProjectId && Array.isArray(nodes)
+    ? nodes
+      .filter((node) => runtimeNodeVisibleForProjectSet(state, node, new Set([scopeProjectId])))
+      .map((node) => publicAgentNode(node, {state, projectIdSet: new Set([scopeProjectId]), profileMode: "project"}))
+    : nodes);
   // 账本类集合：控制台每张表最多渲染 10~20 行，却按整页上限（200）取 —— 实测 400 单元时
   // 监控页一次轮询 1.1MB，绝大多数记录从没被显示过。给它们单独设一个更小的上限；
   // 任务组这类"人要逐条扫"的集合不动（那会让大项目的列表少列条目）。
@@ -1994,6 +2017,11 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     schemaVersion: scoped.schemaVersion,
     stateVersion: scoped.stateVersion,
     runtime: liveRuntime,
+    accountCapabilities: {canCreateProject: account.accountType === "user_account"
+      && hasPermission(state, account.accountId, "project:create", {resourceType: "project", resourceId: "new"})},
+    projectPermissions: scopeProjectId ? {projectId: scopeProjectId, permissions: KNOWN_PERMISSIONS
+      .filter((permission) => permission.startsWith("project:") || permission.startsWith("task_group:") || permission === "agent:activate")
+      .filter((permission) => hasPermission(state, account.accountId, permission, projectScope(scopeProjectId)))} : null,
     // 舰队计数（只有数字，几十字节）。没有它，界面就无从知道"活挂着但没有任何 agent 能接"——
     // 实测零节点时循环照样造出成千上万个 active 会话与租约，控制台看上去一片繁忙，
     // 而真相是没有任何东西在跑。节点明细只在 agent 页下发，这里不带。
@@ -2002,8 +2030,8 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     // 与"一个都还没注册，按安装指引接一台" —— 三台全被吊销时会说前一句，让人去修一台不存在的机器。
     // 已吊销的节点不再参与任何事，不该出现在这个分母里。
     fleet: {
-      online: (scopeCollection(scoped.agentRuntimeNodes) || []).filter((node) => node.status === "online").length,
-      total: (scopeCollection(scoped.agentRuntimeNodes) || []).filter((node) => node.status !== "revoked").length
+      online: (scopeAgentRuntimeNodes(scoped.agentRuntimeNodes) || []).filter((node) => node.status === "online").length,
+      total: (scopeAgentRuntimeNodes(scoped.agentRuntimeNodes) || []).filter((node) => node.status !== "revoked").length
     },
     // 在制品额度（两个数字）。编排周期一旦按这个额度把单元判成 resource_queued，界面必须能说出
     // "为什么我的单元不动" —— 后端有闸而界面没有出口，等于这个闸对使用者不存在。
@@ -2045,7 +2073,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     taskGroups: projectTaskGroupsForView(sliceItems(scopeCollection(scoped.taskGroups), capped)),
     // modelCapabilities 不进基底：只有系统设置那一页读它（实测 15.8 KB），而基底意味着
     // 【每个视图、每次轮询】都带一遍。它现在只列在 runtime 视图里 —— 那正是那一页取的视图。
-    agentRuntimeNodes: sliceItems(scopeCollection(scoped.agentRuntimeNodes), capped),
+    agentRuntimeNodes: sliceItems(scopeAgentRuntimeNodes(scoped.agentRuntimeNodes), capped),
     // progressSnapshots 不进视图基底：控制台的进度数据走专用端点 /api/task-groups/:id/progress
     // 按需取，全站没有一处读 state.progressSnapshots。而单条快照把 repositoryOutputs 与 workItems
     // 整份嵌了进去（实测 300 单元时 97KB/条），基底又意味着【每个视图、每次请求】都带上 ——
@@ -2302,6 +2330,11 @@ function refuseIfNodeServesUnauthorizedProjects(req, state, node) {
   if (isSystemAccount(account)) return null;
   const missing = nodeProjectsBeyondPermission(state, accountIdOf(account), node, hasPermission);
   if (!missing.length) return null;
+  if ((node.registrationScope || "project") === "organization") {
+    return {status: 403, payload: {error: "agent_node_serves_other_projects", nodeId: node.nodeId,
+      registrationScope: "organization", organizationId: node.organizationId || DEFAULT_ORGANIZATION_ID, missingOn: missing,
+      message: "这台节点是组织共享节点，停它或给它下节点级命令会影响组织范围内的项目；需要组织级智能体管理权限"}};
+  }
   return {status: 403, payload: {error: "agent_node_serves_other_projects", nodeId: node.nodeId,
     nodeProjectIds: node.projectIds, missingOn: missing,
     message: "这台节点同时服务多个项目，停它会影响到你没有权限的那几个："
@@ -2425,7 +2458,7 @@ function directPermissionApplies(account, permission, requiredPermission, resour
   if (isSystemAccount(account)) return true;
   if (resourceScope.resourceType === "organization") {
     return account.organizationId === resourceScope.resourceId
-      && (permission.startsWith("org:") || permission === "agent:activate");
+      && permission.startsWith("org:");
   }
   // Organization admins manage every resource in their own organization; the org-boundary
   // gate in hasPermission has already confirmed the resource belongs to their organization.
@@ -2433,12 +2466,12 @@ function directPermissionApplies(account, permission, requiredPermission, resour
     return permission.startsWith("project:") || permission.startsWith("task_group:") || ["member:invite", "agent:activate"].includes(permission);
   }
   if (["member:invite", "agent:activate"].includes(permission) && ["project", "task_group"].includes(resourceScope.resourceType)) return false;
-  // 原先这条只在 task_group 作用域下生效，于是一个 task_group: 权限被拿到【project 作用域】
-  // 比对时会掉到最后的 return true —— 而那句与"是哪个项目"完全无关。结果：任何持直接
-  // task_group:review 的账号，可以对组织内【任意】项目的评审计划动手（已由 HTTP 探针实测）。
-  // task_group 级授权必须始终来自 grant（grant 绑定了具体资源），直接权限一律不算。
+  // 资源级 project/task_group 权限必须来自 grant（grant 绑定了具体资源），不能靠账号上的裸权限。
+  // project:create 是账号能力，不指向既有项目；它是这里唯一保留的普通 project: 直接权限。
   if (permission.startsWith("task_group:")) return false;
-  if (resourceScope.resourceType === "project" && permission.startsWith("project:") && requiredPermission !== "project:create") return false;
+  if (["project", "task_group"].includes(resourceScope.resourceType) && permission.startsWith("project:")) {
+    return permission === "project:create" && requiredPermission === "project:create" && resourceScope.resourceType === "project";
+  }
   // 【归属解析不出组织的作用域是系统级的】。system / system_console / state / git_repo 这几种
   // resourceType 在 resourceScopeOrganizationId 里一律返回 null —— 也就是上面那道组织边界什么
   // 都没挡；再掉到这里的 return true，结果是任何拿着 project:grant 的组织管理员都能对系统级
@@ -2452,6 +2485,7 @@ function directPermissionApplies(account, permission, requiredPermission, resour
 
 function permissionMatches(granted, required) {
   if (granted === required || granted === "system:*") return true;
+  if (granted === "org:*" && required === "agent:activate") return true;
   if (granted.endsWith(":*") && !required.endsWith(":*")) return required.startsWith(granted.slice(0, -1));
   if (granted.endsWith(":*") && required.endsWith(":*")) return granted === required;
   return false;
@@ -2519,6 +2553,102 @@ function recomputeBarrierAfterResolve(state, taskGroupId) {
 
 function projectScope(projectId) {
   return {resourceType: "project", resourceId: projectId};
+}
+
+function taskGroupSummary(taskGroup) {
+  return {
+    id: taskGroup.id,
+    projectId: taskGroup.projectId,
+    name: taskGroup.name,
+    status: taskGroup.status,
+    phase: taskGroup.phase,
+    progress: taskGroup.progress,
+    health: taskGroup.health,
+    goalExecutionStatus: taskGroup.goalExecutionStatus || null,
+    pauseReason: taskGroup.pauseReason || null
+  };
+}
+
+function workItemScopedRecords(records, taskGroupId, workItemId, workItemKey = "workItemId") {
+  return (records || []).filter((item) => item.taskGroupId === taskGroupId && item[workItemKey] === workItemId);
+}
+
+function parseBoundedPositiveInteger(value, fallback, cap, field) {
+  if (value === null || value === undefined || value === "") return {ok: true, value: fallback};
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || !Number.isInteger(numeric) || numeric < 1) {
+    return {ok: false, status: 400, payload: {error: "invalid_request_url", message: `${field} must be a positive integer`}};
+  }
+  return {ok: true, value: Math.min(cap, numeric)};
+}
+
+function parseNonNegativeInteger(value, fallback, field) {
+  if (value === null || value === undefined || value === "") return {ok: true, value: fallback};
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || !Number.isInteger(numeric) || numeric < 0) {
+    return {ok: false, status: 400, payload: {error: "invalid_request_url", message: `${field} must be a non-negative integer`}};
+  }
+  return {ok: true, value: numeric};
+}
+
+function requestWantsLatestEvents(searchParams) {
+  return ["1", "true"].includes(String(searchParams.get("latest") || "").trim().toLowerCase());
+}
+
+function sameStringSet(left, right) {
+  if (left.size !== right.size) return false;
+  for (const value of left) if (!right.has(value)) return false;
+  return true;
+}
+
+function hasTaskGroupPermission(state, account, taskGroup, permission) {
+  if (isSystemAccount(account)) return true;
+  const project = state.projects.find((item) => item.id === taskGroup.projectId);
+  if (project?.ownerAccountId === account.accountId) return true;
+  return [permission, "task_group:*"].some((candidate) =>
+    hasPermission(state, account.accountId, candidate, {resourceType: "task_group", resourceId: taskGroup.id, projectId: taskGroup.projectId})
+  );
+}
+
+function registrationScopeSubject(recordOrNode, fallbackType = "AgentRegistration") {
+  const scope = agentRegistrationResourceScope(recordOrNode);
+  if (scope.resourceType === "organization") return `Organization:${scope.resourceId || "unknown"}`;
+  if (scope.resourceType === "project") return `Project:${scope.resourceId || "unknown"}`;
+  return `${fallbackType}:unknown`;
+}
+
+function joinTokenVisibleToAccount(state, account, token) {
+  if (isSystemAccount(account)) return true;
+  const scope = agentRegistrationResourceScope(token);
+  if (scope.resourceType === "organization") {
+    return hasPermission(state, accountIdOf(account), "agent:activate", scope);
+  }
+  return canReadProject(state, account, token.projectId);
+}
+
+function runtimeNodeVisibleToAccount(state, account, node, visibleProjectIds = null) {
+  if (isSystemAccount(account)) return true;
+  const nodeScope = agentRegistrationResourceScope(node);
+  if (nodeScope.resourceType === "organization" &&
+    hasPermission(state, accountIdOf(account), "agent:activate", nodeScope)) {
+    return true;
+  }
+  const projectIds = visibleProjectIds || new Set((state.projects || [])
+    .filter((project) => canReadProject(state, account, project.id, project))
+    .map((project) => project.id));
+  return runtimeNodeVisibleForProjectSet(state, node, projectIds);
+}
+
+function runtimeNodeProjectionOptionsForAccount(state, account, node, visibleProjectIds = null) {
+  if (isSystemAccount(account)) return {state};
+  const nodeScope = agentRegistrationResourceScope(node);
+  const canManageOrgNode = nodeScope.resourceType === "organization" &&
+    hasPermission(state, accountIdOf(account), "agent:activate", nodeScope);
+  if (canManageOrgNode) return {state};
+  const projectIds = visibleProjectIds || new Set((state.projects || [])
+    .filter((project) => canReadProject(state, account, project.id, project))
+    .map((project) => project.id));
+  return {state, projectIdSet: projectIds, profileMode: "project"};
 }
 
 function writeDriftCheck(state, action, resourceScope = {}) {
@@ -2663,7 +2793,8 @@ async function waitForAgentControlCommandsDirect(node, options = {}) {
 }
 
 async function waitForProjectExecutionEvents(projectId, options = {}) {
-  return sharedLongPoll(projectExecutionWaitFanout, `project-events:${projectId}:${options.afterSequence || 0}:${options.dispatchId || ""}:${options.taskGroupId || ""}:${options.sessionId || ""}:${options.limit || 120}:${options.waitMs || 0}`, () => waitForProjectExecutionEventsDirect(projectId, options));
+  const allowedTaskGroupIds = Array.isArray(options.allowedTaskGroupIds) ? options.allowedTaskGroupIds.map((id) => String(id)).sort().join(",") : "";
+  return sharedLongPoll(projectExecutionWaitFanout, `project-events:${projectId}:${options.afterSequence || 0}:${options.dispatchId || ""}:${options.taskGroupId || ""}:${allowedTaskGroupIds}:${options.workItemId || ""}:${options.sessionId || ""}:${options.latest ? "latest" : "history"}:${options.limit || 120}:${options.waitMs || 0}`, () => waitForProjectExecutionEventsDirect(projectId, options));
 }
 
 async function waitForProjectExecutionEventsDirect(projectId, options = {}) {
@@ -3149,7 +3280,7 @@ async function handleApi(req, res) {
 
   if (req.method === "GET" && url.pathname === "/api/agent/v1/nodes/me") {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
-    json(res, 200, {node: publicAgentNode(node)});
+    json(res, 200, {node: publicAgentNode(node, {state})});
     return;
   }
 
@@ -3648,6 +3779,23 @@ async function handleApi(req, res) {
     return;
   }
 
+  const projectWorkItemsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/work-items$/);
+  if (req.method === "GET" && projectWorkItemsMatch) {
+    const resolved = readableProjectOr403(req, state, projectWorkItemsMatch[1]);
+    if (resolved.denial) {
+      json(res, resolved.denial.status, resolved.denial.payload);
+      return;
+    }
+    const parsed = parseWorkItemListQuery(url.searchParams);
+    if (!parsed.ok) return json(res, parsed.status, parsed.payload);
+    const project = resolved.project;
+    const visibleTaskGroups = (state.taskGroups || []).filter((group) => group.projectId === project.id
+      && canReadTaskGroup(state, resolved.reader.account, group.id, group, project));
+    const result = listProjectWorkItems(visibleTaskGroups, parsed.filters);
+    json(res, 200, {projectId: project.id, ...result});
+    return;
+  }
+
   const taskGroupDetailMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)$/);
   if (req.method === "GET" && taskGroupDetailMatch) {
     const taskGroup = (state.taskGroups || []).find((item) => item.id === taskGroupDetailMatch[1]);
@@ -3685,13 +3833,78 @@ async function handleApi(req, res) {
     return;
   }
 
+  const workItemDetailMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/work-items\/([^/]+)$/);
+  if (req.method === "GET" && workItemDetailMatch) {
+    const taskGroupId = decodeURIComponent(workItemDetailMatch[1]);
+    const workItemId = decodeURIComponent(workItemDetailMatch[2]);
+    const taskGroup = (state.taskGroups || []).find((item) => item.id === taskGroupId);
+    if (!taskGroup) {
+      const denial = missingRecordDenial(req, state, "task_group_not_found", "permission_denied");
+      return json(res, denial.status, denial.payload);
+    }
+    const reader = requireRead(req, state, taskGroupScope(state, taskGroup.id));
+    if (reader.status) return json(res, reader.status, reader.payload);
+    const workItem = (taskGroup.workItems || []).find((item) => item.id === workItemId);
+    if (!workItem) {
+      const denial = missingRecordDenial(req, state, "work_item_not_found", "permission_denied");
+      return json(res, denial.status, denial.payload);
+    }
+    const parsedAfterSequence = parseNonNegativeInteger(url.searchParams.get("afterSequence"), 0, "afterSequence");
+    if (!parsedAfterSequence.ok) return json(res, parsedAfterSequence.status, parsedAfterSequence.payload);
+    const parsedEventLimit = parseBoundedPositiveInteger(url.searchParams.get("eventLimit"), 120, 500, "eventLimit");
+    if (!parsedEventLimit.ok) return json(res, parsedEventLimit.status, parsedEventLimit.payload);
+    const eventResult = await waitForProjectExecutionEvents(taskGroup.projectId, {
+      taskGroupId: taskGroup.id,
+      workItemId: workItem.id,
+      afterSequence: parsedAfterSequence.value,
+      waitMs: Number(url.searchParams.get("waitMs") || 0),
+      limit: parsedEventLimit.value,
+      latest: requestWantsLatestEvents(url.searchParams)
+    });
+    const latest = readStateForRead();
+    const latestTaskGroup = (latest.taskGroups || []).find((item) => item.id === taskGroup.id);
+    if (!latestTaskGroup) {
+      const denial = missingRecordDenial(req, latest, "task_group_not_found", "permission_denied");
+      return json(res, denial.status, denial.payload);
+    }
+    const latestReader = requireRead(req, latest, taskGroupScope(latest, latestTaskGroup.id));
+    if (latestReader.status) return json(res, latestReader.status, latestReader.payload);
+    const latestWorkItem = (latestTaskGroup.workItems || []).find((item) => item.id === workItem.id);
+    if (!latestWorkItem) {
+      const denial = missingRecordDenial(req, latest, "work_item_not_found", "permission_denied");
+      return json(res, denial.status, denial.payload);
+    }
+    json(res, 200, {
+      projectId: latestTaskGroup.projectId,
+      taskGroup: {
+        ...taskGroupSummary(latestTaskGroup),
+        canControl: hasTaskGroupPermission(latest, latestReader.account, latestTaskGroup, "task_group:control"),
+        canReview: hasTaskGroupPermission(latest, latestReader.account, latestTaskGroup, "task_group:review")
+      },
+      workItem: latestWorkItem,
+      agentDispatches: workItemScopedRecords(latest.agentDispatches, latestTaskGroup.id, latestWorkItem.id),
+      workSessions: workItemScopedRecords(latest.workSessions, latestTaskGroup.id, latestWorkItem.id),
+      repositoryOutputs: workItemScopedRecords(latest.repositoryOutputs, latestTaskGroup.id, latestWorkItem.id),
+      checkpoints: workItemScopedRecords(latest.checkpoints, latestTaskGroup.id, latestWorkItem.id, "workId"),
+      events: eventResult.events,
+      nextEventCursor: eventResult.nextCursor,
+      eventCount: eventResult.total,
+      returnedEventCount: eventResult.returnedCount,
+      eventTotalExact: eventResult.totalExact,
+      historyTruncated: eventResult.historyTruncated,
+      hasMoreEvents: Boolean(eventResult.hasMore)
+    });
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/agent-nodes") {
     const reader = accountFromRequest(req, state);
     if (!reader) return json(res, 401, {error: "auth_required"});
     const visible = isSystemAccount(reader.account)
       ? state.agentRuntimeNodes
-      : state.agentRuntimeNodes.filter((nodeItem) => (nodeItem.projectIds || []).some((projectId) => canReadProject(state, reader.account, projectId)));
-    json(res, 200, {agentRuntimeNodes: visible.map(publicAgentNode)});
+      : state.agentRuntimeNodes.filter((nodeItem) => runtimeNodeVisibleToAccount(state, reader.account, nodeItem));
+    json(res, 200, {agentRuntimeNodes: visible.map((nodeItem) =>
+      publicAgentNode(nodeItem, runtimeNodeProjectionOptionsForAccount(state, reader.account, nodeItem)))});
     return;
   }
 
@@ -3699,13 +3912,22 @@ async function handleApi(req, res) {
     const reader = accountFromRequest(req, state);
     if (!reader) return json(res, 401, {error: "auth_required"});
     const projectId = url.searchParams.get("projectId") || undefined;
-    const tokens = listAgentJoinTokens(state, projectId).filter((token) => isSystemAccount(reader.account) || canReadProject(state, reader.account, token.projectId));
+    const tokens = listAgentJoinTokens(state, projectId).filter((token) => joinTokenVisibleToAccount(state, reader.account, token));
     json(res, 200, {agentJoinTokens: tokens});
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/agent-join-tokens") {
-    const guard = beginGuardedWrite(req, state, "agent_join_token_create", `Project:${body.projectId || "unknown"}`, projectScope(body.projectId));
+    const tokenScope = agentRegistrationResourceScope({
+      registrationScope: body.registrationScope || body.scope || "project",
+      projectId: body.projectId,
+      organizationId: body.organizationId
+    });
+    const guard = beginGuardedWrite(req, state, "agent_join_token_create", registrationScopeSubject({
+      registrationScope: body.registrationScope || body.scope || "project",
+      projectId: body.projectId,
+      organizationId: body.organizationId
+    }, "AgentJoinToken"), tokenScope);
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = createAgentJoinToken(state, body, {actor: guard.actor, publicUrl: publicEndpoint(req)});
     const persistedResult = {joinTokenRecord: result.joinTokenRecord, secretReturnedOnce: true};
@@ -3724,7 +3946,7 @@ async function handleApi(req, res) {
       const denial = missingRecordDenial(req, state, "agent_join_token_not_found", "policy_denied");
       return json(res, denial.status, denial.payload);
     }
-    const guard = beginGuardedWrite(req, state, "agent_join_token_revoke", `Project:${record.projectId}`, projectScope(record.projectId));
+    const guard = beginGuardedWrite(req, state, "agent_join_token_revoke", registrationScopeSubject(record, "AgentJoinToken"), agentRegistrationResourceScope(record));
     if (guard.status) return json(res, guard.status, guard.payload);
     record.status = "revoked";
     record.updatedAt = now();
@@ -3746,10 +3968,9 @@ async function handleApi(req, res) {
       const denial = missingRecordDenial(req, state, "agent_node_not_found", "policy_denied");
       return json(res, denial.status, denial.payload);
     }
-    const projectId = targetNode.projectIds?.[0];
     const crossProject = refuseIfNodeServesUnauthorizedProjects(req, state, targetNode);
     if (crossProject) return json(res, crossProject.status, crossProject.payload);
-    const guard = beginGuardedWrite(req, state, "agent_node_revoke", `Project:${projectId}`, projectScope(projectId));
+    const guard = beginGuardedWrite(req, state, "agent_node_revoke", registrationScopeSubject(targetNode, "AgentRuntimeNode"), agentRegistrationResourceScope(targetNode));
     if (guard.status) return json(res, guard.status, guard.payload);
     const payload = requestAgentNodeRevocation(state, targetNode, body, {actor: guard.actor, idempotencyKey: guard.idempotencyKey});
     audit(state, guard.actor, "agent_node_revoke", `AgentRuntimeNode:${targetNode.nodeId}`);
@@ -3790,17 +4011,16 @@ async function handleApi(req, res) {
       const crossProject = refuseIfNodeServesUnauthorizedProjects(req, state, targetNode);
       if (crossProject) return json(res, crossProject.status, crossProject.payload);
     }
-    const projectId = targetNode.projectIds?.[0];
     const guard = taskScopedControl
       ? beginGuardedWrite(req, state, "task_group_agent_control_command_create", `TaskGroup:${targetDispatch.taskGroupId}`, taskGroupScope(state, targetDispatch.taskGroupId))
-      : beginGuardedWrite(req, state, "agent_control_command_create", `AgentRuntimeNode:${targetNode.nodeId}`, projectScope(projectId));
+      : beginGuardedWrite(req, state, "agent_control_command_create", registrationScopeSubject(targetNode, "AgentRuntimeNode"), agentRegistrationResourceScope(targetNode));
     if (guard.status) return json(res, guard.status, guard.payload);
     // Defense in depth: the command's visibility is keyed on nodeId, but the task-scoped branch guards only the
     // dispatch's task group. Independently confirm the target node's project is within the actor's organization,
     // so this endpoint also satisfies the "guard covers the visibility-keying field" invariant even if a future
     // change persisted the command before the node-ownership pre-effect check.
     const controlActor = state.accounts.find((item) => accountIdOf(item) === guard.actor);
-    const targetNodeOrg = resourceScopeOrganizationId(state, projectScope(projectId));
+    const targetNodeOrg = resourceScopeOrganizationId(state, agentRegistrationResourceScope(targetNode));
     if (controlActor && !isSystemAccount(controlActor) && controlActor.organizationId && targetNodeOrg && targetNodeOrg !== controlActor.organizationId) {
       return json(res, 403, {error: "policy_denied", reason: "target_node_out_of_organization"});
     }
@@ -3893,9 +4113,11 @@ async function handleApi(req, res) {
     if (reader.status) return json(res, reader.status, reader.payload);
     const result = await waitForProjectExecutionEvents(dispatch.projectId, {
       dispatchId: dispatch.dispatchId,
+      taskGroupId: dispatch.taskGroupId,
       afterSequence: Number(url.searchParams.get("afterSequence") || 0),
       waitMs: Number(url.searchParams.get("waitMs") || 0),
-      limit: Number(url.searchParams.get("limit") || 120)
+      limit: Number(url.searchParams.get("limit") || 120),
+      latest: requestWantsLatestEvents(url.searchParams)
     });
     json(res, 200, result);
     return;
@@ -3916,6 +4138,42 @@ async function handleApi(req, res) {
     return;
   }
 
+  const projectEventsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/execution-events$/);
+  if (req.method === "GET" && projectEventsMatch) {
+    const project = state.projects.find((item) => item.id === projectEventsMatch[1]);
+    if (!project) {
+      const denial = missingRecordDenial(req, state, "project_not_found", "permission_denied");
+      return json(res, denial.status, denial.payload);
+    }
+    const reader = requireRead(req, state, projectScope(project.id));
+    if (reader.status) return json(res, reader.status, reader.payload);
+    const visibleGroups = new Set((state.taskGroups || []).filter((group) => group.projectId === project.id
+      && canReadTaskGroup(state, reader.account, group.id, group, project)).map((group) => group.id));
+    const result = await waitForProjectExecutionEvents(project.id, {
+      allowedTaskGroupIds: [...visibleGroups],
+      afterSequence: Number(url.searchParams.get("afterSequence") || 0),
+      waitMs: Number(url.searchParams.get("waitMs") || 0),
+      limit: Number(url.searchParams.get("limit") || 120),
+      latest: requestWantsLatestEvents(url.searchParams)
+    });
+    const latest = readStateForRead();
+    const currentReader = requireRead(req, latest, projectScope(project.id));
+    if (currentReader.status) return json(res, currentReader.status, currentReader.payload);
+    const latestVisibleGroups = new Set(latest.taskGroups.filter((group) => group.projectId === project.id
+      && canReadTaskGroup(latest, currentReader.account, group.id, group, project)).map((group) => group.id));
+    const latestScopedResult = sameStringSet(visibleGroups, latestVisibleGroups)
+      ? result
+      : await waitForProjectExecutionEvents(project.id, {
+        allowedTaskGroupIds: [...latestVisibleGroups],
+        afterSequence: Number(url.searchParams.get("afterSequence") || 0),
+        waitMs: 0,
+        limit: Number(url.searchParams.get("limit") || 120),
+        latest: requestWantsLatestEvents(url.searchParams)
+      });
+    json(res, 200, {...latestScopedResult, projectId: project.id, events: latestScopedResult.events.filter((event) => latestVisibleGroups.has(event.taskGroupId))});
+    return;
+  }
+
   const taskGroupEventsMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/execution-events$/);
   if (req.method === "GET" && taskGroupEventsMatch) {
     const taskGroup = state.taskGroups.find((item) => item.id === taskGroupEventsMatch[1]);
@@ -3929,7 +4187,8 @@ async function handleApi(req, res) {
       taskGroupId: taskGroup.id,
       afterSequence: Number(url.searchParams.get("afterSequence") || 0),
       waitMs: Number(url.searchParams.get("waitMs") || 0),
-      limit: Number(url.searchParams.get("limit") || 120)
+      limit: Number(url.searchParams.get("limit") || 120),
+      latest: requestWantsLatestEvents(url.searchParams)
     });
     json(res, 200, result);
     return;
@@ -3947,9 +4206,11 @@ async function handleApi(req, res) {
     const taskGroup = state.taskGroups.find((item) => item.id === session.taskGroupId);
     const result = await waitForProjectExecutionEvents(taskGroup?.projectId || session.projectId || "prj_control_plane", {
       sessionId: session.sessionId,
+      taskGroupId: session.taskGroupId,
       afterSequence: Number(url.searchParams.get("afterSequence") || 0),
       waitMs: Number(url.searchParams.get("waitMs") || 0),
-      limit: Number(url.searchParams.get("limit") || 120)
+      limit: Number(url.searchParams.get("limit") || 120),
+      latest: requestWantsLatestEvents(url.searchParams)
     });
     json(res, 200, result);
     return;
@@ -4384,6 +4645,10 @@ async function handleApi(req, res) {
       const {ok: _ok, status: _status, ...details} = result;
       json(res, result.status || 409, {...details, error: result.error});
       return;
+    }
+    if (body.startPaused === true) {
+      result.taskGroup.goalExecutionStatus = "active_paused_by_control";
+      result.taskGroup.pauseReason = isHumanConfirmationActor(state, guard.actor) ? "human_directive_pause" : "task_group_pause";
     }
     audit(state, guard.actor, "task_group_create", `TaskGroup:${result.taskGroup.id}`);
     finishGuardedWrite(state, guard, 201, result);
@@ -6040,7 +6305,12 @@ async function handleApi(req, res) {
     const at = now();
     const accountId = createId("acct");
     const memberToken = `aimac_account_${randomBytes(32).toString("base64url")}`;
-    const permissions = sanitizeMemberPermissions(body.permissions, ["project:view"]);
+    const sanitizedPermissions = sanitizeMemberPermissions(body.permissions, ["project:view"]);
+    if (!sanitizedPermissions.ok) {
+      return json(res, sanitizedPermissions.status, {error: sanitizedPermissions.error,
+        unknownPermissions: sanitizedPermissions.unknownPermissions, supported: sanitizedPermissions.supported});
+    }
+    const permissions = sanitizedPermissions.permissions;
     // 【默认项目要指得到、且还能开工】。这个字段原先原样收下：可以指向一个已归档的项目
     //（新成员一进来就落在一个开不了新工作的项目上），也可以指向一个根本不存在的 id，
     // 而两种都不会有任何提示。与加入令牌那条同一口径 —— 归档意味着"移出可建新工作的范围"。
@@ -6094,7 +6364,12 @@ async function handleApi(req, res) {
       return json(res, 400, {error: "member_permissions_update_empty",
         message: "改成员授权至少要给 permissions 或 defaultProjectId 之一 —— 两样都不给时这条接口什么也不会改"});
     }
-    member.permissions = sanitizeMemberPermissions(body.permissions, member.permissions || ["project:view"]);
+    const sanitizedPermissions = sanitizeMemberPermissions(body.permissions, member.permissions || ["project:view"]);
+    if (!sanitizedPermissions.ok) {
+      return json(res, sanitizedPermissions.status, {error: sanitizedPermissions.error,
+        unknownPermissions: sanitizedPermissions.unknownPermissions, supported: sanitizedPermissions.supported});
+    }
+    member.permissions = sanitizedPermissions.permissions;
     if (body.defaultProjectId !== undefined) {
       // 同上：改成员的默认项目也要指得到、且还能开工（这条路原先也是原样收下）。
       const refusal = validateDefaultProject(state, body.defaultProjectId, member.organizationId || DEFAULT_ORGANIZATION_ID);
@@ -6277,19 +6552,26 @@ async function handleApi(req, res) {
     const orgId = isSystemAccount(reader.account) ? (url.searchParams.get("orgId") || DEFAULT_ORGANIZATION_ID) : reader.account.organizationId;
     if (!orgId) return json(res, 400, {error: "organization_required"});
     if (!isSystemAccount(reader.account) && reader.account.organizationId !== orgId) return json(res, 403, {error: "permission_denied"});
+    const visibleProjectIds = new Set((state.projects || [])
+      .filter((project) => canReadProject(state, reader.account, project.id, project))
+      .map((project) => project.id));
     const nodes = (state.agentRuntimeNodes || [])
       .filter((node) => (node.organizationId || DEFAULT_ORGANIZATION_ID) === orgId)
-      .map((node) => ({
-        ...publicAgentNode(node),
-        display: {
-          region: node.profile?.region || null,
-          dataRoot: node.profile?.dataRoot || null,
-          health: node.status === "online" ? (node.admission === "full" ? "healthy" : "limited") : node.status,
-          currentDispatchIds: node.activeDispatchIds || [],
-          networkSpeedMbps: node.profile?.networkSpeedMbps || null,
-          models: (node.profile?.models || []).filter((model) => model.available !== false).map((model) => model.providerClass)
-        }
-      }));
+      .filter((node) => runtimeNodeVisibleToAccount(state, reader.account, node, visibleProjectIds))
+      .map((node) => {
+        const publicNode = publicAgentNode(node, runtimeNodeProjectionOptionsForAccount(state, reader.account, node, visibleProjectIds));
+        return {
+          ...publicNode,
+          display: {
+            region: publicNode.profile?.region || null,
+            dataRoot: publicNode.profile?.dataRoot || null,
+            health: publicNode.status === "online" ? (publicNode.admission === "full" ? "healthy" : "limited") : publicNode.status,
+            currentDispatchIds: publicNode.activeDispatchIds || [],
+            networkSpeedMbps: publicNode.profile?.networkSpeedMbps || null,
+            models: (publicNode.profile?.models || []).filter((model) => model.available !== false).map((model) => model.providerClass)
+          }
+        };
+      });
     json(res, 200, {orgId, agentRuntimeNodes: nodes});
     return;
   }

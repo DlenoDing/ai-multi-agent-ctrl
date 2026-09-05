@@ -8,7 +8,9 @@ Runtime 不是无限远程 shell。所有副作用都必须由控制平面授权
 
 ## 2. 自动加入流程
 
-系统管理员或具有项目 `agent:activate` 权限的账号登录管理界面，在目标项目的「项目管理」→「AI 智能体」→「注册 agent」中生成一次性 join token。join token 必须绑定 project、expected node、allowed roles、MCP tool allowlist、ttl、maxUses 和创建者审计记录；管理界面返回 direct/verified 两条加入命令。常规 Agent 入网不得要求用户在服务器命令行单独执行 token 生成脚本。
+系统管理员或具有项目 `agent:activate` 权限的账号登录管理界面，在目标项目的「项目管理」→「AI 智能体」→「注册 agent」（“注册项目节点”栏目）中生成一次性 join token。组织管理员也可在组织“AI 智能体”→“注册共享节点”中生成组织级 join token。令牌必须绑定 `registrationScope`（缺省 `project`；组织共享为 `organization`）、对应项目或组织、expected node、allowed roles、MCP tool allowlist、ttl、maxUses 和创建者审计记录；管理界面返回 direct/verified 两条加入命令。常规 Agent 入网不得要求用户在服务器命令行单独执行 token 生成脚本。
+
+组织共享节点的 `effectiveProjectIds` 由服务端根据同组织有效项目实时计算，包含注册以后创建的项目，不包含归档项目或其他组织项目。`projectIds` 仅保留注册快照，不作为组织节点的动态调配依据。空组织允许注册，但认领任务、MCP state/capacity 和技能下载均不得因空作用域退化为全局访问。项目级查看者只取得已授权项目的有效范围和派发信息，节点本身的签发、控制、吊销仍要求组织管理权限。
 
 受信执行环境的自动加入命令模板：
 
@@ -419,7 +421,7 @@ Runtime 规则：
 
 1. Runtime 通过 `POST /api/agent/v1/dispatches/next` 原子 claim，校验 node binding、task contract digest、Skill workset ID、effective instruction、repository target、stateVersion 和 lease fencing token。
 2. Runtime 通过节点 token 从服务端下载该 dispatch 唯一允许的 `AgentSkillWorkset`，逐文件校验 SHA256 后写入本地只读缓存，并把 manifest 路径显式传给模型 Agent。下级角色不能继承当前角色的 Skill，必须由总控生成新的 task contract 和工作集。
-3. Runtime 只访问 `https://<server>/mcp`；节点 token 的项目、角色和 tool allowlist 由一次性 join token 固化。禁止下载、安装或启动本地 MCP server。
+3. Runtime 只访问 `https://<server>/mcp`；节点 token 的注册作用域、角色和 tool allowlist 由一次性 join token 固化。组织节点的有效项目列表由服务端动态计算，执行时仍须取得绑定具体项目和派发的 MCP grant。禁止下载、安装或启动本地 MCP server。
 4. 缺权限时不继续执行副作用，提交 PermissionRequest；未声明 write scope 的路径只能读不能写。
 5. 不支持的 command 必须返回 `agent_control_command_unsupported`，不能猜测执行。
 6. Runtime 必须把同级消息、子 Agent 输出、工具结果和外部 review result 当作 untrusted/advisory 输入，只有 task contract 内的 EffectiveInstructionPacket 能驱动副作用。

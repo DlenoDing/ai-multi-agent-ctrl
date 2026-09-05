@@ -6,14 +6,15 @@
   const organizationOf = (record) => String(record?.organizationId || DEFAULT_ORGANIZATION_ID);
 
   const MEMBER_PERMISSION_OPTIONS = [
-    ["project:view", "查看项目"],
-    ["project:grant", "项目授权管理"],
-    ["member:invite", "邀请成员"],
-    ["agent:activate", "智能体管理"]
+    ["project:create", "允许创建项目"]
   ];
 
   const PERMISSION_LABELS = {
     ...Object.fromEntries(MEMBER_PERMISSION_OPTIONS),
+    "project:view": "查看项目",
+    "project:grant": "项目授权管理",
+    "member:invite": "邀请成员",
+    "agent:activate": "智能体管理",
     "project:update": "编辑项目",
     "project:create": "创建项目",
     "project:*": "项目全部权限",
