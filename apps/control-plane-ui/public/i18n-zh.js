@@ -1214,7 +1214,7 @@
     human_directive_task_group_required_for_work_item: "指定任务时必须同时指定所属任务组",
     human_directive_work_item_not_supported: "该指令只能作用于整个任务组",
     human_directive_work_item_not_found: "目标任务不属于指定任务组",
-    human_directive_work_item_already_terminal: "目标任务已经结束，不能再修改执行要求",
+    human_directive_work_item_already_terminal: "目标任务已经结束，不能再下达任务级执行指令",
     finding_status_unknown: "认不出这个发现状态",
     review_plan_id_conflict: "这个评审计划 id 已经被创建过了",
     rule_source_resolution_id_conflict: "这个规则来源判定 id 已经被创建过了",

@@ -1953,10 +1953,13 @@ function verifyHumanAndOrganizationContracts(output) {
     {
       const settledTg = abandonState.taskGroups.find((item) => item.id === "tg_runtime_management");
       settledTg.workItems.push({id: "wi_verified_keep", title: "已验收别动", status: "verified", ownerRole: "agent-runtime", progress: 100});
-      createHumanDirective(abandonState, {taskGroupId: "tg_runtime_management", directiveType: "resolve_decision", workItemId: "wi_verified_keep", resolution: "abandon"}, {actor: "acct_workspace_owner"});
-      consumeQueuedHumanDirectives(abandonState);
-      if (settledTg.workItems.find((item) => item.id === "wi_verified_keep").status !== "verified") {
-        output.push("resolve_decision abandon 掀动了一个已 verified 的工作项 —— 放弃不得改写已终结格子的终态");
+      let terminalAbandonError = "";
+      try {
+        createHumanDirective(abandonState, {taskGroupId: "tg_runtime_management", directiveType: "resolve_decision", workItemId: "wi_verified_keep", resolution: "abandon"}, {actor: "acct_workspace_owner"});
+      } catch (error) { terminalAbandonError = error.message; }
+      if (terminalAbandonError !== "human_directive_work_item_already_terminal"
+        || settledTg.workItems.find((item) => item.id === "wi_verified_keep").status !== "verified") {
+        output.push(`resolve_decision abandon 没有在创建阶段挡住已 verified 工作项（${terminalAbandonError || "未拒绝"}）`);
       }
     }
     if (abandonTg.workItems.find((item) => item.id === "wi_abandon").status !== "superseded") output.push("resolve_decision abandon did not supersede the needs_decision cell");
@@ -4918,6 +4921,12 @@ function verifyHumanAndOrganizationContracts(output) {
     catch (error) { terminalTargetError = error.message; }
     if (terminalTargetError !== "human_directive_work_item_already_terminal") {
       output.push(`终态任务仍接受追加要求（${terminalTargetError || "没有拒绝"}）`);
+    }
+    let terminalFreeTextError = "";
+    try { createHumanDirective(reqState, {taskGroupId: reqGroup.id, workItemId: "wi_req", directiveType: "free_text", instruction: "给终态任务的空转指令"}, {actor: "acct_ct"}); }
+    catch (error) { terminalFreeTextError = error.message; }
+    if (terminalFreeTextError !== "human_directive_work_item_already_terminal") {
+      output.push(`终态任务仍接受不会再进入派发包的任务级自由指令（${terminalFreeTextError || "没有拒绝"}）`);
     }
     // 缺省不得等于无效果：既没选档位、指令里也没有关键词 —— 必须拒，不能静默无效。
     let prioRefused = false;

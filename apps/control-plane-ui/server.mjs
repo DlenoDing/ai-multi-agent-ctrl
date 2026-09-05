@@ -6419,7 +6419,7 @@ async function handleApi(req, res) {
     if (!member) return json(res, 404, {error: "org_member_not_found"});
     const resetActiveInitialAdmin = body.resetActiveInitialAdmin === true;
     const initialAdminOrganization = (state.organizations || []).find((organization) =>
-      organization.initialAdminAccountId === member.accountId && organization.orgId === member.organizationId);
+      organization.initialAdminAccountId === member.accountId && organization.orgId === organizationMembershipOf(member));
     const mayResetActiveInitialAdmin = resetActiveInitialAdmin && isSystemAccount(reissueActor)
       && Boolean(initialAdminOrganization) && member.accountType === "org_admin";
     if (resetActiveInitialAdmin && !mayResetActiveInitialAdmin) {

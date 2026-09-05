@@ -5801,10 +5801,10 @@ export function createHumanDirective(state, input = {}, options = {}) {
         details: {taskGroupId: taskGroup.id, workItemId,
           message: "目标任务不属于这个任务组；请从任务详情进入，或重新选择目标任务"}});
     }
-    if (["adjust_priority", "add_requirement"].includes(directiveType) && WORK_ITEM_SETTLED_STATUSES.includes(targetWorkItem.status)) {
+    if (workItemTargetTypes.includes(directiveType) && WORK_ITEM_SETTLED_STATUSES.includes(targetWorkItem.status)) {
       throw Object.assign(new Error("human_directive_work_item_already_terminal"), {status: 409,
         details: {taskGroupId: taskGroup.id, workItemId, status: targetWorkItem.status,
-          message: "目标任务已经结束，不能再调整优先级或追加执行要求"}});
+          message: "目标任务已经结束，不能再下达任务级执行指令；需要记录复盘结论时应写入项目仓库或独立升级材料"}});
     }
   }
   const instruction = assertHumanTextWithinLimit(input.instruction || "", "human_directive_instruction", 4000);
