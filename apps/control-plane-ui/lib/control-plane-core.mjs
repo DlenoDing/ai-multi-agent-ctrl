@@ -5782,6 +5782,31 @@ export function createHumanDirective(state, input = {}, options = {}) {
       {status: 400, directiveType: String(input.directiveType).slice(0, 60), supported: HUMAN_DIRECTIVE_TYPES});
   }
   const directiveType = HUMAN_DIRECTIVE_TYPES.includes(input.directiveType) ? input.directiveType : "free_text";
+  const workItemId = String(input.workItemId || "").trim() || null;
+  const workItemTargetTypes = ["adjust_priority", "add_requirement", "resolve_decision", "free_text"];
+  let targetWorkItem = null;
+  if (workItemId) {
+    if (!taskGroup) {
+      throw Object.assign(new Error("human_directive_task_group_required_for_work_item"), {status: 400,
+        details: {workItemId, message: "指定具体任务时必须同时指定它所属的任务组"}});
+    }
+    if (!workItemTargetTypes.includes(directiveType)) {
+      throw Object.assign(new Error("human_directive_work_item_not_supported"), {status: 400,
+        details: {directiveType, workItemId, supported: workItemTargetTypes,
+          message: "暂停、恢复和取消是任务组级运行控制，不能伪装成只作用于单个任务"}});
+    }
+    targetWorkItem = (taskGroup.workItems || []).find((item) => item.id === workItemId) || null;
+    if (!targetWorkItem) {
+      throw Object.assign(new Error("human_directive_work_item_not_found"), {status: 404,
+        details: {taskGroupId: taskGroup.id, workItemId,
+          message: "目标任务不属于这个任务组；请从任务详情进入，或重新选择目标任务"}});
+    }
+    if (["adjust_priority", "add_requirement"].includes(directiveType) && WORK_ITEM_SETTLED_STATUSES.includes(targetWorkItem.status)) {
+      throw Object.assign(new Error("human_directive_work_item_already_terminal"), {status: 409,
+        details: {taskGroupId: taskGroup.id, workItemId, status: targetWorkItem.status,
+          message: "目标任务已经结束，不能再调整优先级或追加执行要求"}});
+    }
+  }
   const instruction = assertHumanTextWithinLimit(input.instruction || "", "human_directive_instruction", 4000);
   if (!instruction && directiveType === "free_text") throw Object.assign(new Error("human_directive_instruction_required"), {status: 400});
   // adjust_priority 落到 cellAdmissionPriority 真读的 admissionPriorityClass（精确档位枚举）。此前它只写
@@ -5809,7 +5834,8 @@ export function createHumanDirective(state, input = {}, options = {}) {
     taskGroupId: taskGroup?.id || null,
     directiveType,
     instruction,
-    ...(directiveType === "resolve_decision" ? {resolution, workItemId: input.workItemId || null} : {}),
+    ...(workItemId ? {workItemId} : {}),
+    ...(directiveType === "resolve_decision" ? {resolution} : {}),
     ...(directiveType === "adjust_priority" && priorityClass ? {priorityClass} : {}),
     issuedBy: options.actor || "unknown",
     status: "queued",
@@ -6012,8 +6038,11 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
         }
         directive.appliedActions.push({action: "task_group_cancel_pending_dispatches", ref: `TaskGroup:${taskGroup.id}`});
       } else if (directive.directiveType === "add_requirement" && taskGroup) {
-        appendHumanGuidance(taskGroup, {directiveRef: directive.directiveId, text: directive.instruction, addedAt: at});
-        const openWorkItem = (taskGroup.workItems || []).find((item) => !["verified", "closed", "superseded"].includes(item.status));
+        appendHumanGuidance(taskGroup, {directiveRef: directive.directiveId, text: directive.instruction,
+          ...(directive.workItemId ? {workItemId: directive.workItemId} : {}), addedAt: at});
+        const openWorkItem = directive.workItemId
+          ? (taskGroup.workItems || []).find((item) => item.id === directive.workItemId)
+          : (taskGroup.workItems || []).find((item) => !["verified", "closed", "superseded"].includes(item.status));
         if (openWorkItem && directive.instruction) {
           openWorkItem.requirements = unique([...(openWorkItem.requirements || []), directive.instruction]);
           openWorkItem.updatedAt = at;
@@ -6029,8 +6058,10 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
         // 关键词匹配只是模糊 fallback。有档位就落档位，让「调优先级」真正生效到调度器读的那个字段。
         const priorityClass = ADMISSION_PRIORITY_TIERS.includes(directive.priorityClass) ? directive.priorityClass : null;
         const priorityHint = directive.instruction || "elevated";
-        taskGroup.priorityHint = priorityHint;
-        if (priorityClass) taskGroup.admissionPriorityClass = priorityClass;
+        if (!directive.workItemId) {
+          taskGroup.priorityHint = priorityHint;
+          if (priorityClass) taskGroup.admissionPriorityClass = priorityClass;
+        }
         const priorityTargets = (taskGroup.workItems || []).filter((item) =>
           (!directive.workItemId || item.id === directive.workItemId)
           && !WORK_ITEM_SETTLED_STATUSES.includes(item.status));
@@ -6039,8 +6070,10 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
           else workItem.priorityHint = priorityHint;
           workItem.updatedAt = at;
         }
-        appendHumanGuidance(taskGroup, {directiveRef: directive.directiveId, text: `优先级调整：${directive.instruction}`, addedAt: at});
-        directive.appliedActions.push({action: "task_group_priority_adjusted", ref: `TaskGroup:${taskGroup.id}`, workItemCount: priorityTargets.length});
+        appendHumanGuidance(taskGroup, {directiveRef: directive.directiveId, text: `优先级调整：${directive.instruction}`,
+          ...(directive.workItemId ? {workItemId: directive.workItemId} : {}), addedAt: at});
+        directive.appliedActions.push({action: directive.workItemId ? "work_item_priority_adjusted" : "task_group_priority_adjusted",
+          ref: directive.workItemId ? `WorkItem:${directive.workItemId}` : `TaskGroup:${taskGroup.id}`, workItemCount: priorityTargets.length});
       } else if (directive.directiveType === "resolve_decision" && taskGroup) {
         // The operator's decision on a needs_decision cell — the actuator that resolves the
         // rework-cap / role-drift escalation the autonomous cycle deliberately will not auto-resume.
@@ -6093,8 +6126,10 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
         }
         if (!targets.length) directive.appliedActions.push({action: "no_needs_decision_work_item", ref: `TaskGroup:${taskGroup.id}`});
       } else if (taskGroup) {
-        appendHumanGuidance(taskGroup, {directiveRef: directive.directiveId, text: directive.instruction, addedAt: at});
-        directive.appliedActions.push({action: "task_group_guidance_appended", ref: `TaskGroup:${taskGroup.id}`});
+        appendHumanGuidance(taskGroup, {directiveRef: directive.directiveId, text: directive.instruction,
+          ...(directive.workItemId ? {workItemId: directive.workItemId} : {}), addedAt: at});
+        directive.appliedActions.push({action: directive.workItemId ? "work_item_guidance_appended" : "task_group_guidance_appended",
+          ref: directive.workItemId ? `WorkItem:${directive.workItemId}` : `TaskGroup:${taskGroup.id}`});
       } else {
         directive.appliedActions.push({action: "recorded_without_task_group", ref: `Project:${directive.projectId}`});
       }

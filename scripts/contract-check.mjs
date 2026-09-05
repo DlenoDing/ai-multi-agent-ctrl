@@ -3563,7 +3563,8 @@ function verifyHumanAndOrganizationContracts(output) {
       decision: {selectedOptionId: "accept", selectedLabel: "通过", decidedBy: "acct_alice", decidedAt: "2026-08-02T00:00:00Z", action: "finalize"},
       createdAt: "2026-08-02T00:00:00Z", updatedAt: "2026-08-02T00:00:00Z"
     }];
-    cbBTg.humanGuidance = [{text: "优先保证向后兼容"}];
+    cbBTg.humanGuidance = [{text: "优先保证向后兼容"},
+      {text: "只给另一个任务的私有要求", workItemId: "work_else"}];
     // 用真实签名构建：内容包只在"该节点确有一个 running 派发"时才产出，手搓夹具会绕开真实路径。
     const cbBNode = {nodeId: "node_bundle", organizationId: "org_default", status: "online", admission: "admitted", activeDispatchIds: []};
     cbBundleState.agentRuntimeNodes = [cbBNode];
@@ -3609,6 +3610,10 @@ function verifyHumanAndOrganizationContracts(output) {
     }
     if (!cbBundlePaths.includes("task/context.md")) {
       output.push("内容包: 人工补充要求没有进入下发给 agent 的内容包");
+    }
+    const cbContextEntry = (cbBundle?.entries || []).find((entry) => entry.path === "task/context.md");
+    if (String(cbContextEntry?.content || "").includes("只给另一个任务的私有要求")) {
+      output.push("内容包: 其它任务的私有人工要求泄漏进当前任务派发包（任务级控制退化成任务组级污染）");
     }
     const cbConfirmEntry = (cbBundle?.entries || []).find((entry) => entry.path === "task/confirmations.json");
     if (cbConfirmEntry && !String(cbConfirmEntry.content).includes("hcr_bundled")) {
@@ -4864,15 +4869,36 @@ function verifyHumanAndOrganizationContracts(output) {
     const prioSt2 = structuredClone(seedState);
     ensureRuntimeCollections(prioSt2, {root});
     const prioTg2 = prioSt2.taskGroups.find((item) => item.id === "tg_runtime_management");
-    prioTg2.workItems = [{id: "wi_prio", title: "提优先级", status: "ready", ownerRole: "agent-runtime", progress: 0}];
-    createHumanDirective(prioSt2, {taskGroupId: "tg_runtime_management", directiveType: "adjust_priority", priorityClass: "unblock_many", workItemId: "wi_prio"}, {actor: "acct_ct"});
+    prioTg2.workItems = [{id: "wi_prio", title: "提优先级", status: "ready", ownerRole: "agent-runtime", progress: 0},
+      {id: "wi_untouched", title: "保持原优先级", status: "ready", ownerRole: "agent-runtime", progress: 0}];
+    const targetedPriority = createHumanDirective(prioSt2, {taskGroupId: "tg_runtime_management", directiveType: "adjust_priority", priorityClass: "unblock_many", workItemId: "wi_prio"}, {actor: "acct_ct"});
     consumeQueuedHumanDirectives(prioSt2);
     const prioWi = prioSt2.taskGroups.find((item) => item.id === "tg_runtime_management").workItems.find((item) => item.id === "wi_prio");
+    const untouchedWi = prioSt2.taskGroups.find((item) => item.id === "tg_runtime_management").workItems.find((item) => item.id === "wi_untouched");
+    if (targetedPriority.workItemId !== "wi_prio" || untouchedWi.admissionPriorityClass) {
+      output.push(`任务级调优先级扩大了作用域（记录目标=${targetedPriority.workItemId || "无"}，其它任务档位=${untouchedWi.admissionPriorityClass || "未改"}）`);
+    }
     if (prioWi.admissionPriorityClass !== "unblock_many") {
       output.push(`调优先级没落到精确档位（admissionPriorityClass=${prioWi.admissionPriorityClass}）—— 调度器读的是它，只写 priorityHint 靠关键词匹配的话，人写非关键词就静默无效`);
     }
     if (cellAdmissionPriority(prioWi) !== 1) {  // unblock_many 是 ADMISSION_PRIORITY_TIERS 第 2 档（index 1，比默认 current_condition 更靠前）
       output.push(`调优先级选了 unblock_many 但 cellAdmissionPriority 没返回那一档（${cellAdmissionPriority(prioWi)}，应为 1）`);
+    }
+    const reqState = structuredClone(seedState);
+    ensureRuntimeCollections(reqState, {root});
+    const reqGroup = reqState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    reqGroup.workItems = [{id: "wi_req", status: "ready", requirements: []}, {id: "wi_other", status: "ready", requirements: []}];
+    createHumanDirective(reqState, {taskGroupId: reqGroup.id, workItemId: "wi_req", directiveType: "add_requirement", instruction: "只补到指定任务"}, {actor: "acct_ct"});
+    consumeQueuedHumanDirectives(reqState);
+    if (!reqGroup.workItems[0].requirements.includes("只补到指定任务") || reqGroup.workItems[1].requirements.includes("只补到指定任务")
+      || reqGroup.humanGuidance.at(-1)?.workItemId !== "wi_req") {
+      output.push("任务级补充要求没有只落到指定任务，或没有保留任务作用域供内容包过滤");
+    }
+    let foreignWorkError = "";
+    try { createHumanDirective(reqState, {taskGroupId: reqGroup.id, workItemId: "wi_foreign", directiveType: "add_requirement", instruction: "跨组目标"}, {actor: "acct_ct"}); }
+    catch (error) { foreignWorkError = error.message; }
+    if (foreignWorkError !== "human_directive_work_item_not_found") {
+      output.push(`人工指令接受了不属于目标任务组的任务编号（${foreignWorkError || "没有拒绝"}）`);
     }
     // 缺省不得等于无效果：既没选档位、指令里也没有关键词 —— 必须拒，不能静默无效。
     let prioRefused = false;

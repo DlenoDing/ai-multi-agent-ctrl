@@ -152,8 +152,8 @@
 {
   "schemaVersion": "human-directive/v1",
   "directiveId": "hd_xxx",
-  "projectId": "...", "taskGroupId": "...",
-  "directiveType": "pause | resume | cancel | adjust_priority | add_requirement | free_text",
+  "projectId": "...", "taskGroupId": "...", "workItemId": "可选；任务级目标",
+  "directiveType": "pause | resume | cancel | adjust_priority | add_requirement | resolve_decision | free_text",
   "instruction": "人工输入的原文（≤4000字）",
   "issuedBy": "acct_xxx",
   "status": "queued | acknowledged | applied | rejected",
@@ -166,7 +166,7 @@
 ### 3.3 消费流程
 
 1. `POST /api/human-directives`（权限 `task_group:control`）→ `queued`。
-2. `runAutonomousCycle` 开头消费：结构化类型直接映射为既有控制动作（pause/resume/cancel → 任务组控制；add_requirement → 追加 workItem 需求）并记 `appliedActions`；`free_text` 转为一条 `pending` 的人工确认逆向澄清或作为编排上下文写入 `taskGroup.humanGuidance`（追加，不覆盖）。
+2. `runAutonomousCycle` 开头消费：结构化类型直接映射为既有控制动作（pause/resume/cancel → 任务组控制；add_requirement → 追加 workItem 需求）并记 `appliedActions`；`adjust_priority`、`add_requirement`、`resolve_decision`、`free_text` 可带经归属校验的 `workItemId`，只作用于指定任务。`free_text` 作为编排上下文写入 `taskGroup.humanGuidance`（追加，不覆盖），带任务目标的上下文只进入该任务后续派发包。
    **它会原样进入之后每一次派发的内容包**，所以是有上限的：留最近 200 条，
    丢掉的记在 `humanGuidanceDroppedCount` 里，并在内容包与任务组页上如实报出条数 ——
    悄悄丢掉人下达的要求不可接受，而让它无界增长等于几个月前的一句话永远在指挥今天的 agent。

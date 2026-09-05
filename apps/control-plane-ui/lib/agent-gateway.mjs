@@ -1537,7 +1537,8 @@ export function buildExecutionContentBundle(state, node, sessionId, options = {}
   // agent 拿到的是一份"人的全部要求"，少了几条而不作声，它会按不完整的要求去做。
   const guidanceDropped = Number(taskGroup.humanGuidanceDroppedCount || 0);
   const guidance = [
-    ...(taskGroup.humanGuidance || []).map((item) => `- ${item.text}`),
+    ...(taskGroup.humanGuidance || []).filter((item) => !item.workItemId || item.workItemId === contract.workId)
+      .map((item) => `- ${item.text}`),
     ...(guidanceDropped ? [`- （另有 ${guidanceDropped} 条更早的补充要求已超出保留上限，不在本包内；需要时到任务组页查看历史指令）`] : [])
   ].join("\n");
   const dispatchedWorkItemTitle = contract.workId

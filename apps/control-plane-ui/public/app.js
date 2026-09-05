@@ -189,6 +189,7 @@ let tgDetail = null;
 
 let reviewRequests = [];
 let directiveTaskGroupId = "";
+let directiveWorkItemId = "";
 let directiveList = [];
 let pendingConfirmCount = 0;
 
@@ -982,6 +983,7 @@ function clearSession() {
   expandedTaskGroupId = "";
   tgDetail = null;
   reviewRequests = [];
+  directiveWorkItemId = "";
   directiveList = [];
   execScope = {type: "", id: ""};
   execEvents = [];
@@ -1521,6 +1523,7 @@ async function loadDirectiveData() {
   const groups = projectTaskGroups();
   if (!groups.length) {
     directiveTaskGroupId = "";
+    directiveWorkItemId = "";
     directiveList = [];
     return;
   }
@@ -7085,6 +7088,9 @@ function renderDirectives() {
   const directiveRows = directiveList.map((directive) => row([
     {v: fmtTime(directive.createdAt), c: "nowrap"},
     badge(directive.directiveType, "blue"),
+    directive.workItemId
+      ? `<strong>${esc((taskGroupById(directive.taskGroupId)?.workItems || []).find((work) => work.id === directive.workItemId)?.title || "具体任务")}</strong><div class="small muted mono">${esc(directive.workItemId)}</div>`
+      : `<span class="muted">整个任务组</span>`,
     {v: esc(directive.instruction || "-"), c: "text-clip"},
     badge(directive.status),
     {v: esc((directive.appliedActions || []).map((action) => t(action.action)).join("、") || "-"), c: "text-clip"},
@@ -7092,6 +7098,8 @@ function renderDirectives() {
   ])).join("");
 
   const canControl = managementGroupId ? hasGroupPerm(managementGroupId, "task_group:control") : hasPerm("task_group:control");
+  const directiveTargetWorks = taskGroupById(directiveTaskGroupId)?.workItems || [];
+  const targetWorkKnown = directiveTargetWorks.some((work) => work.id === directiveWorkItemId);
   const formHtml = canControl ? `
         <form class="form-grid" data-form="directive-create">
           <div class="form-row"><label>目标任务组</label>${taskGroupSelector(directiveTaskGroupId, "directive-tg", "task_group:control")}</div>
@@ -7110,8 +7118,11 @@ function renderDirectives() {
             ${decisionSelect("priorityClass", [["p0_safety", t("p0_safety")], ["unblock_many", t("unblock_many")], ["available_window", t("available_window")], ["current_condition", t("current_condition")], ["capability_data", t("capability_data")], ["readiness_preflight", t("readiness_preflight")], ["formal_gate", t("formal_gate")]], "请选择优先级档位…", {required: false})}
             <span class="small muted">仅“调整优先级”类型生效；不选档位这条指令对执行顺序没有影响</span>
           </div>
-          <div class="form-row directive-fields" data-directive-types="adjust_priority resolve_decision" hidden><label>目标任务（可选）</label><input name="workItemId" list="directive-task-options" placeholder="选择任务，或输入任务编号；留空作用于任务组" />
-            <datalist id="directive-task-options">${(taskGroupById(directiveTaskGroupId)?.workItems || []).map((work) => `<option value="${esc(work.id)}">${esc(work.title || work.id)}</option>`).join("")}</datalist></div>
+          <div class="form-row directive-fields" data-directive-types="adjust_priority add_requirement resolve_decision free_text"><label>作用目标</label>
+            <select name="workItemId" data-select="directive-work"><option value="">整个任务组</option>
+              ${!targetWorkKnown && directiveWorkItemId ? `<option value="${esc(directiveWorkItemId)}" selected>当前任务 · ${esc(directiveWorkItemId)}</option>` : ""}
+              ${directiveTargetWorks.map((work) => `<option value="${esc(work.id)}"${work.id === directiveWorkItemId ? " selected" : ""}>${esc(work.title || work.id)}</option>`).join("")}
+            </select><span class="small muted">从任务详情进入时会自动选中该任务；留在“整个任务组”时才会影响组内全部未完成任务。</span></div>
           <div class="form-row"><label>指令内容</label><textarea name="instruction" placeholder="补充要求 / 自由指令必填，其余类型可选"></textarea></div>
           <button class="primary-button" type="submit">提交指令</button>
         </form>
@@ -7121,7 +7132,7 @@ function renderDirectives() {
     renderDirectiveSummary(directiveList, canControl),
     renderDirectiveActionBoard(directiveList, canControl),
     renderDirectiveLifecycleGuide(directiveList, canControl),
-    panel("指令流水", table([{label: "时间", c: "nowrap"}, "类型", {label: "指令内容", c: "text-clip"}, "状态", {label: "已执行动作", c: "text-clip"}, "拒绝原因"], directiveRows), {wide: true, headerSide: filterInput("按指令内容过滤…", "directives")}),
+    panel("指令流水", table([{label: "时间", c: "nowrap"}, "类型", "作用目标", {label: "指令内容", c: "text-clip"}, "状态", {label: "已执行动作", c: "text-clip"}, "拒绝原因"], directiveRows), {wide: true, headerSide: filterInput("按指令内容过滤…", "directives")}),
     panel("下达人工指令", `
       <div class="stack">
         <div class="notice">总控与调度会话不接受人工直接输入。所有人工操作通过本通道生成结构化指令，由编排周期作为决策输入消费并全程留审计。</div>
@@ -8727,12 +8738,14 @@ document.addEventListener("submit", async (event) => {
       }
       // 缺省 reopen 是替人做的决定：决策处置必须自己选重开还是放弃。
       if (data.directiveType === "resolve_decision" && !data.resolution) throw new Error("决策处置必须选择处置方式（重开 / 放弃）—— 系统不会替你选一个");
+      const targetableDirective = ["adjust_priority", "add_requirement", "resolve_decision", "free_text"].includes(data.directiveType);
       await api("/api/human-directives", {method: "POST", body: JSON.stringify({
         projectId: currentProjectId,
         taskGroupId: directiveTaskGroupId,
         directiveType: data.directiveType,
         instruction: data.instruction || "",
-        ...(data.directiveType === "resolve_decision" ? {resolution: data.resolution, ...(String(data.workItemId || "").trim() ? {workItemId: data.workItemId.trim()} : {})} : {}),
+        ...(targetableDirective && String(data.workItemId || "").trim() ? {workItemId: data.workItemId.trim()} : {}),
+        ...(data.directiveType === "resolve_decision" ? {resolution: data.resolution} : {}),
         ...(data.directiveType === "adjust_priority" && data.priorityClass ? {priorityClass: data.priorityClass} : {})
       })});
       formTouched = false;
@@ -8902,6 +8915,7 @@ async function focusManagementGroup(groupId, nextPage = page, options = {}) {
   expandedTaskGroupId = nextPage === "tg" ? managementGroupId : "";
   if (!expandedTaskGroupId || tgDetail?.taskGroupId !== expandedTaskGroupId) tgDetail = null;
   directiveTaskGroupId = managementGroupId;
+  directiveWorkItemId = nextPage === "directives" ? String(options.workItemId || "") : "";
   page = nextPage;
   sessionStorage.setItem("aimac.page", page);
   if (page === "tg") workspaces.select(page, "list");
@@ -8968,6 +8982,7 @@ document.addEventListener("change", async (event) => {
       expandedTaskGroupId = "";
       tgDetail = null;
       directiveTaskGroupId = "";
+      directiveWorkItemId = "";
       execScope = {type: "", id: ""};
       execEvents = [];
       execCursor = 0;
@@ -8980,7 +8995,12 @@ document.addEventListener("change", async (event) => {
         return;
       }
       directiveTaskGroupId = target.value;
+      directiveWorkItemId = "";
       await loadPage();
+      return;
+    }
+    if (target.dataset.select === "directive-work") {
+      directiveWorkItemId = target.value;
       return;
     }
     if (target.name === "projectId" && target.closest(`[data-form="project-member"]`)) {
@@ -9128,7 +9148,8 @@ document.addEventListener("click", async (event) => {
   }
   const focusGroupButton = event.target.closest("[data-focus-group]");
   if (focusGroupButton) {
-    try { await focusManagementGroup(focusGroupButton.dataset.focusGroup, focusGroupButton.dataset.focusPage || page); } catch (error) { showError(error); }
+    try { await focusManagementGroup(focusGroupButton.dataset.focusGroup, focusGroupButton.dataset.focusPage || page,
+      {workItemId: focusGroupButton.dataset.focusWork || ""}); } catch (error) { showError(error); }
     return;
   }
   const workButton = event.target.closest("[data-open-work]");
@@ -9971,7 +9992,8 @@ function rememberWorkspaceLocation() {
   window.AIMAC_WORKSPACE_LOCATION?.save({version: 1, accountId: currentAccount?.accountId, projectId: currentProjectId, page,
     workspace: workspaces.current(page)?.id, groupWorkspace: workspaces.current("group-detail")?.id,
     groupId: managementGroupId || (page === "tg" ? expandedTaskGroupId : ""), groupDetail: Boolean(page === "tg" && expandedTaskGroupId),
-    workId: page === "tasks" ? selectedWork?.workItemId : "", search: taskSearch, status: taskStatus, cursor: taskPageCursor, stack: taskCursorStack,
+    workId: page === "tasks" ? selectedWork?.workItemId : "", directiveWorkId: page === "directives" ? directiveWorkItemId : "",
+    search: taskSearch, status: taskStatus, cursor: taskPageCursor, stack: taskCursorStack,
     listGroupId: workListGroupId, listCursor: workListState?.cursor, listStack: workListState?.stack});
 }
 
@@ -9992,6 +10014,7 @@ function restoreWorkspaceLocation() {
   workListGroupId = saved.listGroupId;
   workListState = {cursor: saved.listCursor, stack: saved.listStack};
   directiveTaskGroupId = managementGroupId;
+  directiveWorkItemId = page === "directives" ? saved.directiveWorkId : "";
   restoredWorkspaceLocation = true;
   sessionStorage.setItem("aimac.page", page);
   sessionStorage.setItem("aimac.projectId", currentProjectId);

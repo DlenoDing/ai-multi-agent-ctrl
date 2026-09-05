@@ -1364,6 +1364,12 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
             added?.body?.directiveType === "add_requirement" && !("resolution" in (added.body || {})),
             added ? `发出去的是 ${JSON.stringify(added.body)}` : `没发出去（toast：${JSON.stringify(toasts).slice(0, 120)}）`);
           recorded.length = 0;
+          const targetedAdd = mkDirective("add_requirement", "", "只补到这一项", " work_target ");
+          await probe.submit({target: targetedAdd, submitter: targetedAdd.children[4], preventDefault: () => {}});
+          check("任务级补充要求会把去掉空白的目标任务编号发给服务端",
+            lastPost()?.body?.directiveType === "add_requirement" && lastPost()?.body?.workItemId === "work_target",
+            `发出去的是 ${JSON.stringify(lastPost()?.body)}`);
+          recorded.length = 0;
           const emptyResolve = mkDirective("resolve_decision", "", "");
           await probe.submit({target: emptyResolve, submitter: emptyResolve.children[4], preventDefault: () => {}});
           check("决策处置：处置方式空着要拒，不缺省成 reopen",

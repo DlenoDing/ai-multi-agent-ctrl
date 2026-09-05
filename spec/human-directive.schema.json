@@ -39,7 +39,32 @@
         "cancel",
         "adjust_priority",
         "add_requirement",
+        "resolve_decision",
         "free_text"
+      ]
+    },
+    "workItemId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "priorityClass": {
+      "enum": [
+        "p0_safety",
+        "unblock_many",
+        "available_window",
+        "current_condition",
+        "capability_data",
+        "readiness_preflight",
+        "formal_gate"
+      ]
+    },
+    "resolution": {
+      "enum": [
+        "reopen",
+        "abandon"
       ]
     },
     "instruction": {
@@ -72,6 +97,10 @@
           },
           "ref": {
             "type": "string"
+          },
+          "workItemCount": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       }
