@@ -63,7 +63,7 @@
     if (!items.length) return `<div class="notice">${esc(emptyText)}</div>`;
     return `<div class="governance-grant-list">${items.map((item) => `<div class="governance-grant-row">
       <div><strong>${esc(item.name)}</strong><div class="small muted mono">${esc(item.id)}</div></div>
-      <div>${esc(item.role)}</div>${item.actionHtml ? `<div>${item.actionHtml}</div>` : ""}</div>`).join("")}</div>`;
+      <div>${esc(item.role)}${item.statusHtml ? `<div class="small muted">${item.statusHtml}</div>` : ""}</div>${item.actionHtml ? `<div>${item.actionHtml}</div>` : ""}</div>`).join("")}</div>`;
   }
 
   function memberDetail({member, project, projectMemberships, taskGroupGrants, accountActionsHtml,
@@ -73,7 +73,8 @@
       actionHtml: h.projectLink(item, "打开项目", {page: "proj-members", workspace: "list", accountId: member.accountId})
     }));
     const groupItems = taskGroupGrants.map((grant) => ({
-      id: grant.resource?.resourceId || "-", name: h.taskGroupNameOf(grant.resource?.resourceId), role: h.grantRoleLabel(grant.role)
+      id: grant.resource?.resourceId || "-", name: h.taskGroupNameOf(grant.resource?.resourceId), role: h.grantRoleLabel(grant.role),
+      statusHtml: h.statusBadge("grant", grant.status)
     }));
     return `<div class="governance-object-workspace">
       ${identityHeader({eyebrow: "组织管理 / 成员", title: member.displayName || member.email || member.accountId,
@@ -119,6 +120,7 @@
       id: grant.resource?.resourceId || "-",
       name: h.taskGroupNameOf(grant.resource?.resourceId),
       role: h.grantRoleLabel(grant.role),
+      statusHtml: h.statusBadge("grant", grant.status),
       actionHtml: h.canGrant
         ? `<button class="danger-button" data-action="revoke-grant" data-grant="${esc(grant.grantId)}">撤销任务组角色</button>` : ""
     }));

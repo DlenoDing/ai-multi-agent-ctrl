@@ -48,6 +48,7 @@
     organization: {active: "启用中", suspended: "已停用", disabled: "已停用"},
     account: {active: "已启用", suspended: "已停用", disabled: "已停用", invited: "待接受邀请",
       retired: "已注销（不可恢复）"},
+    grant: {active: "生效中", revoked: "已撤销", expired: "已过期"},
     agent: {active: "已启用", disabled: "已停用", retired: "已退役"},
     skillSource: {active: "已启用", retired: "已退役"},
     joinToken: {issued: "已签发", consumed: "已使用（一次性票已用掉）", expired: "已过期", revoked: "已撤销"}
