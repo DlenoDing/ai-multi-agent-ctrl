@@ -5221,6 +5221,9 @@ function renderTaskGroupDetail(taskGroup) {
               不再需要这项要求时，在下面把它改回「不强制」。</div>`
           : ""}
         ${canReviewWork ? `
+          ${/* 这张表单每张工作项卡都整套渲染（说明 + 下拉 + 理由 + 保存），卡片被撑得很高，而它是偶尔才动一次的杠杆。
+                默认收起，摘要写明当前取值；上面那条「必须先定稿」的警示不受影响，仍然常显。 */""}
+          <details class="guide-bundle plan-finalization-toggle"><summary class="guide-bundle-summary">执行方案定稿要求：当前「${workItem.requiresPlanFinalization === true ? "必须先由人定稿方案" : "不强制（按系统判断）"}」—— 点开可改</summary>
           <form class="form-grid" data-form="plan-finalization" data-task="${esc(taskGroup.id)}" data-work="${esc(workItem.id)}" style="margin-top:8px;">
             <div class="record-meta"><span>系统靠关键词判断这件事要不要人工定稿方案，它认不出架构选型这类决策 —— 你可以直接指定。</span></div>
             <div class="form-row"><label>是否必须先定稿执行方案</label><select name="requiresPlanFinalization">
@@ -5229,7 +5232,7 @@ function renderTaskGroupDetail(taskGroup) {
             </select></div>
             <div class="form-row"><label>理由（必填）</label><input name="justification" placeholder="例如：这涉及存储选型，做错了后面全要返工"></div>
             <button class="secondary-button" type="submit">保存</button>
-          </form>` : ""}
+          </form></details>` : ""}
         ${(() => {
           // 执行历史：这个任务先后交给了哪些 agent、每次用什么角色/模型、结果如何——全部派发按时间倒序，最新在前。
           // 节点只展示 id：tg 页取的是 tasks 视图，里面没有 agentRuntimeNodes，不为一个名字多拉一份集合。

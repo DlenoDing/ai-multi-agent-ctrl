@@ -750,6 +750,22 @@ const MUTATIONS = [
     expect: "抹密钥没抹干净"
   },
   {
+    name: "工作项卡的定稿要求表单必须默认收起",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "          <details class=\"guide-bundle plan-finalization-toggle\"><summary class=\"guide-bundle-summary\">执行方案定稿要求：",
+    to: "          <details class=\"guide-bundle plan-finalization-toggle\" open><summary class=\"guide-bundle-summary\">执行方案定稿要求：",
+    expect: "定稿要求表单没有收起或摘要没写当前取值"
+  },
+  {
+    name: "定稿要求折叠块的摘要必须写当前取值",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "执行方案定稿要求：当前「${workItem.requiresPlanFinalization === true ? \"必须先由人定稿方案\" : \"不强制（按系统判断）\"}」—— 点开可改",
+    to: "执行方案定稿要求 —— 点开可改",
+    expect: "定稿要求表单没有收起或摘要没写当前取值"
+  },
+  {
     name: "非系统账号的状态快照必须走 publicProjectRecord 脱敏（仓库凭证不进浏览器）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

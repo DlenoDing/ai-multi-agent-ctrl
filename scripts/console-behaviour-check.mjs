@@ -1868,6 +1868,9 @@ function sectionBodyOf(html, title) {
 // 于是这张卡上此前一个字都没有 —— 单元停在原地，人不知道它在等什么、不想等了怎么办。
 function runPlanFinalizationNoticeCase() {
   const probe = loadConsole(el("div"));
+  // 定稿要求表单只对有 task_group:review 的人渲染：不设身份，下面「表单收起」两条看的是一张不存在的表单。
+  probe.setAuth("probe-token", {accountId: "u_pf", accountType: "system_admin", displayName: "管理员", organizationId: "org_default",
+    permissions: ["*"], effectivePermissions: ["*"]});
   const withRequirement = probe.renderTaskGroupDetail({taskGroupId: "tg_pf", progress: {}, config: null, roomMessages: []},
     {id: "tg_pf", roles: [], workItems: [{id: "w_pf", title: "缓存策略", status: "in_progress", progress: 60,
       ownerRole: "room-broker", requiresPlanFinalization: true}]});
@@ -1883,6 +1886,18 @@ function runPlanFinalizationNoticeCase() {
   check("没有这项要求时不要多说一句",
     !/必须先有人工定稿的执行方案/.test(withoutRequirement),
     "没被要求定稿方案的单元也挂着这条提示 —— 噪声会让真的那条被忽略");
+  // 【这张表单默认收起】：每张卡整套渲染（说明 + 下拉 + 理由 + 保存）把卡片撑得很高，而它是偶尔才动一次的杠杆。
+  // 收起后摘要要写明当前取值；上面那条「必须先定稿」的警示必须留在折叠块外常显。
+  const toggleOf = (html) => /<details class="guide-bundle plan-finalization-toggle"( open)?>([\s\S]*?)<\/details>/u.exec(html);
+  const openedToggle = toggleOf(withRequirement);
+  const closedToggle = toggleOf(withoutRequirement);
+  check("工作项卡上的定稿要求表单要收进默认关闭的折叠块，摘要写明当前取值",
+    Boolean(openedToggle) && !openedToggle[1] && /data-form="plan-finalization"/u.test(openedToggle[2]) && /当前「必须先由人定稿方案」/u.test(openedToggle[0])
+      && Boolean(closedToggle) && !closedToggle[1] && /当前「不强制（按系统判断）」/u.test(closedToggle[0]),
+    `定稿要求表单没有收起或摘要没写当前取值（有要求：${openedToggle ? openedToggle[0].slice(0, 160) : "没找到折叠块"}）`);
+  check("「必须先定稿」的警示要留在折叠块外常显",
+    Boolean(openedToggle) && !/必须先有人工定稿的执行方案才能开跑/u.test(openedToggle[2]) && /必须先有人工定稿的执行方案才能开跑/u.test(withRequirement),
+    "警示被一起折进去了 —— 单元停在原地，人又看不到它在等什么");
 }
 
 // 任务按时间线倒序：任务组里的工作项要最新建的排最前。服务端下发的是插入序（最旧在前），
