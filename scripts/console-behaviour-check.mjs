@@ -1927,6 +1927,30 @@ function runWorkflowGuideCase() {
 }
 
 
+// 「结果」：每个任务能看到它产出了什么——仓库产出到哪一步、检查点的 Git 证据；没有产出要如实说，推送与否不能含糊。
+function runWorkItemResultCase() {
+  const probe = loadConsole(el("div"));
+  const group = {id: "tg_r", projectId: "p1", roles: [], workItems: [{id: "w_r", title: "结果探针单元", status: "in_progress", progress: 50, ownerRole: "agent-runtime"}]};
+  const baseState = {projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}], taskGroups: [group],
+    agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [], findings: [], humanConfirmationRequests: [], humanDirectives: [],
+    truncatedCollections: [], repositoryOutputs: [], checkpoints: []};
+  const detail = {taskGroupId: "tg_r", progress: {}, config: null, roomMessages: []};
+  const none = probe.renderTaskGroupDetail(detail, group, baseState);
+  check("工作项卡：没有产出时要如实说还没有", /结果：还没有产出/u.test(none), "没有任何产出的任务，卡上一个字都不提结果");
+  const pushed = probe.renderTaskGroupDetail(detail, group, {...baseState,
+    repositoryOutputs: [{taskGroupId: "tg_r", workItemId: "w_r", repositoryId: "repo_x", branch: "feat/x", status: "pushed"}],
+    checkpoints: [{taskGroupId: "tg_r", workId: "w_r", commitRefs: ["c1"], pushRefs: ["p1"]}]});
+  check("工作项卡：结果要说清仓库产出到哪一步与检查点的 Git 证据",
+    /结果：/u.test(pushed) && pushed.includes("repo_x") && pushed.includes("feat/x") && /检查点 1 个/u.test(pushed) && /有提交/u.test(pushed) && /已推送/u.test(pushed),
+    "任务的结果（仓库/分支/状态/提交/推送）没有在卡上说清");
+  const unpushed = probe.renderTaskGroupDetail(detail, group, {...baseState,
+    checkpoints: [{taskGroupId: "tg_r", workId: "w_r", commitRefs: ["c1"], pushRefs: []}]});
+  check("工作项卡：有提交没推送时要说未推送",
+    /有提交/u.test(unpushed) && /未推送/u.test(unpushed) && !/已推送/u.test(unpushed),
+    "没推送却说已推送：人会以为改动已经到远端了");
+}
+
+
 function runRoomVisibilityCase() {
   const probe = loadConsole(el("div"));
   const spoken = "我建议把订单状态机换成事件溯源，评审那步可以跳过";
@@ -6139,6 +6163,7 @@ runWorkItemOrderCase();
 runRuleTextareaAutoGrowCase();
 runWorkItemDispatchHistoryCase();
 runWorkflowGuideCase();
+runWorkItemResultCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();

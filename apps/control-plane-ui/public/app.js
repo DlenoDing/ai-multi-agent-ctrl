@@ -5280,6 +5280,7 @@ function renderTaskGroupDetail(taskGroup) {
               ${dispatchRuleSummaries[item.dispatchId] ? ruleSummaryHtml(dispatchRuleSummaries[item.dispatchId]) : ""}`).join("")}
           </div>`;
         })()}
+        ${workItemResultHtml(taskGroup.id, workItem.id)}
       </div>
     `;
   }).join("");
@@ -5671,6 +5672,23 @@ function ruleSummaryHtml(summary) {
     <span>禁止动作：${list(summary.forbiddenActions, "无")}</span>
     <span>验收要求：${list(summary.validationRequirements, "无")}</span>
   </div>`;
+}
+
+
+// 「结果」：这个任务产出了什么——仓库产出目标到哪一步（候选/已选/写入中/已提交/已推送）、检查点的 Git 证据（提交/推送）。
+// 数据都在 tasks 视图里（repositoryOutputs / checkpoints），不发新请求；没有产出要如实说"还没有"，
+// 推送与否更不能含糊——"没推送却说已推送"会让人以为改动已经到远端。
+function workItemResultHtml(taskGroupId, workItemId) {
+  const target = (state.repositoryOutputs || [])
+    .filter((item) => item.taskGroupId === taskGroupId && item.workItemId === workItemId && item.status !== "superseded")
+    .sort((left, right) => String(right.updatedAt || right.createdAt || "").localeCompare(String(left.updatedAt || left.createdAt || "")))[0] || null;
+  const points = (state.checkpoints || []).filter((item) => item.taskGroupId === taskGroupId && item.workId === workItemId);
+  const latest = points.slice().sort((left, right) => String(right.createdAt || right.submittedAt || "").localeCompare(String(left.createdAt || left.submittedAt || "")))[0] || null;
+  if (!target && !points.length) return `<div class="record-meta"><span>结果：还没有产出（尚未提交检查点）</span></div>`;
+  const parts = [];
+  if (target) parts.push(`仓库产出：<span class="mono">${esc(target.repositoryId || "-")}</span>${target.branch ? ` @ <span class="mono">${esc(target.branch)}</span>` : ""} ${badge(target.status)}`);
+  if (latest) parts.push(`检查点 ${esc(points.length)} 个，最近一次：${(latest.commitRefs || []).length ? "有提交" : "无提交"} · ${(latest.pushRefs || []).length ? "已推送" : "未推送"}`);
+  return `<div class="record-meta"><span>结果：</span>${parts.map((part) => `<span>${part}</span>`).join("")}</div>`;
 }
 
 
