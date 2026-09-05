@@ -824,6 +824,14 @@ function unregisteredDefaultRoles(list) {
     .map((id) => String(id || "").trim()).filter(Boolean);
   return unknownOwnerRoles(roleIds);
 }
+function unavailableDefaultRoleSkills(state, list) {
+  const activeRefs = new Set((state.roleSkills || [])
+    .filter((skill) => !["retired", "quarantined"].includes(skill.status))
+    .map((skill) => skill.roleSkillId));
+  return [...new Set((Array.isArray(list) ? list : [])
+    .map((item) => typeof item === "object" && item ? String(item.roleSkillRef || "").trim() : "")
+    .filter((roleSkillRef) => roleSkillRef && !activeRefs.has(roleSkillRef)))];
+}
 function defaultRoleRefusal(unknownRoles) {
   return {error: "config_default_role_not_registered", unknownOwnerRoles: unknownRoles.slice(0, 10), supported: [...REGISTERED_OWNER_ROLES],
     message: `默认角色「${unknownRoles.slice(0, 10).join("、")}」不在已登记的执行角色里 —— 可用：${REGISTERED_OWNER_ROLES.join("、")}`};
@@ -1110,6 +1118,14 @@ function actorIsProjectOwnerForScope(state, actor, resourceScope = {}) {
   );
 }
 
+function actorIsOrganizationAdminForScope(state, actor, resourceScope = {}) {
+  const account = state.accounts.find((item) => accountIdOf(item) === actor);
+  if (!account || account.status !== "active" || account.accountType !== "org_admin") return false;
+  const resourceOrganizationId = resourceScopeOrganizationId(state, resourceScope);
+  return Boolean(resourceOrganizationId)
+    && resourceOrganizationId === (account.organizationId || DEFAULT_ORGANIZATION_ID);
+}
+
 // 授权能落在哪几种作用域上 —— 这是个闭集。多一个认不出的取值，跨组织边界就少守一次。
 
 
@@ -1166,7 +1182,9 @@ function sanitizeGrantRequest(state, actor, input = {}, resourceScope = {}) {
   if (!shared.ok) return shared;
   if (!isSystemAccount(account)) {
     const denied = permissions.filter((permission) => {
-      if (permission === "project:grant" && !actorIsProjectOwnerForScope(state, actor, resourceScope)) return true;
+      if (permission === "project:grant"
+        && !actorIsProjectOwnerForScope(state, actor, resourceScope)
+        && !actorIsOrganizationAdminForScope(state, actor, resourceScope)) return true;
       return !hasPermission(state, actor, permission, resourceScope);
     });
     if (denied.length) return {ok: false, status: 403, error: "grant_permission_not_delegable", permissions: denied};
@@ -5156,6 +5174,17 @@ async function handleApi(req, res) {
         ...(sanitizedGrant.supported ? {supported: sanitizedGrant.supported} : {})});
       return;
     }
+    if (sanitizedGrant.resource.resourceType === "project") {
+      const targetProject = state.projects.find((item) => item.id === sanitizedGrant.resource.resourceId);
+      if (sanitizedGrant.role === "project_owner") {
+        return json(res, 409, {error: "project_owner_assignment_requires_project_creation",
+          message: "项目负责人只能在创建项目时确定；普通授权只能分配项目管理员或其他成员角色"});
+      }
+      if (targetProject?.ownerAccountId === body.subjectId) {
+        return json(res, 409, {error: "project_owner_grant_immutable",
+          message: "项目负责人不能通过通用授权接口追加或替换角色"});
+      }
+    }
     const at = now();
     if (body.replaceExisting === true || body.replaceExisting === "true") {
       for (const existing of (state.accessGrants || []).filter((item) => item.status === "active"
@@ -6983,6 +7012,9 @@ async function handleApi(req, res) {
     if (projectPrecondition) return json(res, 409, projectPrecondition);
     const unknownProjectDefaultRoles = unregisteredDefaultRoles(body.defaultRoles);
     if (unknownProjectDefaultRoles.length) return json(res, 400, defaultRoleRefusal(unknownProjectDefaultRoles));
+    const unavailableProjectRoleSkills = unavailableDefaultRoleSkills(state, body.defaultRoles);
+    if (unavailableProjectRoleSkills.length) return json(res, 400, {error: "role_skill_not_found",
+      message: `项目默认角色引用了不存在、已退役或已隔离的 Skill（${unavailableProjectRoleSkills.slice(0, 20).join("、")}）；请从当前活动 Skill 列表重新选择`});
     project.config = {
       ...(project.config || {}),
       ...(body.repositories !== undefined ? {repositories: sanitizeRepositoryConfigs(body.repositories, project.config?.repositories || [])} : {}),
@@ -7071,6 +7103,9 @@ async function handleApi(req, res) {
     if (taskGroupPrecondition) return json(res, 409, taskGroupPrecondition);
     const unknownTaskGroupDefaultRoles = unregisteredDefaultRoles(body.defaultRoles);
     if (unknownTaskGroupDefaultRoles.length) return json(res, 400, defaultRoleRefusal(unknownTaskGroupDefaultRoles));
+    const unavailableTaskGroupRoleSkills = unavailableDefaultRoleSkills(state, body.defaultRoles);
+    if (unavailableTaskGroupRoleSkills.length) return json(res, 400, {error: "role_skill_not_found",
+      message: `任务组角色引用了不存在、已退役或已隔离的 Skill（${unavailableTaskGroupRoleSkills.slice(0, 20).join("、")}）；请从当前活动 Skill 列表重新选择`});
     const mergedOverrides = {
       ...(taskGroup.configOverrides || {}),
       ...(body.repositories !== undefined ? {repositories: Array.isArray(body.repositories) ? body.repositories : []} : {}),

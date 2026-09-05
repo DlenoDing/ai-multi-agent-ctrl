@@ -65,6 +65,10 @@
       "type": "string",
       "pattern": "^sha256:[a-fA-F0-9]{64}$"
     },
+    "roleSkillAssignmentSource": {
+      "type": "string",
+      "enum": ["task_group", "project", "agent", "role_default"]
+    },
     "taskExecutionClass": {
       "type": "string",
       "enum": [

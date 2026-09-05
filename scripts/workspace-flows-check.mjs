@@ -60,6 +60,10 @@ try {
 
   const configPath = `/api/projects/${projectId}/config`;
   const emptyConfig = await request(configPath);
+  assert.equal((await request(configPath, {method: "POST", status: 400, body: {
+    defaultRoles: [{roleId: "agent-runtime", roleSkillRef: "skill_missing_from_registry"}],
+    expectedConfigVersion: emptyConfig.configVersion
+  }})).error, "role_skill_not_found");
   const initial = await request(configPath, {method: "POST", body: {
     repositories: [{id: "repo_test", url: "https://example.test/workspace.git", defaultBranch: "main", credentialMode: "none"}],
     baselineData: [{name: "现状资料", locator: "git:docs/baseline.md"}], defaultRoles: [{roleId: "agent-runtime"}],
@@ -104,6 +108,12 @@ try {
     body: {accountId: ownerId, role: "viewer"}})).error, "project_owner_role_immutable");
   assert.equal((await request(`/api/projects/${orgProject.id}/members/${ownerId}/revoke`, {method: "POST", status: 409,
     body: {}})).error, "project_owner_cannot_be_removed");
+  assert.equal((await request("/api/access-grants", {method: "POST", status: 409,
+    body: {subjectId: ownerId, resourceType: "project", resourceId: orgProject.id, role: "project_admin", replaceExisting: true}})).error,
+  "project_owner_grant_immutable");
+  assert.equal((await request("/api/access-grants", {method: "POST", status: 409,
+    body: {subjectId: memberId, resourceType: "project", resourceId: orgProject.id, role: "project_owner"}})).error,
+  "project_owner_assignment_requires_project_creation");
 
   const permissionGroup = (await request("/api/task-groups", {method: "POST", status: 201,
     body: {projectId: orgProject.id, name: "权限替换任务组", objective: "验证任务组角色替换", roles: ["agent-runtime"], startPaused: true}})).taskGroup;
@@ -154,6 +164,9 @@ try {
   await request("/api/auth/change-password", {method: "POST", body: {newPassword: "OldAdmin!2026"}});
   const oldAdminPasswordSession = (await request("/api/auth/login", {method: "POST",
     body: {email: replacementOrg.adminAccount.email, password: "OldAdmin!2026"}})).sessionToken;
+  sessionToken = oldAdminPasswordSession;
+  const oldAdminOwnedProject = await request("/api/org/projects", {method: "POST", status: 201,
+    body: {name: "原管理员创建的项目"}});
   sessionToken = systemSession;
   assert.equal((await request(`/api/orgs/${replacementOrg.organization.orgId}/initial-admin/replace`, {method: "POST", status: 400,
     body: {displayName: "新组织管理员", email: "new-admin-replace@example.test"}})).error,
@@ -169,6 +182,15 @@ try {
   const newAdminSession = (await request("/api/auth/login", {method: "POST",
     body: {email: replacement.adminAccount.email, token: replacement.accountToken}})).sessionToken;
   sessionToken = newAdminSession;
+  const replacementMember = await request("/api/org/members", {method: "POST", status: 201,
+    body: {displayName: "新管理员分配成员", email: "replacement-project-admin@example.test"}});
+  await request(`/api/projects/${oldAdminOwnedProject.id}/members`, {method: "POST",
+    body: {accountId: replacementMember.account.accountId, role: "project_admin"}});
+  const replacementProjectState = await request(`/api/state?view=projects&projectId=${oldAdminOwnedProject.id}`);
+  assert.ok(replacementProjectState.accessGrants.some((grant) => grant.status === "active"
+    && grant.subjectRef?.subjectId === replacementMember.account.accountId
+    && grant.resource?.resourceType === "project" && grant.resource?.resourceId === oldAdminOwnedProject.id
+    && grant.role === "project_admin"), "replacement org admin must manage projects created by the previous admin");
   const replacementMembers = await request("/api/org/members");
   const oldAdminAfter = replacementMembers.members.find((account) => account.accountId === replacementOrg.adminAccount.accountId);
   assert.equal(oldAdminAfter.accountType, "user_account", "old admin must be demoted to a normal organization member");
@@ -176,7 +198,7 @@ try {
   assert.ok(!(oldAdminAfter.permissions || []).some((permission) => permission.startsWith("org:")));
   assert.equal(replacementMembers.members.find((account) => account.accountId === replacement.adminAccount.accountId)?.accountType, "org_admin");
   sessionToken = systemSession;
-  console.log("ok: system admin replacement demotes and suspends the old org admin, revokes old credentials, and signs a new one-time login");
+  console.log("ok: system admin replacement revokes old credentials and the new org admin can manage projects created by the previous admin");
   console.log("workspace flows check passed");
 } catch (error) {
   console.error(`workspace flows check failed: ${error.stack || error.message}`);

@@ -1613,6 +1613,13 @@ function verifyCommitWorksWithoutConfiguredIdentity(output) {
 function verifyHumanAndOrganizationContracts(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});
+  const mcpSource = readFileSync(join(root, "apps/mcp-server/server.mjs"), "utf8");
+  if (!mcpSource.includes('if (role === "project_owner") {\n      return {ok: false, error: "project_owner_assignment_requires_project_creation"};')) {
+    output.push("MCP 通用授权仍能铸造第二个项目负责人 —— REST 与 MCP 的负责人不可变规则不一致");
+  }
+  if (!mcpSource.includes('if (project?.ownerAccountId === subjectRef.subjectId) {\n      return {ok: false, error: "project_owner_grant_immutable"};')) {
+    output.push("MCP 通用授权仍能给项目负责人追加或替换普通角色 —— REST 与 MCP 的负责人保护不一致");
+  }
 
   // Default organization exists and backfills membership/usage.
   const defaultOrg = (state.organizations || []).find((org) => org.orgId === "org_default");
@@ -6511,6 +6518,43 @@ function verifyAgentGatewayContracts(output) {
     const preferredSession = preferenceState.workSessions.find((session) => session.sessionId === preferredContract.sessionId);
     if (preferredContract.roleSkill.roleSkillRef !== customSkill.roleSkillId || preferredSession?.agentId !== projectAgent.id) {
       output.push(`任务契约与工作会话没有绑定同一个 Agent 档案及其 Skill（Agent=${preferredSession?.agentId || "无"}，Skill=${preferredContract.roleSkill.roleSkillRef || "无"}）`);
+    }
+    const configuredSkill = {...customSkill, roleSkillId: "task-group-orchestrator-configured-skill",
+      sourcePath: "runtime://task-group-orchestrator-configured-skill", name: "任务组总控定制 Skill"};
+    preferenceState.roleSkills.push(configuredSkill);
+    preferenceGroup.configOverrides = {defaultRoles: [{roleId: "orchestrator", roleSkillRef: configuredSkill.roleSkillId}]};
+    const configured = selectModel(preferenceState, request, {persist: false});
+    if (configured.roleSkillRef !== configuredSkill.roleSkillId || configured.roleSkillAssignmentSource !== "task_group") {
+      output.push(`任务组角色 Skill 没有优先于 Agent 档案进入选型（Skill=${configured.roleSkillRef || "无"}，来源=${configured.roleSkillAssignmentSource || "无"}）`);
+    }
+    preferenceGroup.workItems.push({id: "work_task_group_skill_contract", title: "任务组 Skill 契约绑定",
+      ownerRole: "orchestrator", status: "ready", progress: 0, requirements: ["集中绑定必须进入执行合同"]});
+    const configuredContract = buildTaskContract(preferenceState, {taskGroupId: preferenceGroup.id,
+      workItemId: "work_task_group_skill_contract", root});
+    if (configuredContract.roleSkill.roleSkillRef !== configuredSkill.roleSkillId) {
+      output.push(`任务组集中分配的 Skill 没有进入任务契约（实际 ${configuredContract.roleSkill.roleSkillRef || "无"}）`);
+    }
+    let mismatchedSkillError = null;
+    try {
+      selectModel(preferenceState, {...request, roleSkillRef: customSkill.roleSkillId}, {persist: false});
+    } catch (error) {
+      mismatchedSkillError = error;
+    }
+    if (mismatchedSkillError?.message !== "role_skill_assignment_mismatch") {
+      output.push(`调用方能够覆盖任务组集中分配的角色 Skill（实际 ${mismatchedSkillError?.message || "未拒绝"}）`);
+    }
+    delete preferenceGroup.configOverrides;
+    const unassignedState = JSON.parse(JSON.stringify(seedState));
+    ensureRuntimeCollections(unassignedState, {root});
+    unassignedState.roleSkills.push(customSkill);
+    let unassignedSkillError = null;
+    try {
+      selectModel(unassignedState, {...request, roleSkillRef: customSkill.roleSkillId}, {persist: false});
+    } catch (error) {
+      unassignedSkillError = error;
+    }
+    if (unassignedSkillError?.message !== "role_skill_not_assigned_to_role") {
+      output.push(`未集中绑定的跨角色 Skill 能被请求直接采用（实际 ${unassignedSkillError?.message || "未拒绝"}）`);
     }
     const pinned = selectModel(preferenceState, {...request, pinnedModelId: otherModel.modelId}, {persist: false});
     if (pinned.selectedModel?.modelId !== otherModel.modelId || pinned.selectedAgentId !== projectAgent.id) {

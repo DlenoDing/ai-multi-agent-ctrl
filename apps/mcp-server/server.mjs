@@ -3086,6 +3086,15 @@ function grantCreate(state, args) {
       ...(delegable.supported ? {supported: delegable.supported} : {}),
       ...(delegable.permissions ? {permissions: delegable.permissions} : {})};
   }
+  if (resource.resourceType === "project") {
+    const project = (state.projects || []).find((item) => item.id === resource.resourceId);
+    if (role === "project_owner") {
+      return {ok: false, error: "project_owner_assignment_requires_project_creation"};
+    }
+    if (project?.ownerAccountId === subjectRef.subjectId) {
+      return {ok: false, error: "project_owner_grant_immutable"};
+    }
+  }
   // Idempotency dedup (mirrors ensurePermissionAccessGrant): a fresh-idempotency-key retry must not mint a
   // duplicate active grant covering the same subject/resource/permissions.
   const existing = state.accessGrants.find((item) =>

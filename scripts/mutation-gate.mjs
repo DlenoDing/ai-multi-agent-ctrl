@@ -1021,9 +1021,33 @@ const MUTATIONS = [
     name: "Agent 档案指定的 Skill 必须进入模型与契约选择",
     check: "verifyAgentGatewayContracts",
     file: CORE,
-    from: '  const roleSkill = resolveRoleSkill(state, roleId, {...request,\n    roleSkillRef: request.roleSkillRef || selectedAgent?.roleSkillRef});',
-    to: "  const roleSkill = resolveRoleSkill(state, roleId, request);",
+    from: '  if (agentRoleSkillRef) return {roleSkillRef: agentRoleSkillRef, source: "agent"};',
+    to: '  if (false && agentRoleSkillRef) return {roleSkillRef: agentRoleSkillRef, source: "agent"};',
     expect: "Agent 模型偏好没有进入动态选型或决策记录"
+  },
+  {
+    name: "任务组角色 Skill 必须优先于 Agent 档案",
+    check: "verifyAgentGatewayContracts",
+    file: CORE,
+    from: '  if (taskGroupRole) return {roleSkillRef: String(taskGroupRole.roleSkillRef).trim(), source: "task_group"};',
+    to: '  if (false && taskGroupRole) return {roleSkillRef: String(taskGroupRole.roleSkillRef).trim(), source: "task_group"};',
+    expect: "任务组角色 Skill 没有优先于 Agent 档案进入选型"
+  },
+  {
+    name: "调用方不得覆盖集中分配的角色 Skill",
+    check: "verifyAgentGatewayContracts",
+    file: CORE,
+    from: "  if (requestedRoleSkillRef && roleSkillAssignment.roleSkillRef\n    && requestedRoleSkillRef !== roleSkillAssignment.roleSkillRef) {",
+    to: "  if (false && requestedRoleSkillRef && roleSkillAssignment.roleSkillRef\n    && requestedRoleSkillRef !== roleSkillAssignment.roleSkillRef) {",
+    expect: "调用方能够覆盖任务组集中分配的角色 Skill"
+  },
+  {
+    name: "未集中绑定时也不得借用别的角色 Skill",
+    check: "verifyAgentGatewayContracts",
+    file: CORE,
+    from: "    if (!defaultRefs.has(effectiveRoleSkillRef)) {",
+    to: "    if (false && !defaultRefs.has(effectiveRoleSkillRef)) {",
+    expect: "未集中绑定的跨角色 Skill 能被请求直接采用"
   },
   {
     name: "同层 Agent 必须按信任分稳定择优",
@@ -1104,6 +1128,46 @@ const MUTATIONS = [
     from: '      oldAdmin.accountType = "user_account";',
     to: '      oldAdmin.accountType = "org_admin";',
     expect: "old admin must be demoted to a normal organization member"
+  },
+  {
+    name: "更换后的组织管理员必须能管理原管理员创建的项目",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "workspace-flows",
+    from: "  return Boolean(resourceOrganizationId)\n    && resourceOrganizationId === (account.organizationId || DEFAULT_ORGANIZATION_ID);",
+    to: "  return false && Boolean(resourceOrganizationId)\n    && resourceOrganizationId === (account.organizationId || DEFAULT_ORGANIZATION_ID);",
+    expect: "grant_permission_not_delegable"
+  },
+  {
+    name: "通用 REST 授权不得铸造第二个项目负责人",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "workspace-flows",
+    from: '      if (sanitizedGrant.role === "project_owner") {',
+    to: '      if (false && sanitizedGrant.role === "project_owner") {',
+    expect: "project_owner_assignment_requires_project_creation"
+  },
+  {
+    name: "通用 REST 授权不得改写项目负责人",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "workspace-flows",
+    from: "      if (targetProject?.ownerAccountId === body.subjectId) {",
+    to: "      if (false && targetProject?.ownerAccountId === body.subjectId) {",
+    expect: "project_owner_grant_immutable"
+  },
+  {
+    name: "通用 MCP 授权不得铸造第二个项目负责人",
+    file: "apps/mcp-server/server.mjs",
+    gate: "contract",
+    from: '    if (role === "project_owner") {\n      return {ok: false, error: "project_owner_assignment_requires_project_creation"};',
+    to: '    if (false && role === "project_owner") {\n      return {ok: false, error: "project_owner_assignment_requires_project_creation"};',
+    expect: "MCP 通用授权仍能铸造第二个项目负责人"
+  },
+  {
+    name: "通用 MCP 授权不得改写项目负责人",
+    file: "apps/mcp-server/server.mjs",
+    gate: "contract",
+    from: '    if (project?.ownerAccountId === subjectRef.subjectId) {\n      return {ok: false, error: "project_owner_grant_immutable"};',
+    to: '    if (false && project?.ownerAccountId === subjectRef.subjectId) {\n      return {ok: false, error: "project_owner_grant_immutable"};',
+    expect: "MCP 通用授权仍能给项目负责人追加或替换普通角色"
   },
   {
     name: "返回任务组列表必须清除详情权限快照",
@@ -5832,8 +5896,8 @@ const MUTATIONS = [
     name: "授权被拒时要说清合法取值是哪几种",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
-    from: "        ...(sanitizedGrant.supported ? {supported: sanitizedGrant.supported} : {})});\n      return;\n    }\n    const at = now();",
-    to: "        ...(false ? {supported: sanitizedGrant.supported} : {})});\n      return;\n    }\n    const at = now();",
+    from: "        ...(sanitizedGrant.supported ? {supported: sanitizedGrant.supported} : {})});\n      return;\n    }\n    if (sanitizedGrant.resource.resourceType === \"project\") {",
+    to: "        ...(false ? {supported: sanitizedGrant.supported} : {})});\n      return;\n    }\n    if (sanitizedGrant.resource.resourceType === \"project\") {",
     // 先红的是 doctor 里那条点名的断言，不是通用那句 —— 按实际先红的写。
     expect: "没有列出这个作用域支持的角色"
   },

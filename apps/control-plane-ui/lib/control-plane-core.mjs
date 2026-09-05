@@ -790,8 +790,17 @@ export function selectModel(state, request = {}, options = {}) {
   const policy = ownPolicy || state.modelSelectionPolicies[0];
   const selectedAgent = agentForRole(state, roleId, {projectId: request.projectId || workItem.projectId,
     organizationId: request.organizationId});
+  const roleSkillAssignment = roleSkillAssignmentForContext(state, roleId, {...request,
+    projectId: request.projectId || workItem.projectId}, selectedAgent);
+  const requestedRoleSkillRef = String(request.roleSkillRef || request.skillRef || "").trim();
+  if (requestedRoleSkillRef && roleSkillAssignment.roleSkillRef
+    && requestedRoleSkillRef !== roleSkillAssignment.roleSkillRef) {
+    throw Object.assign(new Error("role_skill_assignment_mismatch"), {status: 409, roleId,
+      requestedRoleSkillRef, assignedRoleSkillRef: roleSkillAssignment.roleSkillRef,
+      assignmentSource: roleSkillAssignment.source});
+  }
   const roleSkill = resolveRoleSkill(state, roleId, {...request,
-    roleSkillRef: request.roleSkillRef || selectedAgent?.roleSkillRef});
+    roleSkillRef: roleSkillAssignment.roleSkillRef || requestedRoleSkillRef});
   const taskExecution = classifyTaskExecution(workItem, request);
   const modelCeiling = modelCeilingForTask(taskExecution, request);
   const agentModelPreference = String(selectedAgent?.model || "").trim();
@@ -827,6 +836,7 @@ export function selectModel(state, request = {}, options = {}) {
     ...(selectedAgent ? {selectedAgentId: selectedAgent.id, agentModelPreference} : {}),
     roleSkillRef: roleSkill.roleSkillId,
     roleSkillDigest: roleSkill.contentDigest,
+    roleSkillAssignmentSource: roleSkillAssignment.source || "role_default",
     taskExecutionClass: taskExecution.taskExecutionClass,
     splitRequired: taskExecution.splitRequired,
     classifierBasis: taskExecution.classifierBasis,
@@ -1355,7 +1365,7 @@ export function buildTaskContract(state, request = {}) {
   const selectedAgent = (state.agents || []).find((agent) => agent.id === modelDecision.selectedAgentId)
     || agentForRole(state, workItem?.ownerRole || "orchestrator", {projectId: project?.id});
   const roleSkill = resolveRoleSkill(state, workItem?.ownerRole || "orchestrator", {projectId: project?.id,
-    taskGroupId: taskGroup?.id, roleSkillRef: request.roleSkillRef || selectedAgent?.roleSkillRef});
+    taskGroupId: taskGroup?.id, roleSkillRef: modelDecision.roleSkillRef});
   const skillBindingDigest = digestOf({
     roleId: workItem?.ownerRole || "orchestrator",
     roleSkillRef: roleSkill.roleSkillId,
@@ -4334,6 +4344,24 @@ function strengthsFromCapabilities(capabilities) {
   return unique(mapped.length ? mapped : ["planning"]);
 }
 
+function roleSkillAssignmentForContext(state, roleId, request = {}, selectedAgent = null) {
+  const taskGroup = request.taskGroupId
+    ? (state.taskGroups || []).find((item) => item.id === request.taskGroupId)
+    : null;
+  const projectId = String(taskGroup?.projectId || request.projectId || "").trim();
+  const project = projectId ? (state.projects || []).find((item) => item.id === projectId) : null;
+  const taskGroupRole = (taskGroup?.configOverrides?.defaultRoles || [])
+    .find((item) => item?.roleId === roleId && String(item?.roleSkillRef || "").trim());
+  if (taskGroupRole) return {roleSkillRef: String(taskGroupRole.roleSkillRef).trim(), source: "task_group"};
+  const projectRole = (project?.config?.defaultRoles || [])
+    .find((item) => item?.roleId === roleId && String(item?.roleSkillRef || "").trim());
+  if (projectRole) return {roleSkillRef: String(projectRole.roleSkillRef).trim(), source: "project"};
+  const agent = selectedAgent || agentForRole(state, roleId, {projectId, organizationId: request.organizationId});
+  const agentRoleSkillRef = String(agent?.roleSkillRef || "").trim();
+  if (agentRoleSkillRef) return {roleSkillRef: agentRoleSkillRef, source: "agent"};
+  return {roleSkillRef: "", source: "role_default"};
+}
+
 export function resolveRoleSkill(state, roleId, request = {}) {
   // 未登记的角色原先【静默回退到 orchestrator 的提示】，于是一个 ownerRole:"developer" 的工作项
   // 会绑上 orchestrator 的技能 —— agent 按【别人的角色规则】干活，无告警、无事件。
@@ -4355,6 +4383,12 @@ export function resolveRoleSkill(state, roleId, request = {}) {
   const ownHint = roleCapabilityHints[roleId];
   const hint = ownHint || roleCapabilityHints.orchestrator;
   const explicitRoleSkillRef = String(request.roleSkillRef || request.skillRef || "").trim();
+  const assignment = roleSkillAssignmentForContext(state, roleId, request);
+  if (explicitRoleSkillRef && assignment.roleSkillRef && explicitRoleSkillRef !== assignment.roleSkillRef) {
+    throw Object.assign(new Error("role_skill_assignment_mismatch"), {status: 409, roleId,
+      requestedRoleSkillRef: explicitRoleSkillRef, assignedRoleSkillRef: assignment.roleSkillRef,
+      assignmentSource: assignment.source});
+  }
   // 技能内容会进任务契约，等于 agent 的行为准则，所以"绑定谁"必须不可顶替。
   // 原先是任意 `endsWith(skillRef)`：造一个 `evil-<skillRef>` 的 id 就能顶替真技能。
   // 但也不能拿 `-` 当锚点——roleSkillId 是 relativePath 把 `/` 换成 `-` 生成的（parseRoleSkillFile），
@@ -4378,11 +4412,23 @@ export function resolveRoleSkill(state, roleId, request = {}) {
   // 回退到通用执行技能，但在返回值上留痕，让上游与人都能看到"这个角色没有属于自己的技能"。
   // 按提示项匹配到的技能，只有在【提示项是这个角色自己的】时才算它自己的技能；
   // 借用别人提示项匹配到的，本质就是"套用了别人的技能"，必须走下面的留痕分支。
-  const explicitRoleSkill = explicitRoleSkillRef
-    ? state.roleSkills.find((skill) => skill.roleSkillId === explicitRoleSkillRef
+  const effectiveRoleSkillRef = assignment.roleSkillRef || explicitRoleSkillRef;
+  if (effectiveRoleSkillRef && !assignment.roleSkillRef) {
+    const defaultRefs = new Set([
+      ...skillCandidates.map((skill) => skill.roleSkillId),
+      `system-${roleId}`,
+      ...(ownHint ? [] : ["system-orchestrator"])
+    ]);
+    if (!defaultRefs.has(effectiveRoleSkillRef)) {
+      throw Object.assign(new Error("role_skill_not_assigned_to_role"), {status: 409, roleId,
+        requestedRoleSkillRef: effectiveRoleSkillRef, allowedRoleSkillRefs: [...defaultRefs]});
+    }
+  }
+  const explicitRoleSkill = effectiveRoleSkillRef
+    ? state.roleSkills.find((skill) => skill.roleSkillId === effectiveRoleSkillRef
       && !["retired", "quarantined"].includes(skill.status)) : null;
-  if (explicitRoleSkillRef && !explicitRoleSkill) {
-    throw Object.assign(new Error("role_skill_not_found"), {status: 404, roleSkillRef: explicitRoleSkillRef, roleId});
+  if (effectiveRoleSkillRef && !explicitRoleSkill) {
+    throw Object.assign(new Error("role_skill_not_found"), {status: 404, roleSkillRef: effectiveRoleSkillRef, roleId});
   }
   const ownSkill = explicitRoleSkill || (ownHint ? skillCandidates[0] : null)
     || state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`);
@@ -4396,7 +4442,14 @@ export function resolveRoleSkill(state, roleId, request = {}) {
   // 但它确实有自己的 system-agent-runtime 技能 —— 按提示项判会把它误标成回退。
   // 真正需要标注的只有一种情况：绑到的技能既不是按提示项匹配到的、也不是这个角色自己的
   // system-<roleId>，也就是"套用了别人的技能"。
-  return ownSkill ? resolved : {...resolved, roleSkillFallback: {roleId, boundTo: baseSkill.roleSkillId, reason: "role_has_no_dedicated_skill"}};
+  const dedicatedRefs = new Set([
+    ...(ownHint ? skillCandidates.map((skill) => skill.roleSkillId) : []),
+    `system-${roleId}`
+  ]);
+  const intentionalAssignment = Boolean(assignment.roleSkillRef);
+  return intentionalAssignment || dedicatedRefs.has(baseSkill.roleSkillId)
+    ? resolved
+    : {...resolved, roleSkillFallback: {roleId, boundTo: baseSkill.roleSkillId, reason: "role_has_no_dedicated_skill"}};
 }
 
 function selectRoleSkillOverlay(state, roleSkillId, request = {}) {
