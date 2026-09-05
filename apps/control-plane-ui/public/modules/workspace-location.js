@@ -7,9 +7,12 @@
 
   function normalize(value) {
     if (!value || typeof value !== "object" || value.version !== 1 || !text(value.accountId) || !text(value.page)) return null;
-    return {version: 1, accountId: text(value.accountId), projectId: text(value.projectId), page: text(value.page),
+    const page = text(value.page);
+    const executionType = page === "monitor" && ["session", "dispatch"].includes(value.executionType) ? value.executionType : "";
+    return {version: 1, accountId: text(value.accountId), projectId: text(value.projectId), page,
       workspace: text(value.workspace), groupWorkspace: text(value.groupWorkspace), groupId: text(value.groupId),
       groupDetail: value.groupDetail === true, workId: text(value.workId),
+      executionType, executionId: executionType ? text(value.executionId) : "",
       directiveWorkId: text(value.directiveWorkId),
       search: text(value.search, 300), status: text(value.status), cursor: cursor(value.cursor), stack: cursors(value.stack),
       listGroupId: text(value.listGroupId), listCursor: cursor(value.listCursor), listStack: cursors(value.listStack)};

@@ -41,7 +41,8 @@ const consoleModuleFiles = [
   "modules/governance-workspace.js",
   "modules/agent-profile-workspace.js",
   "modules/task-group-workspace.js",
-  "modules/task-workbench.js"
+  "modules/task-workbench.js",
+  "modules/execution-object-workspace.js"
 ];
 
 function readConsoleSource(file) {
@@ -356,7 +357,7 @@ globalThis.__probe = {
   captureToast: (sink) => { toast.info = (message) => sink(message); },
   captureToastKind: (kind, sink) => { toast[kind] = (message) => sink(message); },
   bodyChildren: () => document.body.children || [],
-  sessionState: () => ({page, currentProjectId, modalHtml, selectedWork, selectedAgentProfileId, managementGroupId, workListGroupId, workListState, expandedTaskGroupId, taskGroupDetailId: tgDetail?.taskGroupId || null,
+  sessionState: () => ({page, currentProjectId, modalHtml, selectedWork, selectedAgentProfileId, selectedExecutionObject, managementGroupId, workListGroupId, workListState, expandedTaskGroupId, taskGroupDetailId: tgDetail?.taskGroupId || null,
     projConfigVersion, directiveList,
     storedProjectId: sessionStorage.getItem("aimac.projectId"), storedPage: sessionStorage.getItem("aimac.page")}),
   selectWorkspace: (pageId, paneId) => workspaces.select(pageId, paneId),
@@ -394,11 +395,6 @@ globalThis.__probe = {
   renderSysSettingsInventoryWith: (nextState, instructions, panes) => { state = nextState; if (instructions !== undefined) instructionState = instructions; return __workspaceInventory("sys-settings", () => renderSysSettings(), panes); },
   renderSysOrgsWith: (nextState, account, orgList) => { state = nextState; currentAccount = account; organizations = orgList || []; return __workspaceInventory("sys-orgs", () => renderSysOrgs()); },
   renderSysOrgsInventoryWith: (nextState, account, orgList, panes) => { state = nextState; currentAccount = account; organizations = orgList || []; return __workspaceInventory("sys-orgs", () => renderSysOrgs(), panes); },
-  renderSysAccountsWith: (nextState, account, projectId) => {
-    state = nextState; currentAccount = account;
-    if (projectId !== undefined) currentProjectId = projectId;
-    return renderSysAccounts();
-  },
   renderOrgOverviewWith: (nextState, account, members, nodes) => {
     state = nextState; currentAccount = account; orgMembers = members || []; orgAgentNodes = nodes || [];
     return __workspaceInventory("org-overview", () => renderOrgOverview());
@@ -459,8 +455,13 @@ globalThis.__probe = {
   },
   blockerGuide: (type) => blockerGuide(type),
   repositoryWriteResultHtml,
-  renderMonitorWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; return __workspaceInventory("monitor", () => renderMonitor()); },
-  renderMonitorInventoryWith: (nextState, account, projectId, panes) => { state = nextState; currentAccount = account; currentProjectId = projectId; return __workspaceInventory("monitor", () => renderMonitor(), panes); },
+  renderMonitorWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; selectedExecutionObject = {type: "", id: ""}; executionObjectDetail = null; return __workspaceInventory("monitor", () => renderMonitor()); },
+  renderMonitorInventoryWith: (nextState, account, projectId, panes) => { state = nextState; currentAccount = account; currentProjectId = projectId; selectedExecutionObject = {type: "", id: ""}; executionObjectDetail = null; return __workspaceInventory("monitor", () => renderMonitor(), panes); },
+  renderExecutionObjectWith: (nextState, account, projectId, detail, events = []) => {
+    state = nextState; currentAccount = account; currentProjectId = projectId;
+    selectedExecutionObject = {type: detail.objectType, id: detail.objectId}; executionObjectDetail = detail; execEvents = events;
+    return renderMonitor();
+  },
   setAuth: (token, account) => { authToken = token; currentAccount = account; },
   stashDraft: (pageId, projectId) => { page = pageId; currentProjectId = projectId; stashDraftForExpiredSession(); },
   peekDraft: () => sessionStorage.getItem("aimac.expiredDraft"),
@@ -738,7 +739,7 @@ if (process.env.AIMAC_RENDER_REAL) {
   // 页面清单要与 app.js 里【登记过的那 15 页】对齐。原先这里只列了 8 页 + 上面两页 ——
   // 组织管理员那四页（概览/项目/成员/智能体）从来没有被读过一次，而"没读过"与"读过没问题"
   // 在这份输出上长得一模一样。下面那条自证会把漏掉的页点名。
-  const SURVEY_PAGES = ["proj-overview", "proj-members", "tasks", "review", "directives", "sys-orgs", "sys-accounts",
+  const SURVEY_PAGES = ["proj-overview", "proj-members", "tasks", "review", "directives", "sys-orgs",
     "sys-settings", "sys-overview", "proj-agents", "proj-settings",
     "org-overview", "org-projects", "org-members", "org-agents"];
   {
@@ -2732,6 +2733,13 @@ async function runErrorGuidanceCase() {
     objectProbe.routeParse("#/system/organizations/org_a")?.organizationId === "org_a"
       && objectProbe.routeParse("#/organization/members/acct_a")?.accountId === "acct_a",
     "组织或成员详情仍只能靠当前浏览器内存状态打开");
+  const executionRoute = objectProbe.routeBuild({page: "monitor", projectId: "prj_a", groupId: "tg_a", executionType: "dispatch", executionId: "adp_a", workspace: "events"});
+  const parsedExecutionRoute = objectProbe.routeParse(executionRoute);
+  check("工作会话和派发必须是可复制、可恢复的执行对象地址",
+    executionRoute === "#/project/prj_a/monitor/tg_a/dispatch/adp_a?pane=events"
+      && parsedExecutionRoute?.executionType === "dispatch" && parsedExecutionRoute.executionId === "adp_a"
+      && parsedExecutionRoute.groupId === "tg_a",
+    `执行对象地址无法完整往返：${executionRoute}`);
   check("对象地址拒绝路径逃逸和非 ID 内容",
     objectProbe.routeParse("#/project/..%2Fsecret/tasks/tg_a/work_a") === null
       && objectProbe.routeParse("#/project/%E0%A4%A/tasks") === null,
@@ -2762,6 +2770,30 @@ async function runErrorGuidanceCase() {
     windowedProbe.sessionState().managementGroupId === outsideGroup.id
       && /摘要窗口外任务组/u.test(String(windowedRoot.innerHTML || "")),
     `${JSON.stringify(windowedProbe.sessionState())} ${String(windowedRoot.innerHTML || "").slice(0, 180)}`);
+  const executionRoot = el("div");
+  const executionProbe = loadConsole(executionRoot, {realI18n: true});
+  executionProbe.renderFullPageWith(windowedState, systemAccount, "p1", "proj-overview");
+  executionProbe.restoreRoute({page: "monitor", projectId: "p1", groupId: outsideGroup.id, workspace: "events", executionType: "dispatch", executionId: "adp_outside_window"});
+  executionProbe.setFetch(async (url) => {
+    const target = new URL(String(url), "http://localhost");
+    let payload = windowedState;
+    if (target.pathname === `/api/task-groups/${outsideGroup.id}`) payload = {taskGroup: outsideGroup, workSessions: [], agentDispatches: [], repositoryOutputs: [], latestReadiness: null, latestCloseBarrier: null};
+    if (target.pathname === "/api/agent-dispatches/adp_outside_window/detail") payload = {
+      schemaVersion: "execution-object-detail/v1", objectType: "dispatch", objectId: "adp_outside_window", projectId: "p1", settled: false,
+      taskGroup: outsideGroup, workItem: {id: "w_outside", title: "窗口外执行任务", status: "running", ownerRole: "reviewer", progress: 30},
+      session: {sessionId: "sess_outside", taskGroupId: outsideGroup.id, workItemId: "w_outside", roleId: "reviewer", status: "active"},
+      dispatch: {dispatchId: "adp_outside_window", taskGroupId: outsideGroup.id, workItemId: "w_outside", sessionId: "sess_outside", status: "running", progressPercent: 30},
+      agent: null, node: null, modelDecision: null, placementDecision: null, contractSummary: {found: false}, repositoryOutput: null,
+      relatedDispatches: [], relatedDispatchCount: 1, controlCommands: [], checkpoints: [], qualityGates: [], testResults: []
+    };
+    return {ok: true, status: 200, statusText: "OK", headers: {get: () => null}, json: async () => payload};
+  });
+  await executionProbe.loadObjectLocation();
+  check("窗口外合法派发深链接必须通过执行对象接口恢复独立详情",
+    executionProbe.sessionState().selectedExecutionObject?.id === "adp_outside_window"
+      && /aria-label="Agent 派发详情"/u.test(String(executionRoot.innerHTML || ""))
+      && /窗口外执行任务/u.test(String(executionRoot.innerHTML || "")),
+    `${JSON.stringify(executionProbe.sessionState())} ${String(executionRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").slice(0, 260)}`);
   const browserRouteSource = objectProbe.browserRouteSource();
   check("浏览器历史恢复必须单飞并只排队最新路由",
     /if \(browserRouteBusy\)/u.test(browserRouteSource)
@@ -3384,7 +3416,7 @@ function runReviewAxisCase() {
   // 加入令牌就写着「已采纳」，读起来像有人批准了什么。（active / retired 都撞过同一个形状。）
   {
     const tokenProbe = loadConsole(el("div"), {realI18n: true});
-    const tokenHtml = tokenProbe.renderSysAccountsWith({
+    const tokenState = {
       accounts: [{accountId: "u1", displayName: "管理员", email: "a@x", accountType: "system_admin",
         status: "active", roles: []}],
       projects: [{id: "p1", name: "项目一", status: "active"}],
@@ -3396,7 +3428,9 @@ function runReviewAxisCase() {
         {joinTokenId: "ajt_open", projectId: "p1", allowedRoles: ["monitor"], status: "issued",
           useCount: 0, maxUses: 1, expiresAt: new Date(Date.now() + 3600000).toISOString()}
       ]
-    }, {accountId: "u1", accountType: "system_admin", displayName: "管理员"});
+    };
+    const tokenHtml = tokenProbe.renderOrgAgentsInventoryWith(tokenState,
+      {accountId: "u1", accountType: "org_admin", displayName: "管理员", organizationId: "org_default"}, [], ["tokens"]);
     check("用掉的加入令牌不能写成「已采纳」（那是评审包的词）",
       /已使用/u.test(tokenHtml) && !/已采纳/u.test(tokenHtml),
       String(tokenHtml).replace(/<[^>]+>/gu, " ").match(/ajt_used[^|]{0,80}/u)?.[0] || "（令牌表没渲染出来）");
@@ -3432,8 +3466,7 @@ function runReviewAxisCase() {
   // 屏幕上只有一个「已注销」，事后追不到依据。
   {
     const dictProbe = loadConsole(el("div"), {realI18n: true});
-    const accountsHtml = dictProbe.renderSysAccountsWith({
-      accounts: [
+    const retiredMembers = [
         {accountId: "u1", displayName: "李四", email: "l@x", accountType: "user_account",
           status: "retired", roles: [], retiredAt: "2026-08-20T00:00:00.000Z",
           retiredReason: "离职交接完成"},
@@ -3442,9 +3475,9 @@ function runReviewAxisCase() {
           retiredReason: "human_retire_decision"},
         {accountId: "u3", displayName: "张三", email: "z@x", accountType: "user_account",
           status: "active", roles: []}
-      ],
-      accessGrants: [], mcpGrants: [], auditLog: []
-    }, {accountId: "u3", accountType: "system_admin", displayName: "张三"});
+      ];
+    const accountsHtml = dictProbe.renderOrgMembersWith({projects: [], taskGroups: [], accessGrants: []},
+      {accountId: "u3", accountType: "org_admin", displayName: "张三", organizationId: "org_default"}, retiredMembers);
     check("已注销的账号要说得出什么时候、为什么（注销不可撤销）",
       /离职交接完成/u.test(accountsHtml) && /2026-08-20/u.test(accountsHtml),
       "账号行上只有一个「已注销」，事后追不到依据");
@@ -4939,9 +4972,28 @@ async function runPendingTruncationCase() {
       const multiAgents = objectProbe.renderProjectAgentsInventoryWith(multiState, orgAdmin, "p1", "table", ["nodes"]);
       check("多派发节点不把暂停恢复误绑到数组第一项", /data-action="open-node-tasks"[^>]*>查看 2 个当前任务/u.test(multiAgents) && !/data-command="pause_dispatch"|data-command="resume_dispatch"/u.test(multiAgents), textOf(multiAgents));
       const multiMonitor = objectProbe.renderMonitorInventoryWith(multiState, orgAdmin, "p1", ["runs"]);
-      check("执行监控按派发 ID 分别提供运行与阻塞任务控制", /data-dispatch-id="run1" data-command="pause_dispatch"/u.test(multiMonitor)
-        && /data-dispatch-id="run2" data-command="resume_dispatch"/u.test(multiMonitor)
-        && (multiMonitor.match(/data-command="cancel_dispatch"/gu) || []).length === 2, textOf(multiMonitor).slice(0, 500));
+      check("执行监控列表按派发 ID 进入对象详情而不平铺高影响控制",
+        /data-execution-id="run1"[^>]*data-task="tg1"/u.test(multiMonitor)
+          && /data-execution-id="run2"[^>]*data-task="tg1"/u.test(multiMonitor)
+          && !/data-command="(?:pause_dispatch|resume_dispatch|cancel_dispatch)"/u.test(multiMonitor), textOf(multiMonitor).slice(0, 500));
+      const executionDetailBase = {
+        objectType: "dispatch", objectId: "run1", settled: false,
+        taskGroup: {id: "tg1", name: "任务组一"}, workItem: {id: "w1", title: "执行任务"},
+        session: {sessionId: "sess1", roleId: "reviewer", placement: "new_session"},
+        dispatch: {dispatchId: "run1", taskGroupId: "tg1", assignedNodeId: "idle", status: "running", progressPercent: 42},
+        node: {nodeId: "idle", nodeName: "运行节点", status: "online", admission: "full"},
+        modelDecision: {selectedModel: {modelId: "model-a", reasoningLevel: "medium"}},
+        placementDecision: {placement: "new_session"}, contractSummary: {found: false}, controlCommands: [], checkpoints: [], qualityGates: [], testResults: []
+      };
+      const runningDetail = objectProbe.renderExecutionObjectWith(multiState, orgAdmin, "p1", executionDetailBase);
+      const blockedDetail = objectProbe.renderExecutionObjectWith(multiState, orgAdmin, "p1", {...executionDetailBase, objectId: "run2", dispatch: {...executionDetailBase.dispatch, dispatchId: "run2", status: "blocked"}});
+      check("派发对象详情按状态提供暂停或恢复，并始终明确绑定当前派发",
+        /data-dispatch-id="run1" data-command="pause_dispatch"/u.test(runningDetail)
+          && !/data-command="resume_dispatch"/u.test(runningDetail)
+          && /data-dispatch-id="run2" data-command="resume_dispatch"/u.test(blockedDetail)
+          && !/data-command="pause_dispatch"/u.test(blockedDetail)
+          && (runningDetail.match(/data-command="cancel_dispatch"/gu) || []).length === 1,
+        `${textOf(runningDetail).slice(0, 360)} | ${textOf(blockedDetail).slice(0, 360)}`);
       const modelMonitor = objectProbe.renderMonitorInventoryWith({...multiState,
         agents: [{id: "agent_project_review", name: "项目评审 Agent", role: "reviewer", model: "auto_fast", status: "active", projectId: "p1"}],
         modelSelectionDecisions: [{decisionId: "msd1", taskGroupId: "tg1", workItemId: "w1", roleId: "reviewer",
@@ -5999,6 +6051,11 @@ function runWholeListCapCase() {
   check("系统管理菜单不再暴露账号与授权混合入口",
     !String(fullRoot.innerHTML || "").includes('data-menu="sys-accounts"'),
     "系统侧栏仍暴露账号、授权、项目和 Agent 混合入口，边界会再次被打散");
+  const appSource = readConsoleAppSource();
+  check("系统层遗留账号页不得保留可误恢复的跨层表单",
+    !appSource.includes("function renderSysAccounts") && !appSource.includes('data-form="account-invite"')
+      && !appSource.includes("创建项目（系统级）"),
+    "系统账号兼容页仍藏着组织成员、通用授权或项目创建表单；未来误加入口就会恢复跨层旁路");
   const projectRoot = el("div");
   loadConsole(projectRoot).renderFullPagePaneWith({...base}, admin, "p1", "proj-members", "groups");
   const projectHtml = String(projectRoot.innerHTML || "");
@@ -8308,7 +8365,7 @@ await runCodedApiErrorCase();
     qualityGates: [], findings: [], humanConfirmationRequests: [], truncatedCollections: []
   }, {accountId: "acct_system_owner", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"}, "prj_control_plane"]);
   const scanned = [];
-  const pages = ["sys-overview", "sys-orgs", "sys-settings", "sys-accounts", "org-overview", "org-members",
+  const pages = ["sys-overview", "sys-orgs", "sys-settings", "org-overview", "org-members",
     "org-agents", "org-projects", "proj-overview", "proj-members", "tg", "review", "directives", "monitor", "proj-agents", "proj-settings"];
   for (const [label, state, account, projectId] of i18nScanStates) {
     scanned.push(...scanState(label, state, account, projectId, pages));

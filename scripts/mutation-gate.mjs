@@ -1050,14 +1050,6 @@ const MUTATIONS = [
     expect: "高风险确认必须分别说清失去管理权和旧账号处置"
   },
   {
-    name: "Agent 档案的真实模型 ID 不得触发漏译告警",
-    file: "apps/control-plane-ui/public/app.js",
-    gate: "console",
-    from: "  const agents = (state.agents || []).map((agent) => row([\n    esc(agent.name),\n    esc(t(agent.role)),\n    agentModelCell(agent.model),",
-    to: "  const agents = (state.agents || []).map((agent) => row([\n    esc(agent.name),\n    esc(t(agent.role)),\n    esc(t(agent.model)),",
-    expect: "真实模型 ID 按协议标识展示且不污染漏译告警"
-  },
-  {
     name: "节点支持的模型 ID 不得触发漏译告警",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
@@ -3990,14 +3982,6 @@ const MUTATIONS = [
     expect: "不是已登记的执行角色"
   },
   {
-    name: "授权表单的角色要挂服务端下发的权限模板词表",
-    file: "apps/control-plane-ui/public/app.js",
-    gate: "console",
-    from: '<input name="role" value="viewer" list="grant-role-options"><datalist id="grant-role-options">',
-    to: '<input name="role" value="viewer" list="grant-role-options"><datalist id="grant-role-options-detached">',
-    expect: "授权表单的「角色」要列出服务端下发的权限模板名"
-  },
-  {
     name: "界面拿到的授权角色词表要与拒绝报文的 supported 同一份",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "doctor",
@@ -4914,15 +4898,6 @@ const MUTATIONS = [
     from: '  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg\n    && account.status !== "retired" && account.accountId !== chosen.ownerAccountId);',
     to: '  const grantable = candidates.filter((account) => account.status !== "retired" && account.accountId !== chosen.ownerAccountId);',
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
-  },
-  {
-    name: "statusBadge 的对象类型都要有各自的状态词表",
-    file: "apps/control-plane-ui/public/app.js",
-    check: "verifyLabelTablesMatchTheirEnums",
-    gate: "contract",
-    from: 'statusBadge("grant"',
-    to: 'statusBadge("grantX"',
-    expect: "却没有各自的状态词表"
   },
   {
     name: "REST 侧建单元必须走那份唯一的状态归一化（不调它＝认不出的状态原样收下）",
@@ -11741,6 +11716,14 @@ const MUTATIONS = [
     expect: "管理空间切换必须成为侧栏第一层"
   },
   {
+    name: "系统层不得恢复组织账号与项目写表单",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "/* ---------------- 跨工作区展示与对象授权公共组件 ---------------- */",
+    to: '/* ---------------- 跨工作区展示与对象授权公共组件 ---------------- */\nfunction renderSysAccounts() { return `<form data-form="account-invite"><button>创建项目（系统级）</button></form>`; }',
+    expect: "系统层遗留账号页不得保留可误恢复的跨层表单"
+  },
+  {
     name: "当前项目选择和进度必须与模块导航同处侧栏",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
@@ -11771,6 +11754,54 @@ const MUTATIONS = [
     from: '    const work = route.workId && ["tasks", "directives"].includes(route.page) ? `/${encoded(route.workId)}` : "";',
     to: '    const work = "";',
     expect: "项目任务地址必须完整往返"
+  },
+  {
+    name: "执行对象深链接必须保留会话或派发身份",
+    file: "apps/control-plane-ui/public/modules/workspace-route.js",
+    gate: "console",
+    from: '    const execution = route.page === "monitor" && route.groupId && ["session", "dispatch"].includes(route.executionType) && route.executionId\n      ? `/${encoded(route.executionType)}/${encoded(route.executionId)}` : "";',
+    to: '    const execution = "";',
+    expect: "工作会话和派发必须是可复制、可恢复的执行对象地址"
+  },
+  {
+    name: "窗口外执行对象必须走专用详情接口恢复",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "      await loadExecutionObjectDetail(currentRead);",
+    to: "      executionObjectDetail = null;",
+    expect: "窗口外合法派发深链接必须通过执行对象接口恢复独立详情"
+  },
+  {
+    name: "任务执行次数必须进入统一派发对象详情",
+    file: "apps/control-plane-ui/public/modules/task-workbench.js",
+    gate: "workspace",
+    from: '<button class="primary-button" data-action="open-execution-object" data-execution-type="dispatch" data-execution-id="${esc(run.dispatchId)}" data-task="${esc(group.id)}">查看本次执行</button>',
+    to: '<button class="primary-button">查看本次执行</button>',
+    expect: "each task execution attempt opens the addressable dispatch object"
+  },
+  {
+    name: "派发详情控制必须明确绑定当前派发状态",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  if (dispatch.status === "blocked") controls.push(`<button class="primary-button" data-action="agent-control" data-node-id="${esc(dispatch.assignedNodeId)}" data-dispatch-id="${esc(dispatch.dispatchId)}" data-command="resume_dispatch">恢复本次执行</button>`);',
+    to: '  if (true) controls.push(`<button class="primary-button" data-action="agent-control" data-node-id="${esc(dispatch.assignedNodeId)}" data-dispatch-id="${esc(dispatch.dispatchId)}" data-command="resume_dispatch">恢复本次执行</button>`);',
+    expect: "派发对象详情按状态提供暂停或恢复"
+  },
+  {
+    name: "派发对象详情必须按所属任务组重新鉴权",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "task-api",
+    from: '    const reader = requireRead(req, state, taskGroupScope(state, dispatch.taskGroupId));\n    if (reader.status) return json(res, reader.status, reader.payload);\n    return json(res, 200, buildExecutionObjectDetail(state, {\n      type: "dispatch", id: dispatch.dispatchId, taskGroupSummary,',
+    to: '    const reader = accountFromRequest(req, state);\n    return json(res, 200, buildExecutionObjectDetail(state, {\n      type: "dispatch", id: dispatch.dispatchId, taskGroupSummary,',
+    expect: "GET /api/agent-dispatches/dsp_detail/detail"
+  },
+  {
+    name: "会话对象详情必须按所属任务组重新鉴权",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "task-api",
+    from: '    const reader = requireRead(req, state, taskGroupScope(state, session.taskGroupId));\n    if (reader.status) return json(res, reader.status, reader.payload);\n    return json(res, 200, buildExecutionObjectDetail(state, {\n      type: "session", id: session.sessionId, taskGroupSummary,',
+    to: '    const reader = accountFromRequest(req, state);\n    return json(res, 200, buildExecutionObjectDetail(state, {\n      type: "session", id: session.sessionId, taskGroupSummary,',
+    expect: "GET /api/work-sessions/sess_dsp_detail/detail"
   },
   {
     name: "对象路由 ID 必须拒绝路径逃逸",
@@ -12267,14 +12298,6 @@ const MUTATIONS = [
     expect: "与拒绝报文里的 supported 不是同一份"
   },
   {
-    name: "邀请表单要渲染账号角色词表",
-    file: "apps/control-plane-ui/public/app.js",
-    gate: "console",
-    from: '          <datalist id="account-role-options">${(state.runtime?.accountRoles || []).map((role) => `<option value="${esc(role)}">${esc(t(role))}</option>`).join("")}</datalist></div>',
-    to: '          </div>',
-    expect: "邀请表单没有账号角色的 datalist"
-  },
-  {
     name: "拼错的权限要被拒（原先只有安全筛，project:veiw 一路存进授权）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "doctor",
@@ -12734,6 +12757,7 @@ const GATE_COMMANDS = {
   writer: "scripts/concurrent-writer-gate.mjs",
   console: "scripts/console-behaviour-check.mjs",
   workspace: "scripts/workspaces-check.mjs",
+  "task-api": "scripts/task-workbench-api-check.mjs",
   "workspace-flows": "scripts/workspace-flows-check.mjs",
   idle: "scripts/idle-tick-gate.mjs",
   specs: "scripts/validate-specs.rb",

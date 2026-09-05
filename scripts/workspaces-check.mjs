@@ -43,9 +43,11 @@ function loadPublicModules() {
     "modules/ui-config.js",
     "modules/workspaces.js",
     "modules/workspace-location.js",
+    "modules/workspace-route.js",
     "modules/object-workspace.js",
     "modules/task-group-workspace.js",
-    "modules/task-workbench.js"
+    "modules/task-workbench.js",
+    "modules/execution-object-workspace.js"
   ]) {
     vm.runInContext(readPublic(file), context, {filename: file});
   }
@@ -76,6 +78,10 @@ const locations = context.AIMAC_WORKSPACE_LOCATION;
   check("workspace location preserves task identity and full cursor history", restored?.workId === "w1" && restored.groupId === "g1" && restored.projectId === "p1" && restored.cursor === longCursor && restored.stack.length === 100);
   check("workspace location excludes credentials and task bodies", !JSON.stringify(restored).includes("DO_NOT_STORE"));
   check("workspace location does not restore across accounts", locations.read("a2") === null);
+  check("workspace location stores execution identity only on monitor pages", locations.save({version: 1, accountId: "a1", projectId: "p1", page: "monitor", groupId: "g1", executionType: "session", executionId: "s1"})
+    && locations.read("a1")?.executionType === "session" && locations.read("a1")?.executionId === "s1"
+    && locations.save({version: 1, accountId: "a1", projectId: "p1", page: "tasks", executionType: "dispatch", executionId: "d1"})
+    && locations.read("a1")?.executionType === "" && locations.read("a1")?.executionId === "");
   locations.clear();
   check("workspace location clear removes previous identity", locations.read("a1") === null);
   context.sessionStorage.setItem("aimac.workspace-location", "{broken");
@@ -83,8 +89,22 @@ const locations = context.AIMAC_WORKSPACE_LOCATION;
   locations.clear();
 }
 
+{
+  const routes = context.AIMAC_WORKSPACE_ROUTE;
+  const dispatchHash = routes.build({page: "monitor", projectId: "p1", groupId: "g1", executionType: "dispatch", executionId: "d1", workspace: "events"});
+  const sessionHash = routes.build({page: "monitor", projectId: "p1", groupId: "g1", executionType: "session", executionId: "s1"});
+  check("execution dispatch route keeps project, task group, object and pane", dispatchHash === "#/project/p1/monitor/g1/dispatch/d1?pane=events", dispatchHash);
+  check("execution session route keeps project, task group and object", sessionHash === "#/project/p1/monitor/g1/session/s1", sessionHash);
+  check("execution object route parses back to the same identity",
+    JSON.stringify(routes.parse(dispatchHash)) === JSON.stringify({page: "monitor", projectId: "p1", workspace: "events", groupId: "g1", executionType: "dispatch", executionId: "d1"}),
+    JSON.stringify(routes.parse(dispatchHash)));
+  check("unsafe execution object ids are rejected", routes.parse("#/project/p1/monitor/g1/session/%3Cscript%3E") === null);
+}
+
 check("workspaces module is loaded", !!workspaces && typeof workspaces.run === "function");
 check("task workbench module is loaded", !!taskWorkbench && typeof taskWorkbench.render === "function");
+const executionWorkspace = context.AIMAC_EXECUTION_OBJECT_WORKSPACE;
+check("execution object workspace module is loaded", typeof executionWorkspace?.render === "function");
 const objectWorkspace = context.AIMAC_OBJECT_WORKSPACE;
 check("object workspace module is loaded", typeof objectWorkspace?.trail === "function");
 const trail = objectWorkspace.trail({organization: {name: "组织甲"}, project: {id: "p1", name: "项目甲"}, group: {id: "tg1", name: "任务组甲"}, work: {title: "任务甲"}, pageLabel: "任务详情"});
@@ -306,6 +326,7 @@ const helpers = {
       && !/data-focus-page="review"/u.test(detailHtml)
       && !/data-focus-page="directives"/u.test(detailHtml),
     strip(detailHtml).slice(0, 280));
+  check("each task execution attempt opens the addressable dispatch object", /data-action="open-execution-object"[^>]*data-execution-type="dispatch"[^>]*data-execution-id="d_new"/u.test(detailHtml), strip(detailHtml).slice(0, 360));
   check("task workbench asks the supplied helper for terminal dispatch state",
     terminalDispatchLookups.includes("completed"),
     `helper calls: ${terminalDispatchLookups.join(", ") || "(none)"}`);
@@ -320,6 +341,42 @@ const helpers = {
   check("a failed-before-start attempt is not marked as executed", !/<li class="done">执行任务<\/li>/u.test(failedRun));
   const queuedRun = taskWorkbench.render({groups, state: {...runState, agentDispatches: [runState.agentDispatches[0]], agentExecutionEvents: [{dispatchId: "second", eventType: "executor_started", sequence: 2, createdAt: "2026-09-05T01:00:00Z"}]}, selected: {taskGroupId: "g1", workItemId: "w_new"}, helpers});
   check("executor evidence marks the execution stage reached even when the run fails later", /<li class="done">执行任务<\/li>/u.test(queuedRun));
+}
+
+{
+  const html = executionWorkspace.render({
+    detail: {
+      objectType: "dispatch", objectId: "d_exec", settled: false,
+      taskGroup: {id: "g_exec", name: "发布任务组"},
+      workItem: {id: "w_exec", title: "发布任务"},
+      session: {sessionId: "s_exec", roleId: "reviewer", placement: "new_session", taskContractDigest: "sha256:contract"},
+      dispatch: {dispatchId: "d_exec", taskGroupId: "g_exec", status: "running", progressPercent: 48, model: "model-x", reasoning: "medium", modelDecision: "bounded review", assignedNodeId: "n_exec"},
+      agent: {id: "a_exec", name: "审查 Agent", projectId: null},
+      node: {nodeId: "n_exec", nodeName: "运行节点", status: "online", admission: "full"},
+      modelDecision: {selectedModel: {modelId: "model-x", reasoningLevel: "medium"}, modelDecision: "bounded review"},
+      placementDecision: {placement: "new_session", workerCarrierDecision: {carrier: "codex_thread"}},
+      contractSummary: {found: true, roleSkill: {roleSkillId: "skill-review"}, activeRuleRefs: ["rule:one"], forbiddenActions: ["scope_expand"], validationRequirements: ["tests_passed"]},
+      controlCommands: [{commandId: "cmd_exec", commandType: "pause_dispatch", status: "acked", updatedAt: "2026-09-06T00:00:00Z"}],
+      repositoryOutput: {repositoryId: "repo", branch: "main", status: "pushed"},
+      checkpoints: [{checkpointId: "cp_exec", commitRefs: [{commit: "1234567890abcdef"}], pushRefs: [{remote: "origin"}], createdAt: "2026-09-06T00:00:00Z"}],
+      qualityGates: [], testResults: []
+    },
+    events: [{sequence: 1, eventType: "progress", status: "running", progressPercent: 48, summary: '<script>alert(1)</script>', createdAt: "2026-09-06T00:00:00Z"}],
+    controls: '<button data-command="pause_dispatch">暂停本次执行</button>',
+    helpers: {
+      badge: (value) => `<span class="badge">${String(value ?? "-")}</span>`,
+      t: (value) => value,
+      fmtTime: (value) => value,
+      explainCoded: (value) => value,
+      evidenceRefsHint: () => "",
+      ruleSummaryHtml: () => '<div data-rules>skill-review</div>'
+    }
+  });
+  check("execution object workspace keeps the full task-session-dispatch-node relationship",
+    ["g_exec", "w_exec", "s_exec", "d_exec", "n_exec"].every((value) => html.includes(value)), strip(html).slice(0, 500));
+  check("execution object workspace exposes agent, model, reasoning, rules, commands and Git evidence",
+    ["a_exec", "model-x", "medium", "skill-review", "cmd_exec", "1234567890ab", "pause_dispatch"].every((value) => html.includes(value)), strip(html).slice(0, 700));
+  check("execution event summaries are escaped", !html.includes("<script>") && html.includes("&lt;script&gt;"), html.slice(-500));
 }
 
 {

@@ -201,6 +201,9 @@ let pendingConfirmCount = 0;
 let agentViewMode = "table";
 
 let execScope = {type: "", id: ""};
+let selectedExecutionObject = {type: "", id: ""};
+let executionObjectDetail = null;
+let executionObjectUnavailable = false;
 // 执行历史里按需展开的「规则」摘要缓存（dispatchId → /contract-summary 回执）；再点一次收起。
 const dispatchRuleSummaries = {};
 let execEvents = [];
@@ -1263,6 +1266,37 @@ async function ensureManagementGroupContext(currentRead) {
   return true;
 }
 
+async function loadExecutionObjectDetail(currentRead) {
+  executionObjectUnavailable = false;
+  if (page !== "monitor" || !selectedExecutionObject.id) {
+    executionObjectDetail = null;
+    return;
+  }
+  const selection = selectedExecutionObject;
+  const endpoint = selection.type === "session" ? "work-sessions" : "agent-dispatches";
+  let detail;
+  try {
+    detail = await api(`/api/${endpoint}/${encodeURIComponent(selection.id)}/detail`);
+  } catch (error) {
+    if (currentRead() && selection === selectedExecutionObject && [403, 404].includes(error.status)) {
+      executionObjectDetail = null;
+      executionObjectUnavailable = true;
+      return;
+    }
+    throw error;
+  }
+  if (!currentRead() || selection !== selectedExecutionObject) return;
+  const identityMatches = detail?.objectType === selection.type && detail?.objectId === selection.id
+    && detail?.projectId === currentProjectId && (!managementGroupId || detail?.taskGroup?.id === managementGroupId);
+  if (!identityMatches) {
+    executionObjectDetail = null;
+    executionObjectUnavailable = true;
+    return;
+  }
+  executionObjectDetail = detail;
+  if (!managementGroupId && detail.taskGroup?.id) managementGroupId = detail.taskGroup.id;
+}
+
 async function loadPage() {
   pageReadGeneration += 1;
   const currentRead = pageReadCheckpoint();
@@ -1298,10 +1332,6 @@ async function loadPage() {
       if (!currentRead()) return;
       state = runtimeState;
       instructionState = nextInstructions;
-    } else if (page === "sys-accounts") {
-      const nextState = await fetchState("users");
-      if (!currentRead()) return;
-      state = nextState;
     } else if (page === "org-overview") {
       const [fullState, agentsResult] = await Promise.all([fetchState("orgs"), api("/api/org/agents")]);
       if (!currentRead()) return;
@@ -1405,6 +1435,7 @@ async function loadPage() {
       ensureProjectSelection();
       await ensureManagementGroupContext(currentRead);
       ensureExecScope();
+      await loadExecutionObjectDetail(currentRead);
     } else if (page === "proj-agents") {
       const [tasksState, runtimeState, skillRegistry] = await Promise.all([
         fetchState("tasks", {projectId: currentProjectId}),
@@ -1655,9 +1686,9 @@ function stopExecPolling() {
 
 function startExecPolling() {
   stopExecPolling();
-  if (page !== "monitor" || !execScope.id || execHistoryMode || workspaces.current("monitor")?.id !== "events") return;
+  if (page !== "monitor" || !execScope.id || execHistoryMode || (!selectedExecutionObject.id && workspaces.current("monitor")?.id !== "events")) return;
   execTimer = setInterval(async () => {
-    if (!authToken || page !== "monitor" || execHistoryMode || workspaces.current("monitor")?.id !== "events") {
+    if (!authToken || page !== "monitor" || execHistoryMode || (!selectedExecutionObject.id && workspaces.current("monitor")?.id !== "events")) {
       stopExecPolling();
       return;
     }
@@ -1846,7 +1877,9 @@ function workspaceRouteSnapshot() {
     organizationId: page === "sys-orgs" ? selectedOrganizationId : "",
     accountId: page === "org-members" ? selectedOrgMemberId
       : page === "proj-members" ? selectedProjectMemberId : "",
-    agentId: ["org-agents", "proj-agents"].includes(page) ? selectedAgentProfileId : ""
+    agentId: ["org-agents", "proj-agents"].includes(page) ? selectedAgentProfileId : "",
+    executionType: page === "monitor" ? selectedExecutionObject.type : "",
+    executionId: page === "monitor" ? selectedExecutionObject.id : ""
   };
 }
 
@@ -1869,6 +1902,10 @@ function restoreWorkspaceRoute(route = window.AIMAC_WORKSPACE_ROUTE?.parse()) {
   selectedOrgMemberId = page === "org-members" ? route.accountId || "" : "";
   selectedProjectMemberId = page === "proj-members" ? route.accountId || "" : "";
   selectedAgentProfileId = ["org-agents", "proj-agents"].includes(page) ? route.agentId || "" : "";
+  selectedExecutionObject = page === "monitor" && ["session", "dispatch"].includes(route.executionType) && route.executionId
+    ? {type: route.executionType, id: route.executionId} : {type: "", id: ""};
+  executionObjectDetail = null;
+  executionObjectUnavailable = false;
   memberGrantAccountId = selectedOrgMemberId || selectedProjectMemberId;
   managementGroupId = ["tg", "tasks", "monitor", "review", "directives"].includes(page) ? route.groupId || "" : "";
   expandedTaskGroupId = page === "tg" && managementGroupId ? managementGroupId : "";
@@ -1882,7 +1919,7 @@ function restoreWorkspaceRoute(route = window.AIMAC_WORKSPACE_ROUTE?.parse()) {
     const first = workspaces.catalog[workspacePage]?.[0]?.id;
     if (first) workspaces.select(workspacePage, first);
   }
-  execScope = managementGroupId ? {type: "taskGroup", id: managementGroupId}
+  execScope = selectedExecutionObject.id ? selectedExecutionObject : managementGroupId ? {type: "taskGroup", id: managementGroupId}
     : currentProjectId ? {type: "project", id: currentProjectId} : {type: "", id: ""};
   execEvents = [];
   execCursor = 0;
@@ -1928,6 +1965,16 @@ function reconcileRoutedObjectSelection() {
     execEvents = [];
     execCursor = 0;
     missing = "任务组";
+  }
+  if (!missing && page === "monitor" && selectedExecutionObject.id && executionObjectUnavailable) {
+    selectedExecutionObject = {type: "", id: ""};
+    executionObjectDetail = null;
+    executionObjectUnavailable = false;
+    execScope = managementGroupId ? {type: "taskGroup", id: managementGroupId}
+      : currentProjectId ? {type: "project", id: currentProjectId} : {type: "", id: ""};
+    execEvents = [];
+    execCursor = 0;
+    missing = "执行对象";
   }
   if (missing) {
     routeWriteMode = "replace";
@@ -2063,9 +2110,10 @@ function renderContent() {
     || (page === "proj-members" && selectedProjectMemberId)
     || (["org-agents", "proj-agents"].includes(page) && selectedAgentProfileId);
   if (PROJECT_PAGES.has(page) && hasNoVisibleProject()) return context + renderPanel(PAGE_META[page]?.[0] || "项目管理", noVisibleProjectNotice(), {wide: true});
+  const executionObjectOpen = page === "monitor" && selectedExecutionObject.id;
   const groupDetail = page === "tg" && expandedTaskGroupId;
-  return context + workspaces.navigation(groupDetail ? "group-detail" : page, true, workspaceOptions())
-    + (groupDetail || governanceObjectOpen ? "" : workspaces.heading(page, workspaceOptions()))
+  return context + (executionObjectOpen ? "" : workspaces.navigation(groupDetail ? "group-detail" : page, true, workspaceOptions()))
+    + (groupDetail || governanceObjectOpen || executionObjectOpen ? "" : workspaces.heading(page, workspaceOptions()))
     + managementScopeBar() + workspaces.run(page, renderPageContent);
 }
 
@@ -2084,6 +2132,7 @@ function focusedTaskGroups() {
 }
 
 function managementScopeBar() {
+  if (page === "monitor" && selectedExecutionObject.id) return "";
   if (page === "tg" && expandedTaskGroupId) return "";
   if (!["tg", "tasks", "monitor", "review", "directives"].includes(page)) return "";
   focusedTaskGroups();
@@ -2164,6 +2213,9 @@ function resetTaskWorkbench() {
   execHistoryStart = 0;
   execHasMore = false;
   execRevision += 1;
+  selectedExecutionObject = {type: "", id: ""};
+  executionObjectDetail = null;
+  executionObjectUnavailable = false;
   managementGroupId = "";
   selectedWork = null;
   workListGroupId = "";
@@ -2185,7 +2237,6 @@ function renderPageContent() {
   if (page === "sys-overview") body = renderSysOverview();
   else if (page === "sys-orgs") body = renderSysOrgs();
   else if (page === "sys-settings") body = renderSysSettings();
-  else if (page === "sys-accounts") body = renderSysAccounts();
   else if (page === "org-overview") body = renderOrgOverview();
   else if (page === "org-members") body = renderOrgMembers();
   else if (page === "org-agents") body = renderOrgAgents();
@@ -2906,7 +2957,7 @@ function renderSysSettings() {
   ].join("");
 }
 
-/* ---------------- 系统管理员：账号与授权（保留既有功能） ---------------- */
+/* ---------------- 跨工作区展示与对象授权公共组件 ---------------- */
 
 // 已注销的账号：把"什么时候、为什么"贴在状态旁边。注销不可撤销，这句话是事后唯一的依据。
 // artifacts_verified 这道阻塞此前只说一句"还有产物没核验"，指不出是哪一个 ——
@@ -2950,342 +3001,6 @@ function jumpModuleCard({title, metric, detail, panelTitle, tone = "blue", actio
   `;
 }
 
-function renderSysAccountsSummary() {
-  const accounts = state.accounts || [];
-  const grants = state.accessGrants || [];
-  const agents = state.agents || [];
-  const activeAccounts = accounts.filter((account) => !["retired", "suspended", "disabled"].includes(account.status)).length;
-  const serviceAccounts = accounts.filter((account) => account.accountType === "service_account" && account.status !== "retired").length;
-  const activeGrants = grants.filter((grant) => grant.status === "active").length;
-  const activeAgents = agents.filter((agent) => agent.status === "active").length;
-  return panel("账号与授权总览", `
-    <div class="metric-grid">
-      ${summaryMetric("账号总数", accounts.length, "系统账号、组织成员和服务账号")}
-      ${summaryMetric("启用账号", activeAccounts, "可登录或可被授权的账号")}
-      ${summaryMetric("服务账号", serviceAccounts, "供 agent/runtime 服务身份使用")}
-      ${summaryMetric("有效授权", activeGrants, "项目、任务组与系统资源授权")}
-      ${summaryMetric("项目数", (state.projects || []).length, "可分配成员和 agent 的项目")}
-      ${summaryMetric("待审加入令牌", liveJoinTokenCount(), "尚未消费且未过期的 agent 加入令牌")}
-      ${summaryMetric("agent 档案", agents.length, "可被总控激活的编排角色档案")}
-      ${summaryMetric("启用档案", activeAgents, "当前可参与调度的档案")}
-    </div>
-    <div class="small muted">先看总览确认系统账号、服务账号、跨项目授权和加入令牌规模；常规项目 Agent 注册请进入目标项目的“项目 Agent”页。</div>
-  `, {wide: true});
-}
-
-function renderSysAccountsActionBoard() {
-  const accounts = state.accounts || [];
-  const grants = state.accessGrants || [];
-  const agents = state.agents || [];
-  const selectedProject = currentProject();
-  const invited = accounts.filter((account) => account.status === "invited" || account.invitationWithdrawn).length;
-  const activeAccounts = accounts.filter((account) => !["retired", "suspended", "disabled"].includes(account.status)).length;
-  const systemAdmins = accounts.filter((account) => account.accountType === "system_admin" && account.status !== "retired").length;
-  const serviceAccounts = accounts.filter((account) => account.accountType === "service_account" && account.status !== "retired").length;
-  const activeGrants = grants.filter((grant) => grant.status === "active").length;
-  const revokedGrants = grants.filter((grant) => grant.status !== "active").length;
-  const activeAgents = agents.filter((agent) => agent.status === "active").length;
-  const projects = state.projects || [];
-  const assignableCount = assignableProjects().length;
-  const selectedAssignableProject = selectedProject && selectedProject.status !== "archived";
-  return panel("账号与授权操作看板", `
-    <div class="module-grid action-grid">
-      ${jumpModuleCard({
-        title: "待接受邀请",
-        metric: invited,
-        detail: invited ? "先确认是否需要重发或撤回邀请" : "当前没有等待首次登录的账号",
-        panelTitle: "账号列表",
-        tone: invited ? "orange" : "green"
-      })}
-      ${jumpModuleCard({
-        title: "启用账号",
-        metric: activeAccounts,
-        detail: `其中系统管理员 ${systemAdmins} 个，服务账号 ${serviceAccounts} 个`,
-        panelTitle: "账号列表",
-        tone: activeAccounts ? "blue" : "gray"
-      })}
-      ${jumpModuleCard({
-        title: "有效授权",
-        metric: activeGrants,
-        detail: revokedGrants ? `另有 ${revokedGrants} 条已撤销或失效` : "项目、任务组与系统资源授权",
-        panelTitle: "访问授权列表",
-        tone: activeGrants ? "blue" : "gray"
-      })}
-      ${jumpModuleCard({
-        title: "加入令牌审计",
-        metric: liveJoinTokenCount(),
-        detail: "查看跨项目待用令牌；常规注册到项目页签发",
-        panelTitle: "智能体入网审计",
-        tone: liveJoinTokenCount() ? "orange" : "green"
-      })}
-      ${jumpModuleCard({
-        title: "agent 档案",
-        metric: `${activeAgents}/${agents.length}`,
-        detail: "总控可激活的编排角色档案",
-        panelTitle: "编排智能体档案",
-        tone: activeAgents ? "blue" : "gray"
-      })}
-      ${selectedAssignableProject ? projectModuleCard({
-        pageId: "proj-members",
-        title: "项目成员权限",
-        metric: "当前",
-        detail: `${selectedProject.name || selectedProject.id}：成员角色和任务组权限回「成员权限」处理`,
-        tone: "green",
-        action: "去项目授权"
-      }) : assignableCount ? projectModuleCard({
-        pageId: "proj-overview",
-        title: "项目成员权限",
-        metric: assignableCount,
-        detail: selectedProject?.status === "archived"
-          ? "当前项目已归档；进入「项目管理」选择其他可用项目，再回「成员权限」处理"
-          : "进入「项目管理」后选择目标项目，再回「成员权限」处理",
-        tone: "orange",
-        action: "选项目"
-      }) : jumpModuleCard({
-        title: "项目成员权限",
-        metric: assignableCount,
-        detail: projects.length ? "现有项目已归档，需先创建新项目" : "还没有项目，需先创建项目",
-        panelTitle: "创建项目（系统级）",
-        tone: "gray",
-        action: "建项目"
-      })}
-    </div>
-    <div class="small muted">处理顺序：先核对账号与授权现状，再查看加入令牌审计和 agent 档案；项目成员角色、Agent 注册和任务组执行都从目标项目页发起。</div>
-  `, {wide: true});
-}
-
-function renderSysAccountsBoundaryGuide() {
-  const accounts = state.accounts || [];
-  const grants = state.accessGrants || [];
-  const agents = state.agents || [];
-  const serviceAccounts = accounts.filter((account) => account.accountType === "service_account" && account.status !== "retired").length;
-  const activeGrants = grants.filter((grant) => grant.status === "active").length;
-  const activeAgents = agents.filter((agent) => agent.status === "active").length;
-  const selectedProject = currentProject();
-  return panel("账号与授权职责边界", `
-    <div class="module-grid action-grid">
-      ${jumpModuleCard({
-        title: "系统账号",
-        metric: accounts.length,
-        detail: `登录身份、系统管理员和服务账号；服务账号 ${serviceAccounts} 个`,
-        panelTitle: "账号列表",
-        tone: accounts.length ? "blue" : "gray",
-        action: "看账号"
-      })}
-      ${jumpModuleCard({
-        title: "授权审计",
-        metric: activeGrants,
-        detail: "项目、任务组与系统资源授权在这里审计和撤销",
-        panelTitle: "访问授权列表",
-        tone: activeGrants ? "blue" : "gray",
-        action: "看授权"
-      })}
-      ${selectedProject ? projectModuleCard({
-        pageId: "proj-agents",
-        title: "项目 Agent 注册",
-        metric: "项目页",
-        detail: "进入后先在侧栏确认目标项目，再到「项目管理」→「项目 Agent」→「注册项目节点」签发",
-        tone: "green",
-        action: "确认后注册"
-      }) : jumpModuleCard({
-        title: "项目 Agent 注册",
-        metric: "先选项目",
-        detail: "先创建或选择目标项目，再到「项目管理」→「项目 Agent」→「注册项目节点」签发",
-        panelTitle: "创建项目（系统级）",
-        tone: "orange",
-        action: "建项目"
-      })}
-      ${jumpModuleCard({
-        title: "Agent 档案",
-        metric: `${activeAgents}/${agents.length}`,
-        detail: "这里只维护总控可激活的角色档案，不替代项目注册",
-        panelTitle: "编排智能体档案",
-        tone: activeAgents ? "blue" : "gray",
-        action: "看档案"
-      })}
-    </div>
-    <div class="small muted">职责边界：系统页负责账号、服务账号、全局授权审计、加入令牌审计和 Agent 档案；项目页负责项目级节点、一次性加入令牌、注册脚本和远程 MCP 生效确认。</div>
-  `, {wide: true});
-}
-
-function renderSysAccountsLifecycleGuide() {
-  const accounts = state.accounts || [];
-  const grants = state.accessGrants || [];
-  const agents = state.agents || [];
-  const selectedProject = currentProject();
-  const projects = state.projects || [];
-  const assignableCount = assignableProjects().length;
-  const selectedAssignableProject = selectedProject && selectedProject.status !== "archived";
-  const serviceAccounts = accounts.filter((account) => account.accountType === "service_account" && account.status !== "retired").length;
-  const activeGrants = grants.filter((grant) => grant.status === "active").length;
-  const activeAgents = agents.filter((agent) => agent.status === "active").length;
-  const invited = accounts.filter((account) => account.status === "invited" || account.invitationWithdrawn).length;
-  return panel("账号授权处置流程", `
-    <div class="module-grid action-grid">
-      ${jumpModuleCard({
-        title: "1 账号身份",
-        metric: accounts.length,
-        detail: invited ? `先处理 ${invited} 个待接受或已撤回邀请` : "先确认系统管理员、组织成员和服务账号身份",
-        panelTitle: "账号列表",
-        tone: invited ? "orange" : "blue",
-        action: "看账号"
-      })}
-      ${jumpModuleCard({
-        title: "2 访问授权",
-        metric: activeGrants,
-        detail: "项目、任务组和系统资源授权先审计，必要时再撤销或补发",
-        panelTitle: "访问授权列表",
-        tone: activeGrants ? "blue" : "gray",
-        action: "看授权"
-      })}
-      ${jumpModuleCard({
-        title: "3 服务账号",
-        metric: serviceAccounts,
-        detail: "服务账号只用于系统和 agent runtime 服务身份，不作为真人管理入口",
-        panelTitle: "账号列表",
-        tone: serviceAccounts ? "blue" : "gray",
-        action: "看服务账号"
-      })}
-      ${jumpModuleCard({
-        title: "4 加入令牌审计",
-        metric: liveJoinTokenCount(),
-        detail: "这里只看跨项目待用令牌和撤销，项目加入令牌到项目 Agent 页签发",
-        panelTitle: "智能体入网审计",
-        tone: liveJoinTokenCount() ? "orange" : "green",
-        action: "看审计"
-      })}
-      ${jumpModuleCard({
-        title: "5 Agent 档案",
-        metric: `${activeAgents}/${agents.length}`,
-        detail: "编排角色档案决定总控可激活的角色，不等于某台 agent 节点已注册",
-        panelTitle: "编排智能体档案",
-        tone: activeAgents ? "blue" : "gray",
-        action: "看档案"
-      })}
-      ${selectedAssignableProject ? projectModuleCard({
-        pageId: "proj-members",
-        title: "6 项目级落位",
-        metric: "当前",
-        detail: `${selectedProject.name || selectedProject.id}：进入「成员权限」完成成员角色，再去项目 Agent 和任务组执行`,
-        tone: "green",
-        action: "去授权"
-      }) : assignableCount ? projectModuleCard({
-        pageId: "proj-overview",
-        title: "6 项目级落位",
-        metric: assignableCount,
-        detail: selectedProject?.status === "archived"
-          ? "当前项目已归档；先进入项目管理选择其他可用项目，再到「成员权限」处理"
-          : "先进入项目管理选择目标项目，再到项目「成员权限」处理",
-        tone: "orange",
-        action: "选项目"
-      }) : jumpModuleCard({
-        title: "6 项目级落位",
-        metric: assignableCount,
-        detail: projects.length ? "现有项目已归档；先创建新项目，再到项目「成员权限」处理" : "系统页不做项目成员授权；先创建项目，再到项目「成员权限」处理",
-        panelTitle: "创建项目（系统级）",
-        tone: "gray",
-        action: "建项目"
-      })}
-    </div>
-    <div class="small muted">账号授权页是系统身份和授权治理入口：先确认账号，再审计授权和令牌；真正让用户或 agent 参与某个项目，必须回到项目管理完成成员权限、Agent 注册和任务组执行。</div>
-  `, {wide: true});
-}
-
-function renderSysAccounts() {
-  const accounts = (state.accounts || []).map((account) => row([
-    esc(account.displayName),
-    esc(account.email),
-    badge(account.accountType),
-    // 注销不可撤销，而"为什么注销、什么时候注销的"此前落在 retiredAt/retiredReason 上、
-    // 全仓没有任何读取点：屏幕上只有一个「已注销」，事后追不到依据。
-    `${statusBadge("account", account.status)}${retiredNote(account)}`,
-    esc((account.roles || []).map((role) => t(role)).join("、"))
-  ])).join("");
-  const grants = (state.accessGrants || []).map((grant) => row([
-    `<span class="mono">${esc(grant.subjectRef?.subjectId || "-")}</span>`,
-    resourceScopeLabel(grant.resource),
-    esc(grantRoleLabel(grant.role)),
-    statusBadge("grant", grant.status),
-    esc((grant.permissions || []).map(permLabel).join("、")),
-    grant.status === "active" ? `<button class="danger-button" data-action="revoke-grant" data-grant="${esc(grant.grantId)}">撤销</button>` : "-"
-  ])).join("");
-  const agents = (state.agents || []).map((agent) => row([
-    esc(agent.name),
-    esc(t(agent.role)),
-    agentModelCell(agent.model),
-    statusBadge("agent", agent.status),
-    `<button class="secondary-button" data-action="toggle-agent" data-agent="${esc(agent.id)}">${agent.status === "active" ? "停用" : "启用"}</button>`
-  ])).join("");
-
-  return [
-    renderSysAccountsSummary(),
-    renderSysAccountsActionBoard(),
-    renderSysAccountsBoundaryGuide(),
-    renderSysAccountsLifecycleGuide(),
-    panel("账号列表", table(["账号", "邮箱", "类型", "状态", "角色"], accounts), {wide: true}),
-    panel("访问授权列表", table(["主体", "资源", "角色", "状态", "权限", "操作"], grants), {wide: true}),
-    panel("智能体入网审计", renderJoinTokenSection({auditOnly: true, context: "system"}), {wide: true}),
-    panel("编排智能体档案", table(["名称", "角色", "模型策略", "状态", "操作"], agents) + `
-      <form class="form-grid" data-form="agent-create" style="margin-top:12px;">
-        <div class="form-row-inline">
-          <div class="form-row"><label>名称</label><input name="name" required></div>
-          <div class="form-row"><label>角色（只认已登记的执行角色）</label><input name="role" value="reviewer" required list="agent-role-options">
-            <datalist id="agent-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
-          <div class="form-row"><label>模型策略</label>
-            <select name="model"><option value="auto_best">自动最优</option><option value="auto_fast">自动快速</option><option value="cost_aware">成本优先</option></select>
-          </div>
-        </div>
-        <button class="primary-button" type="submit">创建档案</button>
-      </form>
-    `, {wide: true}),
-    panel("邀请账号", `
-      <form class="form-grid" data-form="account-invite">
-        <div class="form-row"><label>显示名</label><input name="displayName" required></div>
-        <div class="form-row"><label>邮箱</label><input name="email" type="email" required></div>
-        <div class="form-row"><label>账号类型</label>
-          <select name="accountType">
-            <option value="user_account">组织成员</option>
-            <option value="system_admin">系统管理员</option>
-            <option value="service_account">服务账号</option>
-          </select>
-        </div>
-        <div class="form-row"><label>角色（逗号分隔；只认服务端词表里的：${esc((state.runtime?.accountRoles || []).map((role) => t(role)).join("、") || "词表未下发")}）</label>
-          <input name="roles" value="viewer" list="account-role-options">
-          <datalist id="account-role-options">${(state.runtime?.accountRoles || []).map((role) => `<option value="${esc(role)}">${esc(t(role))}</option>`).join("")}</datalist></div>
-        <div class="form-row"><label>默认权限（逗号分隔；只认服务端词表里的）</label><input name="permissions" value="project:view" list="known-permission-options"><datalist id="known-permission-options">${(state.runtime?.knownPermissions || []).map((permission) => `<option value="${esc(permission)}">${esc(permLabel(permission))}</option>`).join("")}</datalist></div>
-        <button class="primary-button" type="submit">邀请并签发一次性令牌</button>
-      </form>
-    `),
-    panel("新增访问授权", `
-      <form class="form-grid" data-form="grant-create">
-        <div class="form-row"><label>账号 ID</label><input name="subjectId" required placeholder="acct_..."></div>
-        <div class="form-row"><label>资源类型</label>
-          <select name="resourceType"><option value="project">项目</option><option value="task_group">任务组</option></select>
-        </div>
-        <div class="form-row"><label>资源 ID</label><input name="resourceId" required placeholder="prj_... / tg_..."></div>
-        <div class="form-row"><label>角色（权限模板；只认服务端词表里的）</label><input name="role" value="viewer" list="grant-role-options"><datalist id="grant-role-options">${[...new Set(Object.values(state.runtime?.grantRoleTemplates || {}).flat())].map((role) => `<option value="${esc(role)}">${esc(t(role))}</option>`).join("")}</datalist></div>
-        <div class="form-row"><label>权限（逗号分隔；只认服务端词表里的）</label><input name="permissions" value="project:view" list="known-permission-options"><datalist id="known-permission-options">${(state.runtime?.knownPermissions || []).map((permission) => `<option value="${esc(permission)}">${esc(permLabel(permission))}</option>`).join("")}</datalist></div>
-        <button class="primary-button" type="submit">新增授权</button>
-      </form>
-    `),
-    panel("创建项目（系统级）", `
-      <form class="form-grid" data-form="project-create">
-        <div class="form-row"><label>项目名称</label><input name="name" required></div>
-        <div class="form-row"><label>项目负责人</label>
-          <select name="ownerAccountId">
-            ${(state.accounts || []).filter((account) => account.status !== "retired")
-              .map((account) => `<option value="${esc(account.accountId)}">${esc(account.displayName)}</option>`).join("")}
-          </select>
-        </div>
-        <button class="primary-button" type="submit">创建项目</button>
-      </form>
-    `)
-  ].join("");
-}
-
-// 一个项目都没有时，这两张表单的「项目」下拉是空的 —— 表单看着完整、点下去必然失败。
-// 回归背景：全新组织曾经把加入令牌和项目成员授权渲染成可提交表单，项目下拉却是 0 个选项。
-// 与其让人填完再撞一个错误，不如当场说清第一步是什么。
 function noProjectYetNotice(what) {
   return `<div class="notice">还没有任何项目，而${what}必须落在具体项目上。`
     + "先创建一个项目：组织管理员切到「组织管理」→「项目列表」创建项目；系统管理员先在「系统管理」→「组织管理」开通组织并交付初始组织管理员，由组织管理员创建项目。创建后再进入「项目管理」→「成员权限」授权。</div>";
@@ -3673,12 +3388,6 @@ function renderOrgOverview() {
 function permLabel(code) {
   return PERMISSION_LABELS[String(code || "")] || t(code);
 }
-function resourceScopeLabel(resource) {
-  const type = resource?.resourceType;
-  const typeLabel = RESOURCE_TYPE_LABELS[type] || (type || "-");
-  return `${esc(typeLabel)}：<span class="mono">${esc(resource?.resourceId || "-")}</span>`;
-}
-
 function permissionCheckboxes(selected = []) {
   return `
     <div class="checkbox-grid">
@@ -7625,6 +7334,32 @@ function repositoryFailureAction(item) {
     data-project="${esc(project.id)}" data-target-menu="proj-settings" data-repo-focus="${esc(output?.repositoryId || "")}">检查仓库凭证</button></div>`;
 }
 
+function executionObjectControlsHtml(detail) {
+  const dispatch = detail?.dispatch;
+  if (!dispatch || detail.settled || !dispatch.assignedNodeId || !hasGroupPerm(dispatch.taskGroupId, "task_group:control")) return "";
+  const controls = [];
+  if (dispatch.status === "blocked") controls.push(`<button class="primary-button" data-action="agent-control" data-node-id="${esc(dispatch.assignedNodeId)}" data-dispatch-id="${esc(dispatch.dispatchId)}" data-command="resume_dispatch">恢复本次执行</button>`);
+  if (["queued", "running"].includes(dispatch.status)) controls.push(`<button class="secondary-button" data-action="agent-control" data-node-id="${esc(dispatch.assignedNodeId)}" data-dispatch-id="${esc(dispatch.dispatchId)}" data-command="pause_dispatch">暂停本次执行</button>`);
+  controls.push(`<button class="danger-button" data-action="agent-control" data-node-id="${esc(dispatch.assignedNodeId)}" data-dispatch-id="${esc(dispatch.dispatchId)}" data-command="cancel_dispatch">取消本次执行</button>`);
+  return controls.join("");
+}
+
+function renderExecutionObjectDetail() {
+  if (!executionObjectDetail) {
+    return panel("执行对象", `<div class="notice">正在读取会话或派发详情；若对象已删除或当前账号无权查看，系统会返回所属监控范围。</div>`, {wide: true});
+  }
+  return window.AIMAC_EXECUTION_OBJECT_WORKSPACE.render({
+    detail: executionObjectDetail,
+    events: execEvents,
+    eventHistory: execHistoryMode,
+    eventPage: execHistoryStack.length + 1,
+    hasMoreEvents: execHasMore,
+    historyTruncated: execEventsDropped,
+    controls: executionObjectControlsHtml(executionObjectDetail),
+    helpers: {badge, t, fmtTime, explainCoded, evidenceRefsHint, ruleSummaryHtml}
+  });
+}
+
 function renderMonitor() {
   // 一个项目都没有时，这一页原先摆出十一张"暂无数据"的空表和一个空的监听范围下拉 ——
   // 屏幕上全是表头，没有一句话说明为什么什么都没有、下一步该做什么。
@@ -7634,6 +7369,7 @@ function renderMonitor() {
   if (hasNoVisibleProject() && !projectTaskGroups().length) {
     return panel("执行监控", noVisibleProjectNotice(), {wide: true});
   }
+  if (selectedExecutionObject.id) return renderExecutionObjectDetail();
   const groups = focusedTaskGroups();
   // 这一页整体以"当前项目"为抬头，因此页内每张表都必须按它过滤。
   // 此前七张表里有五张漏了，最严重的一张还挂着"关闭任务组"按钮。
@@ -7681,18 +7417,12 @@ function renderMonitor() {
     badge(session.status),
     // 会话的阻塞原因此前只写在记录里、从不渲染：人看到一个 needs_decision 的徽标，看不出为什么。
     esc(explainCoded(session.blockedReason)) + repositoryFailureAction(session),
-    `<button class="secondary-button" data-action="show-session-events" data-session-id="${esc(session.sessionId)}">事件</button>`
+    `<button class="primary-button" data-action="open-execution-object" data-execution-type="session" data-execution-id="${esc(session.sessionId)}" data-task="${esc(session.taskGroupId)}">查看详情</button>`
   ])).join("");
 
   const dispatchesAll = filterSource((state.agentDispatches || []).filter((dispatch) => groups.some((taskGroup) => taskGroup.id === dispatch.taskGroupId)), "dispatches");
   const dispatches = dispatchesAll.slice(0, 20).map((dispatch) => {
-    const canControlDispatch = hasGroupPerm(dispatch.taskGroupId, "task_group:control") && dispatch.assignedNodeId && !terminalDispatchStatuses.has(dispatch.status);
-    const controls = [
-      `<button class="secondary-button" data-action="show-dispatch-events" data-dispatch-id="${esc(dispatch.dispatchId)}">事件</button>`,
-      canControlDispatch && dispatch.status === "blocked" ? `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(dispatch.assignedNodeId)}" data-dispatch-id="${esc(dispatch.dispatchId)}" data-command="resume_dispatch">恢复</button>` : "",
-      canControlDispatch && ["queued", "running"].includes(dispatch.status) ? `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(dispatch.assignedNodeId)}" data-dispatch-id="${esc(dispatch.dispatchId)}" data-command="pause_dispatch">暂停</button>` : "",
-      canControlDispatch ? `<button class="danger-button" data-action="agent-control" data-node-id="${esc(dispatch.assignedNodeId)}" data-dispatch-id="${esc(dispatch.dispatchId)}" data-command="cancel_dispatch">取消</button>` : ""
-    ].filter(Boolean).join(" ");
+    const controls = `<button class="primary-button" data-action="open-execution-object" data-execution-type="dispatch" data-execution-id="${esc(dispatch.dispatchId)}" data-task="${esc(dispatch.taskGroupId)}">查看详情</button>`;
     return row([
     `<span class="mono">${esc(dispatch.dispatchId)}</span>`,
     `<span class="mono">${esc(dispatch.workItemId || "-")}</span>`,
@@ -8812,12 +8542,6 @@ document.addEventListener("submit", async (event) => {
       await loadPage();
       return;
     }
-    if (kind === "account-invite") {
-      const result = await api("/api/accounts", {method: "POST", body: JSON.stringify(data)});
-      await loadPage();
-      oneTimeTokenModal("账号邀请成功", result.account?.email || result.login?.email || data.email, result.accountToken || "-", `令牌有效期至 ${fmtTime(result.tokenExpiresAt)}。`);
-      return;
-    }
     if (kind === "grant-create") {
       await api("/api/access-grants", {method: "POST", body: JSON.stringify(data)});
       await loadPage();
@@ -9240,6 +8964,9 @@ async function focusManagementGroup(groupId, nextPage = page, options = {}) {
   if (!allowedMenuItemsFor(perspectiveOf(currentAccount)).some((item) => item.id === nextPage)) return false;
   if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "切换任务组范围会丢失未保存的修改，确认继续？", danger: true, confirmText: "放弃并切换"}))) return false;
   requestRoutePush();
+  selectedExecutionObject = {type: "", id: ""};
+  executionObjectDetail = null;
+  executionObjectUnavailable = false;
   managementGroupId = groupId || "";
   selectedWork = options.workItemId ? {taskGroupId: groupId, workItemId: options.workItemId} : null;
   workEventHistoryMode = false;
@@ -9268,16 +8995,52 @@ async function focusManagementGroup(groupId, nextPage = page, options = {}) {
   return true;
 }
 
+async function focusExecutionObject(type, id, groupId, {history = false} = {}) {
+  if (!["session", "dispatch"].includes(type) || !id) return false;
+  if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "打开执行详情会离开当前表单，未保存的修改会丢失。确认继续？", danger: true, confirmText: "放弃并查看"}))) return false;
+  requestRoutePush();
+  selectedExecutionObject = {type, id};
+  executionObjectDetail = null;
+  executionObjectUnavailable = false;
+  managementGroupId = groupId || (type === "session"
+    ? (state.workSessions || []).find((item) => item.sessionId === id)?.taskGroupId
+    : (state.agentDispatches || []).find((item) => item.dispatchId === id)?.taskGroupId) || managementGroupId;
+  page = "monitor";
+  workspaces.select("monitor", "events");
+  execScope = selectedExecutionObject;
+  execHistoryMode = history;
+  execHistoryStart = 0;
+  execHistoryStack = [];
+  execEvents = [];
+  execCursor = 0;
+  formTouched = false;
+  dirtyFormKinds.clear();
+  sessionStorage.setItem("aimac.page", page);
+  stopExecPolling();
+  await loadPage();
+  if (!selectedExecutionObject.id) return false;
+  await loadExecEvents({reset: true});
+  startExecPolling();
+  render();
+  window.scrollTo?.({top: 0});
+  document.querySelector("[data-execution-object-heading]")?.focus();
+  return true;
+}
+
 async function navigateWorkspace(nextPage, nextSection, options = {}) {
   const closesObjectDetail = (nextPage === "sys-orgs" && selectedOrganizationId)
     || (nextPage === "org-members" && selectedOrgMemberId)
     || (nextPage === "proj-members" && selectedProjectMemberId)
-    || (["org-agents", "proj-agents"].includes(nextPage) && selectedAgentProfileId);
+    || (["org-agents", "proj-agents"].includes(nextPage) && selectedAgentProfileId)
+    || (nextPage === "monitor" && selectedExecutionObject.id);
   if (closesObjectDetail) {
     selectedOrganizationId = "";
     selectedOrgMemberId = "";
     selectedProjectMemberId = "";
     selectedAgentProfileId = "";
+    selectedExecutionObject = {type: "", id: ""};
+    executionObjectDetail = null;
+    executionObjectUnavailable = false;
     memberGrantAccountId = "";
     if (nextPage === page && workspaces.current(page)?.id === nextSection) { render(); return true; }
   }
@@ -9367,6 +9130,8 @@ document.addEventListener("change", async (event) => {
       managementGroupId = "";
       selectedWork = null;
       selectedAgentProfileId = "";
+      selectedExecutionObject = {type: "", id: ""};
+      executionObjectDetail = null;
       sessionStorage.setItem("aimac.projectId", currentProjectId);
       expandedTaskGroupId = "";
       tgDetail = null;
@@ -9403,6 +9168,9 @@ document.addEventListener("change", async (event) => {
     if (target.dataset.select === "exec-scope") {
       const [type, ...rest] = String(target.value).split(":");
       execScope = {type, id: rest.join(":")};
+      selectedExecutionObject = {type: "", id: ""};
+      executionObjectDetail = null;
+      executionObjectUnavailable = false;
       execHistoryStack = [];
       managementGroupId = type === "taskGroup" ? execScope.id : type === "project" ? "" : managementGroupId;
       execEvents = [];
@@ -9570,6 +9338,9 @@ document.addEventListener("click", async (event) => {
     const nextPage = sectionButton.dataset.sectionTarget;
     if (nextPage !== page && formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前页面有未保存的修改，确认离开？", danger: true, confirmText: "放弃并离开"}))) return;
     requestRoutePush();
+    selectedExecutionObject = {type: "", id: ""};
+    executionObjectDetail = null;
+    executionObjectUnavailable = false;
     page = nextPage;
     sessionStorage.setItem("aimac.page", page);
     lastError = "";
@@ -9583,12 +9354,17 @@ document.addEventListener("click", async (event) => {
   if (menuButton) {
     if (menuButton.dataset.menu !== page && formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前页面有未保存的修改，确认离开？", danger: true, confirmText: "放弃并离开"}))) return;
     requestRoutePush();
+    selectedExecutionObject = {type: "", id: ""};
+    executionObjectDetail = null;
+    executionObjectUnavailable = false;
     page = menuButton.dataset.menu;
     if (page === "sys-orgs") selectedOrganizationId = "";
     if (page === "org-members") { selectedOrgMemberId = ""; memberGrantAccountId = ""; }
     if (page === "proj-members") selectedProjectMemberId = "";
     if (["org-agents", "proj-agents"].includes(page)) selectedAgentProfileId = "";
     if (page === "tg") { expandedTaskGroupId = ""; managementGroupId = ""; tgDetail = null; }
+    if (page === "monitor") execScope = managementGroupId ? {type: "taskGroup", id: managementGroupId}
+      : currentProjectId ? {type: "project", id: currentProjectId} : {type: "", id: ""};
     sessionStorage.setItem("aimac.page", page);
     lastError = "";
     formTouched = false;
@@ -9660,6 +9436,60 @@ document.addEventListener("click", async (event) => {
   const guardBtn = target.tagName === "BUTTON" ? target : null;
   if (guardBtn) { guardBtn.disabled = true; guardBtn.classList.add("is-loading"); }
   try {
+    if (action === "close-execution-object") {
+      requestRoutePush();
+      selectedExecutionObject = {type: "", id: ""};
+      executionObjectDetail = null;
+      executionObjectUnavailable = false;
+      execScope = managementGroupId ? {type: "taskGroup", id: managementGroupId}
+        : currentProjectId ? {type: "project", id: currentProjectId} : {type: "", id: ""};
+      execHistoryMode = false;
+      execHistoryStart = 0;
+      execHistoryStack = [];
+      execEvents = [];
+      execCursor = 0;
+      await loadExecEvents({reset: true});
+      startExecPolling();
+      render();
+      window.scrollTo?.({top: 0});
+      return;
+    }
+    if (action === "execution-open-group") {
+      await focusManagementGroup(target.dataset.task || managementGroupId, "tg");
+      return;
+    }
+    if (action === "execution-open-work") {
+      await focusManagementGroup(target.dataset.task || managementGroupId, "tasks", {workItemId: target.dataset.work || ""});
+      return;
+    }
+    if (action === "execution-open-agent") {
+      const agentId = target.dataset.agent || "";
+      requestRoutePush();
+      selectedExecutionObject = {type: "", id: ""};
+      executionObjectDetail = null;
+      page = "proj-agents";
+      selectedAgentProfileId = agentId;
+      workspaces.select("proj-agents", "profiles");
+      sessionStorage.setItem("aimac.page", page);
+      stopExecPolling();
+      await loadPage();
+      window.scrollTo?.({top: 0});
+      document.querySelector("[data-agent-profile-heading]")?.focus();
+      return;
+    }
+    if (action === "execution-open-node") {
+      requestRoutePush();
+      selectedExecutionObject = {type: "", id: ""};
+      executionObjectDetail = null;
+      page = "proj-agents";
+      selectedAgentProfileId = "";
+      workspaces.select("proj-agents", "nodes");
+      sessionStorage.setItem("aimac.page", page);
+      stopExecPolling();
+      await loadPage();
+      window.scrollTo?.({top: 0});
+      return;
+    }
     if (action === "open-org-detail") {
       const orgId = target.dataset.org || "";
       if (!(organizations || []).some((org) => org.orgId === orgId)) return;
@@ -9840,6 +9670,9 @@ document.addEventListener("click", async (event) => {
       memberGrantAccountId = target.dataset.grantAccount || "";
       selectedProjectMemberId = targetPage === "proj-members" ? memberGrantAccountId : "";
       selectedAgentProfileId = "";
+      selectedExecutionObject = {type: "", id: ""};
+      executionObjectDetail = null;
+      executionObjectUnavailable = false;
       if (targetPage === "proj-settings" && target.dataset.repoFocus !== undefined) workspaces.select(page, "repositories");
       sessionStorage.setItem("aimac.page", page);
       lastError = "";
@@ -10314,22 +10147,12 @@ document.addEventListener("click", async (event) => {
       formTouched = true;
       return;
     }
+    if (action === "open-execution-object") {
+      await focusExecutionObject(target.dataset.executionType, target.dataset.executionId, target.dataset.task || "");
+      return;
+    }
     if (action === "show-dispatch-events") {
-      execScope = {type: "dispatch", id: target.dataset.dispatchId || ""};
-      execHistoryMode = target.dataset.eventMode === "history";
-      execHistoryStack = [];
-      managementGroupId = (state.agentDispatches || []).find((item) => item.dispatchId === execScope.id)?.taskGroupId || "";
-      workspaces.select("monitor", "events");
-      execEvents = [];
-      execCursor = 0;
-      if (page !== "monitor") {
-        page = "monitor";
-        sessionStorage.setItem("aimac.page", page);
-        await loadPage();
-      }
-      await loadExecEvents({reset: true});
-      startExecPolling();
-      render();
+      await focusExecutionObject("dispatch", target.dataset.dispatchId || "", target.dataset.task || "", {history: target.dataset.eventMode === "history"});
       return;
     }
     if (action === "show-dispatch-rules") {
@@ -10340,21 +10163,7 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "show-session-events") {
-      execScope = {type: "session", id: target.dataset.sessionId || ""};
-      execHistoryMode = false;
-      execHistoryStack = [];
-      managementGroupId = (state.workSessions || []).find((item) => item.sessionId === execScope.id)?.taskGroupId || "";
-      workspaces.select("monitor", "events");
-      execEvents = [];
-      execCursor = 0;
-      if (page !== "monitor") {
-        page = "monitor";
-        sessionStorage.setItem("aimac.page", page);
-        await loadPage();
-      }
-      await loadExecEvents({reset: true});
-      startExecPolling();
-      render();
+      await focusExecutionObject("session", target.dataset.sessionId || "", target.dataset.task || "");
       return;
     }
     if (action === "orchestrator-run") {
@@ -10474,6 +10283,7 @@ function rememberWorkspaceLocation() {
     workspace: workspaces.current(page)?.id, groupWorkspace: workspaces.current("group-detail")?.id,
     groupId: managementGroupId || (page === "tg" ? expandedTaskGroupId : ""), groupDetail: Boolean(page === "tg" && expandedTaskGroupId),
     workId: page === "tasks" ? selectedWork?.workItemId : "", directiveWorkId: page === "directives" ? directiveWorkItemId : "",
+    executionType: page === "monitor" ? selectedExecutionObject.type : "", executionId: page === "monitor" ? selectedExecutionObject.id : "",
     search: taskSearch, status: taskStatus, cursor: taskPageCursor, stack: taskCursorStack,
     listGroupId: workListGroupId, listCursor: workListState?.cursor, listStack: workListState?.stack});
 }
@@ -10488,6 +10298,10 @@ function restoreWorkspaceLocation() {
   managementGroupId = ["tg", "tasks", "monitor", "review", "directives"].includes(page) ? saved.groupId : "";
   expandedTaskGroupId = page === "tg" && saved.groupDetail ? managementGroupId : "";
   selectedWork = page === "tasks" && saved.workId && managementGroupId ? {taskGroupId: managementGroupId, workItemId: saved.workId} : null;
+  selectedExecutionObject = page === "monitor" && saved.executionId && ["session", "dispatch"].includes(saved.executionType)
+    ? {type: saved.executionType, id: saved.executionId} : {type: "", id: ""};
+  executionObjectDetail = null;
+  executionObjectUnavailable = false;
   taskSearch = saved.search;
   taskStatus = saved.status;
   taskPageCursor = saved.cursor;
@@ -10496,6 +10310,9 @@ function restoreWorkspaceLocation() {
   workListState = {cursor: saved.listCursor, stack: saved.listStack};
   directiveTaskGroupId = managementGroupId;
   directiveWorkItemId = page === "directives" ? saved.directiveWorkId : "";
+  execScope = selectedExecutionObject.id ? selectedExecutionObject
+    : managementGroupId ? {type: "taskGroup", id: managementGroupId}
+      : currentProjectId ? {type: "project", id: currentProjectId} : {type: "", id: ""};
   restoredWorkspaceLocation = true;
   sessionStorage.setItem("aimac.page", page);
   sessionStorage.setItem("aimac.projectId", currentProjectId);

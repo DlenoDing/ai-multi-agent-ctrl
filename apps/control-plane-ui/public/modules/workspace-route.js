@@ -53,6 +53,10 @@
     if (!page) return null;
     const route = {page, projectId, workspace};
     if (["task-groups", "tasks", "monitor", "review", "directives"].includes(segment)) route.groupId = parts[3] || "";
+    if (segment === "monitor" && ["session", "dispatch"].includes(parts[4]) && parts[5]) {
+      route.executionType = parts[4];
+      route.executionId = parts[5];
+    }
     if (segment === "tasks") route.workId = parts[4] || "";
     if (segment === "directives") route.workId = parts[4] || "";
     if (segment === "members") route.accountId = parts[3] || "";
@@ -80,7 +84,9 @@
     const work = route.workId && ["tasks", "directives"].includes(route.page) ? `/${encoded(route.workId)}` : "";
     const account = route.accountId && route.page === "proj-members" ? `/${encoded(route.accountId)}` : "";
     const agent = route.agentId && route.page === "proj-agents" ? `/${encoded(route.agentId)}` : "";
-    return `#/project/${project}/${segment}${agent || account || group}${work}${pane}`;
+    const execution = route.page === "monitor" && route.groupId && ["session", "dispatch"].includes(route.executionType) && route.executionId
+      ? `/${encoded(route.executionType)}/${encoded(route.executionId)}` : "";
+    return `#/project/${project}/${segment}${agent || account || group}${work}${execution}${pane}`;
   }
 
   function write(route, {replace = false} = {}) {
