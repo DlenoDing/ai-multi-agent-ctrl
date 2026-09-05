@@ -750,6 +750,38 @@ const MUTATIONS = [
     expect: "抹密钥没抹干净"
   },
   {
+    name: "流程导航必须含「项目设置」一步（撤掉项目操作路径后不许把入口一起删掉）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    {title: \"项目设置（仓库与凭证 / 规则 / 默认角色 / 角色 Skill 定制）\", done: repos.length > 0 && !credentialMissing, attention: credentialMissing > 0, page: \"proj-settings\",",
+    to: "    {title: \"项目设置\", done: repos.length > 0 && !credentialMissing, attention: credentialMissing > 0, page: \"proj-overview\",",
+    expect: "项目设置 / 成员权限的入口没有并进流程导航"
+  },
+  {
+    name: "流程导航必须含「成员权限」一步",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    {title: \"成员权限\", done: members > 0, page: \"proj-members\",",
+    to: "    {title: \"成员权限\", done: members > 0, page: \"proj-overview\",",
+    expect: "项目设置 / 成员权限的入口没有并进流程导航"
+  },
+  {
+    name: "项目成员页的协作流程指引必须折叠",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    guideBundle(\"协作流程指引\", [renderProjectMembersLifecycleGuide(project, stats)], [\"成员协作流程（5 步）\"]),",
+    to: "    renderProjectMembersLifecycleGuide(project, stats),",
+    expect: "「成员协作流程」要收进默认关闭的折叠块"
+  },
+  {
+    name: "组织成员页的授权流程指引必须折叠",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    guideBundle(\"授权流程指引\", [renderOrgMembersLifecycleGuide(members)], [\"成员授权流程（6 步）\"]),",
+    to: "    renderOrgMembersLifecycleGuide(members),",
+    expect: "「成员授权流程」要收进默认关闭的折叠块"
+  },
+  {
     name: "智能体页阅读型指引必须默认收起（折叠块默认打开等于没折）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

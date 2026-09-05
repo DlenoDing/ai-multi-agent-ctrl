@@ -2505,6 +2505,13 @@ async function runErrorGuidanceCase() {
       organizationId: "org_default"}, "p1",
     [{accountId: "acct_new", displayName: "待授权成员", accountType: "user_account", status: "active", organizationId: "org_default"}]);
   const projectMembersPanelAt = (title) => projectMembersHtml.indexOf(`<h2>${title}</h2>`);
+  {
+    const bundles = [...projectMembersHtml.matchAll(/<details class="guide-bundle"( open)?>([\s\S]*?)<\/details>/gu)];
+    check("项目成员页的「成员协作流程」要收进默认关闭的折叠块（列表与授权表单留在外面）",
+      bundles.length === 1 && !bundles[0][1] && bundles[0][2].includes("<h2>成员协作流程</h2>")
+        && !bundles[0][2].includes("<h2>项目成员列表</h2>") && !bundles[0][2].includes("<h2>项目成员授权</h2>"),
+      `折叠块 ${bundles.length} 个（默认打开 ${bundles.filter((m) => m[1]).length} 个）—— 成员列表被三层引导推到下面`);
+  }
   check("项目成员权限页要先总览、再看板、再流程、再成员列表、最后授权表单",
     projectMembersPanelAt("成员权限总览") >= 0
       && projectMembersPanelAt("成员权限总览") < projectMembersPanelAt("成员权限操作看板")
@@ -4808,6 +4815,13 @@ function runPendingTruncationCase() {
         && panelAt(membersHtml, "成员授权流程") < panelAt(membersHtml, "成员列表")
         && panelAt(membersHtml, "成员列表") < panelAt(membersHtml, "创建成员"),
       "成员管理页没有把邀请、停用、注销、授权边界和创建入口排成可点击操作看板与流程图");
+    {
+      const bundles = [...membersHtml.matchAll(/<details class="guide-bundle"( open)?>([\s\S]*?)<\/details>/gu)];
+      check("组织成员页的「成员授权流程」要收进默认关闭的折叠块（成员列表与创建表单留在外面）",
+        bundles.length === 1 && !bundles[0][1] && bundles[0][2].includes("<h2>成员授权流程</h2>")
+          && !bundles[0][2].includes("<h2>成员列表</h2>") && !bundles[0][2].includes("<h2>创建成员</h2>"),
+        `折叠块 ${bundles.length} 个（默认打开 ${bundles.filter((m) => m[1]).length} 个）—— 成员列表被三层引导推到下面`);
+    }
     check("成员管理操作看板要提供成员列表、创建成员和说明的跳转入口",
       /data-jump-panel="成员列表"/u.test(membersHtml)
         && /data-jump-panel="创建成员"/u.test(membersHtml)
@@ -5008,33 +5022,19 @@ function runPendingTruncationCase() {
     const noAgentOverviewHtml = String(noAgentOverviewRoot.innerHTML || "").replace(/<!--[\s\S]*?-->/gu, "");
     check("项目概览无节点时必须说清注册脚本来源",
       /进入「项目管理」→「AI 智能体」→「注册 agent」签发加入令牌并复制服务端安装脚本/u.test(noAgentOverviewHtml)
-        && /签发加入令牌、复制服务端安装脚本/u.test(noAgentOverviewHtml)
-        && /远程 MCP 和 Skill 工作集/u.test(noAgentOverviewHtml),
+        && /agent 主机上执行安装命令/u.test(noAgentOverviewHtml),
       "项目概览虽然有 AI 智能体入口，但没有把一次性令牌、服务端安装脚本和 MCP/Skill 生效串成闭环");
-    check("项目概览要先给普通用户一条跨模块操作路径",
-      overviewHtml.indexOf("project-hub wide") >= 0
-        && panelAt(overviewHtml, "项目操作路径") > overviewHtml.indexOf("project-hub wide")
-        && panelAt(overviewHtml, "项目操作路径") < panelAt(overviewHtml, "关键指标")
-        && /1 权限落位/u.test(overviewHtml)
-        && /2 执行准备/u.test(overviewHtml)
-        && /3 任务组织/u.test(overviewHtml)
-        && /4 实时监控/u.test(overviewHtml)
-        && /5 人工介入/u.test(overviewHtml)
-        && /6 控制补充/u.test(overviewHtml)
-        && /7 配置调整/u.test(overviewHtml)
-        && /data-menu="proj-members"/u.test(overviewHtml)
-        && /data-menu="tg"/u.test(overviewHtml)
-        && /data-menu="monitor"/u.test(overviewHtml)
-        && /data-menu="review"/u.test(overviewHtml)
-        && /data-menu="directives"/u.test(overviewHtml)
-        && /data-menu="proj-agents"/u.test(overviewHtml)
-        && /data-menu="proj-settings"/u.test(overviewHtml),
-      "项目概览仍是模块卡片和指标堆叠，没有按权限落位、执行准备、任务组织、监控、人工介入和配置调整给出操作路径");
-    check("项目概览配置调整路径要包含角色 Skill 定制",
-      /7 配置调整/u.test(overviewHtml)
-        && /角色 Skill 定制/u.test(overviewHtml)
-        && /仓库、角色 Skill、规则等配置类调整统一回到项目设置/u.test(overviewHtml),
-      "角色 Skill 定制已经是项目/任务组级配置，但项目概览仍没有把它纳入配置调整路径");
+    // 【项目概览只留一份贯穿的人工路径】。曾同时有顶部「流程导航」与下方「项目操作路径」（7 张卡 + 推荐顺序），
+    // 同一件事两份说法。人定留流程导航；它原先缺的「项目设置（含角色 Skill 定制）」「成员权限」两步并进去。
+    const overviewGuide = (() => { const start = overviewHtml.indexOf("流程导航"); const end = overviewHtml.indexOf("按当前项目实时计算", start); return start >= 0 ? overviewHtml.slice(start, end > start ? end : undefined) : ""; })();
+    check("项目概览只留一份贯穿的人工路径（流程导航），不再另摆「项目操作路径」",
+      panelAt(overviewHtml, "流程导航") >= 0 && panelAt(overviewHtml, "项目操作路径") < 0 && !/推荐顺序：/u.test(overviewHtml),
+      "项目概览同时摆着两份流程指引 —— 人不知道该看哪份");
+    check("流程导航要把项目设置（含角色 Skill 定制）与成员权限纳入路径并能直达",
+      /data-menu="proj-settings"/u.test(overviewGuide) && /角色 Skill 定制/u.test(overviewGuide) && /data-menu="proj-members"/u.test(overviewGuide)
+        && /data-menu="proj-agents"/u.test(overviewGuide) && /data-menu="tg"/u.test(overviewGuide) && /data-menu="monitor"/u.test(overviewGuide)
+        && /data-menu="review"/u.test(overviewGuide) && /data-menu="directives"/u.test(overviewGuide),
+      "撤掉「项目操作路径」后，项目设置 / 成员权限的入口没有并进流程导航 —— 去重变成了删功能");
     check("项目概览要先显示仓库产出归属概览，再保留完整仓库明细表",
       panelAt(overviewHtml, "最新执行事件") >= 0
         && panelAt(overviewHtml, "最新执行事件") < panelAt(overviewHtml, "仓库产出归属概览")

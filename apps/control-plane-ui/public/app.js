@@ -3328,7 +3328,7 @@ function renderOrgMembers() {
   return [
     renderOrgMembersSummary(members),
     renderOrgMembersActionBoard(members),
-    renderOrgMembersLifecycleGuide(members),
+    guideBundle("授权流程指引", [renderOrgMembersLifecycleGuide(members)], ["成员授权流程（6 步）"]),
     panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows,
       {emptyText: listEmptyText("成员列表")}), {wide: true, headerSide: filterInput("按姓名、邮箱过滤…", "members")}),
     renderOrgMemberScopeMatrix(members),
@@ -4425,7 +4425,7 @@ function renderProjectMembers() {
   return [
     renderProjectMembersSummary(project, stats),
     renderProjectMembersActionBoard(project, stats),
-    renderProjectMembersLifecycleGuide(project, stats),
+    guideBundle("协作流程指引", [renderProjectMembersLifecycleGuide(project, stats)], ["成员协作流程（5 步）"]),
     panel("项目成员列表", memberRows
       ? table(["成员", "项目角色", "角色影响"], memberRows)
       : `<div class="notice warn-notice">当前项目还没有成员授权。没有成员角色时，任务组控制、人工审核和 Agent 操作入口会缺少负责人。</div>`, {wide: true}),
@@ -4523,82 +4523,9 @@ function projectHubHtml(project, groups, openGroups, eventsInScope, repoTargets)
   `;
 }
 
-function renderProjectOperationPath(project, groups, openGroups, eventsInScope, repoTargets) {
-  const groupIds = new Set(groups.map((taskGroup) => taskGroup.id));
-  const agentStats = projectAgentStats(project.id);
-  const activeDispatches = (state.agentDispatches || [])
-    .filter((item) => groupIds.has(item.taskGroupId) && ["queued", "running", "blocked"].includes(item.status)).length;
-  const blockedDispatches = (state.agentDispatches || [])
-    .filter((item) => groupIds.has(item.taskGroupId) && item.status === "blocked").length;
-  const todo = pendingForMe();
-  const directives = (state.humanDirectives || [])
-    .filter((item) => groupIds.has(item.taskGroupId) && ["queued", "acknowledged"].includes(item.status)).length;
-  const ruleCount = (project.config?.systemRules || []).length + (project.config?.businessRules || []).length;
-  return panel("项目操作路径", `
-    <div class="module-grid action-grid">
-      ${projectModuleCard({
-        pageId: "proj-members",
-        title: "1 权限落位",
-        metric: `${(project.members || []).length}`,
-        detail: "先确认项目管理员、任务组负责人、评审人和智能体操作员是否已经授权",
-        tone: (project.members || []).length ? "blue" : "orange",
-        action: "看成员"
-      })}
-      ${projectModuleCard({
-        pageId: "proj-agents",
-        title: "2 执行准备",
-        metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : "无节点",
-        detail: agentStats.aliveNodes.length
-          ? "先确认 Agent 在线、准入、远程 MCP 和 Skill 工作集生效"
-          : `先到「项目管理」→「AI 智能体」→「注册 agent」签发加入令牌、复制服务端安装脚本，再确认远程 MCP 和 Skill 工作集生效并核对仓库落点（${repoTargets.length} 条）`,
-        tone: agentStats.onlineNodes ? "green" : "orange",
-        action: "检查 Agent"
-      })}
-      ${projectModuleCard({
-        pageId: "tg",
-        title: "3 任务组织",
-        metric: `${openGroups.length}/${groups.length}`,
-        detail: "管理任务组、目标、角色、工作项和统一语言",
-        tone: openGroups.length ? "blue" : "orange",
-        action: "看任务组"
-      })}
-      ${projectModuleCard({
-        pageId: "monitor",
-        title: "4 实时监控",
-        metric: `${activeDispatches}`,
-        detail: blockedDispatches ? `${blockedDispatches} 个派发被挡，先定位卡点` : "查看派发、会话、节点、事件和关闭门",
-        tone: blockedDispatches ? "red" : activeDispatches ? "blue" : "green",
-        action: "看监控"
-      })}
-      ${projectModuleCard({
-        pageId: "review",
-        title: "5 人工介入",
-        metric: `${todo.total}`,
-        detail: todo.total ? "先处理定稿、授权、审批和发现项" : "暂无等待你处理的审核项",
-        tone: todo.total ? "orange" : "green",
-        action: "看审核"
-      })}
-      ${projectModuleCard({
-        pageId: "directives",
-        title: "6 控制补充",
-        metric: `${directives}`,
-        detail: directives ? "有指令等待消费或确认" : "需要改变执行方向时向总控下达结构化指令",
-        tone: directives ? "orange" : "blue",
-        action: "下指令"
-      })}
-      ${projectModuleCard({
-        pageId: "proj-settings",
-        title: "7 配置调整",
-        metric: `${repoTargets.length}/${ruleCount}`,
-        detail: "维护仓库、基线、默认角色、角色 Skill 定制和规则",
-        tone: repoTargets.length ? "blue" : "orange",
-        action: "改设置"
-      })}
-    </div>
-    <div class="small muted">推荐顺序：先确认成员权限，再确认执行准备，然后组织任务；运行中主要看执行监控，只有需要定稿、授权或改方向时才进入人工审核和人工指令；仓库、角色 Skill、规则等配置类调整统一回到项目设置。</div>
-  `, {wide: true});
-}
-
+// 「项目操作路径」（7 张入口卡片 + 推荐顺序）已撤：与顶部「流程导航」是同一件事的两份说法，人不知道该看哪份。
+// 人定（2026-09-05）：留更符合人工查阅的那份 —— 流程导航按建项目→任务组→任务→agent→启动→审核→复核→指令逐步走，
+// 每步带实时状态、无权说明与直达；它原先缺的「项目设置」「成员权限」两步已并入流程导航。
 function renderRepositoryOutputOverview(repoTargets) {
   const repoIds = new Set(repoTargets.map((target) => target.repositoryId || "-"));
   const effectiveTargets = repoTargets.filter((target) => !["superseded", "rejected"].includes(target.status));
@@ -4653,7 +4580,21 @@ function workflowGuidePanel(project, groups) {
   const openBarriers = (state.closeBarriers || []).filter((item) => groupIds.has(item.taskGroupId) && (item.blockers || []).length).length;
   const visible = new Set(menuForCurrentSection(perspectiveOf(currentAccount), page).filter((item) => item.id).map((item) => item.id));
   const go = (id) => visible.has(id) ? `<button class="secondary-button" data-menu="${esc(id)}">前往</button>` : "";
+  // 「项目操作路径」并入后的两步：仓库没配时 agent 的产出没有落点；选了凭证模式却没填密钥的仓库要点名（配了等于没配）。
+  const repos = project.config?.repositories || project.repositories || [];
+  const credentialMissing = repos.filter((repo) => {
+    const mode = repo.credentialMode || repo.credential?.mode || "none";
+    return mode !== "none" && !(repo.credential?.passwordSet || repo.credential?.apiKeySet || repo.credential?.sealedSecret);
+  }).length;
+  const ruleCount = (project.config?.systemRules || []).length + (project.config?.businessRules || []).length;
+  const members = (project.members || []).length;
   const steps = [
+    {title: "项目设置（仓库与凭证 / 规则 / 默认角色 / 角色 Skill 定制）", done: repos.length > 0 && !credentialMissing, attention: credentialMissing > 0, page: "proj-settings",
+      state: repos.length
+        ? `${repos.length} 个仓库 · ${ruleCount} 条规则${credentialMissing ? `；其中 ${credentialMissing} 个仓库选了凭证模式但从没填过密钥 —— 配了等于没配，去填并点「测试连接」` : ""}`
+        : "还没配仓库：agent 的产出没有落点，先添加仓库并填凭证"},
+    {title: "成员权限", done: members > 0, page: "proj-members",
+      state: members ? `${members} 位成员；审核 / 任务组控制权限按具体任务组授予` : "还没有成员授权：项目管理员、评审人在这里授予"},
     {title: "接入 AI 智能体", done: online > 0, page: "proj-agents",
       state: online
         ? `${online} 台在线${offline ? `，另 ${offline} 台离线` : ""}`
@@ -4750,7 +4691,6 @@ function renderProjectOverview() {
     cellsWaitingWithNoAgentNotice(groups),
     wipCapacityNotice(groups),
     projectHubHtml(project, groups, openGroups, eventsInScope, repoTargets),
-    renderProjectOperationPath(project, groups, openGroups, eventsInScope, repoTargets),
     panel(`项目进度 · ${esc(project.name)}`, `
       <div class="stack">
         ${progressLine(project.progress?.percent)}
