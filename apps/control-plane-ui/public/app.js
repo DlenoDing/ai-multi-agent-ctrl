@@ -2635,7 +2635,7 @@ function renderSysAccountsLifecycleGuide() {
       ${jumpModuleCard({
         title: "5 Agent 档案",
         metric: `${activeAgents}/${agents.length}`,
-        detail: "编排角色档案决定总控可激活的角色，不等于某台执行节点已注册",
+        detail: "编排角色档案决定总控可激活的角色，不等于某台 agent 节点已注册",
         panelTitle: "编排智能体档案",
         tone: activeAgents ? "blue" : "gray",
         action: "看档案"
@@ -2994,7 +2994,7 @@ function renderJoinTokenSection(options = {}) {
   return `
     <div class="stack">
       ${options.context === "project"
-        ? `<div class="notice">执行节点通过一次性加入令牌注册到当前项目。服务端集中托管 MCP 与技能同步，agent 端只运行注册脚本和执行器。</div>`
+        ? `<div class="notice">agent 节点通过一次性加入令牌注册到当前项目。服务端集中托管 MCP 与技能同步，agent 端只运行注册脚本和执行器。</div>`
         : ""}
       <form class="form-grid" data-form="join-token">
         <div class="form-row-inline">
@@ -3071,7 +3071,7 @@ function renderOrgOverview() {
       })}
       ${projectModuleCard({
         pageId: "org-agents",
-        title: "2 Agent 节点",
+        title: "2 agent 节点",
         metric: aliveNodes.length ? `${onlineNodes}/${aliveNodes.length}` : "无节点",
         detail: aliveNodes.length ? "查看在线率、自检、加入令牌和吊销" : "新增 agent 先进入目标项目注册",
         action: "管理节点",
@@ -3094,7 +3094,7 @@ function renderOrgOverview() {
         tone: projects.length ? "blue" : "gray"
       })}
     </div>
-    <div class="small muted">推荐顺序：先把成员权限和 Agent 节点准备好，再创建项目并授权；进入项目空间后由总控自动拆分、派发和监控任务。</div>
+    <div class="small muted">推荐顺序：先把成员权限和 agent 节点准备好，再创建项目并授权；进入项目空间后由总控自动拆分、派发和监控任务。</div>
   `, {wide: true});
 
   return [
@@ -3110,7 +3110,7 @@ function renderOrgOverview() {
           return archived ? `<div class="small muted">另有 ${archived} 个已归档，不计入配额</div>` : "";
         })()}</div>
         <div class="metric"><span>进行中的任务组</span><strong>${openTaskGroups.length}${countSuffix("taskGroups")}</strong></div>
-        <div class="metric"><span>在线智能体节点</span><strong>${(() => {
+        <div class="metric"><span>在线 agent 节点</span><strong>${(() => {
           // 分母原先是"表里所有行"，把已吊销的也算了进去 —— 同一屏上配额那格明说了
           // "已吊销不计入配额"，两个分母各算各的，人对不上。已吊销的节点不再参与任何事，
           // 它不该出现在"在线 X/Y"的 Y 里。
@@ -3535,7 +3535,7 @@ function renderOrgAgentsBoundaryGuide() {
         title: "组织节点总览",
         metric: "组织",
         detail: "这里看全组织 agent 节点、健康度、负载和吊销",
-        panelTitle: "智能体节点",
+        panelTitle: "agent 节点",
         tone: "blue",
         action: "看节点"
       })}
@@ -3600,7 +3600,7 @@ function renderProjectAgentRegistrationFlow(project, nodes) {
         title: "4 自动自检",
         metric: "MCP",
         detail: "agent 自动注册、自检并维护远程 MCP 配置",
-        panelTitle: "项目智能体节点",
+        panelTitle: "项目 agent 节点",
         tone: "gray",
         action: "等回报"
       })}
@@ -3608,7 +3608,7 @@ function renderProjectAgentRegistrationFlow(project, nodes) {
         title: "5 确认可用",
         metric: `${stats.onlineNodes}/${stats.aliveNodes.length}`,
         detail: "回到节点列表确认在线、准入和健康度",
-        panelTitle: "项目智能体节点",
+        panelTitle: "项目 agent 节点",
         tone: stats.onlineNodes ? "green" : "orange",
         action: "看节点"
       })}
@@ -3636,7 +3636,7 @@ function renderProjectAgentExecutionLoop(project, nodes) {
         title: "2 轻量 Runtime",
         metric: stats.aliveNodes.length || "未接入",
         detail: "Agent 主机只跑 Runtime：注册、自检、领活、写仓库，不启动本地 MCP、数据库或 Skill Registry",
-        panelTitle: "项目智能体节点",
+        panelTitle: "项目 agent 节点",
         tone: stats.aliveNodes.length ? "green" : "gray",
         action: "看节点"
       })}
@@ -3644,7 +3644,7 @@ function renderProjectAgentExecutionLoop(project, nodes) {
         title: "3 远程能力",
         metric: "MCP/Skill",
         detail: "Runtime 访问控制面公网 /mcp，并按派发下载总控指定的最小 Skill 工作集",
-        panelTitle: "项目智能体节点",
+        panelTitle: "项目 agent 节点",
         tone: "blue",
         action: "看自检"
       })}
@@ -3672,13 +3672,13 @@ function renderProjectAgentExecutionLoop(project, nodes) {
 function renderProjectAgentNodeGovernanceGuide(project, nodes) {
   const stats = projectAgentStats(project.id, nodes);
   const availableNodes = stats.aliveNodes.filter((node) => node.status === "online" && node.admission === "full").length;
-  return panel("Agent 节点处置流程", `
+  return panel("agent 节点处置流程", `
     <div class="module-grid action-grid">
       ${jumpModuleCard({
         title: "1 判断可派发",
         metric: `${availableNodes}/${stats.aliveNodes.length}`,
         detail: "先确认在线且准入为完整的节点数量，不足时先恢复节点或注册新 agent",
-        panelTitle: "项目智能体节点",
+        panelTitle: "项目 agent 节点",
         tone: availableNodes ? "green" : stats.aliveNodes.length ? "orange" : "red",
         action: "看节点"
       })}
@@ -3686,7 +3686,7 @@ function renderProjectAgentNodeGovernanceGuide(project, nodes) {
         title: "2 离线恢复",
         metric: stats.abnormalNodes,
         detail: stats.abnormalNodes ? "离线先恢复目标 agent 主机、Runtime 进程和心跳，再刷新自检" : "当前没有异常节点；离线先恢复目标 agent 主机、Runtime 进程和心跳",
-        panelTitle: "项目智能体节点",
+        panelTitle: "项目 agent 节点",
         tone: stats.abnormalNodes ? "orange" : "green",
         action: "定位"
       })}
@@ -3694,7 +3694,7 @@ function renderProjectAgentNodeGovernanceGuide(project, nodes) {
         title: "3 刷新自检",
         metric: "profile",
         detail: "执行器、远程 MCP、文件系统或 Git 能力修好后，点节点行“刷新自检”重新上报",
-        panelTitle: "项目智能体节点",
+        panelTitle: "项目 agent 节点",
         tone: "blue",
         action: "看按钮"
       })}
@@ -3710,7 +3710,7 @@ function renderProjectAgentNodeGovernanceGuide(project, nodes) {
         title: "5 暂停恢复",
         metric: "控制",
         detail: "暂停、恢复和关停在节点行执行，用于冻结后续领活或让节点排空退出",
-        panelTitle: "项目智能体节点",
+        panelTitle: "项目 agent 节点",
         tone: "blue",
         action: "看控制"
       })}
@@ -3718,7 +3718,7 @@ function renderProjectAgentNodeGovernanceGuide(project, nodes) {
         title: "6 吊销切断",
         metric: "凭据",
         detail: "吊销或立即切断会废止节点令牌和 MCP grant，属于高影响动作",
-        panelTitle: "项目智能体节点",
+        panelTitle: "项目 agent 节点",
         tone: "red",
         action: "看风险"
       })}
@@ -3738,7 +3738,7 @@ function renderOrgAgentsSummary(nodes) {
       ${summaryMetric("待用加入令牌", stats.liveTokens, "可注册到本组织项目的令牌")}
       ${summaryMetric("异常节点", stats.abnormalNodes, "离线、非健康或需排查的节点")}
     </div>
-    <div class="small muted">查看顺序：先看节点在线率和异常节点，再在“智能体节点”里暂停、恢复、关停或吊销；新增机器从目标项目的「项目管理」→「AI 智能体」→「注册 agent」签发一次性令牌，本页只做组织范围令牌审计。</div>
+    <div class="small muted">查看顺序：先看节点在线率和异常节点，再在“agent 节点”里暂停、恢复、关停或吊销；新增机器从目标项目的「项目管理」→「AI 智能体」→「注册 agent」签发一次性令牌，本页只做组织范围令牌审计。</div>
   `, {wide: true});
 }
 
@@ -3750,7 +3750,7 @@ function renderOrgAgentsActionBoard(nodes) {
         title: "在线节点",
         metric: `${stats.onlineNodes}/${stats.aliveNodes.length}`,
         detail: "可接收控制面派发",
-        panelTitle: "智能体节点",
+        panelTitle: "agent 节点",
         tone: stats.onlineNodes ? "green" : "orange",
         action: "查看节点"
       })}
@@ -3758,7 +3758,7 @@ function renderOrgAgentsActionBoard(nodes) {
         title: "异常节点",
         metric: `${stats.abnormalNodes}`,
         detail: stats.abnormalNodes ? "离线、非健康或需排查" : "当前没有异常节点",
-        panelTitle: "智能体节点",
+        panelTitle: "agent 节点",
         tone: stats.abnormalNodes ? "red" : "green",
         action: "定位异常"
       })}
@@ -3766,7 +3766,7 @@ function renderOrgAgentsActionBoard(nodes) {
         title: "忙碌节点",
         metric: `${stats.busyNodes}`,
         detail: "当前正在承载任务",
-        panelTitle: "智能体节点",
+        panelTitle: "agent 节点",
         tone: stats.busyNodes ? "blue" : "gray",
         action: "查看负载"
       })}
@@ -3774,7 +3774,7 @@ function renderOrgAgentsActionBoard(nodes) {
         title: "当前任务",
         metric: `${stats.runningDispatches}`,
         detail: "节点正在执行的派发数量",
-        panelTitle: "智能体节点",
+        panelTitle: "agent 节点",
         tone: stats.runningDispatches ? "blue" : "green",
         action: "查看任务"
       })}
@@ -3807,7 +3807,7 @@ function renderOrgAgentsLifecycleGuide(nodes) {
         title: "1 看在线率",
         metric: `${stats.onlineNodes}/${stats.aliveNodes.length}`,
         detail: "先判断组织内是否有可接收派发的节点，再看异常和负载",
-        panelTitle: "智能体节点",
+        panelTitle: "agent 节点",
         tone: stats.onlineNodes ? "green" : "orange",
         action: "看节点"
       })}
@@ -3815,7 +3815,7 @@ function renderOrgAgentsLifecycleGuide(nodes) {
         title: "2 定位异常",
         metric: stats.abnormalNodes,
         detail: stats.abnormalNodes ? "离线、非健康或自检缺项先定位节点，再决定恢复或吊销" : "当前没有异常节点；离线、非健康或自检缺项先定位节点",
-        panelTitle: "智能体节点",
+        panelTitle: "agent 节点",
         tone: stats.abnormalNodes ? "red" : "green",
         action: "定位"
       })}
@@ -3847,7 +3847,7 @@ function renderOrgAgentsLifecycleGuide(nodes) {
         title: "6 节点处置",
         metric: "控制",
         detail: "暂停、恢复、关停、吊销和立即切断都在节点列表按单节点执行",
-        panelTitle: "智能体节点",
+        panelTitle: "agent 节点",
         tone: "blue",
         action: "看控制"
       })}
@@ -3882,7 +3882,7 @@ function renderOrgAgents() {
           </div>
         `).join("")}
       </div>
-    ` : `<div class="notice">当前组织暂无智能体节点。新增 agent 请进入目标项目的「AI 智能体」页签发一次性加入令牌。</div>`;
+    ` : `<div class="notice">当前组织暂无 agent 节点。新增 agent 请进入目标项目的「AI 智能体」页签发一次性加入令牌。</div>`;
   } else {
     const nodeRows = nodes.map((node) => row([
       `<span class="hover-wrap"><strong>${esc(node.nodeName || node.nodeId)}</strong>${agentHoverPop(node)}</span><div class="small muted mono">${esc(node.nodeId)}</div>`,
@@ -3894,7 +3894,7 @@ function renderOrgAgents() {
       agentActions(node)
     ])).join("");
     bodyHtml = table(["名称", "运行状态", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"],
-      nodeRows, {emptyText: listEmptyText("智能体节点")});
+      nodeRows, {emptyText: listEmptyText("agent 节点")});
   }
 
   return [
@@ -3904,13 +3904,13 @@ function renderOrgAgents() {
     renderOrgAgentsLifecycleGuide(nodes),
     panel("组织级 Agent 档案", `
       <div class="stack">
-        <div class="notice">组织级 Agent 是可被本组织内项目调配的角色能力档案，不等于已经在线的运行时节点。节点注册仍需要进入具体项目签发一次性加入令牌。</div>
+        <div class="notice">组织级 Agent 是可被本组织内项目调配的角色能力档案，不等于已经在线的 agent 节点。节点注册仍需要进入具体项目签发一次性加入令牌。</div>
         ${table(["档案", "角色", "默认模型", "作用域", "状态", {label: "信任分", c: "num"}, "Skill", "操作"],
           agentProfileRows(scopedAgents), {emptyText: "当前组织还没有组织级 Agent 档案。可先创建通用角色档案，项目特殊角色再到项目页创建。"})}
         ${renderAgentProfileForm({title: "创建组织级 Agent 档案", readOnly: !hasPerm("agent:activate")})}
       </div>
     `, {wide: true, headerSide: filterInput("按档案、角色、模型过滤…", "org-agent-profiles")}),
-    panel("智能体节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "org-nodes")}${toggle}`}),
+    panel("agent 节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "org-nodes")}${toggle}`}),
     panel("加入令牌审计", renderJoinTokenSection({auditOnly: true, context: "org"}), {wide: true})
   ].join("");
 }
@@ -3954,7 +3954,7 @@ function renderProjectAgentsActionBoard(project, nodes) {
         title: "项目节点",
         metric: `${stats.onlineNodes}/${stats.aliveNodes.length}`,
         detail: stats.aliveNodes.length ? "查看当前项目可用节点" : "当前项目还没有节点",
-        panelTitle: "项目智能体节点",
+        panelTitle: "项目 agent 节点",
         tone: stats.onlineNodes ? "green" : stats.aliveNodes.length ? "orange" : "gray",
         action: "查看节点"
       })}
@@ -3962,7 +3962,7 @@ function renderProjectAgentsActionBoard(project, nodes) {
         title: "异常节点",
         metric: `${stats.abnormalNodes}`,
         detail: stats.abnormalNodes ? "需要排查或吊销" : "当前项目没有异常节点",
-        panelTitle: "项目智能体节点",
+        panelTitle: "项目 agent 节点",
         tone: stats.abnormalNodes ? "red" : "green",
         action: "定位异常"
       })}
@@ -4003,7 +4003,7 @@ function renderProjectAgentScriptHub(project, nodes) {
         title: "3 确认节点自检",
         metric: `${stats.onlineNodes}/${stats.aliveNodes.length}`,
         detail: "脚本执行后回到节点列表确认在线、准入、远程 MCP 和 Skill 工作集",
-        panelTitle: "项目智能体节点",
+        panelTitle: "项目 agent 节点",
         tone: stats.onlineNodes ? "green" : stats.aliveNodes.length ? "orange" : "gray",
         action: "看节点"
       })}
@@ -4056,7 +4056,7 @@ function renderProjectAgents() {
       : `<div class="notice warn-notice">当前项目还没有任何 agent 节点。要让任务实际执行，请在下面“注册 agent”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 agent 主机执行。</div>`;
   const bodyHtml = agentViewMode === "cards"
     ? projectAgentCards(nodes, canControlNodes, {showDanger: !preferOrgGovernance})
-    : table(["名称", "运行状态", "准入", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"], nodeRows, {emptyText: "当前项目暂无智能体节点"});
+    : table(["名称", "运行状态", "准入", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"], nodeRows, {emptyText: "当前项目暂无 agent 节点"});
   // 真实产出读下来：这一页在节点列表前曾堆了总览 + 看板 + 四组流程指引（共 20 步），节点列表与注册表单被推到最底下。
   // 阅读型的三组指引默认收起（内容一字不少，摘要写明里面有什么）；可操作的「注册与脚本操作台」保持可见；面板顺序不变。
   return [
@@ -4065,7 +4065,7 @@ function renderProjectAgents() {
     guideBundle("接入前先读", [renderProjectAgentRegistrationFlow(project, nodes)], ["Agent 注册流程（5 步）"]),
     renderProjectAgentScriptHub(project, nodes),
     guideBundle("运行与处置指引", [renderProjectAgentExecutionLoop(project, nodes), renderProjectAgentNodeGovernanceGuide(project, nodes)],
-      ["Agent 接入与运行闭环（5 步）", "Agent 节点处置流程（6 步）"]),
+      ["Agent 接入与运行闭环（5 步）", "agent 节点处置流程（6 步）"]),
     panel("可调配 Agent 档案", `
       <div class="stack">
         <div class="notice">任务组执行时，总控可在当前项目级 Agent 和本组织级 Agent 中选择合适角色；项目级档案只服务当前项目，组织级档案可跨本组织项目复用。</div>
@@ -4074,7 +4074,7 @@ function renderProjectAgents() {
         ${renderAgentProfileForm({projectId: project.id, title: "创建项目级 Agent 档案", readOnly: !hasPerm("agent:activate")})}
       </div>
     `, {wide: true, headerSide: filterInput("按档案、角色、模型过滤…", "project-agent-profiles")}),
-    panel("项目智能体节点", `<div class="stack">${nodeNotice}${bodyHtml}</div>`,
+    panel("项目 agent 节点", `<div class="stack">${nodeNotice}${bodyHtml}</div>`,
       {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "project-nodes")}${toggle}`}),
     panel("注册 agent", renderJoinTokenSection({projectId: project.id, context: "project"}), {wide: true})
   ].join("");
@@ -5905,8 +5905,8 @@ const BLOCKER_GUIDE = {
   ReviewBundle: "在本页下方「阻塞项人工处置」收尾评审包",
   SharedDefinitionContract: "在本页下方「阻塞项人工处置」处置共享定义契约",
   ExecutionTopology: "在本页下方「阻塞项人工处置」终止卡住的执行方案",
-  WorkSession: "执行中的会话：等它结束，或在「运行时节点」上取消对应派发",
-  AgentDispatch: "执行中的派发：等它结束，或在「运行时节点」上取消它",
+  WorkSession: "执行中的会话：等它结束，或在「agent 节点」上取消对应派发",
+  AgentDispatch: "执行中的派发：等它结束，或在「agent 节点」上取消它",
   Lease: "随持有它的会话一起释放：处理掉那个会话即可，无需单独操作",
   RoleDriftGuard: "随对应会话终结自动关闭：处理掉那个会话即可，无需单独操作",
 
@@ -6095,7 +6095,7 @@ function agentNodeManagementPath({needMoreCapacity = false, registeredNodeCount 
   if (hasRegisteredNodes) {
     return `${canManageProjectAgents ? directRefresh : askRefresh}；${governance}`;
   }
-  return `${canManageProjectAgents ? directRegister : askRegister}；agent 上线后回到${projectAgentPage}的「项目智能体节点」确认在线`;
+  return `${canManageProjectAgents ? directRegister : askRegister}；agent 上线后回到${projectAgentPage}的「项目 agent 节点」确认在线`;
 }
 
 // 派发排着队、会话挂着 active，但一个能干活的 agent 都没有 —— 这时控制台看上去一片繁忙，
@@ -7030,9 +7030,9 @@ function renderMonitorActionBoard({
   const nodeMetric = nodes.length ? `${abnormalNodes}/${nodes.length}` : "0";
   const nodeDetail = nodes.length
     ? (abnormalNodes
-      ? "存在离线、心跳过旧、自检缺项或运行时过旧节点；先恢复 agent 主机/进程心跳，能力修好后到「项目管理」→「AI 智能体」→「项目智能体节点」点「刷新自检」"
+      ? "存在离线、心跳过旧、自检缺项或运行时过旧节点；先恢复 agent 主机/进程心跳，能力修好后到「项目管理」→「AI 智能体」→「项目 agent 节点」点「刷新自检」"
       : "可见节点当前正常")
-    : "当前项目没有可见运行时节点；先到「项目管理」→「AI 智能体」→「注册 agent」签发加入令牌并复制服务端安装脚本";
+    : "当前项目没有可见 agent 节点；先到「项目管理」→「AI 智能体」→「注册 agent」签发加入令牌并复制服务端安装脚本";
   const nodeTone = nodes.length ? (abnormalNodes ? "orange" : "green") : "gray";
   const orchestrator = state.runtime?.autonomousOrchestrator || {};
   const orchestratorIssues = Number(orchestrator.consecutiveErrors || 0);
@@ -7075,7 +7075,7 @@ function renderMonitorActionBoard({
       title: "节点",
       metric: nodeMetric,
       detail: nodeDetail,
-      panelTitle: "运行时节点",
+      panelTitle: "agent 节点",
       tone: nodeTone
     }),
     monitorActionCard({
@@ -7126,10 +7126,10 @@ function renderMonitorRealtimeGuide({eventsShown, sessionsAll, dispatchesAll, co
         action: "看命令"
       })}
       ${jumpModuleCard({
-        title: "4 运行节点",
+        title: "4 agent 节点",
         metric: `${onlineNodes}/${nodes.length}`,
         detail: "节点只报告自身 Runtime 状态；远程 MCP、Skill 工作集和任务控制都由服务端统一调度",
-        panelTitle: "运行时节点",
+        panelTitle: "agent 节点",
         tone: onlineNodes ? "green" : nodes.length ? "orange" : "gray",
         action: "看节点"
       })}
@@ -7516,7 +7516,7 @@ function renderMonitor() {
         ? table(["条目", "命令", "作用对象", "原因", "状态", {label: "更新时间", c: "nowrap"}, "处置"], dlqRows)
         : `<div class="small muted">没有待处置的死信条目。命令重试超限时才会在这里出现，非终态会挡住任务组关闭。</div>`, {wide: true});
     })(),
-    panel("运行时节点", table(["节点", "状态", "准入", {label: "最近心跳", c: "nowrap"}, "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…", "runtime-nodes")}),
+    panel("agent 节点", table(["节点", "状态", "准入", {label: "最近心跳", c: "nowrap"}, "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…", "runtime-nodes")}),
     panel("模型选择记录", table(["角色", "工作项", "模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText(decisionsInScope.length, 10, "modelSelectionDecisions")})),
     panel("会话放置记录", table(["工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态"], placements, {moreText: moreText(placementsInScope.length, 10, "sessionPlacementDecisions")})),
     panel("准入决策", table(["工作项", "判定", "分类", {label: "原因", c: "text-clip"}], admissions, {moreText: moreText(admissionsInScope.length, 12, "admissionDecisions")}), {wide: true}),
@@ -7900,7 +7900,7 @@ function renderProjectSettingsActionBoard(project, repos, baselineData, defaultR
         action: "查看规则"
       })}
     </div>
-    <div class="small muted">处理顺序：本页先确认产出仓库、默认角色与规则；Agent 节点和注册脚本到「AI 智能体」页处理。看板只使用本页已加载数据，不额外请求接口。</div>
+    <div class="small muted">处理顺序：本页先确认产出仓库、默认角色与规则；agent 节点和注册脚本到「AI 智能体」页处理。看板只使用本页已加载数据，不额外请求接口。</div>
   `, {wide: true});
 }
 
@@ -7947,12 +7947,12 @@ function renderProjectSettingsBoundaryGuide(project, repos, baselineData, defaul
         pageId: "proj-agents",
         title: "Agent 接入",
         metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : "项目页",
-        detail: "Agent 节点、注册脚本和远程 MCP 确认不在本页处理，进入「项目管理」→「AI 智能体」",
+        detail: "agent 节点、注册脚本和远程 MCP 确认不在本页处理，进入「项目管理」→「AI 智能体」",
         tone: agentStats.onlineNodes ? "green" : "orange",
         action: "去注册"
       })}
     </div>
-    <div class="small muted">职责分区：项目设置只维护会影响派发和产出落地的配置；运行节点、一次性加入令牌、安装脚本、远程 MCP 和 Skill 工作集生效确认统一进入「项目管理」→「AI 智能体」。</div>
+    <div class="small muted">职责分区：项目设置只维护会影响派发和产出落地的配置；agent 节点、一次性加入令牌、安装脚本、远程 MCP 和 Skill 工作集生效确认统一进入「项目管理」→「AI 智能体」。</div>
   `, {wide: true});
 }
 
@@ -8135,7 +8135,7 @@ function renderProjectSettings() {
           tone: agentStats.onlineNodes ? "green" : "orange"
         })}
       </div>
-      <div class="small muted">这里不再承载注册表单，避免仓库/规则配置与运行节点管理混在一起。</div>
+      <div class="small muted">这里不再承载注册表单，避免仓库/规则配置与 agent 节点管理混在一起。</div>
     `, {wide: true}),
     panel("角色 Skill 定制", `
       <div class="notice">项目级定制会影响本项目后续派发中匹配该角色 Skill 的 agent；任务组里的特殊要求请在对应任务组详情里创建。服务端会把生效 overlay 写进任务契约和下发给 agent 的 Skill 工作集。</div>
@@ -9066,7 +9066,7 @@ document.addEventListener("click", async (event) => {
       const agent = (state.agents || []).find((item) => item.id === target.dataset.agent);
       if (agent?.status === "active" && !(await confirmDialog({title: "停用智能体", message: "确认停用该智能体档案？",
         // 这里最容易被误解成"把跑着的 agent 停了"。档案与运行中的节点是两回事，必须说破。
-        sub: "停用的是这份档案：该角色的新工作会改落到其它启用中的档案。它不会让正在运行的智能体节点停下来 ——要让节点停，切到「组织管理」后打开 AI 智能体，用「关停节点」或「立即切断」（本页管的是档案，不是节点）。随时可以再启用。",
+        sub: "停用的是这份档案：该角色的新工作会改落到其它启用中的档案。它不会让正在运行的 agent 节点停下来 ——要让节点停，切到「组织管理」后打开 AI 智能体，用「关停节点」或「立即切断」（本页管的是档案，不是节点）。随时可以再启用。",
         danger: true, confirmText: "停用"}))) return;
       await api(`/api/agents/${encodeURIComponent(target.dataset.agent)}/activate`, {method: "POST", body: JSON.stringify({active: agent?.status !== "active"})});
       await loadPage();
@@ -9119,8 +9119,8 @@ document.addEventListener("click", async (event) => {
       // 排了一条撤销命令，节点在 ACK 之前仍然通过认证。界面报告了比实际更强的结果，运维会以为
       // 已经断开。文案必须说出真实发生的事，以及它什么时候才会真的生效。
       if (!(await confirmDialog({
-        title: "吊销智能体节点",
-        message: "确认吊销该智能体节点？",
+        title: "吊销 agent 节点",
+        message: "确认吊销该 agent 节点？",
         sub: "节点会收到撤销指令，交回运行中的任务后离线。它的凭据在此期间仍然有效（它需要凭据才能确认这条指令）；若在期限内没有确认，凭据会被自动作废。已知节点失陷时请改用「立即切断」。",
         danger: true, confirmText: "吊销"
       }))) return;

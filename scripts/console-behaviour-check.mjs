@@ -1360,7 +1360,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         && /角色回退/u.test(settingsHtml)
         && /执行规则/u.test(settingsHtml)
         && /Agent 接入/u.test(settingsHtml)
-        && /Agent 节点、注册脚本和远程 MCP 确认不在本页处理/u.test(settingsHtml)
+        && /agent 节点、注册脚本和远程 MCP 确认不在本页处理/u.test(settingsHtml)
         && /一次性加入令牌.+安装脚本.+远程 MCP/u.test(settingsHtml)
         && /项目管理.+AI 智能体/u.test(settingsHtml),
       "项目设置页仍把配置、规则和 Agent 接入混成一个长页面，没有先给普通用户职责分区");
@@ -1377,7 +1377,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
       "项目设置页没有把配置如何进入任务组、agent 执行和监控回看讲成流程");
     check("项目设置里的 Agent 入口要说明注册脚本只来自项目 AI 智能体页",
       /注册脚本只在签发成功弹窗显示|需要新节点时进入「AI 智能体」→「注册 agent」签发/u.test(settingsHtml)
-        && /Agent 节点、注册脚本和远程 MCP 确认不在本页处理/u.test(settingsHtml),
+        && /agent 节点、注册脚本和远程 MCP 确认不在本页处理/u.test(settingsHtml),
       "项目设置仍像 Agent 注册页的附属表单，用户会继续在这里找注册脚本");
     check("项目设置操作看板要提供能直接跳到各配置模块的入口",
       /data-jump-panel="项目基础配置"/u.test(settingsHtml)
@@ -2674,7 +2674,7 @@ async function runErrorGuidanceCase() {
   // 接线：三张【由独立接口取数】的表都要用它。少了这条，helper 写了没人用照样全绿。
   const appSrc2 = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
   const wired = (appSrc2.match(/listEmptyText\(/gu) || []).length;
-  check("三张独立取数的表都要接上（组织 / 成员 / 智能体节点）",
+  check("三张独立取数的表都要接上（组织 / 成员 / agent 节点）",
     wired >= 4,
     `listEmptyText 只被用了 ${wired - 1} 处（定义之外，应为 3）—— 有表还在说"暂无数据"`);
 }
@@ -4626,7 +4626,7 @@ function runPendingTruncationCase() {
         && /项目、任务组和系统资源授权先审计/u.test(accountHtml)
         && /服务账号只用于系统和 agent runtime 服务身份/u.test(accountHtml)
         && /项目加入令牌到项目 AI 智能体页签发/u.test(accountHtml)
-        && /不等于某台执行节点已注册/u.test(accountHtml)
+        && /不等于某台 agent 节点已注册/u.test(accountHtml)
         && /真正让用户或 agent 参与某个项目/u.test(accountHtml)
         && /data-jump-panel="智能体入网审计"/u.test(accountHtml)
         && /data-jump-panel="编排智能体档案"/u.test(accountHtml)
@@ -4807,7 +4807,7 @@ function runPendingTruncationCase() {
         && /远程 MCP、Skill 工作集和任务控制都由服务端统一调度/u.test(monitorHtml)
         && /总控和监测角色通过服务端状态及时纠偏/u.test(monitorHtml)
         && /data-jump-panel="控制通道"/u.test(monitorHtml)
-        && /data-jump-panel="运行时节点"/u.test(monitorHtml),
+        && /data-jump-panel="agent 节点"/u.test(monitorHtml),
       "执行监控页仍然只堆明细表，没有解释事件流、控制通道、节点和关闭门之间的实时链路");
     const monitorNoNodeState = structuredClone(overviewState);
     monitorNoNodeState.agentRuntimeNodes = [];
@@ -4821,8 +4821,8 @@ function runPendingTruncationCase() {
     const monitorAbnormalHtml = probe.renderMonitorWith(monitorAbnormalState, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
     check("执行监控异常节点卡片必须指向项目智能体刷新自检",
       /先恢复 agent 主机\/进程心跳/u.test(monitorAbnormalHtml)
-        && /项目管理.+AI 智能体.+项目智能体节点.+刷新自检/u.test(monitorAbnormalHtml)
-        && /data-jump-panel="运行时节点"/u.test(monitorAbnormalHtml),
+        && /项目管理.+AI 智能体.+项目 agent 节点.+刷新自检/u.test(monitorAbnormalHtml)
+        && /data-jump-panel="agent 节点"/u.test(monitorAbnormalHtml),
       "监控页能看到异常节点，却没有把用户带回真实的项目节点自检操作");
     const sysSettingsHtml = probe.renderSysSettingsWith(overviewState, {sharedDefinitions: [{contractId: "def_1", definitionType: "api_contract", canonicalOwnerRole: "integration_owner", producerRole: "architect", status: "active"}]}).replace(/<!--[\s\S]*?-->/gu, "");
     check("系统设置页先显示总览，再显示运行参数",
@@ -4904,11 +4904,11 @@ function runPendingTruncationCase() {
         && panelAt(agentsHtml, "智能体运行总览") < panelAt(agentsHtml, "智能体治理操作看板")
         && panelAt(agentsHtml, "智能体治理操作看板") < panelAt(agentsHtml, "智能体管理边界")
         && panelAt(agentsHtml, "智能体管理边界") < panelAt(agentsHtml, "组织 Agent 治理流程")
-        && panelAt(agentsHtml, "组织 Agent 治理流程") < panelAt(agentsHtml, "智能体节点")
-        && panelAt(agentsHtml, "智能体节点") < panelAt(agentsHtml, "加入令牌审计"),
+        && panelAt(agentsHtml, "组织 Agent 治理流程") < panelAt(agentsHtml, "agent 节点")
+        && panelAt(agentsHtml, "agent 节点") < panelAt(agentsHtml, "加入令牌审计"),
       "AI 智能体页没有把在线率、异常节点、负载、令牌审计和组织/项目边界排成可点击操作看板");
     check("组织 AI 智能体治理看板要提供节点、令牌审计和项目注册跳转入口",
-      /data-jump-panel="智能体节点"/u.test(agentsHtml)
+      /data-jump-panel="agent 节点"/u.test(agentsHtml)
         && /data-jump-panel="加入令牌审计"/u.test(agentsHtml)
         && /data-menu="proj-agents"/u.test(agentsHtml)
         && /进入后先用顶部项目选择器确认目标项目/u.test(agentsHtml)
@@ -4926,7 +4926,7 @@ function runPendingTruncationCase() {
         && /data-menu="proj-agents"/u.test(agentsHtml)
         && /data-menu="monitor"/u.test(agentsHtml),
       "组织 AI 智能体页没有按节点治理和项目注册分工形成流程");
-    check("组织 AI 智能体节点操作要提供刷新自检入口",
+    check("组织 AI agent 节点操作要提供刷新自检入口",
       /data-command="refresh_profile"/u.test(agentsHtml) && /刷新自检/u.test(agentsHtml),
       "阻塞处置提示会要求到组织 AI 智能体页刷新自检，但节点行没有这个按钮");
     check("组织 AI 智能体危险按钮不能粘连成一段",
@@ -4951,9 +4951,9 @@ function runPendingTruncationCase() {
         && panelAt(projectAgentHtml, "项目智能体操作看板") < panelAt(projectAgentHtml, "Agent 注册流程")
         && panelAt(projectAgentHtml, "Agent 注册流程") < panelAt(projectAgentHtml, "注册与脚本操作台")
         && panelAt(projectAgentHtml, "注册与脚本操作台") < panelAt(projectAgentHtml, "Agent 接入与运行闭环")
-        && panelAt(projectAgentHtml, "Agent 接入与运行闭环") < panelAt(projectAgentHtml, "Agent 节点处置流程")
-        && panelAt(projectAgentHtml, "Agent 节点处置流程") < panelAt(projectAgentHtml, "项目智能体节点")
-        && panelAt(projectAgentHtml, "项目智能体节点") < panelAt(projectAgentHtml, "注册 agent"),
+        && panelAt(projectAgentHtml, "Agent 接入与运行闭环") < panelAt(projectAgentHtml, "agent 节点处置流程")
+        && panelAt(projectAgentHtml, "agent 节点处置流程") < panelAt(projectAgentHtml, "项目 agent 节点")
+        && panelAt(projectAgentHtml, "项目 agent 节点") < panelAt(projectAgentHtml, "注册 agent"),
       "项目级智能体入口仍可能藏在项目设置里，项目负责人不能直接按项目查看节点、注册流程、运行闭环和注册脚本");
     check("项目 AI 智能体页要在节点长表前提供注册与脚本操作台",
       /注册与脚本操作台/u.test(projectAgentScriptHubHtml)
@@ -4970,9 +4970,9 @@ function runPendingTruncationCase() {
         && /服务端 Gateway、远程 MCP 和最小 Skill 工作集/u.test(projectAgentScriptHubHtml)
         && /模型输出摘要和控制 ACK/u.test(projectAgentScriptHubHtml)
         && /data-jump-panel="注册 agent"/u.test(projectAgentScriptHubHtml)
-        && /data-jump-panel="项目智能体节点"/u.test(projectAgentScriptHubHtml)
+        && /data-jump-panel="项目 agent 节点"/u.test(projectAgentScriptHubHtml)
         && /data-menu="monitor"/u.test(projectAgentScriptHubHtml)
-        && panelAt(projectAgentHtml, "注册与脚本操作台") < panelAt(projectAgentHtml, "项目智能体节点"),
+        && panelAt(projectAgentHtml, "注册与脚本操作台") < panelAt(projectAgentHtml, "项目 agent 节点"),
       "项目 AI 智能体页仍没有把生成注册脚本、节点自检和实时监控入口做成节点长表前的操作台");
     // 【阅读型指引默认收起】：真实产出读下来这一页在节点列表前堆了四组流程指引（20 步）。三组阅读型的收进
     // 默认关闭的折叠块（内容仍在、摘要说明里面有什么），可操作的「注册与脚本操作台」与节点列表必须留在折叠块外。
@@ -4981,15 +4981,15 @@ function runPendingTruncationCase() {
       const inBundle = (title) => bundles.some((m) => m[2].includes(`<h2>${title}</h2>`));
       check("项目 AI 智能体页的三组阅读型指引要收进默认关闭的折叠块",
         bundles.length === 2 && bundles.every((m) => !m[1])
-          && inBundle("Agent 注册流程") && inBundle("Agent 接入与运行闭环") && inBundle("Agent 节点处置流程"),
+          && inBundle("Agent 注册流程") && inBundle("Agent 接入与运行闭环") && inBundle("agent 节点处置流程"),
         `折叠块 ${bundles.length} 个（默认打开 ${bundles.filter((m) => m[1]).length} 个）；注册流程/运行闭环/处置流程在折叠块里：`
-          + `${["Agent 注册流程", "Agent 接入与运行闭环", "Agent 节点处置流程"].map(inBundle).join("/")} —— 节点列表又被推到几屏之下`);
-      check("可操作的「注册与脚本操作台」与「项目智能体节点」不许被折叠起来",
-        !inBundle("注册与脚本操作台") && !inBundle("项目智能体节点") && !inBundle("注册 agent"),
+          + `${["Agent 注册流程", "Agent 接入与运行闭环", "agent 节点处置流程"].map(inBundle).join("/")} —— 节点列表又被推到几屏之下`);
+      check("可操作的「注册与脚本操作台」与「项目 agent 节点」不许被折叠起来",
+        !inBundle("注册与脚本操作台") && !inBundle("项目 agent 节点") && !inBundle("注册 agent"),
         "第一次接入用的操作台或节点列表被收进折叠块 —— 人得先猜再点");
       check("折叠块摘要要说明里面有哪几组、默认收起",
         bundles.length === 2 && /Agent 注册流程（5 步）[\s\S]*默认收起/u.test(projectAgentHtml)
-          && /Agent 接入与运行闭环（5 步） · Agent 节点处置流程（6 步）[\s\S]*默认收起/u.test(projectAgentHtml),
+          && /Agent 接入与运行闭环（5 步） · agent 节点处置流程（6 步）[\s\S]*默认收起/u.test(projectAgentHtml),
         "折叠块摘要没说清里面是什么");
       check("Agent 档案表的默认模型预设要显示与创建表单一致的中文（不是原始码 auto_best）",
         /自动最优<div class="small muted mono">auto_best<\/div>/u.test(projectAgentHtml),
@@ -5015,7 +5015,7 @@ function runPendingTruncationCase() {
         && /data-menu="monitor"/u.test(projectAgentHtml),
       "项目智能体页仍只讲安装步骤，没有把集中 MCP、Skill 工作集、实时回送和服务端控制画成闭环");
     check("项目 AI 智能体页要把节点查看、离线恢复、自检、监控和高影响控制串成处置流程",
-      /Agent 节点处置流程/u.test(projectAgentHtml)
+      /agent 节点处置流程/u.test(projectAgentHtml)
         && /先确认在线且准入为完整的节点数量/u.test(projectAgentHtml)
         && /离线先恢复目标 agent 主机、Runtime 进程和心跳/u.test(projectAgentHtml)
         && /执行器、远程 MCP、文件系统或 Git 能力修好后/u.test(projectAgentHtml)
@@ -5024,7 +5024,7 @@ function runPendingTruncationCase() {
         && /暂停、恢复和关停在节点行执行/u.test(projectAgentHtml)
         && /吊销或立即切断会废止节点令牌和 MCP grant/u.test(projectAgentHtml)
         && /重新注册只用于新 agent 接入/u.test(projectAgentHtml)
-        && /data-jump-panel="项目智能体节点"/u.test(projectAgentHtml)
+        && /data-jump-panel="项目 agent 节点"/u.test(projectAgentHtml)
         && /data-menu="monitor"/u.test(projectAgentHtml),
       "项目 AI 智能体页没有把注册完成后的节点治理做成普通用户能顺着处理的流程");
     check("项目 AI 智能体页要说明加入令牌命令只显示一次且不能从列表还原",
@@ -5056,7 +5056,7 @@ function runPendingTruncationCase() {
         && !/data-action="force-revoke-agent-node"/u.test(orgProjectAgentHtml)
         && /吊销和立即切断在「组织管理」→「AI 智能体」处理/u.test(orgProjectAgentHtml),
       "组织管理员已有组织级智能体治理页，项目页再放吊销/立即切断会弱化职责边界");
-    check("项目 AI 智能体节点危险按钮不能粘连成一段",
+    check("项目 AI agent 节点危险按钮不能粘连成一段",
       !/吊销立即切断/u.test(projectAgentHtml) && !/吊销立即切断/u.test(projectAgentCardsHtml),
       "项目节点操作区把「吊销」和「立即切断」粘在一起，危险操作边界不清晰");
     const projectOverviewRoot = el("div");
@@ -5141,7 +5141,7 @@ function runPendingTruncationCase() {
       "组织概览仍像只读报表，组织管理员看完指标后不知道该先管成员、节点、项目还是进入项目执行");
     check("组织概览操作路径要覆盖成员、Agent、项目和项目执行四个入口",
       /1 成员与权限/u.test(orgOverviewHtml)
-        && /2 Agent 节点/u.test(orgOverviewHtml)
+        && /2 agent 节点/u.test(orgOverviewHtml)
         && /3 项目与授权/u.test(orgOverviewHtml)
         && /4 项目执行/u.test(orgOverviewHtml)
         && /data-menu="org-members"/u.test(orgOverviewHtml)
@@ -5945,7 +5945,7 @@ function runSelfCheckReasonCase() {
     "没有原因可说时仍然渲染了一块空内容");
 
   // 上面两条只证明判据本身对，证明不了它长在人看得见的那一行上 —— 把渲染里那次调用删掉，
-  // 它们照样全绿。运行时节点表才是人真正看这件事的地方。
+  // 它们照样全绿。agent 节点表才是人真正看这件事的地方。
   const html = probe.renderMonitorWith({
     projects: [{id: "p_a", name: "甲项目", organizationId: "org_default", status: "active"}],
     taskGroups: [{id: "tg_a", projectId: "p_a", name: "甲组"}],
@@ -5954,7 +5954,7 @@ function runSelfCheckReasonCase() {
       selfCheckFailures: [{checkId: "gateway", detail: "http://ctl.example — connect ECONNREFUSED 10.0.0.9:443"}]}],
     closeBarriers: [], qualityGates: [], testResults: [], checkpoints: [], executionTopologies: []
   }, {accountId: "acct_a", accountType: "org_admin"}, "p_a");
-  check("原因长在运行时节点表上",
+  check("原因长在 agent 节点表上",
     html.includes("自检未通过") && html.includes("ECONNREFUSED"),
     "节点表上只写了自检未通过、没写原因 —— 判据写好了却没接到人看得见的地方");
 }
@@ -6062,7 +6062,7 @@ function runHeartbeatHintCase() {
       "p1", "monitor");
     const nodeText = String(nodeRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
     if (!/僵尸节点/u.test(nodeText)) {
-      check("心跳超时的节点行要渲染出来", false, "这一屏没渲染出运行时节点表 —— 下面几条什么也没验");
+      check("心跳超时的节点行要渲染出来", false, "这一屏没渲染出 agent 节点表 —— 下面几条什么也没验");
     } else {
       const row = nodeText.slice(nodeText.indexOf("僵尸节点"), nodeText.indexOf("僵尸节点") + 260);
       check("心跳早就超时的节点，行上不许还写着「在线」",
@@ -7423,9 +7423,9 @@ await runCodedApiErrorCase();
     text: async () => JSON.stringify(orgState)});
   await probe.loadWithFetch(orgState, orgAdmin, "", "org-overview", overviewFetch);
   const overviewHtml = String(overviewRoot.innerHTML || "");
-  // 同一屏上另一处分母：「在线智能体节点 X/Y」原先把已吊销的也算进 Y，
+  // 同一屏上另一处分母：「在线 agent 节点 X/Y」原先把已吊销的也算进 Y，
   // 而旁边那格明说"已吊销不计入配额" —— 两个分母各算各的。
-  const fleetCell = overviewHtml.slice(overviewHtml.indexOf("在线智能体节点"), overviewHtml.indexOf("在线智能体节点") + 220);
+  const fleetCell = overviewHtml.slice(overviewHtml.indexOf("在线 agent 节点"), overviewHtml.indexOf("在线 agent 节点") + 220);
   check("在线节点的分母不含已吊销的（与旁边那格配额同口径）",
     fleetCell.includes(">1/1<") || /1\/1/.test(fleetCell.replace(/<[^>]+>/gu, "")),
     fleetCell.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 120));

@@ -204,7 +204,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 | `AIMAC_ORG_DEFAULT_MAX_MEMBERS` | `50` | 新组织的成员配额缺省（下限 1，更小的值按它生效） | 组织管理员可在「组织管理」页改 |
 | `AIMAC_ORG_DEFAULT_MAX_PROJECTS` | `20` | 新组织的项目配额缺省（下限 1，更小的值按它生效） | 同上 |
 | `AIMAC_ORG_DEFAULT_MAX_TASK_GROUPS` | `200` | 新组织的任务组配额缺省（下限 1，更小的值按它生效） | 同上 |
-| `AIMAC_ORG_DEFAULT_MAX_AGENTS` | `100` | 新组织的智能体节点配额缺省（节点＋未用掉的加入令牌一起算） | 同上 |
+| `AIMAC_ORG_DEFAULT_MAX_AGENTS` | `100` | 新组织的 agent 节点配额缺省（节点＋未用掉的加入令牌一起算） | 同上 |
 | `AIMAC_PG_POOL_MAX` | `10` | PostgreSQL 连接池上限 | 并发写多时排队 |
 | `AIMAC_PG_POOL_IDLE_MS` | `30000` | 空闲连接回收时间 | — |
 | `AIMAC_PG_POOL_CONNECT_TIMEOUT_MS` | `10000` | 建连超时 | 数据库不可达时多久报错 |

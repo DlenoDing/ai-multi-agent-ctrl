@@ -63,7 +63,7 @@
     instructionMetrics: "指令度量", modelSelectionPolicies: "模型选型策略",
     accessGrants: "访问授权", accounts: "账号", admissionDecisions: "准入判决", agentControlCommands: "控制指令",
     agentDispatches: "派发", agentExecutionEvents: "执行事件", agentJoinTokens: "加入令牌",
-    agentRuntimeNodes: "智能体节点", agents: "编排智能体", approvalRequests: "审批请求", auditLog: "审计台账",
+    agentRuntimeNodes: "agent 节点", agents: "编排智能体", approvalRequests: "审批请求", auditLog: "审计台账",
     artifacts: "产物", checkpoints: "检查点", closeBarriers: "关闭屏障", executionTopologies: "执行拓扑", findings: "评审发现",
     humanConfirmationRequests: "人工确认", humanDirectives: "人工指令", modelCapabilities: "模型能力",
     modelSelectionDecisions: "模型选择", organizations: "组织", permissionRequests: "授权请求", projects: "项目",

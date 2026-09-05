@@ -3394,7 +3394,7 @@ try {
       throw new Error(`造不出外租户加入令牌（HTTP ${foreignJoinToken.response.status} `
         + `${JSON.stringify(foreignJoinToken.payload)}）—— 那条路由的存在性探针会一直空转`);
     }
-    // 再把它兑成一个真实的运行节点：不注册的话 agent-nodes 那两条路由永远没样本。
+    // 再把它兑成一个真实的 agent 节点：不注册的话 agent-nodes 那两条路由永远没样本。
     const foreignNode = await jsonFetch(port, "/api/agent/v1/register", {
       method: "POST",
       headers: {authorization: `Bearer ${foreignJoinToken.payload.joinToken}`},
@@ -3402,7 +3402,7 @@ try {
         runtimeVersion: "doctor", profile: {tools: [], models: [{providerClass: "custom", adapter: "doctor", available: true}]}})
     });
     if (foreignNode.response.status !== 201) {
-      throw new Error(`造不出外租户运行节点（HTTP ${foreignNode.response.status} `
+      throw new Error(`造不出外租户 agent 节点（HTTP ${foreignNode.response.status} `
         + `${JSON.stringify(foreignNode.payload)}）—— agent-nodes 两条路由的存在性探针会一直空转`);
     }
     const wide = await jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: systemAuth}});
