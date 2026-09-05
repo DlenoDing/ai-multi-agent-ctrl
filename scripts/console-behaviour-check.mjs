@@ -2806,6 +2806,7 @@ async function runErrorGuidanceCase() {
       && !/<select name="projectId">/u.test(String(projectMembersHtml).slice(projectMembersPanelAt("项目成员授权"))),
     "项目内授权表单仍允许在同一页切到别的项目，用户以为在当前项目授权但实际可能提交到别处");
   const styles = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/styles.css"), "utf8");
+  const workspaceStyles = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/workspaces.css"), "utf8");
   check("侧栏空间名要有明确 brand-section 类，不许再靠 .brand span 误伤图形标识",
     /<span class="brand-section">/u.test(systemNav)
       && !/\.brand span\b/u.test(styles),
@@ -2825,7 +2826,7 @@ async function runErrorGuidanceCase() {
     /@media \(max-width: 860px\)[\s\S]*\.sidebar \{ width: 100%; flex: none;/u.test(styles),
     "桌面侧栏加宽后，移动端没有明确改回 100%，390px 首屏可能被固定宽度撑开");
   check("移动端不得隐藏当前任务对象",
-    !/@media \(max-width: 860px\)[\s\S]*\.sidebar-work-card \{ display: none; \}/u.test(styles),
+    !/@media \(max-width: 860px\)[\s\S]*\.sidebar-work-card \{ display: none; \}/u.test(workspaceStyles),
     "深链接恢复到了任务，但窄屏侧栏把当前任务整块隐藏，用户只看得到上级任务组");
   check("菜单待办徽标不可收缩，长标题或未来新增入口不能把数字压扁",
     /\.nav-badge \{[^}]*flex:\s*0\s+0\s+auto/u.test(styles),
