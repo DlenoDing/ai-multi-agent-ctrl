@@ -1,0 +1,23 @@
+.task-group-object { min-width: 0; }
+.task-group-object-header { display: flex; justify-content: space-between; gap: 24px; padding: 16px 0; border-bottom: 1px solid var(--card-border); }
+.task-group-object-header > div:first-child { min-width: 0; flex: 1; }
+.task-group-object-header h2 { font-size: 20px; margin: 14px 0 8px; overflow-wrap: anywhere; }
+.task-group-object-header .record-meta { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; }
+.task-group-object-objective { font-size: 14px; margin: 12px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-group-object-progress { flex: 0 1 260px; min-width: 160px; align-self: center; }
+.task-group-object-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 0; }
+.task-group-object-actions .button-row { display: contents; }
+.task-run-trace { display: grid; gap: 12px; }
+.task-run > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; cursor: pointer; padding: 12px 0; list-style: none; }
+.task-run > summary::before { content: "+"; width: 16px; flex: 0 0 16px; font-weight: 700; }
+.task-run[open] > summary::before { content: "-"; }
+.task-run-summary-meta { display: flex; flex-wrap: wrap; gap: 8px; color: var(--text-sub); font-size: 12px; overflow-wrap: anywhere; }
+.task-run-body { border-left: 2px solid #a8b9cc; padding: 4px 0 8px 14px; margin-left: 7px; min-width: 0; }
+.task-run-events { margin-top: 12px; }
+.task-run-events > summary { cursor: pointer; font-size: 13px; }
+@media (max-width: 700px) {
+  .task-group-object-header { flex-direction: column; gap: 12px; }
+  .task-group-object-progress { flex: 1; align-self: stretch; }
+  .task-group-object-header h2 { font-size: 18px; }
+  .task-run-summary-meta { width: 100%; padding-left: 24px; }
+}

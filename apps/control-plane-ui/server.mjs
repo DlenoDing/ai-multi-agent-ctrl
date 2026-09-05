@@ -1910,6 +1910,7 @@ function cachedScopedState(state, account, session) {
 const embeddedWorkItemCap = clampEnvNumber(process.env.AIMAC_VIEW_EMBEDDED_WORK_ITEM_CAP, 5, 20);
 // 明细页（/api/task-groups/:id/progress）比列表视图需要多得多的工作项，但也不能不设上限。
 const progressWorkItemCap = clampEnvNumber(process.env.AIMAC_PROGRESS_WORK_ITEM_CAP, 20, 300);
+const progressHumanGuidanceCap = 20;
 
 // 只写一处：视图基底与各视角的字段清单都会产出 taskGroups，分别写一遍的话，
 // 后写的那次会把前一次的截断【覆盖掉】——实测就是这么漏的（tasks 视角照旧 89KB）。
@@ -4092,6 +4093,15 @@ async function handleApi(req, res) {
     }
     json(res, 200, {
       taskGroupId: taskGroup.id,
+      taskGroup: {id: taskGroup.id, projectId: taskGroup.projectId, name: taskGroup.name, objective: taskGroup.objective,
+        status: taskGroup.status, phase: taskGroup.phase, health: taskGroup.health, progress: taskGroup.progress,
+        goalExecutionStatus: taskGroup.goalExecutionStatus, pauseReason: taskGroup.pauseReason,
+        createdAt: taskGroup.createdAt, updatedAt: taskGroup.updatedAt, languagePolicy: taskGroup.languagePolicy,
+        roleCount: (taskGroup.roles || []).length, workItemCount: (taskGroup.workItems || []).length,
+        humanGuidance: newestWindow(taskGroup.humanGuidance, progressHumanGuidanceCap),
+        humanGuidanceTotal: (taskGroup.humanGuidance || []).length, humanGuidanceDroppedCount: taskGroup.humanGuidanceDroppedCount || 0,
+        canControl: hasTaskGroupPermission(state, reader.account, taskGroup, "task_group:control"),
+        canReview: hasTaskGroupPermission(state, reader.account, taskGroup, "task_group:review")},
       phase: taskGroup.phase,
       progress: taskGroup.progress,
       health: taskGroup.health,

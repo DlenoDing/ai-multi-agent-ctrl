@@ -9,13 +9,13 @@
     }).sort((a, b) => String(b.work.createdAt || "").localeCompare(String(a.work.createdAt || "")) || String(b.work.id).localeCompare(String(a.work.id)));
   }
 
-  function render({groups, detail, state, selected, pageData, workDetail, pageNumber = 1, eventHistory = false, eventPage = 1, loading = false, query = "", status = "", helpers: h}) {
+  function render({groups, detail, state, selected, pageData, workDetail, pageNumber = 1, eventHistory = false, eventPage = 1, loading = false, query = "", status = "", disclosure = {}, helpers: h}) {
     const all = pageData ? (pageData.workItems || []).map((work) => ({work,
       group: groups.find((item) => item.id === work.taskGroupId) || {id: work.taskGroupId, name: work.taskGroupName}})) : itemsFor(groups, detail);
     const picked = selected?.workItemId && workDetail?.workItem?.id === selected.workItemId && workDetail?.taskGroup?.id === selected?.taskGroupId
       ? {group: workDetail.taskGroup, work: workDetail.workItem}
       : all.find(({group, work}) => group.id === selected?.taskGroupId && work.id === selected?.workItemId);
-    if (selected?.workItemId && picked) return renderDetail(picked, state, h, workDetail || {}, eventHistory, eventPage);
+    if (selected?.workItemId && picked) return renderDetail(picked, state, h, workDetail || {}, eventHistory, eventPage, disclosure);
     const needle = query.trim().toLocaleLowerCase();
     const visible = pageData ? all : all.filter(({group, work}) => (!status || work.status === status)
       && (!needle || [work.title, work.id, group.name, work.ownerRole].join(" ").toLocaleLowerCase().includes(needle)));
@@ -38,19 +38,29 @@
         <span class="small muted">第 ${pageNumber} 页 · 本页 ${visible.length} 项</span><button class="secondary-button" data-task-page="next"${loading || !pageData.hasMore ? " disabled" : ""}>下一页</button></div>` : ""}</div>`;
   }
 
-  function renderDetail({group, work}, state, h, eventInfo, eventHistory, eventPage) {
+  function renderDetail({group, work}, state, h, eventInfo, eventHistory, eventPage, disclosure) {
     const runs = (state.agentDispatches || []).filter((run) => run.taskGroupId === group.id && run.workItemId === work.id)
-      .slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+      .slice().sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")) || String(a.dispatchId).localeCompare(String(b.dispatchId)));
     const nodeNames = new Map((state.agentRuntimeNodes || []).map((node) => [node.nodeId, node.nodeName || node.nodeId]));
+    const sessions = new Map((state.workSessions || []).map((session) => [session.sessionId, session]));
+    const agents = new Map((state.agents || []).map((agent) => [agent.id, agent]));
+    const eventsByRun = new Map();
+    for (const event of state.agentExecutionEvents || []) {
+      if (!eventsByRun.has(event.dispatchId)) eventsByRun.set(event.dispatchId, []);
+      eventsByRun.get(event.dispatchId).push(event);
+    }
     const histories = runs.map((run, index) => {
-      const session = (state.workSessions || []).find((item) => item.sessionId === run.sessionId);
-      const logical = (state.agents || []).find((item) => item.id === session?.agentId);
-      const events = (state.agentExecutionEvents || []).filter((event) => event.dispatchId === run.dispatchId)
-        .slice().sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+      const session = sessions.get(run.sessionId);
+      const logical = agents.get(session?.agentId);
+      const events = (eventsByRun.get(run.dispatchId) || []).slice().sort((a, b) =>
+        Number(a.sequence || 0) && Number(b.sequence || 0) ? Number(a.sequence) - Number(b.sequence) : String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
       const returned = h.isTerminalDispatch(run.status);
-      const stages = [["建立派发", true], ["节点认领", Boolean(run.assignedNodeId)], ["执行任务", Boolean(run.claimedAt || events.some((event) => event.eventType === "executor_started") || returned)], ["过程回送", events.length > 0], ["检查点", run.status === "completed"]];
-      return `<section class="task-run"><h3>第 ${runs.length - index} 次执行 ${h.badge(run.status)}</h3>
-        <ol class="execution-stages">${stages.map(([label, done]) => `<li class="${done ? "done" : returned ? "attention" : ""}">${esc(label)}</li>`).join("")}</ol>
+      const executed = run.status === "completed" || events.some((event) => ["executor_started", "executor_output", "checkpoint_submitted"].includes(event.eventType));
+      const stages = [["建立派发", true], ["节点认领", Boolean(run.assignedNodeId || run.claimedAt)], ["执行任务", executed], ["过程回送", Boolean(events.length || run.lastExecutionEventAt)], ["检查点", run.status === "completed"]];
+      const open = disclosure[run.dispatchId] ?? (!returned || index === runs.length - 1);
+      return `<details class="task-run"${open ? " open" : ""}><summary data-run-disclosure="${esc(run.dispatchId)}"><strong>第 ${index + 1} 次执行</strong> ${h.badge(run.status)}
+        <span class="task-run-summary-meta"><span>${esc(h.t(run.roleId || work.ownerRole))}</span><span>${esc(nodeNames.get(run.assignedNodeId) || run.assignedNodeId || "等待认领")}</span><span>${esc(run.model || "未指定模型")}</span><span>${h.fmtTime(run.createdAt)}</span></span></summary>
+        <div class="task-run-body"><ol class="execution-stages">${stages.map(([label, done]) => `<li class="${done ? "done" : returned ? "attention" : ""}">${esc(label)}</li>`).join("")}</ol>
         <dl class="kv-list"><dt>运行节点</dt><dd>${esc(nodeNames.get(run.assignedNodeId) || run.assignedNodeId || "等待认领")}</dd>
           <dt>角色档案</dt><dd>${esc(logical?.name || logical?.id || session?.agentId || "未记录")}</dd>
           <dt>执行角色</dt><dd>${esc(h.t(run.roleId || work.ownerRole))}</dd>
@@ -64,8 +74,8 @@
           <button class="secondary-button" data-action="show-dispatch-events" data-event-mode="history" data-dispatch-id="${esc(run.dispatchId)}">历史执行记录</button>
           <button class="secondary-button" data-action="show-dispatch-rules" data-dispatch-id="${esc(run.dispatchId)}">本次执行规则</button></div>
         ${h.dispatchRuleSummaries[run.dispatchId] ? h.ruleSummaryHtml(h.dispatchRuleSummaries[run.dispatchId]) : ""}
-        ${events.length ? `<ol class="task-requirements">${events.map((event) => `<li><span class="small muted">${h.fmtTime(event.createdAt)}</span> ${esc(h.t(event.eventType))}：${esc(event.summary || "")}</li>`).join("")}</ol>` : ""}
-      </section>`;
+        ${events.length ? `<details class="task-run-events"${disclosure[`${run.dispatchId}:events`] ? " open" : ""}><summary data-run-disclosure="${esc(run.dispatchId)}:events">执行记录（${events.length} 条）</summary><ol class="task-requirements">${events.map((event) => `<li><span class="small muted">${h.fmtTime(event.createdAt)}</span> ${esc(h.t(event.eventType))}：${esc(event.summary || "")}</li>`).join("")}</ol></details>` : ""}
+      </div></details>`;
     }).join("");
     const runIds = new Set(runs.map((run) => run.dispatchId));
     const archivedEvents = (state.agentExecutionEvents || []).filter((event) => event.taskGroupId === group.id && event.workItemId === work.id && !runIds.has(event.dispatchId));
@@ -86,7 +96,7 @@
         </form></details>` : ""}
       <section><h3>执行过程</h3><div class="button-row"><button class="${eventHistory ? "secondary-button" : "primary-button"}" data-work-event-mode="live">最新记录</button><button class="${eventHistory ? "primary-button" : "secondary-button"}" data-work-event-mode="history">完整历史</button></div>
         <div class="small muted">${eventInfo.eventTotalExact === true && typeof eventInfo.eventCount === "number" ? `当前查询共 ${eventInfo.eventCount} 条记录` : "近期记录窗口"} · 本页 ${eventInfo.returnedEventCount ?? (eventInfo.events || []).length} 条${eventInfo.historyTruncated ? " · 含未显示的历史" : ""}</div>
-        ${histories || (archivedEvents.length ? "" : `<div class="notice">当前没有可展示的派发记录。${esc(h.t(work.status))}</div>`)}
+        <div class="task-run-trace">${histories || (archivedEvents.length ? "" : `<div class="notice">当前没有可展示的派发记录。${esc(h.t(work.status))}</div>`)}</div>
         ${archivedEvents.length ? `<div class="notice">以下事件的派发快照已不在当前运行态，历史事件仍保留。</div><ol class="task-requirements">${archivedEvents.map((event) => `<li>${h.fmtTime(event.createdAt)} · <code>${esc(event.dispatchId)}</code> · ${esc(h.t(event.eventType))}：${esc(event.summary || "")}</li>`).join("")}</ol>` : ""}
         ${eventHistory ? `<div class="button-row"><button class="secondary-button" data-work-event-page="previous"${eventPage <= 1 ? " disabled" : ""}>上一页</button><span class="small muted">第 ${eventPage} 页</span><button class="secondary-button" data-work-event-page="next"${eventInfo.hasMoreEvents ? "" : " disabled"}>下一页</button></div>` : ""}</section>
       <section><h3>结果与证据</h3>${h.workItemResultHtml(group.id, work.id)}</section></div>`;

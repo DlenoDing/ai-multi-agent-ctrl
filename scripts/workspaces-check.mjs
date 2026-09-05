@@ -42,7 +42,9 @@ function loadPublicModules() {
     "modules/labels.js",
     "modules/ui-config.js",
     "modules/workspaces.js",
+    "modules/workspace-location.js",
     "modules/object-workspace.js",
+    "modules/task-group-workspace.js",
     "modules/task-workbench.js"
   ]) {
     vm.runInContext(readPublic(file), context, {filename: file});
@@ -65,6 +67,21 @@ const context = loadPublicModules();
 const workspaces = context.AIMAC_WORKSPACES || context.window.AIMAC_WORKSPACES;
 const taskWorkbench = context.AIMAC_TASK_WORKBENCH || context.window.AIMAC_TASK_WORKBENCH;
 const uiConfig = context.AIMAC_CONSOLE_UI_CONFIG || context.window.AIMAC_CONSOLE_UI_CONFIG;
+const locations = context.AIMAC_WORKSPACE_LOCATION;
+{
+  const longCursor = "c".repeat(4096);
+  const snapshot = {version: 1, accountId: "a1", projectId: "p1", page: "tasks", groupId: "g1", workId: "w1", workspace: "list", cursor: longCursor, stack: Array.from({length: 100}, (_, index) => `cursor-${index}`), token: "DO_NOT_STORE_TOKEN", objective: "DO_NOT_STORE_BODY"};
+  check("workspace location saves whitelisted state", locations.save(snapshot));
+  const restored = locations.read("a1");
+  check("workspace location preserves task identity and full cursor history", restored?.workId === "w1" && restored.groupId === "g1" && restored.projectId === "p1" && restored.cursor === longCursor && restored.stack.length === 100);
+  check("workspace location excludes credentials and task bodies", !JSON.stringify(restored).includes("DO_NOT_STORE"));
+  check("workspace location does not restore across accounts", locations.read("a2") === null);
+  locations.clear();
+  check("workspace location clear removes previous identity", locations.read("a1") === null);
+  context.sessionStorage.setItem("aimac.workspace-location", "{broken");
+  check("invalid local location is ignored without breaking the UI", locations.read("a1") === null);
+  locations.clear();
+}
 
 check("workspaces module is loaded", !!workspaces && typeof workspaces.run === "function");
 check("task workbench module is loaded", !!taskWorkbench && typeof taskWorkbench.render === "function");
@@ -75,7 +92,7 @@ check("object breadcrumb retains all identity levels and real navigation actions
 const maliciousTrail = objectWorkspace.trail({organization: {name: '<script>alert(1)</script>'}, pageLabel: "概览", returnTask: {title: '\" onclick=\"alert(1)'}});
 check("breadcrumb labels and return titles are escaped", !maliciousTrail.includes("<script>") && maliciousTrail.includes("&quot; onclick=&quot;"), maliciousTrail);
 workspaces.select("org-members", "list");
-check("member list does not duplicate its own primary create action in generic heading", !workspaces.heading("org-members").includes('data-workspace="create"'));
+check("generic workspace heading never duplicates create/register navigation", !workspaces.heading("org-members").includes("data-workspace") && !workspaces.heading("proj-agents").includes("data-workspace"));
 check("member direct permission editor only offers project creation",
   JSON.stringify(uiConfig?.MEMBER_PERMISSION_OPTIONS || []) === JSON.stringify([["project:create", "允许创建项目"]]),
   JSON.stringify(uiConfig?.MEMBER_PERMISSION_OPTIONS || []));
@@ -188,11 +205,11 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
     const shownHeading = workspaces.heading(page, {canCreate: true});
     check(`${page} hides create/register workspace affordances when canCreate is false`,
       !String(hiddenNav).includes(`data-workspace="${createPane}"`)
-        && !String(hiddenHeading).includes(`data-workspace="${createPane}"`),
+        && !String(hiddenHeading).includes("data-workspace"),
       `nav=${hiddenNav}; heading=${hiddenHeading}`);
     check(`${page} keeps create/register workspace affordances when canCreate is true`,
       String(shownNav).includes(`data-workspace="${createPane}"`)
-        && String(shownHeading).includes(`data-workspace="${createPane}"`),
+        && !String(shownHeading).includes("data-workspace"),
       `nav=${shownNav}; heading=${shownHeading}`);
   }
 }
@@ -292,6 +309,17 @@ const helpers = {
   check("task workbench asks the supplied helper for terminal dispatch state",
     terminalDispatchLookups.includes("completed"),
     `helper calls: ${terminalDispatchLookups.join(", ") || "(none)"}`);
+  const runState = {agentDispatches: [
+    {dispatchId: "second", taskGroupId: "g1", workItemId: "w_new", status: "failed", createdAt: "2026-09-05T00:00:00Z", roleId: "qa", model: "model-b"},
+    {dispatchId: "first", taskGroupId: "g1", workItemId: "w_new", status: "completed", createdAt: "2026-09-04T00:00:00Z", roleId: "agent-runtime", model: "model-a"}
+  ], agentExecutionEvents: [], agents: [], workSessions: []};
+  const runHtml = taskWorkbench.render({groups, state: runState, selected: {taskGroupId: "g1", workItemId: "w_new"}, disclosure: {first: true, second: false}, helpers});
+  check("execution trace is chronological and each attempt remains independently addressable", runHtml.indexOf('data-run-disclosure="first"') < runHtml.indexOf('data-run-disclosure="second"'));
+  check("execution trace retains explicit expand/collapse choices", /<details class="task-run" open><summary data-run-disclosure="first"/u.test(runHtml) && /<details class="task-run"><summary data-run-disclosure="second"/u.test(runHtml));
+  const failedRun = runHtml.slice(runHtml.indexOf('data-run-disclosure="second"'));
+  check("a failed-before-start attempt is not marked as executed", !/<li class="done">执行任务<\/li>/u.test(failedRun));
+  const queuedRun = taskWorkbench.render({groups, state: {...runState, agentDispatches: [runState.agentDispatches[0]], agentExecutionEvents: [{dispatchId: "second", eventType: "executor_started", sequence: 2, createdAt: "2026-09-05T01:00:00Z"}]}, selected: {taskGroupId: "g1", workItemId: "w_new"}, helpers});
+  check("executor evidence marks the execution stage reached even when the run fails later", /<li class="done">执行任务<\/li>/u.test(queuedRun));
 }
 
 {
@@ -344,7 +372,7 @@ const helpers = {
       && /clearSession\(\)/u.test(apiBlock),
     "old 401 responses must not logout a newer session");
   check("workspaceOptions gates create/register panes for task groups, tasks and project agents",
-    /workspaces\.navigation\(page, true, workspaceOptions\(\)\)/u.test(renderContentBlock)
+    /workspaces\.navigation\(groupDetail \? "group-detail" : page, true, workspaceOptions\(\)\)/u.test(renderContentBlock)
       && /workspaces\.heading\(page, workspaceOptions\(\)\)/u.test(renderContentBlock)
       && /page === "tg" \? hasProjectPermission\("task_group:control"\)/u.test(workspaceOptionsBlock)
       && /page === "tasks" \? hasPerm\("task_group:control"\)/u.test(workspaceOptionsBlock)

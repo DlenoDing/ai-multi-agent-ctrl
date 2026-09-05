@@ -32,7 +32,9 @@ const consoleModuleFiles = [
   "modules/ui-config.js",
   "modules/ui-primitives.js",
   "modules/workspaces.js",
+  "modules/workspace-location.js",
   "modules/object-workspace.js",
+  "modules/task-group-workspace.js",
   "modules/task-workbench.js"
 ];
 
@@ -205,6 +207,8 @@ function makeContext(documentRoot) {
   const noop = () => {};
   const context = {
     console,
+    URL,
+    URLSearchParams,
     setInterval: () => 0,
     clearInterval: noop,
     setTimeout: () => 0,
@@ -330,13 +334,17 @@ globalThis.__probe = {
   captureToast: (sink) => { toast.info = (message) => sink(message); },
   captureToastKind: (kind, sink) => { toast[kind] = (message) => sink(message); },
   bodyChildren: () => document.body.children || [],
-  sessionState: () => ({page, currentProjectId, modalHtml, selectedWork, managementGroupId, workListGroupId, workListState,
+  sessionState: () => ({page, currentProjectId, modalHtml, selectedWork, managementGroupId, workListGroupId, workListState, expandedTaskGroupId, taskGroupDetailId: tgDetail?.taskGroupId || null,
     projConfigVersion, directiveList,
     storedProjectId: sessionStorage.getItem("aimac.projectId"), storedPage: sessionStorage.getItem("aimac.page")}),
   selectWorkspace: (pageId, paneId) => workspaces.select(pageId, paneId),
   setMemberFocus: (accountId) => { memberGrantAccountId = accountId; },
   setTaskOrigin: (origin) => { taskReturnContext = origin; managementGroupId = origin?.taskGroupId || ""; },
   resetTaskNavigation: () => resetTaskWorkbench(),
+  setObjectLocation: (value) => { page = value.page; if (value.projectId !== undefined) currentProjectId = value.projectId; managementGroupId = value.groupId; expandedTaskGroupId = value.expanded ? value.groupId : ""; selectedWork = value.workId ? {taskGroupId: value.groupId, workItemId: value.workId} : null; },
+  rememberObjectLocation: () => rememberWorkspaceLocation(),
+  restoreObjectLocation: () => restoreWorkspaceLocation(),
+  loadObjectLocation: () => loadPage(),
   workspacePaneIds: (pageId) => __workspacePaneIds(pageId),
   translate: (key) => t(key),
   filteredEmptyText: (query, hidden) => filteredEmptyText(query, hidden),
@@ -453,7 +461,7 @@ globalThis.__probe = {
   // 「待人工确认」那个数不在 state 里：它由 loadPage 从计数接口取回来放进模块级变量。
   // 不给探针一个入口的话，凡是依赖它的那一格都只能在 0 上被验，而真实产品里它常常不是 0。
   setPendingConfirmCount: (count) => { pendingConfirmCount = Number(count) || 0; },
-  renderTaskGroupsWith: (nextState, account, projectId, detailId, detail) => { state = nextState; currentAccount = account; currentProjectId = projectId; expandedTaskGroupId = detailId; if (detail !== undefined) tgDetail = detail; return __workspaceInventory("tg", () => renderTaskGroups()); },
+  renderTaskGroupsWith: (nextState, account, projectId, detailId, detail, panes) => { state = nextState; currentAccount = account; currentProjectId = projectId; expandedTaskGroupId = detailId; if (detail !== undefined) tgDetail = detail; return __workspaceInventory("tg", () => renderTaskGroups(), panes); },
   renderTaskGroupsInventoryWith: (nextState, account, projectId, detailId, detail, panes) => { state = nextState; currentAccount = account; currentProjectId = projectId; expandedTaskGroupId = detailId; if (detail !== undefined) tgDetail = detail; return __workspaceInventory("tg", () => renderTaskGroups(), panes); },
   renderProjectOverviewWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; page = "proj-overview"; return __workspaceInventory("proj-overview", () => renderProjectOverview()); },
   renderProjectOverviewInventoryWith: (nextState, account, projectId, panes) => { state = nextState; currentAccount = account; currentProjectId = projectId; page = "proj-overview"; return __workspaceInventory("proj-overview", () => renderProjectOverview(), panes); },
@@ -3754,7 +3762,7 @@ function runNoVisibleProjectCase() {
     const langText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
       organizationId: "org_default"}, slimLangState, "tg", "p1");
     check("语言策略只给 tag 时，界面显示的仍是那门语言（不是回落成中文）",
-      /语言：日本語/u.test(langText),
+      /日本語/u.test(langText) && !/Japanese/u.test(langText),
       "视图里的语言策略已经瘦到只剩 languageTag / languageName —— 界面若还依赖别的字段，"
         + "屏幕上会静默回落成默认的「中文」，而这个组配的是别的语言");
   }
@@ -3770,10 +3778,10 @@ function runNoVisibleProjectCase() {
       executionTopologies: [], closeBarriers: [], qualityGates: [], findings: [],
       permissionRequests: [], approvalRequests: [], truncatedCollections: []
     };
-    const countText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
-      organizationId: "org_default"}, countState, "tg", "p1");
+    const countText = loadConsole(el("div"), {realI18n: true}).renderTaskGroupsWith(countState,
+      {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"}, "p1");
     check("任务组的角色数显示的是服务端给的那个数（整份 roles 不再下发）",
-      /角色数：7/u.test(countText),
+      /data-field="role-count">7<\/span>/u.test(countText),
       "视图不再带整份 roles（列表只数个数、明细页另有来源）—— 界面必须用服务端给的 roleCount，"
         + "否则它自己数一个空数组，屏幕上永远是 0");
   }
@@ -4647,6 +4655,110 @@ async function runPendingTruncationCase() {
       return String(root.innerHTML || "");
     };
     const containsAll = (html, values) => values.every((value) => String(html).includes(value));
+    {
+      const objectProbe = loadConsole(el("div"), {realI18n: true});
+      const objectGroups = {...overviewState, taskGroups: [...overviewState.taskGroups, {id: "tg_second", projectId: "p1", name: "另一个任务组", status: "development", workItems: []}]};
+      const groupList = objectProbe.renderTaskGroupsWith(objectGroups, orgAdmin, "p1", "", undefined, ["list"]);
+      const groupDetail = objectProbe.renderTaskGroupsWith(objectGroups, orgAdmin, "p1", "tg1", {taskGroupId: "tg1", progress: {workItems: []}, config: {}, roomMessages: []}, ["list"]);
+      check("任务组列表是对象表格，独立详情不混入其他任务组卡片", /<table/u.test(groupList) && /另一个任务组/u.test(groupList)
+        && /aria-label="任务组工作区"/u.test(groupDetail) && /返回任务组列表/u.test(groupDetail) && !/另一个任务组/u.test(groupDetail), textOf(groupDetail).slice(0, 240));
+      const stalePermissionProbe = loadConsole(el("div"), {realI18n: true});
+      stalePermissionProbe.renderTaskGroupsWith(objectGroups, orgAdmin, "p1", "tg1", {taskGroupId: "tg1", progress: {taskGroup: {...objectGroups.taskGroups[0], canControl: true}, workItems: []}, config: {}, roomMessages: []}, ["list"]);
+      stalePermissionProbe.stubNavigation();
+      await stalePermissionProbe.click({target: el("button", {dataset: {action: "tg-list"}}), preventDefault: () => {}});
+      check("返回任务组列表会清除详情权限快照", stalePermissionProbe.sessionState().taskGroupDetailId === null
+        && stalePermissionProbe.sessionState().expandedTaskGroupId === "", JSON.stringify(stalePermissionProbe.sessionState()));
+      check("任务组对象可直达任务、监控、审核、指令和当前项目 Agent",
+        ["tasks", "monitor", "review", "directives"].every((target) => groupDetail.includes(`data-focus-page="${target}"`))
+          && /data-target-menu="proj-agents" data-target-workspace="nodes"/u.test(groupDetail), textOf(groupDetail).slice(0, 400));
+      const idleNodeState = {...overviewState, agentRuntimeNodes: [{nodeId: "idle", projectIds: ["p1"], status: "online", activeDispatchIds: [], lastHeartbeatAt: "2099-01-01T00:00:00Z"}]};
+      const runningNodeState = {...idleNodeState, agentDispatches: [{dispatchId: "run1", taskGroupId: "tg1", assignedNodeId: "idle", status: "running"}],
+        agentRuntimeNodes: [{...idleNodeState.agentRuntimeNodes[0], activeDispatchIds: ["run1"]}]};
+      const blockedNodeState = {...runningNodeState, agentDispatches: [{...runningNodeState.agentDispatches[0], status: "blocked"}]};
+      const idleAgents = objectProbe.renderProjectAgentsInventoryWith(idleNodeState, orgAdmin, "p1", "table", ["nodes"]);
+      const runningAgents = objectProbe.renderProjectAgentsInventoryWith(runningNodeState, orgAdmin, "p1", "table", ["nodes"]);
+      const blockedAgents = objectProbe.renderProjectAgentsInventoryWith(blockedNodeState, orgAdmin, "p1", "table", ["nodes"]);
+      check("空闲 Agent 不显示无目标的暂停或恢复任务按钮", !/pause_dispatch|resume_dispatch/u.test(idleAgents), textOf(idleAgents));
+      check("运行中与阻塞派发的 Agent 控制按钮按状态二选一", /pause_dispatch/u.test(runningAgents) && !/resume_dispatch/u.test(runningAgents)
+        && /data-command="pause_dispatch" data-dispatch-id="run1"/u.test(runningAgents)
+        && /data-command="resume_dispatch" data-dispatch-id="run1"/u.test(blockedAgents) && !/pause_dispatch/u.test(blockedAgents), `${textOf(runningAgents)} | ${textOf(blockedAgents)}`);
+      const multiState = {...runningNodeState,
+        agentRuntimeNodes: [{...runningNodeState.agentRuntimeNodes[0], activeDispatchIds: ["run1", "run2"]}],
+        agentDispatches: [...runningNodeState.agentDispatches, {dispatchId: "run2", taskGroupId: "tg1", assignedNodeId: "idle", status: "blocked"}]};
+      const multiAgents = objectProbe.renderProjectAgentsInventoryWith(multiState, orgAdmin, "p1", "table", ["nodes"]);
+      check("多派发节点不把暂停恢复误绑到数组第一项", /data-action="open-node-tasks"[^>]*>查看 2 个当前任务/u.test(multiAgents) && !/data-command="pause_dispatch"|data-command="resume_dispatch"/u.test(multiAgents), textOf(multiAgents));
+      const multiMonitor = objectProbe.renderMonitorInventoryWith(multiState, orgAdmin, "p1", ["runs"]);
+      check("执行监控按派发 ID 分别提供运行与阻塞任务控制", /data-dispatch-id="run1" data-command="pause_dispatch"/u.test(multiMonitor)
+        && /data-dispatch-id="run2" data-command="resume_dispatch"/u.test(multiMonitor)
+        && (multiMonitor.match(/data-command="cancel_dispatch"/gu) || []).length === 2, textOf(multiMonitor).slice(0, 500));
+      const dispatchControlProbe = loadConsole(el("div"), {realI18n: true});
+      dispatchControlProbe.renderProjectAgentsInventoryWith(multiState, orgAdmin, "p1", "table", ["nodes"]);
+      const controlPosts = [];
+      dispatchControlProbe.setFetch(async (url, init = {}) => {
+        controlPosts.push({url: String(url), body: init.body ? JSON.parse(init.body) : null});
+        return {ok: true, status: 201, statusText: "Created", headers: {get: () => null}, json: async () => ({command: {status: "queued"}})};
+      });
+      dispatchControlProbe.stubNavigation();
+      await dispatchControlProbe.click({target: el("button", {dataset: {action: "agent-control", nodeId: "idle", dispatchId: "run2", command: "resume_dispatch"}}), preventDefault: () => {}});
+      check("派发行控制处理器使用按钮明确指定的派发而非节点数组首项", controlPosts.some((post) => post.body?.dispatchId === "run2" && post.body?.commandType === "resume_dispatch"), JSON.stringify(controlPosts));
+      const nodeTaskProbe = loadConsole(el("div"), {realI18n: true});
+      nodeTaskProbe.renderProjectAgentsInventoryWith(multiState, orgAdmin, "p1", "table", ["nodes"]);
+      nodeTaskProbe.setObjectLocation({page: "proj-agents", projectId: "p1", groupId: "tg1"});
+      nodeTaskProbe.stubNavigation();
+      await nodeTaskProbe.click({target: el("button", {dataset: {action: "open-node-tasks"}}), preventDefault: () => {}});
+      check("多派发节点进入项目级执行会话而不遗留单任务组范围", nodeTaskProbe.sessionState().page === "monitor"
+        && nodeTaskProbe.sessionState().managementGroupId === "", JSON.stringify(nodeTaskProbe.sessionState()));
+      const overdueState = {...idleNodeState, fleet: {online: 0, total: 1}, agentRuntimeNodes: [{...idleNodeState.agentRuntimeNodes[0], lastHeartbeatAt: "2000-01-01T00:00:00Z"}]};
+      const overdueHelp = objectProbe.renderProjectAgentsInventoryWith(overdueState, orgAdmin, "p1", "table", ["help"]);
+      check("Agent 汇总把心跳超时节点计入异常且不计在线", /异常节点[\s\S]*>1</u.test(overdueHelp)
+        && /在线节点[\s\S]*>0\/1</u.test(overdueHelp), textOf(overdueHelp).slice(0, 420));
+      objectProbe.renderFullPageWith(overviewState, orgAdmin, "p1", "tasks");
+      objectProbe.setObjectLocation({page: "tasks", groupId: "tg1", workId: "w1"});
+      objectProbe.rememberObjectLocation();
+      objectProbe.resetTaskNavigation();
+      objectProbe.restoreObjectLocation();
+      check("实际控制器可从账号绑定定位恢复原任务", objectProbe.sessionState().selectedWork?.workItemId === "w1"
+        && objectProbe.sessionState().managementGroupId === "tg1" && objectProbe.sessionState().currentProjectId === "p1", JSON.stringify(objectProbe.sessionState()));
+      objectProbe.setObjectLocation({page: "tg", groupId: "tg1", expanded: true});
+      objectProbe.rememberObjectLocation();
+      objectProbe.setObjectLocation({page: "tg", groupId: "", expanded: false});
+      objectProbe.restoreObjectLocation();
+      check("实际控制器可恢复独立任务组详情", objectProbe.sessionState().expandedTaskGroupId === "tg1", JSON.stringify(objectProbe.sessionState()));
+      const hiddenCreate = renderPane(overviewState, {accountId: "read_only", accountType: "user_account", permissions: []}, "tasks", "create");
+      check("旧创建栏目偏好不会让只读账号进入空白创建页", /搜索任务/u.test(hiddenCreate) && !/data-form="work-item-create"/u.test(hiddenCreate), textOf(hiddenCreate).slice(0, 300));
+      const outsideGroup = {id: "g_outside", projectId: "p1", name: "窗口之外的任务组", status: "development", workItemCount: 1, roleCount: 1, canControl: false, canReview: false};
+      const outside = loadConsole(el("div"), {realI18n: true}).renderTaskGroupsWith({...overviewState, taskGroups: []}, orgAdmin, "p1", "g_outside",
+        {taskGroupId: "g_outside", progress: {taskGroup: outsideGroup, workItems: []}, config: {}, roomMessages: []}, ["list"]);
+      check("窗口外的已授权任务组可从服务端摘要恢复独立详情", /窗口之外的任务组/u.test(outside) && /aria-label="任务组工作区"/u.test(outside), textOf(outside));
+      const invalid = loadConsole(el("div"), {realI18n: true}).renderTaskGroupsWith({...overviewState, taskGroups: []}, orgAdmin, "p1", "g_outside",
+        {taskGroupId: "g_outside", progress: {taskGroup: {...outsideGroup, projectId: "foreign"}, workItems: []}, config: {}, roomMessages: []}, ["list"]);
+      check("不属于当前项目的恢复摘要不会显示成当前任务组", !/窗口之外的任务组/u.test(invalid) && /返回任务组列表/u.test(invalid), textOf(invalid));
+      const mismatchRoot = el("div");
+      const mismatchProbe = loadConsole(mismatchRoot, {realI18n: true});
+      mismatchProbe.renderFullPageWith(overviewState, orgAdmin, "p1", "tasks");
+      mismatchProbe.setObjectLocation({page: "tasks", groupId: "tg1", workId: "w1"});
+      mismatchProbe.setFetch(async (url) => ({ok: true, status: 200, headers: {get: () => null}, json: async () => String(url).includes("/work-items/w1")
+        ? {projectId: "other", taskGroup: {id: "tg1", projectId: "other"}, workItem: {id: "w1", title: "不属于当前项目的任务"}} : overviewState}));
+      await mismatchProbe.loadObjectLocation();
+      check("任务恢复验证响应的项目及对象绑定，不能展示错配结果", !String(mismatchRoot.innerHTML).includes("不属于当前项目的任务")
+        && String(mismatchRoot.innerHTML).includes("不匹配"), textOf(mismatchRoot.innerHTML).slice(-350));
+      const revokedRoot = el("div");
+      const revokedProbe = loadConsole(revokedRoot, {realI18n: true});
+      revokedProbe.renderFullPageWith(overviewState, orgAdmin, "p1", "proj-overview");
+      revokedProbe.setObjectLocation({page: "tasks", projectId: "revoked_project", groupId: "gone_group", workId: "gone_work"});
+      revokedProbe.rememberObjectLocation();
+      revokedProbe.restoreObjectLocation();
+      revokedProbe.setFetch(async (url) => {
+        const target = new URL(String(url), "http://localhost");
+        const denied = target.searchParams.get("projectId") === "revoked_project";
+        return {ok: !denied, status: denied ? 403 : 200, statusText: denied ? "Forbidden" : "OK", headers: {get: () => null},
+          json: async () => denied ? {error: "permission_denied"} : target.pathname === "/api/model-registry" ? {modelCapabilities: []}
+            : target.pathname === "/api/skill-registry" ? {roleSkillIndex: [], roleSkillOverlays: []} : overviewState};
+      });
+      await revokedProbe.loadObjectLocation();
+      check("恢复的项目权限已失效时改选仍可见项目而不是困在403空页", revokedProbe.sessionState().currentProjectId === "p1"
+        && revokedProbe.sessionState().page === "proj-overview" && !/403|permission_denied/u.test(textOf(revokedRoot.innerHTML)), `${JSON.stringify(revokedProbe.sessionState())} ${textOf(revokedRoot.innerHTML).slice(-280)}`);
+    }
     for (const delayed of ["state", "config", "directives"]) {
       const navigationRoot = el("div");
       const navigationProbe = loadConsole(navigationRoot, {realI18n: true});
@@ -4855,6 +4967,10 @@ async function runPendingTruncationCase() {
     check("逻辑 Agent 默认模型预设显示中文标签",
       /自动最优/u.test(projectProfiles) && !/模型策略[^<]{0,120}auto_best/u.test(projectProfiles),
       textOf(projectProfiles).slice(0, 240));
+    const namedOrgProfiles = probe.renderProjectAgentsInventoryWith({...overviewState, organizationContext: {id: "org_default", name: "研发组织"}}, systemAdmin, "p1", "table", ["profiles"]);
+    check("项目 Agent 页用组织名称说明共享档案范围并解释模型预设",
+      /组织级：研发组织/u.test(namedOrgProfiles) && /自动最优（auto_best）/u.test(namedOrgProfiles)
+        && /实际模型 ID/u.test(namedOrgProfiles), textOf(namedOrgProfiles).slice(0, 320));
     const projectRegisterText = textOf(projectRegister);
     check("项目注册 pane 说明加入令牌和安装命令只显示一次",
       /只在[\s\S]{0,40}显示一次/u.test(projectRegisterText)
@@ -4874,12 +4990,10 @@ async function runPendingTruncationCase() {
         && /data-action="agent-view-mode" data-mode="cards"/u.test(projectNodesTable)
         && /class="agent-card"/u.test(projectNodesCards),
       "节点管理不能只剩一种视图");
-    check("项目 agent 节点表格保留自检刷新和控制动作",
+    check("项目 agent 节点表格保留节点级自检和关停动作",
       /data-action="agent-control" data-node-id="node1" data-command="refresh_profile"/u.test(projectNodesTable)
-        && /data-command="pause_dispatch"/u.test(projectNodesTable)
-        && /data-command="resume_dispatch"/u.test(projectNodesTable)
         && /data-command="shutdown"/u.test(projectNodesTable),
-      "节点表格缺少刷新自检、暂停、恢复或关停入口");
+      "节点表格缺少刷新自检或关停入口");
     check("项目 agent 卡片视图显示准入、健康、任务、心跳和控制入口",
       /agent-card/u.test(projectNodesCards)
         && /健康度/u.test(projectNodesCards)
@@ -5027,6 +5141,17 @@ async function runPendingTruncationCase() {
       loadConsole(root, {realI18n: true}).renderFullPageWith(state, account, "p1", pageId);
       return String(root.innerHTML || "");
     };
+    {
+      const passwordProbe = loadConsole(el("div"), {realI18n: true});
+      const passwordAccount = {...orgAdmin, passwordSet: true, authPolicy: {passwordSet: false}};
+      const header = topbarFor(overviewState, passwordAccount);
+      check("登录 DTO 的 passwordSet 优先于旧 authPolicy，已设置密码时显示修改密码", /data-action="open-change-password">修改密码</u.test(header), textOf(header).slice(0, 180));
+      passwordProbe.renderFullPageWith(overviewState, passwordAccount, "p1", "proj-overview");
+      await passwordProbe.click({target: el("button", {dataset: {action: "open-change-password"}}), preventDefault: () => {}});
+      check("已设置密码的账号不再被提示当前密码可留空", !passwordProbe.sessionState().modalHtml.includes("你还没有设过密码")
+        && /name="currentPassword"[^>]*required/u.test(passwordProbe.sessionState().modalHtml), passwordProbe.sessionState().modalHtml);
+      check("旧账号缓存的 authPolicy passwordSet 仍被识别", /data-action="open-change-password">修改密码</u.test(topbarFor(overviewState, {...orgAdmin, authPolicy: {passwordSet: true}})));
+    }
     const projectCreateUser = {accountId: "acct_project_creator", accountType: "user_account", displayName: "项目创建人",
       email: "creator@example.com", organizationId: "org_default", roles: [], permissions: ["project:create"]};
     const noCreateUser = {...projectCreateUser, accountId: "acct_plain_user", displayName: "普通成员", permissions: []};
@@ -5186,7 +5311,7 @@ async function runPendingTruncationCase() {
       languagePolicy: {languageTag: "zh-CN", languageName: "Chinese"}}]};
     const langHtml = probe.renderTaskGroupsWith(langState, admin, "p1", "tg1", fullProgress);
     check("语种名要显示中文，不能把后端的英文名摆上去",
-      /语言：中文/.test(langHtml) && !/语言：Chinese/.test(langHtml),
+      /data-field="group-language">中文<\/span>/.test(langHtml) && !/Chinese/.test(langHtml),
       "中文界面上写着「语言：Chinese」—— 界面本来就有 zh-CN→中文 的对照表");
     const guidanceHtml = probe.renderTaskGroupsWith(guidanceState, admin, "p1", "tg1", fullProgress);
     check("人工补充要求要看得见",
@@ -5217,7 +5342,7 @@ async function runPendingTruncationCase() {
     };
     const listView = probe.renderTaskGroupsWith(truncatedState, admin, "p1");
     check("列表页的工作项数要报真实总数",
-      /工作项：300/.test(listView),
+      /data-field="task-count">300<\/span>/.test(listView),
       `嵌入的工作项被截断到 20 条，列表页却按截断后的长度报数 —— 人看到的是一个假数字（片段：${
         (listView.match(/工作项：\d+/) || ["无"])[0]}）`);
     // 明细页的 tgDetail 要给全形状（taskGroupId/progress/config/roomMessages），

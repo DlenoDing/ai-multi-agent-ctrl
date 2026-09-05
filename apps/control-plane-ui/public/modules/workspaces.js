@@ -15,7 +15,7 @@
     "proj-overview": [pane("overview", "项目概况", ["项目概况", "关键指标", "任务组一览"]), pane("activity", "最新执行", ["最新执行事件"]), pane("outputs", "仓库产出", ["仓库产出归属概览", "仓库产出归属"]), pane("help", "准备与操作", ["流程导航"])],
     "proj-members": [pane("list", "项目成员", ["项目成员列表", "项目成员授权"]), pane("groups", "任务组权限", ["任务组权限列表", "任务组权限授权"]), pane("help", "授权说明")],
     "proj-settings": [pane("repositories", "仓库与凭据", ["项目基础配置", "规则配置"]), pane("baseline", "基线资料", ["基线资料"]), pane("roles", "角色与 Skill", ["项目默认角色", "角色 Skill 定制"]), pane("system-rules", "系统规则", ["系统规则"]), pane("business-rules", "业务规则", ["业务规则"]), pane("help", "配置说明")],
-    tg: [pane("list", "任务组列表"), pane("create", "创建任务组", ["创建任务组"]), pane("help", "任务组说明", ["任务组总览", "任务组处置看板", "任务组生命周期", "创建工作项"])],
+    tg: [pane("list", "任务组列表", ["任务组列表", "任务组详情"]), pane("create", "创建任务组", ["创建任务组"]), pane("help", "任务组说明", ["任务组总览", "任务组处置看板", "任务组生命周期", "创建工作项"])],
     tasks: [pane("list", "任务工作台", ["任务工作台", "任务详情"]), pane("create", "创建任务", ["创建工作项"])],
     monitor: [pane("overview", "进度总览", ["执行监控", "执行监控总览", "任务组监控矩阵", "自治控制"]), pane("runs", "执行会话", ["工作会话", "智能体派发", "可复用执行载体（Worker Lane）", "模型选择记录", "会话放置记录"]), pane("events", "实时事件", ["实时事件流"]), pane("nodes", "节点与控制", ["控制通道", "agent 节点"]), pane("evidence", "产出与验收", ["检查点（Git 证据）", "质量门禁 / 测试证据", "最近的人工定稿"]), pane("barriers", "阻塞与复核"), pane("help", "监控说明", ["监控处置看板", "实时回送链路"])],
     review: [pane("pending", "待我审核", ["人工审核", "待人工确认"]), pane("decisions", "授权与复核", ["授权与处置"]), pane("history", "审核历史", ["已答历史"]), pane("inbox", "待办汇总", ["待你处理*"]), pane("help", "审核说明")],
@@ -67,9 +67,7 @@
   function heading(page, options = {}) {
     const entry = current(page);
     if (!entry) return "";
-    const create = options.canCreate === false || (page === "org-members" && entry.id === "list") ? null : (catalog[page] || []).find((item) => ["create", "register"].includes(item.id));
-    return `<div class="workspace-heading">${entry.titles.includes(entry.label) ? "" : `<h2>${esc(entry.label)}</h2>`}${create && create.id !== entry.id
-      ? `<button class="primary-button" data-workspace-page="${esc(page)}" data-workspace="${esc(create.id)}">${esc(create.label)}</button>` : ""}</div>`;
+    return entry.titles.includes(entry.label) ? "" : `<div class="workspace-heading"><h2>${esc(entry.label)}</h2></div>`;
   }
 
   window.AIMAC_WORKSPACES = {catalog, current, select, owner, allows, run, showGuide, showHub, navigation, heading};

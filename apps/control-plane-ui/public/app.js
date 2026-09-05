@@ -72,6 +72,9 @@ let currentProjectId = sessionStorage.getItem("aimac.projectId") || "";
 let managementGroupId = "";
 let selectedWork = null;
 let taskReturnContext = null;
+let taskRunDisclosure = {};
+let restoredWorkspaceLocation = false;
+let recoveringWorkspaceLocation = false;
 let workListGroupId = "";
 let workListState = null;
 let taskSearch = "";
@@ -409,6 +412,11 @@ function emptyState() {
 // 服务端在 tasks 视图里按任务组算好了真实权限；拿不到那份映射时（别的视图）退回并集，
 // 那时宁可多显示一个按钮，也不要把人自己的活藏起来。
 function hasGroupPerm(taskGroupId, perm) {
+  const groupDetail = tgDetail?.progress?.taskGroup;
+  if (groupDetail?.projectId === currentProjectId && groupDetail.id === taskGroupId) {
+    if (perm === "task_group:control") return groupDetail.canControl === true;
+    if (perm === "task_group:review") return groupDetail.canReview === true;
+  }
   const detail = taskWorkDetail?.taskGroup;
   if (detail?.projectId === currentProjectId && detail.id === taskGroupId) {
     if (perm === "task_group:control") return detail.canControl === true;
@@ -948,6 +956,7 @@ function restoreDraftAfterRelogin() {
 }
 
 function clearSession() {
+  window.AIMAC_WORKSPACE_LOCATION?.clear();
   resetTaskWorkbench();
   authToken = "";
   currentAccount = null;
@@ -1190,7 +1199,10 @@ function ensureProjectSelection() {
 }
 
 function projectTaskGroups() {
-  return (state.taskGroups || []).filter((taskGroup) => !currentProjectId || taskGroup.projectId === currentProjectId);
+  const groups = (state.taskGroups || []).filter((taskGroup) => !currentProjectId || taskGroup.projectId === currentProjectId);
+  const detail = tgDetail?.progress?.taskGroup;
+  if (detail?.projectId === currentProjectId && !groups.some((group) => group.id === detail.id)) groups.push(detail);
+  return groups;
 }
 
 /* ---------------- 页面数据加载 ---------------- */
@@ -1392,6 +1404,38 @@ async function loadPage() {
     pageLoadedAt[page] = lastLoadedAt;
   } catch (error) {
     if (!currentRead()) return;
+    if (restoredWorkspaceLocation && !recoveringWorkspaceLocation && PROJECT_PAGES.has(page) && [403, 404].includes(error.status)) {
+      restoredWorkspaceLocation = false;
+      recoveringWorkspaceLocation = true;
+      window.AIMAC_WORKSPACE_LOCATION?.clear();
+      resetTaskWorkbench();
+      expandedTaskGroupId = "";
+      tgDetail = null;
+      currentProjectId = "";
+      page = "proj-overview";
+      sessionStorage.setItem("aimac.page", page);
+      sessionStorage.removeItem("aimac.projectId");
+      try {
+        const fallbackState = await fetchState("projects");
+        if (!currentRead()) return;
+        state = fallbackState;
+        ensureProjectSelection();
+        lastError = "";
+        if (currentProjectId) {
+          recoveringWorkspaceLocation = false;
+          await loadPage();
+          return;
+        }
+        loading = false;
+        render();
+        return;
+      } catch (fallbackError) {
+        if (!currentRead()) return;
+        error = fallbackError;
+      } finally {
+        recoveringWorkspaceLocation = false;
+      }
+    }
     lastError = error?.message || String(error);
     lastErrorIsRequest = error?.requestFailure === true;
     // Surface authenticated page-load failures — previously the value was only rendered on the login
@@ -1713,6 +1757,10 @@ function render() {
       toast.info(`「${asked}」在当前视角下打不开，已回到「${PAGE_META[page]?.[0] || page}」`);
     }
   }
+  if (workspaceOptions().canCreate === false && ["create", "register"].includes(workspaces.current(page)?.id)) {
+    workspaces.select(page, workspaces.catalog[page]?.[0]?.id);
+  }
+  if (!loading && !lastError) rememberWorkspaceLocation();
   const [title, subtitle] = PAGE_META[page] || ["管理后台", ""];
   // 菜单上直接带计数：否则"等你签字的东西"藏在一个叫"执行监控"的页面里，人根本不会去点。
   const menuTodoCounts = todoCountsByPage();
@@ -1721,7 +1769,7 @@ function render() {
     ? `<div class="nav-divider">${esc(item.divider)}</div>`
     : (() => {
         const todo = menuTodoCounts[item.id] || {count: 0, capped: false};
-        return menuItemHtml(item, item.id === page, todo) + (item.id === page ? workspaces.navigation(page, false, workspaceOptions()) : "");
+        return menuItemHtml(item, item.id === page, todo) + (item.id === page ? workspaces.navigation(page === "tg" && expandedTaskGroupId ? "group-detail" : page, false, workspaceOptions()) : "");
       })()
   ).join("");
   const switchHtml = sectionSwitchHtml(perspective, page);
@@ -1772,7 +1820,7 @@ function render() {
             ${/* 接口一直下发 authPolicy.passwordSet，这里此前没读：一个从没设过口令的人（邀请令牌登录的）
                   看到的是"修改密码"，弹窗里还写着"当前密码（首次设置可留空）"—— 让他去想自己是不是忘了什么。
                   系统知道他有没有设过，就该直接说对。 */""}
-            <button class="secondary-button" data-action="open-change-password">${currentAccount?.authPolicy?.passwordSet ? "修改密码" : "设置密码"}</button>
+            <button class="secondary-button" data-action="open-change-password">${(currentAccount?.passwordSet ?? currentAccount?.authPolicy?.passwordSet) ? "修改密码" : "设置密码"}</button>
             <button class="icon-button" data-action="refresh" title="刷新" aria-label="刷新">↻</button>
             <button class="secondary-button" data-action="logout">退出登录</button>
           </div>
@@ -1824,7 +1872,8 @@ function renderContent() {
   const context = window.AIMAC_OBJECT_WORKSPACE.trail({organization: state.organizationContext, project, group: project && ["tg", "tasks", "monitor", "review", "directives"].includes(page) ? group : null,
     work: page === "tasks" && selectedWork ? taskWorkDetail?.workItem : null, pageLabel: PAGE_META[page]?.[0] || "", returnTask});
   if (PROJECT_PAGES.has(page) && hasNoVisibleProject()) return context + renderPanel(PAGE_META[page]?.[0] || "项目管理", noVisibleProjectNotice(), {wide: true});
-  return context + workspaces.navigation(page, true, workspaceOptions()) + workspaces.heading(page, workspaceOptions()) + managementScopeBar() + workspaces.run(page, renderPageContent);
+  const groupDetail = page === "tg" && expandedTaskGroupId;
+  return context + workspaces.navigation(groupDetail ? "group-detail" : page, true, workspaceOptions()) + (groupDetail ? "" : workspaces.heading(page, workspaceOptions())) + managementScopeBar() + workspaces.run(page, renderPageContent);
 }
 
 function workspaceOptions() {
@@ -1842,6 +1891,7 @@ function focusedTaskGroups() {
 }
 
 function managementScopeBar() {
+  if (page === "tg" && expandedTaskGroupId) return "";
   if (!["tg", "tasks", "monitor", "review", "directives"].includes(page)) return "";
   focusedTaskGroups();
   const groups = projectTaskGroups();
@@ -1854,13 +1904,14 @@ function managementScopeBar() {
 function renderTaskWorkbench() {
   if (hasNoVisibleProject()) return panel("任务工作台", noVisibleProjectNotice(), {wide: true});
   if (workspaces.current("tasks")?.id === "create") return renderTaskGroups();
-  if (selectedWork && (taskWorkDetail?.workItem?.id !== selectedWork.workItemId || taskWorkDetail?.taskGroup?.id !== selectedWork.taskGroupId)) {
+  if (selectedWork && (taskWorkDetail?.workItem?.id !== selectedWork.workItemId || taskWorkDetail?.taskGroup?.id !== selectedWork.taskGroupId || taskWorkDetail?.taskGroup?.projectId !== currentProjectId)) {
     return panel("任务详情", `<button class="secondary-button" data-close-work>返回任务列表</button><div class="notice">${taskPageLoading ? "正在加载完整任务详情…" : "任务详情尚未加载成功，请刷新重试。"}</div>`, {wide: true});
   }
   return panel(selectedWork ? "任务详情" : "任务工作台", window.AIMAC_TASK_WORKBENCH.render({
     groups: focusedTaskGroups(), detail: tgDetail, state, selected: selectedWork, query: taskSearch, status: taskStatus,
     pageData: taskPageData, workDetail: taskWorkDetail, pageNumber: taskCursorStack.length + 1, loading: taskPageLoading,
     eventHistory: workEventHistoryMode, eventPage: workEventCursorStack.length + 1,
+    disclosure: taskRunDisclosure,
     helpers: {badge, t, explainCoded, fmtTime, progressLine, humanTraceHtml, workItemExitHint, workItemResultHtml, repositoryFailureAction, dispatchRuleSummaries, ruleSummaryHtml,
       isTerminalDispatch: (status) => terminalDispatchStatuses.has(status)}
   }), {wide: true});
@@ -1883,6 +1934,12 @@ async function loadTaskWorkbenchData() {
       : await api(`/api/projects/${encodeURIComponent(projectId)}/work-items?${query}`);
     if (!currentRead() || generation !== taskRequestGeneration || projectId !== currentProjectId || page !== "tasks") return;
     if (selectedWork) {
+      if (result.projectId !== projectId || result.taskGroup?.projectId !== projectId || result.taskGroup?.id !== selectedWork.taskGroupId || result.workItem?.id !== selectedWork.workItemId) {
+        const error = new Error("任务与当前项目或保存的位置不匹配，请返回任务列表重新选择");
+        error.requestFailure = true;
+        throw error;
+      }
+      if (taskWorkDetail?.workItem?.id !== result.workItem?.id || taskWorkDetail?.taskGroup?.id !== result.taskGroup?.id) taskRunDisclosure = {};
       taskWorkDetail = result;
       taskReturnContext = {...selectedWork, accountId: currentAccount?.accountId, projectId,
         title: result.workItem?.title || selectedWork.workItemId, listGroupId: workListGroupId, listState: workListState};
@@ -1902,6 +1959,7 @@ async function loadTaskWorkbenchData() {
 }
 
 function resetTaskWorkbench() {
+  taskRunDisclosure = {};
   taskReturnContext = null;
   memberGrantAccountId = "";
   workEventHistoryMode = false;
@@ -3286,7 +3344,7 @@ function renderOrgOverview() {
   const org = (state.organizations || []).find((item) => item.orgId === currentAccount?.organizationId)
     || (state.organizations || [])[0] || null;
   const projects = state.projects || [];
-  const openTaskGroups = (state.taskGroups || []).filter((taskGroup) => !["closed", "aborted"].includes(taskGroup.status));
+  const openTaskGroups = (state.taskGroups || []).filter((taskGroup) => !settledTaskGroupStatuses.has(taskGroup.status));
   const activeProjects = projects.filter((project) => project.status !== "archived");
   const memberCount = org?.usage?.members ?? (orgMembers || []).filter((account) => account.accountType !== "service_account"
     && !["retired", "disabled", "suspended"].includes(account.status)).length;
@@ -3570,17 +3628,29 @@ function agentHoverPop(node) {
   `;
 }
 
+function nodeDispatchIds(node) {
+  return Array.isArray(node?.activeDispatchIds) ? node.activeDispatchIds : node?.display?.currentDispatchIds || [];
+}
+
 function agentActions(node, options = {}) {
   if (node.status === "revoked") return "-";
   if (node.registrationScope === "organization" && perspectiveOf(currentAccount) === "user") return `<span class="small muted">组织共享节点，由组织管理员维护</span>`;
   const scope = options.scope || "org";
   const showDanger = scope === "org" || options.showDanger === true;
+  const activeDispatchIds = nodeDispatchIds(node);
+  const activeDispatch = (state.agentDispatches || []).find((dispatch) => activeDispatchIds.includes(dispatch.dispatchId));
+  const dispatchControl = options.includeDispatchControl === false ? "" : activeDispatchIds.length > 1
+    ? `<button class="secondary-button" data-action="open-node-tasks">查看 ${activeDispatchIds.length} 个当前任务</button>`
+    : activeDispatch?.status === "blocked"
+    ? `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="resume_dispatch" data-dispatch-id="${esc(activeDispatch.dispatchId)}" title="恢复当前被暂停或阻塞的派发">恢复当前任务</button>`
+    : activeDispatch && ["queued", "running"].includes(activeDispatch.status)
+      ? `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="pause_dispatch" data-dispatch-id="${esc(activeDispatch.dispatchId)}" title="暂停当前派发并等待后续处置">暂停当前任务</button>`
+      : activeDispatchIds.length ? `<button class="secondary-button" data-action="open-node-tasks">查看当前任务</button>` : "";
   const buttons = [
     `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="refresh_profile" title="让节点重新探测模型执行器、远程 MCP、文件系统和 Git 能力">刷新自检</button>`,
-    `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="pause_dispatch">暂停</button>`,
-    `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="resume_dispatch">恢复</button>`,
+    dispatchControl,
     `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="shutdown">关停</button>`
-  ];
+  ].filter(Boolean);
   if (showDanger) {
     buttons.push(
       `<button class="danger-button" data-action="revoke-agent-node" data-node-id="${esc(node.nodeId)}">吊销</button>`,
@@ -3594,11 +3664,11 @@ function agentActions(node, options = {}) {
 
 function orgAgentStats(nodes) {
   const aliveNodes = nodes.filter((node) => node.status !== "revoked");
-  const onlineNodes = aliveNodes.filter((node) => node.status === "online").length;
-  const busyNodes = aliveNodes.filter((node) => Number((node.display?.currentDispatchIds || []).length) > 0).length;
-  const runningDispatches = aliveNodes.reduce((sum, node) => sum + Number((node.display?.currentDispatchIds || []).length), 0);
+  const onlineNodes = aliveNodes.filter((node) => node.status === "online" && !heartbeatTimedOut(node) && node.display?.health !== "offline").length;
+  const busyNodes = aliveNodes.filter((node) => nodeDispatchIds(node).length > 0).length;
+  const runningDispatches = aliveNodes.reduce((sum, node) => sum + nodeDispatchIds(node).length, 0);
   const abnormalNodes = aliveNodes.filter((node) =>
-    node.status !== "online" || !["ok", "healthy", "normal", undefined, ""].includes(node.display?.health)).length;
+    heartbeatTimedOut(node) || node.status !== "online" || !["ok", "healthy", "normal", undefined, ""].includes(node.display?.health)).length;
   const projectIds = new Set((state.projects || []).map((project) => project.id));
   const liveTokens = (state.agentJoinTokens || []).filter((token) =>
     projectIds.has(token.projectId)
@@ -3614,13 +3684,13 @@ function projectAgentNodes(projectId = currentProjectId) {
 
 function projectAgentStats(projectId = currentProjectId, nodes = projectAgentNodes(projectId)) {
   const aliveNodes = nodes.filter((node) => node.status !== "revoked");
-  const onlineNodes = aliveNodes.filter((node) => node.status === "online").length;
-  const busyNodes = aliveNodes.filter((node) => Number((node.display?.currentDispatchIds || []).length) > 0).length;
+  const onlineNodes = aliveNodes.filter((node) => node.status === "online" && !heartbeatTimedOut(node) && node.display?.health !== "offline").length;
+  const busyNodes = aliveNodes.filter((node) => nodeDispatchIds(node).length > 0).length;
   const groupIds = new Set((state.taskGroups || []).filter((taskGroup) => taskGroup.projectId === projectId).map((taskGroup) => taskGroup.id));
   const runningDispatches = (state.agentDispatches || []).filter((dispatch) =>
     groupIds.has(dispatch.taskGroupId) && ["queued", "running", "blocked"].includes(dispatch.status)).length;
   const abnormalNodes = aliveNodes.filter((node) =>
-    node.status !== "online" || !["ok", "healthy", "normal", undefined, ""].includes(node.display?.health)).length;
+    heartbeatTimedOut(node) || node.status !== "online" || !["ok", "healthy", "normal", undefined, ""].includes(node.display?.health)).length;
   const liveTokens = liveJoinTokenCount(projectId);
   return {aliveNodes, onlineNodes, busyNodes, runningDispatches, abnormalNodes, liveTokens};
 }
@@ -3638,9 +3708,12 @@ function projectScopedAgents(projectId) {
 }
 
 function agentScopeText(agent) {
+  const agentOrganizationId = agent.organizationId || DEFAULT_ORGANIZATION_ID;
+  const organization = (state.organizations || []).find((org) => org.orgId === agentOrganizationId);
+  const contextOrganization = state.organizationContext?.id === agentOrganizationId ? state.organizationContext : null;
   return agent.projectId
     ? `项目级：${projectNameOf(agent.projectId)}`
-    : `组织级：${(state.organizations || []).find((org) => org.orgId === agent.organizationId)?.name || agent.organizationId || "当前组织"}`;
+    : `组织级：${contextOrganization?.name || organization?.name || agentOrganizationId || "当前组织"}`;
 }
 
 // 三个「自动选型」预设在创建表单里显示中文（自动最优 / 自动快速 / 成本优先），列表里此前却显示原始码 auto_best ——
@@ -3685,7 +3758,8 @@ function renderAgentProfileForm({projectId = "", title = "创建 Agent 档案", 
         <div class="form-row"><label>执行角色</label><input name="role" list="agent-role-options" required placeholder="例如：agent-runtime">
           <datalist id="agent-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
         <div class="form-row"><label>默认模型</label><input name="model" list="agent-model-options" value="auto_best" placeholder="auto_best 或实际模型 ID">
-          <datalist id="agent-model-options">${modelOptionsHtml()}</datalist></div>
+          <datalist id="agent-model-options">${modelOptionsHtml()}</datalist>
+          <div class="small muted">自动最优（auto_best）· 自动快速（auto_fast）· 成本优先（cost_aware），或填写模型能力列表中的实际模型 ID。</div></div>
         <div class="form-row"><label>信任分</label><input name="trustScore" type="number" step="0.01" min="0" max="1" value="0.85"></div>
       </div>
       <div class="form-row"><label>角色 Skill 引用（可选）</label><input name="roleSkillRef" list="agent-role-skill-options" placeholder="默认使用技能源内匹配角色">
@@ -3706,9 +3780,9 @@ function projectAgentCards(nodes, canControlNodes, options = {}) {
             <h3><span class="hover-wrap">${esc(node.nodeName || node.nodeId)}${agentHoverPop(node)}</span>${timedOut ? badge("heartbeat_timeout") : badge(node.status)}</h3>
             <div class="agent-meta">
               <span>准入：${badge(node.admission)}</span>
-              <span>健康度：${badge(node.display?.health)}</span>
+              <span>健康度：${badge(timedOut ? "offline" : node.display?.health || node.status)}</span>
               <span>地区：${esc(node.display?.region || "-")}</span>
-              <span>当前任务数：${(node.display?.currentDispatchIds || []).length}</span>
+              <span>当前任务数：${nodeDispatchIds(node).length}</span>
               <span>最近心跳：${fmtTime(node.lastHeartbeatAt)}</span>
             </div>
             ${timedOut ? `<div class="small warn-text">上次状态仍为「${esc(t(node.status) || node.status)}」，但心跳已超过判死阈值。</div>` : ""}
@@ -4062,30 +4136,35 @@ function renderOrgAgents() {
   if (agentViewMode === "cards") {
     bodyHtml = nodes.length ? `
       <div class="agent-cards">
-        ${nodes.map((node) => `
+        ${nodes.map((node) => {
+          const timedOut = heartbeatTimedOut(node);
+          return `
           <div class="agent-card">
-            <h3><span class="hover-wrap">${esc(node.nodeName || node.nodeId)}${agentHoverPop(node)}</span>${badge(node.status)}</h3>
+            <h3><span class="hover-wrap">${esc(node.nodeName || node.nodeId)}${agentHoverPop(node)}</span>${timedOut ? badge("heartbeat_timeout") : badge(node.status)}</h3>
             <div class="agent-meta">
               <span>地区：${esc(node.display?.region || "-")}</span>
-              <span>健康度：${badge(node.display?.health)}</span>
-              <span>当前任务数：${(node.display?.currentDispatchIds || []).length}</span>
+              <span>健康度：${badge(timedOut ? "offline" : node.display?.health || node.status)}</span>
+              <span>当前任务数：${nodeDispatchIds(node).length}</span>
               <span>最近心跳：${fmtTime(node.lastHeartbeatAt)}</span>
             </div>
+            ${timedOut ? `<div class="small warn-text">上次状态仍为「${esc(t(node.status) || node.status)}」，但心跳已超过判死阈值。</div>` : ""}
             <div class="button-row" style="margin-top:10px;">${agentActions(node)}</div>
           </div>
-        `).join("")}
+        `;}).join("")}
       </div>
     ` : `<div class="notice">当前组织暂无 agent 节点。可注册组织共享节点，或在项目内注册专属节点。</div>`;
   } else {
-    const nodeRows = nodes.map((node) => row([
+    const nodeRows = nodes.map((node) => {
+      const timedOut = heartbeatTimedOut(node);
+      return row([
       `<span class="hover-wrap"><strong>${esc(node.nodeName || node.nodeId)}</strong>${agentHoverPop(node)}</span><div class="small muted mono">${esc(node.nodeId)}</div>${customBadge(node.registrationScope === "organization" ? "组织共享" : "项目专属", node.registrationScope === "organization" ? "green" : "blue")}`,
-      badge(node.status),
+      timedOut ? `${badge("heartbeat_timeout")}<div class="small warn-text">上次状态仍为「${esc(t(node.status) || node.status)}」</div>` : badge(node.status),
       esc(node.display?.region || "-"),
-      badge(node.display?.health),
-      {v: String((node.display?.currentDispatchIds || []).length), c: "num"},
+      badge(timedOut ? "offline" : node.display?.health || node.status),
+      {v: String(nodeDispatchIds(node).length), c: "num"},
       {v: fmtTime(node.lastHeartbeatAt), c: "nowrap"},
       agentActions(node)
-    ])).join("");
+    ]);}).join("");
     bodyHtml = table(["名称", "运行状态", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"],
       nodeRows, {emptyText: listEmptyText("agent 节点")});
   }
@@ -4238,8 +4317,8 @@ function renderProjectAgents() {
         : badge(node.status)}${claimMissHint(node)}${selfCheckFailureHint(node)}`,
       badge(node.admission),
       esc(node.display?.region || "-"),
-      badge(node.display?.health),
-      {v: String((node.display?.currentDispatchIds || []).length), c: "num"},
+      badge(timedOut ? "offline" : node.display?.health || node.status),
+      {v: String(nodeDispatchIds(node).length), c: "num"},
       {v: `${fmtTime(node.lastHeartbeatAt)}${heartbeatStaleHint(node)}`, c: "nowrap"},
       canControlNodes ? agentActions(node, {scope: "project", showDanger: !preferOrgGovernance}) : "-"
     ]);
@@ -4689,7 +4768,7 @@ function renderProjectOverview() {
     return panel("项目概览", noVisibleProjectNotice(), {wide: true});
   }
   const groups = projectTaskGroups();
-  const openGroups = groups.filter((taskGroup) => !["closed", "aborted"].includes(taskGroup.status));
+  const openGroups = groups.filter((taskGroup) => !settledTaskGroupStatuses.has(taskGroup.status));
   const blockers = groups.flatMap((taskGroup) => taskGroup.blockers || []);
   // 这个数是【按任务组】平均，而同一屏顶上那个大百分比是服务端【按工作项】平均算的
   // （control-plane-core 的 recomputeProgressSnapshots）。两个数并排、公式不同，
@@ -5074,67 +5153,41 @@ function renderTaskGroups() {
     `)
   ];
 
-  const groupPanels = groups.map((taskGroup) => {
-    const expanded = expandedTaskGroupId === taskGroup.id;
-    const activeGroup = taskGroup.status !== "closed" && taskGroup.status !== "aborted";
-    const head = `
-      <div class="stack">
-        <div class="record-title">
-          ${badge(taskGroup.status)} ${badge(taskGroup.phase)} ${badge(taskGroup.health)} ${badge(taskGroup.goalExecutionStatus || "active")}
-          ${/* 人工指令的「暂停」和「取消」落到同一个执行状态（都是 active_paused_by_freeze），
-                只有 pauseReason 分得开，而它此前一处都没渲染 —— 于是下了取消的人看到的是
-                "已被冻结暂停"，和别人按的暂停一模一样，而两者能不能恢复并不一样。 */""}
-          ${taskGroup.pauseReason ? customBadge(`停因：${t(taskGroup.pauseReason)}`, "orange") : ""}
-        </div>
-        ${progressLine(taskGroup.progress)}
-        <div class="record-meta">
-          <span>语言：${esc(languageLabel(taskGroup.languagePolicy))}</span>
-          <span>角色数：${taskGroup.roleCount ?? 0}</span>
-          <span>工作项：${esc(taskGroup.workItemCount ?? (taskGroup.workItems || []).length)}</span>
-          <span>更新时间：${fmtTime(taskGroup.updatedAt)}</span>
-        </div>
-        ${/* 人工补充要求会原样进【每一次派发】的内容包，一直指挥后续所有 agent，而此前界面上
-              一处都不渲染：人既看不到自己（或同事）当初加了什么，也就无从判断该不该再加一条。
-              超出保留上限而丢掉的条数也要一并说出来。 */""}
-        ${(taskGroup.humanGuidance || []).length ? `
-        <details class="record">
-          <summary>人工补充要求（${(taskGroup.humanGuidance || []).length} 条${Number(taskGroup.humanGuidanceDroppedCount || 0) ? `，另有 ${esc(taskGroup.humanGuidanceDroppedCount)} 条更早的已超出保留上限` : ""}）—— 它们会进入之后每一次派发</summary>
-          ${(taskGroup.humanGuidance || []).slice(-20).reverse().map((item) => `
-            <div class="record-meta"><span>${fmtTime(item.addedAt)}</span><span>${esc(item.text || "")}</span></div>
-          `).join("")}
-        </details>` : ""}
-        <div class="button-row">
-          <button class="secondary-button" data-action="tg-detail" data-task="${esc(taskGroup.id)}">${expanded ? "收起详情" : "查看详情"}</button>
-          ${activeGroup && hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="primary-button" data-workspace-page="tasks" data-workspace="create" data-create-for-group="${esc(taskGroup.id)}">创建任务</button>` : ""}
-          ${/* 暂停与恢复按【当前状态】二选一 —— 两个一直摆着的话，总有一个是按了什么都不会发生的：
-                对已经停下来的组点「暂停」、对在跑的组点「恢复」，回执都是 200，而屏幕一点没变。
-                成员那一行早就是二选一（启用 XOR 停用），这里是漏的。
-                人停下来的（停因以 human_directive 开头）后端只让真人恢复 —— 机器主体连按钮都不该看见，
-                否则按下去只会拿回一句 403，而人不知道自己为什么点不动。 */ ""}
-          ${activeGroup && hasGroupPerm(taskGroup.id, "task_group:control") ? (
-            String(taskGroup.goalExecutionStatus || "").startsWith("active_paused")
-              ? (canResumeTaskGroup(taskGroup)
-                ? `<button class="primary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="resume">启动执行</button>`
-                : `<span class="notice">这个任务组是人停下来的（停因：${esc(t(taskGroup.pauseReason))}），只有真人能恢复它</span>`)
-              : `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="pause">暂停</button>`
-          ) : ""}
-          ${activeGroup && (hasGroupPerm(taskGroup.id, "task_group:review") || hasGroupPerm(taskGroup.id, "task_group:control")) ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="request_review">请求评审</button>` : ""}
-          ${activeGroup && hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="danger-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="rebound_drift">纠偏</button>` : ""}
-        </div>
-        ${expanded ? renderTaskGroupDetail(taskGroup) : ""}
-      </div>
-    `;
-    return panel(taskGroup.name || taskGroup.id, head, {wide: true});
-  }).join("");
-
   if (hasNoVisibleProject()) return panel("任务组", noVisibleProjectNotice(), {wide: true});
-  return cellsWaitingWithNoAgentNotice(groups) + wipCapacityNotice(groups) + renderTaskGroupsSummary(groups)
-    + renderTaskGroupAttentionBoard(groups) + renderTaskGroupLifecycleGuide(groups) + createPanels.join("")
-    + (groupPanels || panel("任务组", `<div class="notice">当前项目暂无任务组。</div>`, {wide: true}));
+  const notices = cellsWaitingWithNoAgentNotice(groups) + wipCapacityNotice(groups);
+  if (!workspaces.allows("任务组列表")) return notices + renderTaskGroupsSummary(groups)
+    + renderTaskGroupAttentionBoard(groups) + renderTaskGroupLifecycleGuide(groups) + createPanels.join("");
+  const helpers = {row, table, badge, progressLine, fmtTime, languageLabel, t, controls: taskGroupControls, quickControl: taskGroupLifecycleControl,
+    project: currentProject(), projectLink: window.AIMAC_OBJECT_WORKSPACE.projectLink, groupLink: window.AIMAC_OBJECT_WORKSPACE.groupLink};
+  if (expandedTaskGroupId) {
+    const taskGroup = groups.find((group) => group.id === expandedTaskGroupId);
+    if (!taskGroup) return panel("任务组详情", `<button class="secondary-button" data-action="tg-list">返回任务组列表</button><div class="notice">该任务组未能加载或已不在可见范围内。</div>`, {wide: true});
+    return notices + window.AIMAC_TASK_GROUP_WORKSPACE.detail(taskGroup, renderTaskGroupDetail(taskGroup), helpers);
+  }
+  return notices + panel("任务组列表", window.AIMAC_TASK_GROUP_WORKSPACE.list(groups, helpers), {wide: true,
+    headerSide: filterInput("按任务组名称、状态或语言筛选…", "task-group-list")});
+}
+
+function taskGroupControls(taskGroup) {
+  const activeGroup = !settledTaskGroupStatuses.has(taskGroup.status);
+  return `<div class="button-row">
+    ${activeGroup && hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="primary-button" data-workspace-page="tasks" data-workspace="create" data-create-for-group="${esc(taskGroup.id)}">创建任务</button>` : ""}
+    ${taskGroupLifecycleControl(taskGroup)}
+    ${activeGroup && (hasGroupPerm(taskGroup.id, "task_group:review") || hasGroupPerm(taskGroup.id, "task_group:control")) ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="request_review">请求评审</button>` : ""}
+    ${activeGroup && hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="danger-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="rebound_drift">纠偏</button>` : ""}
+  </div>`;
+}
+
+function taskGroupLifecycleControl(taskGroup) {
+  if (settledTaskGroupStatuses.has(taskGroup.status) || !hasGroupPerm(taskGroup.id, "task_group:control")) return "";
+  if (String(taskGroup.goalExecutionStatus || "").startsWith("active_paused")) return canResumeTaskGroup(taskGroup)
+    ? `<button class="primary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="resume">启动执行</button>`
+    : `<span class="notice">这个任务组是人停下来的（停因：${esc(t(taskGroup.pauseReason))}），只有真人能恢复它</span>`;
+  return `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="pause">暂停</button>`;
 }
 
 function renderTaskGroupDetail(taskGroup) {
-  return workspaces.navigation("group-detail", "inline") + workspaces.run("group-detail", () => renderTaskGroupDetailBody(taskGroup));
+  return (page === "tg" && expandedTaskGroupId ? "" : workspaces.navigation("group-detail", "inline")) + workspaces.run("group-detail", () => renderTaskGroupDetailBody(taskGroup));
 }
 
 function renderTaskGroupDetailBody(taskGroup) {
@@ -5704,6 +5757,7 @@ function collectRuleFragments(form, layer) {
 // 它与真相源（state-machines.yaml 的 AgentDispatch.terminal）由 validate-specs 逐字核对，
 // 并且【整个前端只准有这一份】—— 原先另有一处内联抄写，已改成用这个集合。
 const terminalDispatchStatuses = new Set(["completed", "failed", "cancelled"]);
+const settledTaskGroupStatuses = new Set(["closed", "aborted"]);
 
 // 「这次派发用了什么规则」：如实展示契约记录的治理件。契约不在当前运行态里（被容量淘汰）要说清，不能显示成"没规则"。
 function ruleSummaryHtml(summary) {
@@ -7276,7 +7330,15 @@ function renderMonitor() {
   ])).join("");
 
   const dispatchesAll = filterSource((state.agentDispatches || []).filter((dispatch) => groups.some((taskGroup) => taskGroup.id === dispatch.taskGroupId)), "dispatches");
-  const dispatches = dispatchesAll.slice(0, 20).map((dispatch) => row([
+  const dispatches = dispatchesAll.slice(0, 20).map((dispatch) => {
+    const canControlDispatch = hasGroupPerm(dispatch.taskGroupId, "task_group:control") && dispatch.assignedNodeId && !terminalDispatchStatuses.has(dispatch.status);
+    const controls = [
+      `<button class="secondary-button" data-action="show-dispatch-events" data-dispatch-id="${esc(dispatch.dispatchId)}">事件</button>`,
+      canControlDispatch && dispatch.status === "blocked" ? `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(dispatch.assignedNodeId)}" data-dispatch-id="${esc(dispatch.dispatchId)}" data-command="resume_dispatch">恢复</button>` : "",
+      canControlDispatch && ["queued", "running"].includes(dispatch.status) ? `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(dispatch.assignedNodeId)}" data-dispatch-id="${esc(dispatch.dispatchId)}" data-command="pause_dispatch">暂停</button>` : "",
+      canControlDispatch ? `<button class="danger-button" data-action="agent-control" data-node-id="${esc(dispatch.assignedNodeId)}" data-dispatch-id="${esc(dispatch.dispatchId)}" data-command="cancel_dispatch">取消</button>` : ""
+    ].filter(Boolean).join(" ");
+    return row([
     `<span class="mono">${esc(dispatch.dispatchId)}</span>`,
     `<span class="mono">${esc(dispatch.workItemId || "-")}</span>`,
     badge(dispatch.status),
@@ -7311,8 +7373,9 @@ function renderMonitor() {
         ? `<div class="small warn-text">⚠ 契约签发之后规则发生过变更：这次执行遵循的可能不是当前生效的规则</div>`
         : ""
     ].filter(Boolean).join(""),
-    `<button class="secondary-button" data-action="show-dispatch-events" data-dispatch-id="${esc(dispatch.dispatchId)}">事件</button>`
-  ])).join("");
+    controls
+  ]);
+  }).join("");
 
   const commandsInScope = (state.agentControlCommands || []).filter(inScope);
   const commands = commandsInScope.slice(0, 16).map((command) => row([
@@ -7346,11 +7409,7 @@ function renderMonitor() {
     badge(node.admission),
     // 心跳时间戳原先只是一个时间：人得自己算它有多旧，而"节点其实已经死了"正是最该一眼看出来的。
     {v: `${fmtTime(node.lastHeartbeatAt)}${heartbeatStaleHint(node)}`, c: "nowrap"},
-    node.status !== "revoked" && canControlNodes ? [
-      `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="refresh_profile" title="让节点重新探测模型执行器、远程 MCP、文件系统和 Git 能力">刷新自检</button>`,
-      `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="pause_dispatch">暂停</button>`,
-      `<button class="danger-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="cancel_dispatch">取消</button>`
-    ].join(" ") : "-"
+    node.status !== "revoked" && canControlNodes ? agentActions(node, {scope: "project", showDanger: false, includeDispatchControl: false}) : "-"
   ])).join("");
 
   const decisionsInScope = (state.modelSelectionDecisions || []).filter(inScope);
@@ -8794,6 +8853,7 @@ async function focusManagementGroup(groupId, nextPage = page, options = {}) {
   taskPageCursor = options.listState?.cursor || "";
   taskCursorStack = options.listState?.stack || [];
   expandedTaskGroupId = nextPage === "tg" ? managementGroupId : "";
+  if (!expandedTaskGroupId || tgDetail?.taskGroupId !== expandedTaskGroupId) tgDetail = null;
   directiveTaskGroupId = managementGroupId;
   page = nextPage;
   sessionStorage.setItem("aimac.page", page);
@@ -9002,6 +9062,11 @@ document.addEventListener("click", async (event) => {
     try { await loadTaskWorkbenchData(); render(); } catch (error) { taskPageCursor = previous.cursor; taskCursorStack = previous.stack; showError(error); }
     return;
   }
+  const runDisclosure = event.target.closest("[data-run-disclosure]");
+  if (runDisclosure) {
+    taskRunDisclosure[runDisclosure.dataset.runDisclosure] = !runDisclosure.closest("details").open;
+    return;
+  }
   const returnWorkButton = event.target.closest("[data-return-work]");
   if (returnWorkButton) {
     const origin = taskReturnContext;
@@ -9081,6 +9146,7 @@ document.addEventListener("click", async (event) => {
   if (menuButton) {
     if (menuButton.dataset.menu !== page && formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前页面有未保存的修改，确认离开？", danger: true, confirmText: "放弃并离开"}))) return;
     page = menuButton.dataset.menu;
+    if (page === "tg") { expandedTaskGroupId = ""; managementGroupId = ""; tgDetail = null; }
     sessionStorage.setItem("aimac.page", page);
     lastError = "";
     formTouched = false;
@@ -9152,6 +9218,11 @@ document.addEventListener("click", async (event) => {
   const guardBtn = target.tagName === "BUTTON" ? target : null;
   if (guardBtn) { guardBtn.disabled = true; guardBtn.classList.add("is-loading"); }
   try {
+    if (action === "open-node-tasks") {
+      workspaces.select("monitor", "runs");
+      await focusManagementGroup("", "monitor");
+      return;
+    }
     if (action === "modal-close") {
       await requestCloseModal();
       return;
@@ -9199,7 +9270,7 @@ document.addEventListener("click", async (event) => {
     if (action === "open-change-password") {
       openModal("修改密码", `
         <form class="form-grid" data-form="change-password">
-          <div class="form-row"><label>${currentAccount?.authPolicy?.passwordSet ? "当前密码" : "当前密码（你还没有设过密码，留空即可）"}</label><input name="currentPassword" type="password" autocomplete="current-password"></div>
+          <div class="form-row"><label>${(currentAccount?.passwordSet ?? currentAccount?.authPolicy?.passwordSet) ? "当前密码" : "当前密码（你还没有设过密码，留空即可）"}</label><input name="currentPassword" type="password" autocomplete="current-password"${(currentAccount?.passwordSet ?? currentAccount?.authPolicy?.passwordSet) ? " required" : ""}></div>
           <div class="form-row"><label>新密码（至少 8 位）</label><input name="newPassword" type="password" required minlength="8" autocomplete="new-password"></div>
           <div class="form-row"><label>确认新密码</label><input name="confirmPassword" type="password" required minlength="8" autocomplete="new-password"></div>
           <button class="primary-button" type="submit">保存新密码</button>
@@ -9540,7 +9611,7 @@ document.addEventListener("click", async (event) => {
         danger: true, confirmText: "取消派发"}))) return;
       if (command === "shutdown" && !(await confirmDialog({title: "关停节点", message: "确认优雅关停该节点？", sub: "节点将进入 draining，完成或围栏当前派发后离线（区别于硬吊销）。", danger: true, confirmText: "关停"}))) return;
       const node = [...(state.agentRuntimeNodes || []), ...orgAgentNodes].find((item) => item.nodeId === target.dataset.nodeId);
-      const dispatchId = (node?.activeDispatchIds || node?.display?.currentDispatchIds || [])[0] || "";
+      const dispatchId = target.dataset.dispatchId || nodeDispatchIds(node)[0] || "";
       await api(`/api/agent-nodes/${encodeURIComponent(target.dataset.nodeId)}/control`, {
         method: "POST",
         body: JSON.stringify({commandType: command, dispatchId: dispatchId || undefined})
@@ -9586,19 +9657,12 @@ document.addEventListener("click", async (event) => {
       }
       return;
     }
+    if (action === "tg-list") {
+      await focusManagementGroup("", "tg");
+      return;
+    }
     if (action === "tg-detail") {
-      const taskGroupId = target.dataset.task;
-      if (expandedTaskGroupId === taskGroupId) {
-        expandedTaskGroupId = "";
-        tgDetail = null;
-        render();
-      } else {
-        expandedTaskGroupId = taskGroupId;
-        tgDetail = null;
-        render();
-        await loadTaskGroupDetail(taskGroupId);
-        render();
-      }
+      await focusManagementGroup(target.dataset.task, "tg");
       return;
     }
     if (action === "tg-config-reset") {
@@ -9814,7 +9878,38 @@ setInterval(() => {
 
 /* ---------------- 启动 ---------------- */
 
+function rememberWorkspaceLocation() {
+  window.AIMAC_WORKSPACE_LOCATION?.save({version: 1, accountId: currentAccount?.accountId, projectId: currentProjectId, page,
+    workspace: workspaces.current(page)?.id, groupWorkspace: workspaces.current("group-detail")?.id,
+    groupId: managementGroupId || (page === "tg" ? expandedTaskGroupId : ""), groupDetail: Boolean(page === "tg" && expandedTaskGroupId),
+    workId: page === "tasks" ? selectedWork?.workItemId : "", search: taskSearch, status: taskStatus, cursor: taskPageCursor, stack: taskCursorStack,
+    listGroupId: workListGroupId, listCursor: workListState?.cursor, listStack: workListState?.stack});
+}
+
+function restoreWorkspaceLocation() {
+  const saved = window.AIMAC_WORKSPACE_LOCATION?.read(currentAccount?.accountId);
+  if (!saved || !allowedMenuItemsFor(perspectiveOf(currentAccount)).some((item) => item.id === saved.page)) return;
+  page = saved.page;
+  currentProjectId = saved.projectId;
+  workspaces.select(page, saved.workspace);
+  workspaces.select("group-detail", saved.groupWorkspace);
+  managementGroupId = ["tg", "tasks", "monitor", "review", "directives"].includes(page) ? saved.groupId : "";
+  expandedTaskGroupId = page === "tg" && saved.groupDetail ? managementGroupId : "";
+  selectedWork = page === "tasks" && saved.workId && managementGroupId ? {taskGroupId: managementGroupId, workItemId: saved.workId} : null;
+  taskSearch = saved.search;
+  taskStatus = saved.status;
+  taskPageCursor = saved.cursor;
+  taskCursorStack = saved.stack;
+  workListGroupId = saved.listGroupId;
+  workListState = {cursor: saved.listCursor, stack: saved.listStack};
+  directiveTaskGroupId = managementGroupId;
+  restoredWorkspaceLocation = true;
+  sessionStorage.setItem("aimac.page", page);
+  sessionStorage.setItem("aimac.projectId", currentProjectId);
+}
+
 if (authToken && currentAccount) {
+  restoreWorkspaceLocation();
   page = page || defaultPageFor(perspectiveOf(currentAccount));
   connectRealtime();
   loadPage().then(() => {

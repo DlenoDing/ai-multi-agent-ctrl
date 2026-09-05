@@ -182,6 +182,8 @@ function buildState() {
       health: "ok",
       goalExecutionStatus: "active_paused_by_control",
       pauseReason: "task_group_pause",
+      humanGuidance: Array.from({length: 25}, (_, index) => ({text: `guidance-${index + 1}`, addedAt: at(index + 1)})),
+      humanGuidanceDroppedCount: 3,
       workItems: visibleItems,
       createdAt: at(0),
       updatedAt: at(0)
@@ -334,6 +336,20 @@ try {
   await request("/api/task-groups/tg_workbench_visible/work-items/w_outside_summary", foreignToken, {status: 403});
 
   const detail = await request("/api/task-groups/tg_workbench_visible/work-items/w_outside_summary?eventLimit=2", viewerToken);
+  const groupProgress = await request("/api/task-groups/tg_workbench_visible/progress", viewerToken);
+  assert.equal(groupProgress.taskGroup.id, "tg_workbench_visible");
+  assert.equal(groupProgress.taskGroup.projectId, "prj_workbench_api");
+  assert.equal(groupProgress.taskGroup.canControl, true);
+  assert.equal(groupProgress.taskGroup.canReview, false);
+  assert.equal(groupProgress.taskGroup.workItemCount, 325);
+  assert.equal(groupProgress.taskGroup.humanGuidanceTotal, 25);
+  assert.equal(groupProgress.taskGroup.humanGuidance.length, 20);
+  assert.equal(groupProgress.taskGroup.humanGuidance[0].text, "guidance-6");
+  assert.equal(groupProgress.taskGroup.humanGuidanceDroppedCount, 3);
+  assert.ok(!("blockers" in groupProgress.taskGroup), "identity summary must not duplicate top-level blocker detail");
+  assert.ok(!("workItems" in groupProgress.taskGroup), "identity summary must not duplicate large task payloads");
+  await request("/api/task-groups/tg_workbench_visible/progress", foreignToken, {status: 403});
+  await request("/api/task-groups/tg_workbench_hidden/progress", viewerToken, {status: 403});
   assert.equal(detail.projectId, "prj_workbench_api");
   assert.equal(detail.taskGroup.id, "tg_workbench_visible");
   assert.equal(detail.taskGroup.goalExecutionStatus, "active_paused_by_control");

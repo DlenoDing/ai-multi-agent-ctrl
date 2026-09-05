@@ -1018,11 +1018,43 @@ const MUTATIONS = [
     expect: "悄悄丢掉人下达的要求"
   },
   {
-    name: "人工补充要求要在任务组页看得见",
-    file: APP,
+    name: "任务执行轨迹不得把失败终态冒充执行器已启动",
+    file: "apps/control-plane-ui/public/modules/task-workbench.js",
+    gate: "workspace",
+    from: 'const executed = run.status === "completed" || events.some((event) => ["executor_started", "executor_output", "checkpoint_submitted"].includes(event.eventType));',
+    to: "const executed = returned;",
+    expect: "failed-before-start"
+  },
+  {
+    name: "工作区刷新定位不得跨账号恢复",
+    file: "apps/control-plane-ui/public/modules/workspace-location.js",
+    gate: "workspace",
+    from: "return location?.accountId === accountId ? location : null;",
+    to: "return location;",
+    expect: "does not restore across accounts"
+  },
+  {
+    name: "返回任务组列表必须清除详情权限快照",
+    file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "        ${(taskGroup.humanGuidance || []).length ? `",
-    to: "        ${false ? `",
+    from: "if (!expandedTaskGroupId || tgDetail?.taskGroupId !== expandedTaskGroupId) tgDetail = null;",
+    to: "if (expandedTaskGroupId && tgDetail?.taskGroupId !== expandedTaskGroupId) tgDetail = null;",
+    expect: "返回任务组列表会清除详情权限快照"
+  },
+  {
+    name: "多派发控制必须使用按钮指定的派发 ID",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: 'const dispatchId = target.dataset.dispatchId || nodeDispatchIds(node)[0] || "";',
+    to: 'const dispatchId = nodeDispatchIds(node)[0] || "";',
+    expect: "明确指定的派发而非节点数组首项"
+  },
+  {
+    name: "人工补充要求要在任务组页看得见",
+    file: "apps/control-plane-ui/public/modules/task-group-workspace.js",
+    gate: "console",
+    from: "const guidance = group.humanGuidance || [];",
+    to: "const guidance = [];",
     expect: "任务组页不显示人工补充要求"
   },
   {
@@ -6356,8 +6388,8 @@ const MUTATIONS = [
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
     // 锚点跟着改到「暂停/恢复」二选一之后那一处（2026-08-26 把两个常驻按钮改成按状态出一个）。
-    from: '          ${activeGroup && hasGroupPerm(taskGroup.id, "task_group:control") ? (',
-    to: "          ${activeGroup && canControl ? (",
+    from: 'if (settledTaskGroupStatuses.has(taskGroup.status) || !hasGroupPerm(taskGroup.id, "task_group:control")) return "";',
+    to: 'if (settledTaskGroupStatuses.has(taskGroup.status) || !hasPerm("task_group:control")) return "";',
     expect: "别人那段也有"
   },
   {
@@ -7393,10 +7425,10 @@ const MUTATIONS = [
   },
   {
     name: "任务组的角色数必须用服务端给的那个数",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/task-group-workspace.js",
     gate: "console",
-    from: "          <span>角色数：${taskGroup.roleCount ?? 0}</span>",
-    to: "          <span>角色数：${(taskGroup.roles || []).length}</span>",
+    from: '<span data-field="role-count">${group.roleCount ?? 0}</span>',
+    to: '<span data-field="role-count">${(group.roles || []).length}</span>',
     expect: "界面必须用服务端给的 roleCount"
   },
   {
@@ -9878,8 +9910,8 @@ const MUTATIONS = [
     name: "已吊销的节点必须离开舰队分母（否则叫人去修一台不存在的机器）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "agent",
-    from: 'total: (scopeAgentRuntimeNodes(scoped.agentRuntimeNodes) || []).filter((node) => node.status !== "revoked").length',
-    to: "total: (scopeAgentRuntimeNodes(scoped.agentRuntimeNodes) || []).length",
+    from: 'total: fleetNodes.filter((node) => node.status !== "revoked").length',
+    to: "total: fleetNodes.length",
     expect: "舰队分母把已吊销的节点也算了进去"
   },
   {
@@ -12293,6 +12325,7 @@ const GATE_COMMANDS = {
   crash: "scripts/crash-consistency-gate.mjs",
   writer: "scripts/concurrent-writer-gate.mjs",
   console: "scripts/console-behaviour-check.mjs",
+  workspace: "scripts/workspaces-check.mjs",
   idle: "scripts/idle-tick-gate.mjs",
   specs: "scripts/validate-specs.rb",
   // 控制面 e2e（约 94 秒，其中九成在等 I/O，与别的变异并行几乎不占额外墙钟）。
