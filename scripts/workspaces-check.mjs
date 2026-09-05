@@ -300,11 +300,11 @@ const helpers = {
   check("task workbench detail scopes run history to selected task group and work item",
     /d_new/u.test(detailHtml) && /Runtime A/u.test(detailHtml) && !/d_other/u.test(detailHtml) && !/Runtime B/u.test(detailHtml),
     strip(detailHtml).slice(0, 280));
-  check("task workbench detail preserves lifecycle links",
-    /data-focus-page="monitor"/u.test(detailHtml)
-      && /data-focus-page="review"/u.test(detailHtml)
-      && /data-focus-page="directives"/u.test(detailHtml)
-      && /data-close-work/u.test(detailHtml),
+  check("task workbench detail keeps one return action and leaves lifecycle navigation to the object shell",
+    /data-close-work/u.test(detailHtml)
+      && !/data-focus-page="monitor"/u.test(detailHtml)
+      && !/data-focus-page="review"/u.test(detailHtml)
+      && !/data-focus-page="directives"/u.test(detailHtml),
     strip(detailHtml).slice(0, 280));
   check("task workbench asks the supplied helper for terminal dispatch state",
     terminalDispatchLookups.includes("completed"),
