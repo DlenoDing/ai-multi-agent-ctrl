@@ -6510,6 +6510,14 @@ function verifyAgentGatewayContracts(output) {
         preference: preferred.agentModelPreference, skill: preferred.roleSkillRef, model: preferred.selectedModel?.modelId,
         score: preferred.scoreBreakdown?.agentPreference})}`);
     }
+    preferenceState.projects.push({...preferenceState.projects.find((item) => item.id === "prj_control_plane"),
+      id: "prj_same_org_foreign", name: "同组织另一项目", members: []});
+    preferenceState.agents.push({...projectAgent, id: "agent_other_project_orchestrator", projectId: "prj_same_org_foreign",
+      trustScore: 1});
+    const spoofedProject = selectModel(preferenceState, {...request, projectId: "prj_same_org_foreign"}, {persist: false});
+    if (spoofedProject.selectedAgentId !== projectAgent.id) {
+      output.push(`模型选择信任了请求伪造的同组织 projectId，而不是从任务组派生项目（实际 Agent=${spoofedProject.selectedAgentId || "无"}）`);
+    }
     const preferenceGroup = preferenceState.taskGroups.find((item) => item.id === "tg_runtime_management");
     preferenceGroup.workItems.push({id: "work_agent_contract_preference", title: "项目 Agent 契约绑定",
       ownerRole: "orchestrator", status: "ready", progress: 0, requirements: ["验证 Agent 与 Skill 同源"]});

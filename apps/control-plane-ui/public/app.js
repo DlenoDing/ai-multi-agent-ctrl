@@ -3167,10 +3167,8 @@ function renderProjectMemberForm(options = {}) {
       <div class="form-row"><label>项目角色</label>
         ${/* 默认停在 project_owner 上：不读就提交，等于把最高权限授予名单里排第一的人。
               授权对象与角色两个下拉都必须显式选择 —— 少了任一个，误授都能一次点击完成。 */ ""}
-        ${/* 2026-08-26 人定：项目管理员与项目负责人是同一个人，下拉里只留管理员。
-              「项目负责人」这个身份仍然存在 —— 建项目时创建者会被自动记成它，
-              已经发出去的那些授权也照旧生效（模板还在）；去掉的只是【重复的那个选项】：
-              两项权限本来就一字不差，摆两个只会让人以为它们不一样。 */ ""}
+        ${/* 项目负责人是创建者且不可由普通授权改写；项目管理员是可分配角色。
+              两者当前权限模板一致，但对象语义不同，所以这里只提供可分配的项目管理员。 */ ""}
         ${decisionSelect("role", [
           ["project_admin", "项目管理员"],
           ["task_group_owner", "任务组负责人"],
@@ -3217,7 +3215,7 @@ function renderTaskGroupGrantForm(project, options = {}) {
           ["viewer", "观察者（只读查看）"]
         ], "请选择任务组角色…")}</div>
       </div>
-      <div class="notice">任务组授权只影响所选任务组，不会自动扩大到同项目其它任务组。项目级角色在“项目成员”栏目维护。</div>
+      <div class="notice">同一账号在同一任务组只保留一个角色；再次提交会撤销其当前角色并替换为新角色。任务组授权不会扩大到同项目其它任务组，项目级角色在“项目成员”栏目维护。</div>
       <button class="primary-button" type="submit">授予任务组权限</button>
     </form>
   `;
@@ -8548,10 +8546,10 @@ document.addEventListener("submit", async (event) => {
     if (kind === "org-admin-replace") {
       if (!data.oldAdminDisposition) throw new Error("请选择旧管理员的处置方式");
       const oldAdmin = (state.accounts || []).find((account) => account.accountId === form.dataset.oldAdmin);
-      const dispositionText = data.oldAdminDisposition === "suspend" ? "停用旧管理员" : "保留为普通成员";
+      const dispositionText = data.oldAdminDisposition === "suspend" ? "停用该账号" : "保留为普通成员";
       if (!(await confirmDialog({
         title: "确认更换初始组织管理员",
-        message: `确认将“${oldAdmin?.displayName || "当前管理员"}”降为普通成员，并${dispositionText}？`,
+        message: `确认更换初始组织管理员？旧管理员“${oldAdmin?.displayName || "当前管理员"}”将立即失去组织管理权限，并${dispositionText}。`,
         sub: "旧管理员的组织管理权限和活动会话会立即失效；项目所有权和其它项目记录不会被暗中转移。新管理员的一次性令牌只显示一次。",
         danger: true,
         confirmText: "确认更换"

@@ -878,6 +878,11 @@ function check(name, condition, detail) {
   check("系统组织详情区分初始管理员与组织子账户并展示状态构成",
     /组织子账户概况/u.test(html) && /子账户总数[\s\S]*1/u.test(html) && /已停用[\s\S]*1/u.test(html),
     "系统管理员需要看到子账户数量与状态，但不能在系统空间直接管理这些账号");
+  const adminReplaceSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  check("更换管理员确认说明权限后果且不重复普通成员措辞",
+    /旧管理员.*将立即失去组织管理权限，并.*dispositionText/u.test(adminReplaceSource)
+      && !/降为普通成员，并.*dispositionText/u.test(adminReplaceSource),
+    "高风险确认必须分别说清失去管理权和旧账号处置，不能重复拼接同一结果");
   admin.status = "active";
   admin.authPolicy.passwordSet = true;
   const activeHtml = probe.renderSysOrgsInventoryWith({accounts: [admin]}, account, [org], ["list"]);
@@ -5120,8 +5125,10 @@ async function runPendingTruncationCase() {
         && /name="resourceType" value="task_group"/u.test(taskGroupMemberPane),
       "项目成员角色和任务组级权限又混回同一授权表单");
     check("任务组角色表单明确使用替换语义，避免降级时叠加旧权限",
-      /name="replaceExisting" value="true"/u.test(taskGroupMemberPane),
-      "控制台如果不显式请求替换，先授评审人再授观察者会同时保留两种权限");
+      /name="replaceExisting" value="true"/u.test(taskGroupMemberPane)
+        && /同一账号在同一任务组只保留一个角色/u.test(taskGroupMemberPane)
+        && /再次提交会撤销其当前角色并替换为新角色/u.test(taskGroupMemberPane),
+      "控制台必须执行替换并在提交前说清后果，避免降级时叠加旧权限或让管理员误以为会追加");
     check("项目成员授权 pane 绑定当前 projectId，任务组授权 pane 只列当前项目任务组",
       /type="hidden" name="projectId" value="p1"/u.test(projectMemberPane)
         && /value="tg1"/u.test(taskGroupMemberPane)

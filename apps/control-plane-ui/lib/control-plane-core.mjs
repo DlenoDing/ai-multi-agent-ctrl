@@ -782,16 +782,18 @@ export function selectModel(state, request = {}, options = {}) {
   ensureRuntimeCollections(state);
   const roleId = request.roleId || request.ownerRole || "orchestrator";
   const workItem = request.workItem || findWorkItem(state, request.taskGroupId, request.workItemId) || {};
+  const scopedTaskGroup = (state.taskGroups || []).find((item) => item.id === (request.taskGroupId || workItem.taskGroupId));
+  const scopedProjectId = scopedTaskGroup?.projectId || workItem.projectId || request.projectId;
   // 【套用了别人的模型策略要留痕】。与角色技能回退同一个形态：22 个已登记角色里有 10 个
   // 没有自己的选型策略（策略是按 roleCapabilityHints 的键生成的，那 10 个不在里面），
   // 于是它们静默套用数组第一条 —— 也就是 orchestrator 的 requiredCapabilities / hardConstraints，
   // 决定了这个角色的工作项能选到哪些模型，而记录上没有任何地方说明这不是它自己的策略。
   const ownPolicy = state.modelSelectionPolicies.find((item) => item.roleId === roleId);
   const policy = ownPolicy || state.modelSelectionPolicies[0];
-  const selectedAgent = agentForRole(state, roleId, {projectId: request.projectId || workItem.projectId,
+  const selectedAgent = agentForRole(state, roleId, {projectId: scopedProjectId,
     organizationId: request.organizationId});
   const roleSkillAssignment = roleSkillAssignmentForContext(state, roleId, {...request,
-    projectId: request.projectId || workItem.projectId}, selectedAgent);
+    projectId: scopedProjectId}, selectedAgent);
   const requestedRoleSkillRef = String(request.roleSkillRef || request.skillRef || "").trim();
   if (requestedRoleSkillRef && roleSkillAssignment.roleSkillRef
     && requestedRoleSkillRef !== roleSkillAssignment.roleSkillRef) {

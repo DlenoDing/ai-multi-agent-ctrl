@@ -1026,6 +1026,30 @@ const MUTATIONS = [
     expect: "Agent 模型偏好没有进入动态选型或决策记录"
   },
   {
+    name: "Agent 选择的项目必须从任务组派生",
+    check: "verifyAgentGatewayContracts",
+    file: CORE,
+    from: "  const scopedProjectId = scopedTaskGroup?.projectId || workItem.projectId || request.projectId;",
+    to: "  const scopedProjectId = request.projectId || scopedTaskGroup?.projectId || workItem.projectId;",
+    expect: "模型选择信任了请求伪造的同组织 projectId"
+  },
+  {
+    name: "任务组角色替换必须在表单提交前说清",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "同一账号在同一任务组只保留一个角色；再次提交会撤销其当前角色并替换为新角色。",
+    to: "任务组权限已启用。",
+    expect: "控制台必须执行替换并在提交前说清后果"
+  },
+  {
+    name: "更换管理员确认不得重复普通成员结果",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: 'message: `确认更换初始组织管理员？旧管理员“${oldAdmin?.displayName || "当前管理员"}”将立即失去组织管理权限，并${dispositionText}。`,',
+    to: 'message: `确认将“${oldAdmin?.displayName || "当前管理员"}”降为普通成员，并${dispositionText}？`,',
+    expect: "高风险确认必须分别说清失去管理权和旧账号处置"
+  },
+  {
     name: "任务组角色 Skill 必须优先于 Agent 档案",
     check: "verifyAgentGatewayContracts",
     file: CORE,
