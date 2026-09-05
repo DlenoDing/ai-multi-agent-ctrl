@@ -283,6 +283,8 @@ globalThis.__probe = {
   routeBuild: (route) => window.AIMAC_WORKSPACE_ROUTE.build(route),
   routeSnapshot: () => workspaceRouteSnapshot(),
   restoreRoute: (route) => restoreWorkspaceRoute(route),
+  reconcileRouteSelection: () => reconcileRoutedObjectSelection(),
+  browserRouteSource: () => String(applyBrowserHistoryRoute),
   currentRouteHash: () => window.location?.hash || "",
   projectCommandDecision: (input) => window.AIMAC_PROJECT_COMMAND_CENTER.decide({...input,
     statsFor: (group) => group.stats || {tasks: group.workItemCount || 0, runs: 0, reviews: 0, blocked: 0}}),
@@ -353,7 +355,7 @@ globalThis.__probe = {
   captureToast: (sink) => { toast.info = (message) => sink(message); },
   captureToastKind: (kind, sink) => { toast[kind] = (message) => sink(message); },
   bodyChildren: () => document.body.children || [],
-  sessionState: () => ({page, currentProjectId, modalHtml, selectedWork, managementGroupId, workListGroupId, workListState, expandedTaskGroupId, taskGroupDetailId: tgDetail?.taskGroupId || null,
+  sessionState: () => ({page, currentProjectId, modalHtml, selectedWork, selectedAgentProfileId, managementGroupId, workListGroupId, workListState, expandedTaskGroupId, taskGroupDetailId: tgDetail?.taskGroupId || null,
     projConfigVersion, directiveList,
     storedProjectId: sessionStorage.getItem("aimac.projectId"), storedPage: sessionStorage.getItem("aimac.page")}),
   selectWorkspace: (pageId, paneId) => workspaces.select(pageId, paneId),
@@ -2733,6 +2735,21 @@ async function runErrorGuidanceCase() {
     objectProbe.routeParse("#/project/..%2Fsecret/tasks/tg_a/work_a") === null
       && objectProbe.routeParse("#/project/%E0%A4%A/tasks") === null,
     "地址里的对象 ID 可以注入路径分隔符或坏编码");
+  const routeNotices = [];
+  objectProbe.captureToastKind("info", (message) => routeNotices.push(message));
+  objectProbe.restoreRoute({page: "proj-agents", projectId: "p1", agentId: "agent_not_visible", workspace: "profiles"});
+  const missingRouteObject = objectProbe.reconcileRouteSelection();
+  check("深链接对象不可见时必须清除定位并明确提示",
+    missingRouteObject === "Agent 档案" && objectProbe.sessionState().selectedAgentProfileId === ""
+      && routeNotices.some((message) => /不存在或当前账号无权查看/u.test(message)),
+    `结果=${missingRouteObject || "空"}，提示=${routeNotices.join("；") || "无"}`);
+  const browserRouteSource = objectProbe.browserRouteSource();
+  check("浏览器历史恢复必须单飞并只排队最新路由",
+    /if \(browserRouteBusy\)/u.test(browserRouteSource)
+      && /queuedBrowserRoute = route/u.test(browserRouteSource)
+      && /const nextRoute = queuedBrowserRoute/u.test(browserRouteSource)
+      && /queuedBrowserRoute = null/u.test(browserRouteSource),
+    "连续前进/后退可以并发弹出多个草稿确认框，或旧路由会覆盖最后一次导航");
   const commandProject = {id: "p_cmd", status: "active"};
   const repo = [{id: "repo", credentialMode: "none"}];
   const commandCases = [

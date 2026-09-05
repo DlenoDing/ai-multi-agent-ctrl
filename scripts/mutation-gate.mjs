@@ -11933,6 +11933,22 @@ const MUTATIONS = [
     expect: "项目与任务组运行统计必须一次建索引后复用"
   },
   {
+    name: "不可见的深链接对象必须清除并提示",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '    if (!visibleAgents.some((agent) => agent.id === selectedAgentProfileId)) {',
+    to: '    if (false && !visibleAgents.some((agent) => agent.id === selectedAgentProfileId)) {',
+    expect: "深链接对象不可见时必须清除定位并明确提示"
+  },
+  {
+    name: "浏览器历史恢复必须防止并发重入",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (browserRouteBusy) {\n    queuedBrowserRoute = route;",
+    to: "  if (false && browserRouteBusy) {\n    queuedBrowserRoute = route;",
+    expect: "浏览器历史恢复必须单飞并只排队最新路由"
+  },
+  {
     name: "MCP 工具崩溃不得伪装成正当拒绝（要回 server_error、打日志、说清别重试）",
     file: "apps/mcp-server/server.mjs",
     gate: "contract",

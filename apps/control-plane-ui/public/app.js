@@ -77,6 +77,8 @@ let restoredWorkspaceLocation = false;
 let recoveringWorkspaceLocation = false;
 let routeWriteMode = "replace";
 let applyingBrowserRoute = false;
+let browserRouteBusy = false;
+let queuedBrowserRoute = null;
 let workListGroupId = "";
 let workListState = null;
 let taskSearch = "";
@@ -1415,6 +1417,7 @@ async function loadPage() {
     }
     if (!currentRead()) return;
     ensureProjectSelection();
+    reconcileRoutedObjectSelection();
     lastError = "";
     lastLoadErrorToast = "";
     lastLoadedAt = Date.now();
@@ -1883,6 +1886,45 @@ function restoreWorkspaceRoute(route = window.AIMAC_WORKSPACE_ROUTE?.parse()) {
   sessionStorage.setItem("aimac.page", page);
   if (currentProjectId) sessionStorage.setItem("aimac.projectId", currentProjectId);
   return true;
+}
+
+function reconcileRoutedObjectSelection() {
+  let missing = "";
+  if (page === "sys-orgs" && selectedOrganizationId
+    && !(organizations || []).some((organization) => organization.orgId === selectedOrganizationId)) {
+    selectedOrganizationId = "";
+    missing = "组织";
+  } else if (page === "org-members" && selectedOrgMemberId
+    && !(orgMembers || []).some((account) => account.accountId === selectedOrgMemberId)) {
+    selectedOrgMemberId = "";
+    memberGrantAccountId = "";
+    missing = "组织成员";
+  } else if (page === "proj-members" && selectedProjectMemberId
+    && !(currentProject()?.members || []).some((member) => member.accountId === selectedProjectMemberId)) {
+    selectedProjectMemberId = "";
+    missing = "项目成员";
+  } else if (["org-agents", "proj-agents"].includes(page) && selectedAgentProfileId) {
+    const visibleAgents = page === "org-agents" ? orgScopedAgents() : projectScopedAgents(currentProjectId);
+    if (!visibleAgents.some((agent) => agent.id === selectedAgentProfileId)) {
+      selectedAgentProfileId = "";
+      missing = "Agent 档案";
+    }
+  }
+  if (!missing && managementGroupId && ["tg", "tasks", "monitor", "review", "directives"].includes(page)
+    && !projectTaskGroups().some((group) => group.id === managementGroupId)
+    && taskWorkDetail?.taskGroup?.id !== managementGroupId) {
+    managementGroupId = "";
+    expandedTaskGroupId = "";
+    selectedWork = null;
+    directiveTaskGroupId = "";
+    directiveWorkItemId = "";
+    missing = "任务组";
+  }
+  if (missing) {
+    routeWriteMode = "replace";
+    toast.info(`地址中的${missing}不存在或当前账号无权查看，已返回最近的可见范围`);
+  }
+  return missing;
 }
 
 function render() {
@@ -10474,17 +10516,23 @@ function restoreWorkspaceLocation() {
 
 async function applyBrowserHistoryRoute(route) {
   if (!authToken || !currentAccount || !route) return;
-  if (!allowedMenuItemsFor(perspectiveOf(currentAccount)).some((item) => item.id === route.page)) {
-    toast.info("这个地址不属于当前账号的管理空间，已保留在当前页面");
-    window.AIMAC_WORKSPACE_ROUTE?.write(workspaceRouteSnapshot(), {replace: true});
+  if (browserRouteBusy) {
+    queuedBrowserRoute = route;
     return;
   }
-  if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "浏览器导航将离开当前对象，未保存的修改会丢失。确认继续？", danger: true, confirmText: "放弃并离开"}))) {
-    window.AIMAC_WORKSPACE_ROUTE?.write(workspaceRouteSnapshot(), {replace: true});
-    return;
-  }
-  applyingBrowserRoute = true;
+  browserRouteBusy = true;
   try {
+    if (!allowedMenuItemsFor(perspectiveOf(currentAccount)).some((item) => item.id === route.page)) {
+      toast.info("这个地址不属于当前账号的管理空间，已保留在当前页面");
+      window.AIMAC_WORKSPACE_ROUTE?.write(workspaceRouteSnapshot(), {replace: true});
+      return;
+    }
+    if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "浏览器导航将离开当前对象，未保存的修改会丢失。确认继续？", danger: true, confirmText: "放弃并离开"}))) {
+      queuedBrowserRoute = null;
+      window.AIMAC_WORKSPACE_ROUTE?.write(workspaceRouteSnapshot(), {replace: true});
+      return;
+    }
+    applyingBrowserRoute = true;
     formTouched = false;
     dirtyFormKinds.clear();
     stopExecPolling();
@@ -10499,6 +10547,10 @@ async function applyBrowserHistoryRoute(route) {
     showError(error);
   } finally {
     applyingBrowserRoute = false;
+    browserRouteBusy = false;
+    const nextRoute = queuedBrowserRoute;
+    queuedBrowserRoute = null;
+    if (nextRoute) Promise.resolve().then(() => applyBrowserHistoryRoute(nextRoute).catch(reportBackgroundRefreshFailure));
   }
 }
 
