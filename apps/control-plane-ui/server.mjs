@@ -3965,7 +3965,7 @@ async function handleApi(req, res) {
       }
       projectionOptions = runtimeNodeProjectionOptionsForAccount(state, authenticated.account, node);
     }
-    const publicNode = publicAgentNode(node, projectionOptions);
+    const publicNode = {...publicAgentNode(node, projectionOptions), heartbeatOverdue: agentNodeHeartbeatOverdue(node)};
     return json(res, 200, buildRuntimeNodeDetail(state, node, {publicNode, projectId: requestedProjectId}));
   }
 

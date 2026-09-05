@@ -63,9 +63,10 @@
     return `<section class="runtime-node-workspace wide" aria-label="运行节点详情">
       <header class="runtime-node-header" tabindex="-1" data-runtime-node-heading><button class="secondary-button" data-action="close-runtime-node">返回运行节点列表</button>
         <div class="runtime-node-title"><div><span class="governance-eyebrow">${esc(scopeText)}</span><h2>${esc(node.nodeName || node.nodeId)}</h2><span class="mono">${esc(node.nodeId)}</span></div>
-          <div class="runtime-node-state">${h.badge(node.status)}${h.badge(node.admission)}</div></div>
+          <div class="runtime-node-state">${h.badge(node.heartbeatOverdue ? "heartbeat_timeout" : node.status)}${h.badge(node.admission)}</div></div>
         <div class="runtime-node-metrics">${metric("当前任务", (detail.activeDispatches || []).length)}${metric("累计派发", detail.assignedDispatchCount || 0)}${metric("匹配档案", (detail.agentProfiles || []).length)}${metric("最近事件", (detail.recentEvents || []).length)}${metric("完成 / 失败", `${node.completedDispatchCount || 0} / ${node.failedDispatchCount || 0}`)}</div>
       </header>
+      ${node.heartbeatOverdue ? `<div class="notice warn-notice">节点记录仍是“${esc(h.t(node.status) || node.status)}”，但心跳已超过判死阈值。它当前不能被当作可执行节点；先恢复 Agent Runtime 和网络心跳，再刷新自检。</div>` : ""}
       ${controls ? `<div class="runtime-node-controls">${controls}</div>` : ""}
       <div class="runtime-node-columns">
         <section><span class="governance-eyebrow">运行健康</span><h3>心跳与自检</h3><dl class="execution-kv">

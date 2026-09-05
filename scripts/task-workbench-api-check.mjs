@@ -449,6 +449,7 @@ try {
   const nodeObject = await request("/api/agent-nodes/node_detail/detail?projectId=prj_workbench_api", viewerToken);
   assert.equal(nodeObject.schemaVersion, "runtime-node-detail/v1");
   assert.equal(nodeObject.node.nodeId, "node_detail");
+  assert.equal(nodeObject.node.heartbeatOverdue, true, "stale node detail must not present the stored online status as live health");
   assert.deepEqual(nodeObject.node.projectIds, ["prj_workbench_api"]);
   assert.equal(nodeObject.projectId, "prj_workbench_api");
   assert.deepEqual(nodeObject.activeDispatches.map((item) => item.dispatchId), ["dsp_detail"]);

@@ -11804,6 +11804,14 @@ const MUTATIONS = [
     expect: "GET /api/agent-nodes/node_detail/detail"
   },
   {
+    name: "节点详情必须派生心跳超时而非照抄在线状态",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "task-api",
+    from: "    const publicNode = {...publicAgentNode(node, projectionOptions), heartbeatOverdue: agentNodeHeartbeatOverdue(node)};",
+    to: "    const publicNode = {...publicAgentNode(node, projectionOptions), heartbeatOverdue: false};",
+    expect: "stale node detail must not present the stored online status as live health"
+  },
+  {
     name: "窗口外执行对象必须走专用详情接口恢复",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
