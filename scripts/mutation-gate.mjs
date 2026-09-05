@@ -11740,12 +11740,28 @@ const MUTATIONS = [
     expect: "任务组和任务对象上下文必须跨页面持续显示"
   },
   {
-    name: "窄屏二级栏目必须收敛成单一选择器",
-    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    name: "窄屏主要功能必须收敛成单一全局选择器",
+    file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "    if (mobile === true) {",
-    to: "    if (false && mobile === true) {",
-    expect: "窄屏二级栏目必须是单一选择器"
+    from: '  return context + (groupDetail ? "" : mobileMenuHtml(functionalMenu, page, activeWorkspace))',
+    to: '  return context + ""',
+    expect: "窄屏主要功能只使用一个全局选择器"
+  },
+  {
+    name: "桌面不得恢复父菜单下的临时 workspace 导航",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "        return menuItemHtml(item, item.id === page && item.workspace === activeWorkspace, todo);",
+    to: '        return menuItemHtml(item, item.id === page && item.workspace === activeWorkspace, todo) + (item.id === page ? workspaces.navigation(page, false, workspaceOptions()) : "");',
+    expect: "桌面侧栏直接列功能"
+  },
+  {
+    name: "创建与注册功能菜单必须按权限隐藏",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const visibleMenu = menuForCurrentSection(perspective, page).filter((item) => item.divider || menuItemAvailable(item));",
+    to: "  const visibleMenu = menuForCurrentSection(perspective, page);",
+    expect: "只读项目账号看不到新建任务组"
   },
   {
     name: "任务深链接必须保留任务对象",

@@ -31,6 +31,7 @@
 .workspace-scope { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .workspace-scope select { max-width: 100%; min-width: 180px; }
 .workspace-mobile-picker { display: none; }
+.mobile-function-picker { display: none; }
 .task-list { display: grid; gap: 0; }
 .task-list-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--card-border); }
 .task-list-row:last-child { border-bottom: 0; }
@@ -60,6 +61,8 @@
   .workspace-nav { display: none; }
   .workspace-mobile-picker { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; color: var(--text-sub); font-size: 12px; }
   .workspace-mobile-picker select { width: 100%; min-width: 0; }
+  .mobile-function-picker { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--card-border); color: var(--text-sub); font-size: 12px; }
+  .mobile-function-picker select { width: 100%; min-width: 0; }
   .management-space-switch { padding: 8px 10px; }
   .management-space-options { display: flex; overflow-x: auto; }
   .management-space-option { flex: 1 0 130px; }

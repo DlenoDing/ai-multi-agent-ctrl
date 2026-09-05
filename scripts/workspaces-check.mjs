@@ -470,13 +470,12 @@ const helpers = {
       && /response\.status === 401 && authToken && authToken === requestToken/u.test(apiBlock)
       && /clearSession\(\)/u.test(apiBlock),
     "old 401 responses must not logout a newer session");
-  check("workspaceOptions gates create/register panes for task groups, tasks and project agents",
-    /workspaces\.navigation\(groupDetail \? "group-detail" : page, true, workspaceOptions\(\)\)/u.test(renderContentBlock)
-      && /workspaces\.heading\(page, workspaceOptions\(\)\)/u.test(renderContentBlock)
-      && /page === "tg" \? hasProjectPermission\("task_group:control"\)/u.test(workspaceOptionsBlock)
-      && /page === "tasks" \? hasPerm\("task_group:control"\)/u.test(workspaceOptionsBlock)
-      && /page === "proj-agents" \? hasPerm\("agent:activate"\) : true/u.test(workspaceOptionsBlock),
-    "renderContent should pass canCreate into workspace navigation/heading for the affected pages");
+  check("menu-first navigation gates create/register leaves and uses one mobile function picker",
+    /menuForCurrentSection\(perspective, page\)\.filter\(\(item\) => item\.divider \|\| menuItemAvailable\(item\)\)/u.test(renderContentBlock)
+      && /mobileMenuHtml\(functionalMenu, page, activeWorkspace\)/u.test(renderContentBlock)
+      && /item\.requires === "agent:activate"/u.test(renderContentBlock)
+      && /item\.requires === "task_group:control"/u.test(renderContentBlock),
+    "renderContent should build the mobile picker from the same permission-filtered stable menu used on desktop");
   check("member-perms submit preserves uneditable original permissions",
     /const editablePermissions = new Set\(MEMBER_PERMISSION_OPTIONS\.map\(\(\[permission\]\) => permission\)\)/u.test(memberPermsSubmitBlock)
       && /\.\.\.\(member\.permissions \|\| \[\]\)\.filter\(\(permission\) => !editablePermissions\.has\(permission\)\)/u.test(memberPermsSubmitBlock)

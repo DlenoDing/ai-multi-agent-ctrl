@@ -18,7 +18,9 @@ const {
   managementSectionOf,
   menuForCurrentSection,
   sectionLabel,
-  menuItemHtml
+  menuItemHtml,
+  menuMeta,
+  mobileMenuHtml
 } = window.AIMAC_CONSOLE_NAV;
 const {
   TONE_GREEN,
@@ -2054,15 +2056,16 @@ function render() {
     rememberWorkspaceLocation();
     syncWorkspaceRoute();
   }
-  const [title, subtitle] = PAGE_META[page] || ["管理后台", ""];
+  const activeWorkspace = page === "tg" && expandedTaskGroupId ? "list" : workspaces.current(page)?.id || "";
+  const [title, subtitle] = menuMeta(perspective, page, activeWorkspace);
   // 菜单上直接带计数：否则"等你签字的东西"藏在一个叫"执行监控"的页面里，人根本不会去点。
   const menuTodoCounts = todoCountsByPage();
-  const visibleMenu = menuForCurrentSection(perspective, page);
+  const visibleMenu = menuForCurrentSection(perspective, page).filter((item) => item.divider || menuItemAvailable(item));
   const menuHtml = visibleMenu.map((item) => item.divider
     ? `<div class="nav-divider">${esc(item.divider)}</div>`
     : (() => {
-        const todo = menuTodoCounts[item.id] || {count: 0, capped: false};
-        return menuItemHtml(item, item.id === page, todo) + (item.id === page ? workspaces.navigation(page === "tg" && expandedTaskGroupId ? "group-detail" : page, false, workspaceOptions()) : "");
+        const todo = menuTodoFor(item, menuTodoCounts);
+        return menuItemHtml(item, item.id === page && item.workspace === activeWorkspace, todo);
       })()
   ).join("");
   const sidebarContext = sidebarContextHtml(perspective);
@@ -2156,9 +2159,26 @@ function renderContent() {
   if (PROJECT_PAGES.has(page) && hasNoVisibleProject()) return context + renderPanel(PAGE_META[page]?.[0] || "项目管理", noVisibleProjectNotice(), {wide: true});
   const executionObjectOpen = page === "monitor" && selectedExecutionObject.id;
   const groupDetail = page === "tg" && expandedTaskGroupId;
-  return context + (executionObjectOpen ? "" : workspaces.navigation(groupDetail ? "group-detail" : page, true, workspaceOptions()))
-    + (groupDetail || governanceObjectOpen || executionObjectOpen ? "" : workspaces.heading(page, workspaceOptions()))
+  const perspective = perspectiveOf(currentAccount);
+  const activeWorkspace = groupDetail ? "list" : workspaces.current(page)?.id || "";
+  const functionalMenu = menuForCurrentSection(perspective, page).filter((item) => item.divider || menuItemAvailable(item));
+  return context + (groupDetail ? "" : mobileMenuHtml(functionalMenu, page, activeWorkspace))
+    + (groupDetail ? workspaces.navigation("group-detail", true, workspaceOptions()) : "")
     + managementScopeBar() + workspaces.run(page, renderPageContent);
+}
+
+function menuItemAvailable(item) {
+  if (!item?.requires) return true;
+  if (item.requires === "agent:activate") return hasPerm("agent:activate");
+  if (item.requires === "task_group:control" && item.id === "tg") return hasProjectPermission("task_group:control");
+  if (item.requires === "task_group:control") return hasPerm("task_group:control");
+  return hasPerm(item.requires);
+}
+
+function menuTodoFor(item, counts) {
+  if (item.id === "monitor" && item.workspace !== "barriers") return {count: 0, capped: false};
+  if (item.id === "review" && !["pending", "inbox", "decisions"].includes(item.workspace)) return {count: 0, capped: false};
+  return counts[item.id] || {count: 0, capped: false};
 }
 
 function workspaceOptions() {
@@ -9174,9 +9194,63 @@ async function navigateWorkspace(nextPage, nextSection, options = {}) {
   return true;
 }
 
+async function navigateMenuTarget(nextPage, nextWorkspace = "") {
+  const perspective = perspectiveOf(currentAccount);
+  const targetItem = allowedMenuItemsFor(perspective).find((item) => !item.divider && item.id === nextPage
+    && (!nextWorkspace || item.workspace === nextWorkspace));
+  if (!targetItem || !menuItemAvailable(targetItem)) return false;
+  const workspace = nextWorkspace || targetItem.workspace || workspaces.catalog[nextPage]?.[0]?.id || "";
+  const sameTarget = page === nextPage && workspaces.current(nextPage)?.id === workspace
+    && !selectedOrganizationId && !selectedOrgMemberId && !selectedProjectMemberId
+    && !selectedAgentProfileId && !selectedRuntimeNodeId && !selectedExecutionObject.id
+    && !(page === "tg" && expandedTaskGroupId);
+  if (sameTarget) return true;
+  if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前页面有未保存的修改，确认离开？", danger: true, confirmText: "放弃并离开"}))) return false;
+  if (!workspaces.select(nextPage, workspace)) return false;
+  requestRoutePush();
+  selectedOrganizationId = "";
+  selectedOrgMemberId = "";
+  selectedProjectMemberId = "";
+  memberGrantAccountId = "";
+  selectedAgentProfileId = "";
+  selectedRuntimeNodeId = "";
+  runtimeNodeDetail = null;
+  runtimeNodeUnavailable = false;
+  selectedExecutionObject = {type: "", id: ""};
+  executionObjectDetail = null;
+  executionObjectUnavailable = false;
+  if (nextPage === "tg") { expandedTaskGroupId = ""; tgDetail = null; }
+  page = nextPage;
+  sessionStorage.setItem("aimac.page", page);
+  lastError = "";
+  formTouched = false;
+  dirtyFormKinds.clear();
+  stopExecPolling();
+  if (page === "monitor") {
+    execScope = managementGroupId ? {type: "taskGroup", id: managementGroupId}
+      : currentProjectId ? {type: "project", id: currentProjectId} : {type: "", id: ""};
+    execEvents = [];
+    execCursor = 0;
+  }
+  await loadPage();
+  if (page === "monitor" && workspace === "events") {
+    try { await loadExecEvents({reset: true}); } catch (error) { toast.error(`执行事件加载失败：${error?.message || error}`); }
+    startExecPolling();
+    render();
+  }
+  window.scrollTo?.({top: 0});
+  return true;
+}
+
 document.addEventListener("change", async (event) => {
   const target = event.target;
   try {
+    if (target.dataset.menuSelect !== undefined) {
+      const [nextPage, nextWorkspace = ""] = String(target.value).split("|");
+      const previous = `${page}|${workspaces.current(page)?.id || ""}`;
+      if (!(await navigateMenuTarget(nextPage, nextWorkspace))) target.value = previous;
+      return;
+    }
     if (target.dataset.workspaceSelect !== undefined) {
       const nextPage = target.dataset.workspacePage || page;
       const previous = workspaces.current(nextPage)?.id || "";
@@ -9432,57 +9506,12 @@ document.addEventListener("click", async (event) => {
   }
   const sectionButton = event.target.closest("[data-section-target]");
   if (sectionButton) {
-    const nextPage = sectionButton.dataset.sectionTarget;
-    if (nextPage !== page && formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前页面有未保存的修改，确认离开？", danger: true, confirmText: "放弃并离开"}))) return;
-    requestRoutePush();
-    selectedExecutionObject = {type: "", id: ""};
-    executionObjectDetail = null;
-    executionObjectUnavailable = false;
-    selectedRuntimeNodeId = "";
-    runtimeNodeDetail = null;
-    runtimeNodeUnavailable = false;
-    page = nextPage;
-    sessionStorage.setItem("aimac.page", page);
-    lastError = "";
-    formTouched = false;
-    stopExecPolling();
-    await loadPage();
-    render();
+    await navigateMenuTarget(sectionButton.dataset.sectionTarget, "");
     return;
   }
   const menuButton = event.target.closest("[data-menu]");
   if (menuButton) {
-    if (menuButton.dataset.menu !== page && formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前页面有未保存的修改，确认离开？", danger: true, confirmText: "放弃并离开"}))) return;
-    requestRoutePush();
-    selectedExecutionObject = {type: "", id: ""};
-    executionObjectDetail = null;
-    executionObjectUnavailable = false;
-    selectedRuntimeNodeId = "";
-    runtimeNodeDetail = null;
-    runtimeNodeUnavailable = false;
-    page = menuButton.dataset.menu;
-    if (page === "sys-orgs") selectedOrganizationId = "";
-    if (page === "org-members") { selectedOrgMemberId = ""; memberGrantAccountId = ""; }
-    if (page === "proj-members") selectedProjectMemberId = "";
-    if (["org-agents", "proj-agents"].includes(page)) selectedAgentProfileId = "";
-    if (page === "tg") { expandedTaskGroupId = ""; managementGroupId = ""; tgDetail = null; }
-    if (page === "monitor") execScope = managementGroupId ? {type: "taskGroup", id: managementGroupId}
-      : currentProjectId ? {type: "project", id: currentProjectId} : {type: "", id: ""};
-    sessionStorage.setItem("aimac.page", page);
-    lastError = "";
-    formTouched = false;
-    stopExecPolling();
-    await loadPage();
-    if (page === "monitor") {
-      try {
-        await loadExecEvents({reset: true});
-      } catch (error) {
-        // 空白的事件列表分不出"这段时间没有事件"和"根本没取到" —— 后者必须说出来。
-        toast.error(`执行事件加载失败：${error?.message || error}`);
-      }
-      startExecPolling();
-      render();
-    }
+    await navigateMenuTarget(menuButton.dataset.menu, menuButton.dataset.menuWorkspace || "");
     return;
   }
   // 触屏/无悬浮环境：点击 hover-wrap 切换资源气泡显隐（桌面仍支持悬浮）

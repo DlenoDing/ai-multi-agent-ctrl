@@ -12,34 +12,78 @@
 
   const PROJECT_PAGES = new Set(["proj-overview", "proj-members", "tg", "tasks", "review", "directives", "monitor", "proj-agents", "proj-settings"]);
 
+  const leaf = (id, workspace, label, description, options = {}) => ({id, workspace, label, description, ...options});
+
   const PROJECT_MENU_TAIL = [
     {divider: "项目总览"},
-    {id: "proj-overview", label: "项目概览"},
-    {divider: "准备与接入"},
-    {id: "proj-members", label: "成员权限"},
-    {id: "proj-agents", label: "项目 Agent"},
-    {divider: "执行推进"},
-    {id: "tg", label: "任务组"},
-    {id: "tasks", label: "任务工作台"},
-    {id: "monitor", label: "执行监控"},
+    leaf("proj-overview", "overview", "项目概览", "总进度、健康度和当前下一步"),
+    leaf("proj-overview", "activity", "最新执行", "近期执行事件与变化"),
+    leaf("proj-overview", "outputs", "仓库产出", "项目 Git 产出归属"),
+    {divider: "成员与权限"},
+    leaf("proj-members", "list", "项目成员", "项目角色和成员详情"),
+    leaf("proj-members", "groups", "任务组权限", "按任务组分配控制、审核和观察"),
+    {divider: "Agent"},
+    leaf("proj-agents", "profiles", "Agent 档案", "项目专属与组织共享逻辑角色"),
+    leaf("proj-agents", "nodes", "运行节点", "项目专属与组织共享运行载体"),
+    leaf("proj-agents", "register", "注册 Agent", "签发一次性令牌和安装脚本", {requires: "agent:activate"}),
+    {divider: "工作推进"},
+    leaf("tg", "list", "任务组", "任务组列表、进度与状态"),
+    leaf("tg", "create", "新建任务组", "定义目标、角色和初始状态", {requires: "task_group:control"}),
+    leaf("tasks", "list", "任务", "按时间倒序查看任务和执行详情"),
+    leaf("tasks", "create", "新建任务", "向任务组增加工作项", {requires: "task_group:control"}),
+    {divider: "执行观测"},
+    leaf("monitor", "overview", "项目监控", "项目或任务组进度与异常"),
+    leaf("monitor", "runs", "执行会话", "工作会话、派发、载体和模型决定"),
+    leaf("monitor", "events", "实时事件", "Agent 执行过程持续回送"),
+    leaf("monitor", "nodes", "节点控制", "运行节点和控制命令 ACK"),
+    leaf("monitor", "evidence", "产出验收", "Git 检查点、测试和质量门"),
+    leaf("monitor", "barriers", "阻塞与门禁", "关闭阻塞、人工复核和死信"),
     {divider: "人工控制"},
-    {id: "review", label: "人工审核"},
-    {id: "directives", label: "人工指令"},
-    {divider: "治理配置"},
-    {id: "proj-settings", label: "项目设置"}
+    leaf("review", "pending", "待我审核", "执行方案与确认卡"),
+    leaf("review", "decisions", "授权复核", "授权、审批和发现处置"),
+    leaf("review", "history", "审核历史", "已完成的人定记录"),
+    leaf("review", "inbox", "待办汇总", "当前账号可处理的全部待办"),
+    leaf("directives", "compose", "下达指令", "向 AI 总控提交结构化控制输入", {requires: "task_group:control"}),
+    leaf("directives", "history", "指令记录", "查看消费、拒绝和执行动作"),
+    {divider: "项目治理"},
+    leaf("proj-settings", "repositories", "仓库凭据", "仓库地址、账号密码或 API Key"),
+    leaf("proj-settings", "baseline", "基线资料", "任务可引用的稳定输入"),
+    leaf("proj-settings", "roles", "角色与 Skill", "默认角色和 Skill 定制"),
+    leaf("proj-settings", "system-rules", "系统规则", "项目执行纪律和安全边界"),
+    leaf("proj-settings", "business-rules", "业务规则", "项目业务约束")
   ];
 
   const SYSTEM_MENU = [
-    {id: "sys-overview", label: "系统概览"},
-    {id: "sys-orgs", label: "组织管理"},
-    {id: "sys-settings", label: "系统设置"}
+    {divider: "平台运行"},
+    leaf("sys-overview", "overview", "系统概览", "服务、资源和存储状态"),
+    leaf("sys-overview", "audit", "审计日志", "系统操作与归档链"),
+    leaf("sys-overview", "maintenance", "维护操作", "初始化与受控维护"),
+    {divider: "组织治理"},
+    leaf("sys-orgs", "list", "组织列表", "组织、初始管理员、启停和配额"),
+    leaf("sys-orgs", "create", "开通组织", "创建组织与初始组织管理员"),
+    {divider: "平台能力"},
+    leaf("sys-settings", "runtime", "运行参数", "服务器运行参数和状态"),
+    leaf("sys-settings", "models", "模型能力", "可调度模型能力目录"),
+    leaf("sys-settings", "skills", "技能源", "服务端 Skill 源与同步状态"),
+    leaf("sys-settings", "protocol", "调度协议", "指令压缩和共享定义归属")
   ];
 
   const ORG_MENU = [
-    {id: "org-overview", label: "组织概览"},
-    {id: "org-members", label: "成员管理"},
-    {id: "org-agents", label: "共享 Agent"},
-    {id: "org-projects", label: "项目列表"}
+    {divider: "组织总览"},
+    leaf("org-overview", "overview", "组织概览", "配额、成员、项目与共享资源"),
+    {divider: "成员与权限"},
+    leaf("org-members", "list", "成员账户", "组织子账户和生命周期"),
+    leaf("org-members", "create", "创建成员", "签发一次性登录凭据"),
+    leaf("org-members", "grants", "权限矩阵", "成员的项目与任务组角色"),
+    {divider: "项目目录"},
+    leaf("org-projects", "list", "项目列表", "组织内项目状态和负责人"),
+    leaf("org-projects", "create", "创建项目", "创建人自动成为项目负责人"),
+    leaf("org-projects", "grants", "项目授权", "把组织成员加入项目"),
+    {divider: "共享 Agent"},
+    leaf("org-agents", "profiles", "共享 Agent 档案", "组织级逻辑角色"),
+    leaf("org-agents", "nodes", "共享运行节点", "组织级和项目级节点总览"),
+    leaf("org-agents", "register", "注册共享节点", "组织范围的一次性接入"),
+    leaf("org-agents", "tokens", "加入令牌", "待用、已用和已撤销令牌")
   ];
 
   const MENUS = {
@@ -66,6 +110,12 @@
     "proj-agents": ["项目 Agent", "项目专属档案、可调配共享档案、运行节点与注册控制"],
     "proj-settings": ["项目设置", "仓库与访问凭据、基线数据、规则与默认角色"]
   };
+
+  function menuMeta(perspective, pageId, workspace) {
+    const item = allowedMenuItemsFor(perspective).find((entry) => !entry.divider && entry.id === pageId
+      && (!entry.workspace || entry.workspace === workspace));
+    return item ? [item.label, item.description || ""] : PAGE_META[pageId] || ["管理后台", ""];
+  }
 
   function perspectiveOf(account) {
     if (!account) return "user";
@@ -127,10 +177,9 @@
   }
 
   function menuItemHtml(item, active, todo) {
-    const meta = PAGE_META[item.id] || [item.label, ""];
-    const description = meta[1] || "";
+    const description = item.description || "";
     return `
-      <button class="nav-item ${active ? "active" : ""}" data-menu="${esc(item.id)}">
+      <button class="nav-item nav-leaf ${active ? "active" : ""}" data-menu="${esc(item.id)}" data-menu-workspace="${esc(item.workspace || "")}" aria-current="${active ? "page" : "false"}">
         <span class="nav-item-main">
           <span class="nav-item-title">${esc(item.label)}</span>
           ${todo.count ? `<span class="nav-badge">${todo.count}${todo.capped ? "+" : ""}</span>` : ""}
@@ -140,6 +189,20 @@
     `;
   }
 
+  function mobileMenuHtml(items, pageId, workspace) {
+    const groups = [];
+    let current = {label: "功能", items: []};
+    for (const item of items) {
+      if (item.divider) {
+        if (current.items.length) groups.push(current);
+        current = {label: item.divider, items: []};
+      } else current.items.push(item);
+    }
+    if (current.items.length) groups.push(current);
+    return `<label class="mobile-function-picker"><span>当前功能</span><select data-menu-select aria-label="当前功能">${groups.map((group) =>
+      `<optgroup label="${esc(group.label)}">${group.items.map((item) => `<option value="${esc(`${item.id}|${item.workspace || ""}`)}"${item.id === pageId && item.workspace === workspace ? " selected" : ""}>${esc(item.label)}</option>`).join("")}</optgroup>`).join("")}</select></label>`;
+  }
+
   global.AIMAC_CONSOLE_NAV = {
     PROJECT_PAGES,
     PROJECT_MENU_TAIL,
@@ -147,6 +210,7 @@
     ORG_MENU,
     MENUS,
     PAGE_META,
+    menuMeta,
     perspectiveOf,
     defaultPageFor,
     primarySectionPageFor,
@@ -155,6 +219,7 @@
     menuForCurrentSection,
     sectionLabel,
     sectionSwitchHtml,
-    menuItemHtml
+    menuItemHtml,
+    mobileMenuHtml
   };
 })(window);

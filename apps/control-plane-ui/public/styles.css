@@ -177,6 +177,9 @@ html, body {
   font-weight: 600;
 }
 
+.nav-item.nav-leaf { padding-top: 8px; padding-bottom: 8px; }
+.nav-item.nav-leaf .nav-item-desc { display: none; }
+
 .nav-divider {
   margin: 12px 18px 6px;
   padding-top: 10px;
@@ -693,13 +696,7 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   .brand-mark { width: 30px; height: 30px; font-size: 14px; border-radius: 8px; }
   .brand .brand-section { display: none; }
   .nav {
-    flex-direction: row;
-    flex-wrap: nowrap;
-    gap: 4px;
-    padding: 8px 10px 10px;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: thin;
+    display: none;
   }
   .nav-item {
     border-left: none;

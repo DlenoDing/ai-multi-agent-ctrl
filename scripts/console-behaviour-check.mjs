@@ -2637,46 +2637,54 @@ async function runErrorGuidanceCase() {
     loadConsole(rootEl, {realI18n: true}).renderFullPageWith(navState, account, projectId, pageId);
     return String(rootEl.innerHTML || "").replace(/<!--[\s\S]*?-->/gu, "");
   };
-  const assertMenuDescriptions = (label, html, pageIds) => {
-    for (const pageId of pageIds) {
-      check(`${label}侧栏菜单要显示「${meta[pageId]?.title || pageId}」用途说明`,
-        html.includes(`<span class="nav-item-desc">${meta[pageId]?.desc}</span>`),
-        `菜单只有短标题或说明没有取自 PAGE_META：${pageId} / ${meta[pageId]?.desc}`);
+  const assertMenuLeaves = (label, html, leaves) => {
+    for (const [pageId, workspace, title] of leaves) {
+      const marker = `data-menu="${pageId}" data-menu-workspace="${workspace}"`;
+      check(`${label}侧栏要有可直接进入的「${title}」功能`,
+        html.includes(marker) && html.indexOf(title, html.indexOf(marker)) > html.indexOf(marker),
+        `缺少稳定功能入口：${pageId}/${workspace}/${title}`);
     }
   };
   const systemAccount = {accountId: "sys", email: "sys@local", displayName: "系统管理员",
     accountType: "system_admin", roles: ["system_owner"], permissions: ["system:*"], organizationId: null};
   const systemNav = renderedNav(systemAccount, null, "sys-overview");
-  assertMenuDescriptions("系统管理", systemNav, ["sys-overview", "sys-orgs", "sys-settings"]);
+  assertMenuLeaves("系统管理", systemNav, [["sys-overview", "overview", "系统概览"], ["sys-overview", "audit", "审计日志"],
+    ["sys-orgs", "list", "组织列表"], ["sys-orgs", "create", "开通组织"], ["sys-settings", "models", "模型能力"]]);
   const orgNav = renderedNav({accountId: "org", email: "org@local", displayName: "组织管理员",
     accountType: "org_admin", roles: ["org_admin"], permissions: ["org:*", "project:create", "member:invite", "agent:activate"], organizationId: "org_default"}, "p1", "org-overview");
-  assertMenuDescriptions("组织管理", orgNav, ["org-overview", "org-members", "org-agents", "org-projects"]);
+  assertMenuLeaves("组织管理", orgNav, [["org-members", "list", "成员账户"], ["org-members", "create", "创建成员"],
+    ["org-members", "grants", "权限矩阵"], ["org-projects", "list", "项目列表"], ["org-agents", "profiles", "共享 Agent 档案"],
+    ["org-agents", "nodes", "共享运行节点"], ["org-agents", "register", "注册共享节点"]]);
   const projectNav = renderedNav({accountId: "user", email: "user@local", displayName: "项目成员",
     accountType: "user_account", roles: ["workspace_owner"], permissions: ["project:view", "project:update", "task_group:control", "task_group:review"], organizationId: "org_default"}, "p1", "proj-overview");
-  const projectMenuOrder = ["proj-overview", "proj-members", "proj-agents", "tg", "monitor", "review", "directives", "proj-settings"];
-  assertMenuDescriptions("项目管理", projectNav, projectMenuOrder);
+  const projectMenuOrder = [["proj-overview", "overview", "项目概览"], ["proj-members", "list", "项目成员"],
+    ["proj-agents", "profiles", "Agent 档案"], ["tg", "list", "任务组"], ["tasks", "list", "任务"],
+    ["monitor", "overview", "项目监控"], ["monitor", "runs", "执行会话"], ["review", "pending", "待我审核"],
+    ["directives", "compose", "下达指令"], ["proj-settings", "repositories", "仓库凭据"]];
+  assertMenuLeaves("项目管理", projectNav, projectMenuOrder);
   check("项目管理侧栏顺序要贴合执行路径",
-    projectMenuOrder.every((pageId, index) => index === 0
-      || projectNav.indexOf(`data-menu="${pageId}"`) > projectNav.indexOf(`data-menu="${projectMenuOrder[index - 1]}"`)),
+    projectMenuOrder.every(([pageId, workspace], index) => index === 0
+      || projectNav.indexOf(`data-menu="${pageId}" data-menu-workspace="${workspace}"`)
+        > projectNav.indexOf(`data-menu="${projectMenuOrder[index - 1][0]}" data-menu-workspace="${projectMenuOrder[index - 1][1]}"`)),
     "项目菜单顺序没有按概览、Agent 准备、任务组织、实时监控、人工介入、控制补充、配置调整排列");
   check("项目管理侧栏要按普通管理动作分栏目",
     /<div class="nav-divider">项目总览<\/div>/u.test(projectNav)
-      && /<div class="nav-divider">准备与接入<\/div>/u.test(projectNav)
-      && /<div class="nav-divider">执行推进<\/div>/u.test(projectNav)
+      && /<div class="nav-divider">成员与权限<\/div>/u.test(projectNav)
+      && /<div class="nav-divider">Agent<\/div>/u.test(projectNav)
+      && /<div class="nav-divider">工作推进<\/div>/u.test(projectNav)
+      && /<div class="nav-divider">执行观测<\/div>/u.test(projectNav)
       && /<div class="nav-divider">人工控制<\/div>/u.test(projectNav)
-      && /<div class="nav-divider">治理配置<\/div>/u.test(projectNav)
+      && /<div class="nav-divider">项目治理<\/div>/u.test(projectNav)
       && projectNav.indexOf("项目总览") < projectNav.indexOf('data-menu="proj-overview"')
-      && projectNav.indexOf("准备与接入") < projectNav.indexOf('data-menu="proj-members"')
-      && projectNav.indexOf("准备与接入") < projectNav.indexOf('data-menu="proj-agents"')
-      && projectNav.indexOf("准备与接入") > projectNav.indexOf('data-menu="proj-overview"')
-      && projectNav.indexOf("执行推进") < projectNav.indexOf('data-menu="tg"')
-      && projectNav.indexOf("执行推进") < projectNav.indexOf('data-menu="monitor"')
-      && projectNav.indexOf("执行推进") > projectNav.indexOf('data-menu="proj-agents"')
+      && projectNav.indexOf("成员与权限") < projectNav.indexOf('data-menu="proj-members"')
+      && projectNav.indexOf("Agent") < projectNav.indexOf('data-menu="proj-agents"')
+      && projectNav.indexOf("工作推进") < projectNav.indexOf('data-menu="tg"')
+      && projectNav.indexOf("执行观测") < projectNav.indexOf('data-menu="monitor"')
       && projectNav.indexOf("人工控制") < projectNav.indexOf('data-menu="review"')
       && projectNav.indexOf("人工控制") < projectNav.indexOf('data-menu="directives"')
       && projectNav.indexOf("人工控制") > projectNav.indexOf('data-menu="monitor"')
-      && projectNav.indexOf("治理配置") < projectNav.indexOf('data-menu="proj-settings"')
-      && projectNav.indexOf("治理配置") > projectNav.indexOf('data-menu="directives"'),
+      && projectNav.indexOf("项目治理") < projectNav.indexOf('data-menu="proj-settings"')
+      && projectNav.indexOf("项目治理") > projectNav.indexOf('data-menu="directives"'),
     "项目管理侧栏仍是平铺功能清单，没有把项目总览、准备接入、执行推进、人工控制和治理配置分开");
   const systemProjectNav = renderedNav(systemAccount, "p1", "proj-overview");
   const projectAside = systemProjectNav.split("</aside>")[0] || "";
@@ -2693,6 +2701,10 @@ async function runErrorGuidanceCase() {
       && /sidebar-progress/u.test(projectAside)
       && !/class="project-switch"/u.test(projectTopbar),
     "项目选择器、项目状态和项目模块仍散落在顶栏与内容区");
+  check("桌面侧栏直接列功能，不在选中父菜单后临时展开 workspace 子导航",
+    !/class="workspace-nav"/u.test(projectAside) && /data-menu="monitor" data-menu-workspace="runs"/u.test(projectAside)
+      && /data-menu="proj-agents" data-menu-workspace="register"/u.test(projectAside),
+    "侧栏仍把执行会话或注册 Agent 藏在父页面下面的临时栏目里");
 
   const objectProbe = loadConsole(el("div"), {realI18n: true});
   const group = {id: "tg_context", projectId: "p1", name: "支付链路任务组", status: "active", goalExecutionStatus: "active",
@@ -2717,11 +2729,10 @@ async function runErrorGuidanceCase() {
   check("对象工作区渲染后地址必须与当前任务一致",
     objectProbe.currentRouteHash() === "#/project/p1/tasks/tg_context/work_context?pane=list",
     `当前地址是 ${objectProbe.currentRouteHash() || "空"}`);
-  const mobileWorkspace = objectProbe.workspaceMobileNavigation("monitor");
-  check("窄屏二级栏目必须是单一选择器而不是第二条横向 Tab",
-    /workspace-mobile-picker/u.test(mobileWorkspace) && /data-workspace-select/u.test(mobileWorkspace)
-      && !/workspace-mobile-nav|workspace-nav-item/u.test(mobileWorkspace),
-    "移动端仍要在主菜单下面再左右滑动一条栏目 Tab");
+  check("窄屏主要功能只使用一个全局选择器",
+    (String(objectHtml).match(/class="mobile-function-picker"/gu) || []).length === 1
+      && /data-menu-select/u.test(objectHtml) && !/class="workspace-mobile-picker"/u.test(objectHtml),
+    "移动端仍同时存在横向主菜单和页面栏目选择器，或缺少稳定功能选择器");
 
   const taskRoute = objectProbe.routeBuild({page: "tasks", projectId: "prj_a", groupId: "tg_a", workId: "work_a", workspace: "list", token: "secret"});
   const parsedTaskRoute = objectProbe.routeParse(taskRoute);
@@ -5593,16 +5604,16 @@ async function runPendingTruncationCase() {
     const writableTg = renderPane(overviewState, systemAdmin, "tg", "list");
     const writableTasks = renderPane(overviewState, systemAdmin, "tasks", "list");
     const writableAgents = renderPane(overviewState, systemAdmin, "proj-agents", "nodes");
-    check("只读项目账号看不到任务组/任务/项目 agent 的创建或注册 workspace CTA",
-      !/data-workspace-page="tg" data-workspace="create"/u.test(readOnlyTg)
-        && !/data-workspace-page="tasks" data-workspace="create"/u.test(readOnlyTasks)
-        && !/data-workspace-page="proj-agents" data-workspace="register"/u.test(readOnlyAgents),
+    check("只读项目账号看不到新建任务组、新建任务或注册 Agent 功能菜单",
+      !/data-menu="tg" data-menu-workspace="create"/u.test(readOnlyTg)
+        && !/data-menu="tasks" data-menu-workspace="create"/u.test(readOnlyTasks)
+        && !/data-menu="proj-agents" data-menu-workspace="register"/u.test(readOnlyAgents),
       [textOf(readOnlyTg).slice(0, 120), textOf(readOnlyTasks).slice(0, 120), textOf(readOnlyAgents).slice(0, 120)].join(" | "));
-    check("有权限账号仍能从 workspace 导航/标题进入创建或注册 pane",
-      /data-workspace-page="tg" data-workspace="create"/u.test(writableTg)
-        && /data-workspace-page="tasks" data-workspace="create"/u.test(writableTasks)
-        && /data-workspace-page="proj-agents" data-workspace="register"/u.test(writableAgents),
-      "canCreate 不能把正常可写账号的入口也藏掉");
+    check("有权限账号能从稳定功能菜单直接进入创建或注册页",
+      /data-menu="tg" data-menu-workspace="create"/u.test(writableTg)
+        && /data-menu="tasks" data-menu-workspace="create"/u.test(writableTasks)
+        && /data-menu="proj-agents" data-menu-workspace="register"/u.test(writableAgents),
+      "可写账号缺少新建任务组、新建任务或注册 Agent 的直接菜单");
 
     const topbarFor = (state, account, pageId = "proj-overview") => {
       const root = el("div");
