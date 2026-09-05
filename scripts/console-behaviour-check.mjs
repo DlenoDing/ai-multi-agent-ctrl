@@ -2769,7 +2769,7 @@ async function runErrorGuidanceCase() {
     "按钮写着查看，实际却进入无权限账号看不到的创建栏目");
   const statsSources = objectProbe.operationalStatsSources();
   check("项目与任务组运行统计必须一次建索引后复用",
-    /operationalStatsCache\?\.source === state/u.test(statsSources.index)
+    /if \(operationalStatsCache\?\.source === state\) return operationalStatsCache;/u.test(statsSources.index)
       && /for \(const dispatch of state\.agentDispatches/u.test(statsSources.index)
       && /indexed\.runs\.get\(group\.id\)/u.test(statsSources.group)
       && !/state\.agentDispatches[\s\S]*\.filter/u.test(statsSources.group),
