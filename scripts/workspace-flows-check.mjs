@@ -142,6 +142,39 @@ try {
   const systemProjectView = await request(`/api/state?view=projects&projectId=${orgProject.id}`);
   assert.deepEqual(systemProjectView.organizationContext, orgView.organizationContext, "system reader uses the target project's organization, not the reader's default organization");
   console.log("ok: organization breadcrumb context follows the authorized project for org and system readers");
+
+  const replacementOrg = await request("/api/orgs", {method: "POST", status: 201,
+    body: {name: "管理员更换验证组织", admin: {email: "old-admin-replace@example.test", displayName: "原组织管理员"},
+      quotas: {maxMembers: 2, maxProjects: 2, maxTaskGroups: 2, maxAgents: 2}}});
+  const oldAdminFirstSession = (await request("/api/auth/login", {method: "POST",
+    body: {email: replacementOrg.adminAccount.email, token: replacementOrg.accountToken}})).sessionToken;
+  sessionToken = oldAdminFirstSession;
+  await request("/api/auth/change-password", {method: "POST", body: {newPassword: "OldAdmin!2026"}});
+  const oldAdminPasswordSession = (await request("/api/auth/login", {method: "POST",
+    body: {email: replacementOrg.adminAccount.email, password: "OldAdmin!2026"}})).sessionToken;
+  sessionToken = systemSession;
+  assert.equal((await request(`/api/orgs/${replacementOrg.organization.orgId}/initial-admin/replace`, {method: "POST", status: 400,
+    body: {displayName: "新组织管理员", email: "new-admin-replace@example.test"}})).error,
+  "org_initial_admin_disposition_required");
+  const replacement = await request(`/api/orgs/${replacementOrg.organization.orgId}/initial-admin/replace`, {method: "POST", status: 201,
+    body: {displayName: "新组织管理员", email: "new-admin-replace@example.test", oldAdminDisposition: "suspend"}});
+  assert.ok(replacement.accountToken);
+  sessionToken = oldAdminPasswordSession;
+  await request("/api/org/members", {status: 401});
+  sessionToken = "";
+  await request("/api/auth/login", {method: "POST", status: 401,
+    body: {email: replacementOrg.adminAccount.email, password: "OldAdmin!2026"}});
+  const newAdminSession = (await request("/api/auth/login", {method: "POST",
+    body: {email: replacement.adminAccount.email, token: replacement.accountToken}})).sessionToken;
+  sessionToken = newAdminSession;
+  const replacementMembers = await request("/api/org/members");
+  const oldAdminAfter = replacementMembers.members.find((account) => account.accountId === replacementOrg.adminAccount.accountId);
+  assert.equal(oldAdminAfter.accountType, "user_account");
+  assert.equal(oldAdminAfter.status, "suspended");
+  assert.ok(!(oldAdminAfter.permissions || []).some((permission) => permission.startsWith("org:")));
+  assert.equal(replacementMembers.members.find((account) => account.accountId === replacement.adminAccount.accountId)?.accountType, "org_admin");
+  sessionToken = systemSession;
+  console.log("ok: system admin replacement demotes and suspends the old org admin, revokes old credentials, and signs a new one-time login");
   console.log("workspace flows check passed");
 } catch (error) {
   console.error(`workspace flows check failed: ${error.stack || error.message}`);

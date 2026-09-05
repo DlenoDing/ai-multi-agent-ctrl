@@ -1383,7 +1383,7 @@ const HUMAN_ONLY_ACTIONS = [
   // 这一族原先是机器可做的：拿到相应权限就能建组织、改成员权限与状态、调配额、发放/撤销授权。
   // 它绕得过人工定稿闸门吗？绕不过（闸门认 accountType，而铸账号已是真人专属）——
   // 但"谁能干什么"本身就不该由干活的一方来定，所以整族收归真人。
-  "org_create", "org_member_create", "org_member_permissions_update", "org_member_status_update",
+  "org_create", "org_initial_admin_replace", "org_member_create", "org_member_permissions_update", "org_member_status_update",
   "org_quota_update", "org_status_update",
   "access_grant_create", "access_grant_revoke", "project_member_grant", "project_member_revoke",
   // 【取消与中止】2026-08-26 人定：AI 可以暂停，取消只能由人发起。
@@ -2396,7 +2396,7 @@ function permissionForAction(action) {
   if (action === "shared_definition_resolve") return "project:update";
   if (action === "project_config_update") return "project:update";
   if (action === "project_archive") return "project:update";
-  if (["org_create", "org_quota_update", "org_status_update"].includes(action)) return "system:*";
+  if (["org_create", "org_initial_admin_replace", "org_quota_update", "org_status_update"].includes(action)) return "system:*";
   if (["org_member_create", "org_member_permissions_update", "org_member_status_update", "org_member_invite_reissue"].includes(action)) return "org:member_admin";
   if (action === "org_project_create") return "org:project_admin";
   if (action === "human_confirmation_decide") return "task_group:review";
@@ -6205,6 +6205,79 @@ async function handleApi(req, res) {
     finishGuardedWrite(state, guard, 201, {organization, adminAccountId});
     writeState(state);
     json(res, 201, {organization, adminAccount: publicAccountRecord(adminAccount), accountToken: adminToken, login: {email: adminAccount.email, tokenField: "accountToken"}});
+    return;
+  }
+
+  const replaceInitialAdminMatch = url.pathname.match(/^\/api\/orgs\/([^/]+)\/initial-admin\/replace$/);
+  if (req.method === "POST" && replaceInitialAdminMatch) {
+    const orgId = replaceInitialAdminMatch[1];
+    const guard = beginGuardedWrite(req, state, "org_initial_admin_replace", `Organization:${orgId}`, {resourceType: "system", resourceId: "organizations"});
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const organization = organizationOf(state, orgId);
+    if (!organization) return json(res, 404, {error: "organization_not_found"});
+    const disposition = String(body.oldAdminDisposition || "");
+    if (!["suspend", "keep_member"].includes(disposition)) {
+      return json(res, 400, {error: "org_initial_admin_disposition_required", supported: ["suspend", "keep_member"],
+        message: "更换组织管理员必须明确选择旧管理员是停用，还是保留为普通成员"});
+    }
+    const email = String(body.email || "").trim();
+    const displayName = String(body.displayName || "").trim();
+    if (!email || !email.includes("@")) {
+      return json(res, 400, {error: "organization_admin_email_required",
+        message: "更换组织管理员必须填写新管理员的登录邮箱"});
+    }
+    if ((state.accounts || []).some((account) => sameEmail(account.email, email))) {
+      return json(res, 409, {error: "account_email_already_registered"});
+    }
+    recomputeOrganizationUsage(state);
+    const oldAdmin = (state.accounts || []).find((account) => account.accountId === organization.initialAdminAccountId) || null;
+    const oldAdminCounted = oldAdmin && !["disabled", "suspended", "retired"].includes(oldAdmin.status);
+    const projectedMembers = Number(organization.usage?.members || 0) + 1
+      - (disposition === "suspend" && oldAdminCounted ? 1 : 0);
+    const memberQuota = Number(organization.quotas?.maxMembers || 0);
+    if (!Number.isFinite(memberQuota) || memberQuota < 1 || projectedMembers > memberQuota) {
+      return json(res, 409, {error: "org_quota_exceeded", kind: "members", quota: memberQuota,
+        usage: Number(organization.usage?.members || 0), projectedUsage: projectedMembers,
+        message: "更换后的预计成员数会超过组织成员配额；可选择停用旧管理员，或先提高成员配额"});
+    }
+    const at = now();
+    const newAdminAccountId = createId("acct");
+    const newAdminToken = `aimac_account_${randomBytes(32).toString("base64url")}`;
+    const newAdmin = {
+      schemaVersion: "account/v1",
+      accountId: newAdminAccountId,
+      accountType: "org_admin",
+      organizationId: organization.orgId,
+      displayName: displayName || "组织管理员",
+      email,
+      status: "invited",
+      roles: ["org_admin"],
+      permissions: ["org:*", "project:create", "project:*", "task_group:*", "member:invite", "agent:activate", "project:grant"],
+      authPolicy: {method: "invite_token", mfaRequired: false, passwordSet: false, sessionTtlSeconds: 28800},
+      credentialDigest: digestOf(`account-invite:${newAdminAccountId}:${newAdminToken}`),
+      credentialIssuedAt: at,
+      credentialExpiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
+      createdAt: at,
+      updatedAt: at
+    };
+    if (oldAdmin) {
+      oldAdmin.accountType = "user_account";
+      oldAdmin.roles = ["member"];
+      oldAdmin.permissions = ["project:view"];
+      if (disposition === "suspend") oldAdmin.status = "suspended";
+      oldAdmin.updatedAt = at;
+      revokeAccountSessions(state, oldAdmin.accountId, "organization_admin_replaced");
+    }
+    state.accounts.unshift(newAdmin);
+    organization.initialAdminAccountId = newAdmin.accountId;
+    organization.updatedAt = at;
+    recomputeOrganizationUsage(state);
+    const safePayload = {organization, adminAccount: publicAccountRecord(newAdmin), previousAdminAccountId: oldAdmin?.accountId || null,
+      oldAdminDisposition: disposition, secretReturnedOnce: true};
+    audit(state, guard.actor, "org_initial_admin_replace", `Organization:${organization.orgId}:Account:${newAdmin.accountId}`);
+    finishGuardedWrite(state, guard, 201, safePayload);
+    writeState(state);
+    json(res, 201, {...safePayload, accountToken: newAdminToken, login: {email: newAdmin.email, tokenField: "accountToken"}});
     return;
   }
 

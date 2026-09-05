@@ -2326,6 +2326,7 @@ function renderSysOrgsLifecycleGuide({orgs, activeOrgs, suspendedOrgs, quotaPres
 function systemOrganizationActions(org, initialAdmin) {
   return [
     `<button class="secondary-button" data-action="org-quota" data-org="${esc(org.orgId)}">调整配额</button>`,
+    `<button class="secondary-button" data-action="replace-initial-admin" data-org="${esc(org.orgId)}">更换初始管理员</button>`,
     initialAdmin?.status === "invited"
       ? `<button class="secondary-button" data-action="member-reissue-invite" data-account="${esc(org.initialAdminAccountId)}">重发管理员邀请</button>` : "",
     initialAdmin && ["active", "suspended", "locked"].includes(initialAdmin.status)
@@ -8523,6 +8524,27 @@ document.addEventListener("submit", async (event) => {
       oneTimeTokenModal(`组织「${result.organization?.name || data.name}」创建成功`, result.adminAccount?.email || data.adminEmail, result.accountToken || "-", "请将令牌交给该组织的初始组织管理员，首次登录后建议立即设置密码。");
       return;
     }
+    if (kind === "org-admin-replace") {
+      if (!data.oldAdminDisposition) throw new Error("请选择旧管理员的处置方式");
+      const oldAdmin = (state.accounts || []).find((account) => account.accountId === form.dataset.oldAdmin);
+      const dispositionText = data.oldAdminDisposition === "suspend" ? "停用旧管理员" : "保留为普通成员";
+      if (!(await confirmDialog({
+        title: "确认更换初始组织管理员",
+        message: `确认将“${oldAdmin?.displayName || "当前管理员"}”降为普通成员，并${dispositionText}？`,
+        sub: "旧管理员的组织管理权限和活动会话会立即失效；项目所有权和其它项目记录不会被暗中转移。新管理员的一次性令牌只显示一次。",
+        danger: true,
+        confirmText: "确认更换"
+      }))) return;
+      const result = await api(`/api/orgs/${encodeURIComponent(form.dataset.org)}/initial-admin/replace`, {
+        method: "POST", body: JSON.stringify({displayName: data.displayName, email: data.email,
+          oldAdminDisposition: data.oldAdminDisposition})
+      });
+      closeModal();
+      await loadPage();
+      oneTimeTokenModal("初始组织管理员已更换", result.adminAccount?.email || data.email, result.accountToken || "-",
+        `旧管理员已${data.oldAdminDisposition === "suspend" ? "停用" : "保留为普通成员"}；请将一次性令牌通过受控通道交给新管理员。`);
+      return;
+    }
     if (kind === "org-quotas") {
       await api(`/api/orgs/${encodeURIComponent(form.dataset.org)}/quotas`, {method: "POST", body: JSON.stringify({
         quotas: quotaBody(data)
@@ -9373,6 +9395,29 @@ document.addEventListener("click", async (event) => {
       render();
       window.scrollTo?.({top: 0});
       document.querySelector("[data-governance-object-heading]")?.focus();
+      return;
+    }
+    if (action === "replace-initial-admin") {
+      const org = (organizations || []).find((item) => item.orgId === target.dataset.org);
+      if (!org) return;
+      const oldAdmin = (state.accounts || []).find((account) => account.accountId === org.initialAdminAccountId);
+      openModal(`更换初始组织管理员 · ${org.name}`, `
+        <div class="stack">
+          <div class="notice warn-notice">当前管理员：${esc(oldAdmin?.displayName || org.initialAdminAccountId || "记录缺失")}。更换后旧账号立即失去组织管理身份，不能自动恢复。</div>
+          <form class="form-grid" data-form="org-admin-replace" data-org="${esc(org.orgId)}" data-old-admin="${esc(org.initialAdminAccountId || "")}">
+            <div class="form-row-inline">
+              <div class="form-row"><label>新管理员姓名</label><input name="displayName" required></div>
+              <div class="form-row"><label>新管理员登录邮箱</label><input name="email" type="email" required></div>
+            </div>
+            <div class="form-row"><label>旧管理员处置</label>${decisionSelect("oldAdminDisposition", [
+              ["suspend", "停用旧管理员账号"],
+              ["keep_member", "保留为普通组织成员"]
+            ], "必须明确选择…")}</div>
+            <div class="notice">新管理员以待接受邀请状态创建。旧管理员的组织管理权限和活动会话会立即撤销；项目所有权保持原记录，不做隐式转移。</div>
+            <button class="danger-button" type="submit">更换并签发新管理员令牌</button>
+          </form>
+        </div>
+      `);
       return;
     }
     if (action === "close-org-detail") {

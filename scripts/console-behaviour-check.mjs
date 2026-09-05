@@ -871,6 +871,7 @@ function check(name, condition, detail) {
   check("系统组织详情集中展示初始管理员、配额和启停治理",
     /返回组织列表/u.test(html) && /初始组织管理员/u.test(html) && /配额与用量/u.test(html)
       && /data-action="member-reissue-invite" data-account="acct_org_admin"/u.test(html)
+      && /data-action="replace-initial-admin" data-org="org_workspace"/u.test(html)
       && /data-action="org-quota" data-org="org_workspace"/u.test(html)
       && /data-action="org-status" data-org="org_workspace"/u.test(html),
     String(html).replace(/<[^>]+>/gu, " ").slice(0, 500));
