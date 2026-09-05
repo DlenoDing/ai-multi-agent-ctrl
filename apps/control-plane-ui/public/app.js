@@ -4612,6 +4612,10 @@ function workflowGuidePanel(project, groups) {
   const fleet = state.fleet || {};
   const online = Number(fleet.online || 0);
   const registered = Number(fleet.total || 0);
+  // 接入这条链有三个中间态，卡在哪一环要分开说：签了令牌没人用（去 agent 主机上装）/ 注册了但全离线（恢复心跳）/ 在线但另有离线。
+  const pendingTokens = (state.agentJoinTokens || []).filter((token) => token.projectId === project.id && token.status === "issued"
+    && !(token.expiresAt && new Date(token.expiresAt).getTime() <= serverNow())).length;
+  const offline = Math.max(0, registered - online);
   const groupIds = new Set(groups.map((taskGroup) => taskGroup.id));
   const workItemCount = groups.reduce((sum, taskGroup) => sum + Number(taskGroup.workItemCount ?? (taskGroup.workItems || []).length), 0);
   const dispatches = (state.agentDispatches || []).filter((item) => item.projectId === project.id || groupIds.has(item.taskGroupId)).length;
@@ -4622,7 +4626,13 @@ function workflowGuidePanel(project, groups) {
   const go = (id) => visible.has(id) ? `<button class="secondary-button" data-menu="${esc(id)}">前往</button>` : "";
   const steps = [
     {title: "接入 AI 智能体", done: online > 0, page: "proj-agents",
-      state: online ? `${online} 台在线` : (registered ? `已注册 ${registered} 台，但没有在线的——活派不出去` : "尚未接入：先签发入网令牌，再在 agent 主机上执行安装命令")},
+      state: online
+        ? `${online} 台在线${offline ? `，另 ${offline} 台离线` : ""}`
+        : (registered
+          ? `已注册 ${registered} 台，但没有在线的——活派不出去：先恢复 agent 主机/进程心跳`
+          : (pendingTokens
+            ? `已签发 ${pendingTokens} 张入网令牌待使用，还没有节点注册：到 agent 主机上执行安装命令`
+            : "尚未接入：先签发入网令牌，再在 agent 主机上执行安装命令"))},
     {title: "创建任务组", done: groups.length > 0, page: "tg", state: groups.length ? `${groups.length} 个任务组` : "还没有任务组"},
     {title: "创建工作项（任务）", done: workItemCount > 0, page: "tg", state: workItemCount ? `${workItemCount} 个工作项` : "还没有工作项：到任务组里「创建工作项」"},
     {title: "启动执行", done: dispatches > 0, page: "monitor",

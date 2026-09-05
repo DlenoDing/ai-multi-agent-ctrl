@@ -2066,7 +2066,10 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
       "dlqEntries",
       // artifacts 此前在防泄漏白名单里却【没有任何视图下发它】。关闭门的 artifacts_verified
       // 只说一句"还有产物没核验"、指不出是哪一条，而人被要求"等执行方补齐证据或取消对应工作项"。
-      "artifacts"],
+      "artifacts",
+      // 入网令牌：项目概览的流程导航要算"已签发待使用"，让人知道接入链卡在安装这一环。
+      // 记录只存摘要不存明文，带 projectId，按项目裁剪与别的视图一致。
+      "agentJoinTokens"],
     runtime: ["modelCapabilities", "modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions", "workerLanes", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkillOverlays"],
     // effectiveInstructionPackets / roleDriftGuards 控制台一处都没读（实测这一视图 608KB 里
     // 它们占 303KB）。需要时可从 view=full 或专用接口取，不该让每次打开这一页都付这笔钱。

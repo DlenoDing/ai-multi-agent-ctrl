@@ -1912,6 +1912,18 @@ function runWorkflowGuideCase() {
   check("没有编排权限时，流程导航不摆「推进一拍」",
     /流程导航/u.test(cannotRun) && !/data-action="orchestrator-run"/u.test(cannotRun),
     "没有编排权限却摆了「推进一拍」：按下去必然 403，看得到却按不动");
+  // 接入这条链的中间态：签了令牌还没人用 / 注册了但都离线 / 在线但另有离线——各说清卡在哪一环。
+  const tokenIssued = {...base, agentJoinTokens: [{joinTokenId: "jt1", projectId: "p1", status: "issued", expiresAt: "2099-01-01T00:00:00.000Z"}]};
+  check("流程导航：签发了令牌但还没有节点注册时要说清卡在安装这一环",
+    /已签发 1 张入网令牌待使用/u.test(guideOf(probe.renderProjectOverviewWith(tokenIssued, admin, "p1"))),
+    "签发了令牌却还说尚未接入：人不知道令牌已经发了、下一步是去 agent 主机上装");
+  const registeredOffline = {...base, fleet: {online: 0, total: 2}};
+  check("流程导航：注册了但都离线时要说活派不出去",
+    /已注册 2 台，但没有在线的/u.test(guideOf(probe.renderProjectOverviewWith(registeredOffline, admin, "p1"))),
+    "注册了但全离线，导航却没说清活派不出去");
+  check("流程导航：在线但另有离线时要一并说",
+    /2 台在线，另 1 台离线/u.test(guideOf(probe.renderProjectOverviewWith(busy, admin, "p1"))),
+    "有离线节点却只报在线数");
 }
 
 

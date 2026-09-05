@@ -621,6 +621,15 @@ const MUTATIONS = [
     expect: "没有编排权限却摆了「推进一拍」"
   },
   {
+    // 签了令牌没人用是接入链最常见的卡点；把待用令牌数掐成 0 即退回"尚未接入"，人不知道该去 agent 主机上装。
+    name: "流程导航必须说清令牌已签发待使用",
+    file: APP,
+    gate: "console",
+    from: "  const pendingTokens = (state.agentJoinTokens || [])",
+    to: "  const pendingTokens = 0 && (state.agentJoinTokens || [])",
+    expect: "签发了令牌却还说尚未接入"
+  },
+  {
     // 项目设置的配置行（仓库/基线/角色）对只读成员必须收起「删除」：cfg-del 是本地暂存，保存已禁用，
     // 只读成员点了删本地行却存不下＝按了看不到效果的死动作。去掉 cfgRepoRow 的 readOnly 门即让删除对只读成员出现。
     name: "只读成员的配置行不许摆删除按钮",
