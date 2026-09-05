@@ -286,8 +286,12 @@ function pendingForMe() {
   // 一条都不会被算到。所以它一旦被截，所有桶的数字都只是下限，而不只是某一类不准。
   const scopeTruncated = truncated.has("taskGroups");
   // allowed 可以是布尔（项目级权限，这一屏只看一个项目）或按条判断的函数（任务组级权限）。
+  // 范围内存在、但当前账号无权处置的条数——按去向页累计。给"暂无"一个诚实的替代：范围内明明有待办、
+  // 只是你没权限，屏幕不能说"没有"（缺省不得等于有利结果）。桶本身仍只列"我的"，现有消费者不受影响。
+  const othersByPage = {};
   const add = (id, label, page, items, allowed, sourceField) => {
     const mine = typeof allowed === "function" ? items.filter(allowed) : (allowed ? items : []);
+    othersByPage[page] = (othersByPage[page] || 0) + Math.max(0, items.length - mine.length);
     if (!mine.length) return;
     buckets.push({id, label, page, count: mine.length, capped: scopeTruncated || truncated.has(sourceField),
       items: mine.slice(0, 5), projectIds: projectIdsForItems(mine)});
@@ -329,7 +333,7 @@ function pendingForMe() {
   // 会读成"已经处理掉了"。显式区分：不知道就别报数。
   const known = Array.isArray(state.taskGroups);
   const partial = buckets.some((bucket) => bucket.capped);
-  return {buckets, total: buckets.reduce((sum, bucket) => sum + bucket.count, 0), known, partial};
+  return {buckets, total: buckets.reduce((sum, bucket) => sum + bucket.count, 0), known, partial, othersByPage};
 }
 
 function bucketNeedsProjectJump(bucket) {
@@ -4625,6 +4629,9 @@ function workflowGuidePanel(project, groups) {
   const countOn = (pageId) => (todo.buckets || []).filter((bucket) => bucket.page === pageId).reduce((sum, bucket) => sum + Number(bucket.count || 0), 0);
   const reviewTodo = countOn("review");
   const recheckTodo = countOn("monitor");
+  const othersOn = (pageId) => Number((todo.othersByPage || {})[pageId] || 0);
+  const reviewOthers = othersOn("review");
+  const recheckOthers = othersOn("monitor");
   const queuedDirectives = (state.humanDirectives || []).filter((item) => item.status === "queued" && groupIds.has(item.taskGroupId)).length;
   const openBarriers = (state.closeBarriers || []).filter((item) => groupIds.has(item.taskGroupId) && (item.blockers || []).length).length;
   const visible = new Set(menuForCurrentSection(perspectiveOf(currentAccount), page).filter((item) => item.id).map((item) => item.id));
@@ -4645,9 +4652,11 @@ function workflowGuidePanel(project, groups) {
       action: hasPerm("task_group:orchestrate") && workItemCount > 0 ? `<button class="secondary-button" data-action="orchestrator-run">推进一拍</button>` : "",
       state: dispatches ? `已派发 ${dispatches} 次` : (workItemCount && online ? "还没派发：后台每拍自动推进；等不及可到「执行监控」点「运行自治循环」" : "有工作项且有在线 agent 后自动开始")},
     {title: "人工审核 / 定稿", done: reviewTodo === 0, attention: reviewTodo > 0, page: "review",
-      state: reviewTodo ? `${reviewTodo}${todo.partial ? "+" : ""} 项等你处理（定稿 / 授权 / 审批 / 发现项）` : "暂无等你处理的审核项"},
+      state: reviewTodo ? `${reviewTodo}${todo.partial ? "+" : ""} 项等你处理（定稿 / 授权 / 审批 / 发现项）`
+        : (reviewOthers ? `有 ${reviewOthers} 项在等有权的人处置——你在相关任务组上没有审核权限，只能看` : "暂无等你处理的审核项")},
     {title: "人工复核 / 阻塞处置", done: recheckTodo === 0, attention: recheckTodo > 0, page: "monitor",
-      state: recheckTodo ? `${recheckTodo} 项等你收尾（评审计划 / 评审包 / 卡住的执行方案 / 质量门豁免等）` : "暂无等你收尾的复核项"},
+      state: recheckTodo ? `${recheckTodo} 项等你收尾（评审计划 / 评审包 / 卡住的执行方案 / 质量门豁免等）`
+        : (recheckOthers ? `有 ${recheckOthers} 项在等有权的人处置——你在相关任务组上没有相应权限，只能看` : "暂无等你收尾的复核项")},
     {title: "人工指令", done: queuedDirectives === 0, attention: queuedDirectives > 0, page: "directives",
       state: queuedDirectives ? `${queuedDirectives} 条指令待编排消费` : "需要干预（暂停/纠偏/调优先级）时在这里下达"},
     {title: "收口关闭", done: groups.length > 0 && openBarriers === 0, attention: openBarriers > 0, page: "monitor",

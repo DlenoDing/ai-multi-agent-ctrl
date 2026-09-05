@@ -648,6 +648,15 @@ const MUTATIONS = [
     expect: "复核项被算进了人工审核"
   },
   {
+    // 把"无权待办"掐成 0 → 无权者又被告知"暂无"。范围内明明有待办，屏幕说没有＝缺省等于有利结果。
+    name: "流程导航对无权限者必须如实说在等有权的人处置",
+    file: APP,
+    gate: "console",
+    from: "  const othersOn = (pageId) => Number((todo.othersByPage || {})[pageId] || 0);",
+    to: "  const othersOn = () => 0;",
+    expect: "无权限的人被告知暂无"
+  },
+  {
     // 推送与否骗人后果最重：把"未推送"写死成"已推送"，人会以为改动已经到远端。
     name: "工作项结果行必须如实区分已推送与未推送",
     file: APP,

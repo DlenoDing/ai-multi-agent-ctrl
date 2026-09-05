@@ -1934,6 +1934,13 @@ function runWorkflowGuideCase() {
   check("流程导航：复核项不该混进「人工审核 / 定稿」的计数",
     /暂无等你处理的审核项/u.test(planGuide),
     "复核项被算进了人工审核：人去人工审核页找，那里没有");
+  // 无权者不能被告知"暂无"：范围内有待办、只是你没权限——要如实说在等有权的人（缺省不得等于有利结果）。
+  const withBoth = {...busy, reviewPlans: [{reviewPlanId: "rp1", taskGroupId: "tg1", status: "open"}],
+    humanConfirmationRequests: [{requestId: "hc1", taskGroupId: "tg1", status: "pending"}]};
+  const noReview = guideOf(probe.renderProjectOverviewWith(withBoth, operator(PERMS.filter((item) => item !== "task_group:review")), "p1"));
+  check("流程导航：没有审核权限的人要被告知在等有权的人处置，而不是暂无",
+    /有 1 项在等有权的人处置/u.test(noReview) && !/暂无等你处理的审核项/u.test(noReview) && !/暂无等你收尾的复核项/u.test(noReview),
+    "无权限的人被告知暂无：范围内明明有待办、只是他没权限，屏幕却说没有");
 }
 
 
