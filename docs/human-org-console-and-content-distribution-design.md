@@ -281,7 +281,8 @@
 
 - `systemRules`/`businessRules` 为**层级覆盖片段**：只需写要停用/改写/新增的规则（按 `ruleId` 与内置默认集合并），未写的默认规则原样继承（见 §4.4）。
 - 解析视图：`GET /api/projects/:id/config`、`GET /api/task-groups/:id/config` 返回 `effective*Config`，含 `systemRules`/`businessRules`（带 `source: default|project|task_group` 与 `contentDigest`）及 `activeSystemRules`/`activeBusinessRules`（实际下发的已启用集）。
-- 仓库访问凭证只存**引用**（环境变量名 / 秘钥管理地址），状态库不落明文。
+- 仓库访问凭证**按项目单独配置**（`credentialMode`: `none` / `account_password` / `api_key`），不走环境变量引用：不同组织不同项目的仓库各不相同，环境变量配不过来。状态库只落 AES-256-GCM 密文（`credential.sealedSecret`，密钥来自 `AIMAC_CREDENTIAL_KEY` 或运行时目录 `credential.key`），读接口只回 `passwordSet` / `apiKeySet`；密钥只在节点认领派发时随认领响应投递（`repositoryCredential`），agent 侧经 `GIT_ASKPASS` 注入本次 git 子进程，不落盘、不进日志。
+- `POST /api/projects/:id/repositories/:repoId/connection-test`（权限同改配置）：用已保存的地址与凭证跑一次 `git ls-remote`，返回 `{ok, reason, detail, refCount, defaultBranchFound}`；`reason` 词表在 `lib/git-connection-test.mjs`（认证失败 / 找不到仓库 / 够不着 / 超时 / 未归类 / 没填密钥 / 密文解不开）。
 
 ### 5.2 任务组继承与覆盖
 

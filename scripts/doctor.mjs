@@ -3669,6 +3669,44 @@ try {
     });
     if (cpConfigWrite.response.status !== 200) throw new Error(`给控制面项目仓库配凭证失败（${cpConfigWrite.response.status}/${cpConfigWrite.payload?.error}）`);
     issuedPlaintextSecrets.push(["控制面项目仓库 API Key", controlPlaneRepoSecret]);
+    // 【项目仓库「测试连接」】：临时再挂两行仓库——一行指向 doctor 的本地裸仓库（带 api_key 凭证，必须报连上、
+    // 且回执不带密钥）、一行指向不存在的路径（必须归成 repository_not_found）；测完把两行撤掉，别影响后面按仓库数的断言。
+    {
+      const connSecret = `doctor-conn-secret-${Date.now().toString(36)}`;
+      issuedPlaintextSecrets.push(["测试连接仓库 API Key", connSecret]);
+      const withProbeRows = await jsonFetch(port, "/api/projects/prj_control_plane/config", {
+        method: "POST", headers: {"Idempotency-Key": "doctor-cp-repo-conn-rows", authorization: systemAuth},
+        body: JSON.stringify({repositories: [...cpConfigWrite.payload.config.repositories,
+          {id: "repo_doctor_conn_ok", url: doctorRepo.remote, defaultBranch: "main", credentialMode: "api_key", credential: {apiKey: connSecret}},
+          {id: "repo_doctor_conn_missing", url: join(doctorRepo.base, "missing.git"), defaultBranch: "main", credentialMode: "none", credential: {mode: "none"}}],
+          expectedConfigVersion: cpConfigWrite.payload.configVersion})
+      });
+      if (withProbeRows.response.status !== 200) throw new Error(`挂测试连接用的仓库行失败（${withProbeRows.response.status}/${withProbeRows.payload?.error}）`);
+      const connOk = await jsonFetch(port, "/api/projects/prj_control_plane/repositories/repo_doctor_conn_ok/connection-test", {
+        method: "POST", headers: {"Idempotency-Key": "doctor-conn-ok", authorization: systemAuth}, body: "{}"});
+      if (connOk.response.status !== 200 || connOk.payload?.ok !== true || connOk.payload?.refCount !== 1 || connOk.payload?.defaultBranchFound !== true) {
+        throw new Error(`本地裸仓库的测试连接没报成功（HTTP ${connOk.response.status} ${JSON.stringify(connOk.payload).slice(0, 200)}）`);
+      }
+      if (JSON.stringify(connOk.payload).includes(connSecret)) throw new Error("测试连接回执里带出了仓库密钥");
+      const connMissing = await jsonFetch(port, "/api/projects/prj_control_plane/repositories/repo_doctor_conn_missing/connection-test", {
+        method: "POST", headers: {"Idempotency-Key": "doctor-conn-missing", authorization: systemAuth}, body: "{}"});
+      if (connMissing.response.status !== 200 || connMissing.payload?.ok !== false || connMissing.payload?.reason !== "repository_not_found") {
+        throw new Error(`不存在的仓库没归成 repository_not_found（HTTP ${connMissing.response.status} ${JSON.stringify(connMissing.payload).slice(0, 200)}）`);
+      }
+      expectStatus(await jsonFetch(port, "/api/projects/prj_control_plane/repositories/repo_nope/connection-test", {
+        method: "POST", headers: {"Idempotency-Key": "doctor-conn-nope", authorization: systemAuth}, body: "{}"}),
+        404, "测试连接：不存在的仓库 ID", "project_repository_not_found");
+      // 没有改配置权限的人不能拿别人的凭证去探远端。
+      const connDenied = await jsonFetch(port, "/api/projects/prj_control_plane/repositories/repo_doctor_conn_ok/connection-test", {
+        method: "POST", headers: {"Idempotency-Key": "doctor-conn-denied", authorization: reviewerAuth}, body: "{}"});
+      if (connDenied.response.status !== 403) throw new Error(`没有改配置权限的账号也能测试连接（HTTP ${connDenied.response.status} ${JSON.stringify(connDenied.payload).slice(0, 120)}）`);
+      const restored = await jsonFetch(port, "/api/projects/prj_control_plane/config", {
+        method: "POST", headers: {"Idempotency-Key": "doctor-cp-repo-conn-rows-restore", authorization: systemAuth},
+        body: JSON.stringify({repositories: cpConfigWrite.payload.config.repositories, expectedConfigVersion: withProbeRows.payload.configVersion})
+      });
+      if (restored.response.status !== 200) throw new Error(`撤掉测试连接用的仓库行失败（${restored.response.status}/${restored.payload?.error}）`);
+      console.log("  ok  项目仓库「测试连接」：本地裸仓库连上（回执无密钥）、不存在的路径归成找不到仓库、未知仓库 ID 404、无改配置权限 403");
+    }
     // 不自检就领不到活（admission 停在 read_only）—— 六项必检全绿才算入网。
     await jsonFetch(port, "/api/agent/v1/self-check", {
       method: "POST", headers: {authorization: haltNodeAuth},

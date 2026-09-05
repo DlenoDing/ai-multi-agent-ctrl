@@ -694,6 +694,54 @@ const MUTATIONS = [
     expect: "isSealed 判定不严"
   },
   {
+    name: "测试连接：认证失败必须归成 repository_auth_failed（不然人看到的是「原因没归类」）",
+    check: "verifyRepositoryConnectionTest",
+    file: "apps/control-plane-ui/lib/git-connection-test.mjs",
+    from: "    return \"repository_auth_failed\";\n  }\n  if (/does not appear",
+    to: "    return \"repository_connection_failed\";\n  }\n  if (/does not appear",
+    expect: "git 报错归类错了"
+  },
+  {
+    name: "测试连接：askpass 脚本里不得写入密钥",
+    check: "verifyRepositoryConnectionTest",
+    file: "apps/control-plane-ui/lib/git-connection-test.mjs",
+    from: "  writeFileSync(script, \"#!/bin/sh\\ncase",
+    to: "  writeFileSync(script, \"#!/bin/sh\\n# \" + secret + \"\\ncase",
+    expect: "askpass 脚本里写进了密钥"
+  },
+  {
+    name: "测试连接：跑完必须删掉 askpass 目录",
+    check: "verifyRepositoryConnectionTest",
+    file: "apps/control-plane-ui/lib/git-connection-test.mjs",
+    from: "    rmSync(authDir, {recursive: true, force: true});",
+    to: "    void authDir;",
+    expect: "askpass 目录有残留"
+  },
+  {
+    name: "测试连接：detail 必须抹掉密钥",
+    check: "verifyRepositoryConnectionTest",
+    file: "apps/control-plane-ui/lib/git-connection-test.mjs",
+    from: "  if (secret) value = value.split(String(secret)).join(\"***\");",
+    to: "",
+    expect: "抹密钥没抹干净"
+  },
+  {
+    name: "测试连接：界面只认 ok === true，认不出的原因不许当成功",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "      if (result?.ok === true) {",
+    to: "      if (result?.ok !== false) {",
+    expect: "认不出的原因没按失败说"
+  },
+  {
+    name: "测试连接：表单有未保存改动时不许发请求",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "      if (formTouched) { toast.info(\"测试用的是已保存的仓库配置 —— 先点「保存项目配置」，再测\"); return; }",
+    to: "",
+    expect: "未保存改动时仍发了请求"
+  },
+  {
     // api_key 模式不给用户名时要按平台惯例缺省 x-access-token；缺省成空，GitHub/GitLab 这类 token 认证会直接被拒。
     name: "agent 侧 api_key 模式的 git 认证要缺省 x-access-token",
     check: "verifyAgentGatewayContracts",

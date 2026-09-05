@@ -142,7 +142,8 @@ import {
   projectRepositories,
   isSafeGitRef,
   noteWorkItemExecutionFailure, normalizePinnedModelId, newestWindow, dispatchContractSummary} from "./lib/control-plane-core.mjs";
-import { sealSecret, isSealed } from "./lib/credential-seal.mjs";
+import { sealSecret, isSealed, openSecret } from "./lib/credential-seal.mjs";
+import { testRepositoryConnection } from "./lib/git-connection-test.mjs";
 import { isTerminalDispatchStatus } from "./lib/lifecycle-states.mjs";
 
 // 真正绑上的端口（listen 回调写入）；localEndpoint 用它。放在模块顶部：读状态的路径在 listen 之前就会调它。
@@ -6528,6 +6529,48 @@ async function handleApi(req, res) {
     finishGuardedWrite(state, guard, 200, publicConfig);
     writeState(state);
     json(res, 200, {projectId: project.id, config: publicConfig, configVersion: configLayerVersion(project.config)});
+    return;
+  }
+
+  // 【项目仓库测试连接】：用已保存的地址与凭证跑一次 git ls-remote。此前凭证配错要等派发失败才知道，
+  // 而 agent 那边只报 git_command_failed。要解开密钥、命中远端，权限与改配置同级（能改配置的人才能拿它去探）。
+  // 结果是诊断，不是请求错误：HTTP 200 + {ok, reason, detail}，reason 词表见 lib/git-connection-test.mjs。
+  const repositoryConnectionTestMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/repositories\/([^/]+)\/connection-test$/);
+  if (req.method === "POST" && repositoryConnectionTestMatch) {
+    if (projectHiddenFromActor(req, state, repositoryConnectionTestMatch[1])) return json(res, 403, {error: "permission_denied"});
+    const guard = beginGuardedWrite(req, state, "project_config_update", `Project:${repositoryConnectionTestMatch[1]}`, projectScope(repositoryConnectionTestMatch[1]));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const project = state.projects.find((item) => item.id === repositoryConnectionTestMatch[1]);
+    if (!project) {
+      const denial = missingProjectDenial(guard.actorAccount || accountFromRequest(req, state)?.account);
+      return json(res, denial.status, denial.payload);
+    }
+    const repositoryId = decodeURIComponent(repositoryConnectionTestMatch[2]);
+    const repository = projectRepositories(project).find((item) => item.id === repositoryId);
+    if (!repository) return json(res, 404, {error: "project_repository_not_found", repositoryId});
+    if (!isSafeGitRemoteUrl(repository.url)) return json(res, 400, {error: "repository_output_target_unsafe_repository_url"});
+    const mode = repository.credentialMode || repository.credential?.mode || "none";
+    let secret = null;
+    let precheck = null;
+    if (mode !== "none") {
+      const sealed = repository.credential?.sealedSecret;
+      if (!sealed) precheck = {ok: false, reason: "credential_missing", detail: `模式 ${mode}，但从没填过密钥`};
+      else {
+        try { secret = openSecret(sealed, runtimeDir); } catch (error) {
+          precheck = {ok: false, reason: "repository_credential_unreadable", detail: String(error?.message || error).slice(0, 160)};
+        }
+      }
+    }
+    // 测试连接的墙钟比检查点验证短得多：人在页面上等着，30 秒还握不上手就该报「没应答」而不是让人干等 10 分钟。
+    const timeoutMs = Math.min(clampEnvNumber(process.env.AIMAC_GIT_COMMAND_TIMEOUT_MS, 60000, 600000), 30000);
+    const result = precheck || await testRepositoryConnection({url: repository.url, defaultBranch: repository.defaultBranch || "main",
+      mode, username: repository.credential?.username || repository.username || "", secret, runtimeDir, timeoutMs});
+    secret = null;
+    const payload = {projectId: project.id, repositoryId, mode, checkedAt: now(), ...result};
+    audit(state, guard.actor, "project_repository_connection_test", `Project:${project.id}`);
+    finishGuardedWrite(state, guard, 200, payload);
+    writeState(state);
+    json(res, 200, payload);
     return;
   }
 

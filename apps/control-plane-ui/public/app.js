@@ -7701,9 +7701,22 @@ function cfgRepoRow(repo = {}, readOnly = false) {
       <input name="repoPassword" type="password" placeholder="${esc(passwordPlaceholder)}" value="${esc(password)}" ${ro} autocomplete="new-password">
       <input name="repoApiKey" type="password" placeholder="${esc(apiKeyPlaceholder)}" value="${esc(apiKey)}" ${ro} autocomplete="new-password">
       ${readOnly ? "" : `<button type="button" class="danger-button" data-action="cfg-del">删除</button>`}
+      ${!readOnly && repo.id ? `<button type="button" class="secondary-button" data-action="repo-test-connection" data-repo="${esc(repo.id)}" title="用已保存的地址与凭证跑一次 git ls-remote，看远端认不认这份凭证">测试连接</button>` : ""}
     </div>
   `;
 }
+
+// 「测试连接」的结果原因 → 人话。键必须与 lib/git-connection-test.mjs 的 REPOSITORY_CONNECTION_REASONS 一一对上
+// （console 门核）；认不出的原因不许当成功，原样带出来。
+const REPO_CONNECTION_REASON_TEXT = {
+  repository_auth_failed: "远端拒绝了这份凭证（账号密码或 API Key 不对、已过期，或没有这个仓库的权限）",
+  repository_not_found: "远端说没有这个仓库（地址写错、仓库被删或改名，或这份凭证看不到它）",
+  repository_unreachable: "够不着远端（域名解析不了、端口不通或网络被拦）",
+  repository_connection_timeout: "远端在限定时间内没有应答（网络太慢或远端挂起）",
+  repository_connection_failed: "git 没能完成握手，原因没归到已知类别 —— 看后面 git 的原话",
+  credential_missing: "选了需要凭证的模式，但从没填过密钥（密码 / API Key 留空只是保留原值，从没填过就是空）",
+  repository_credential_unreadable: "已保存的凭证解不开（控制面换过凭证密钥）—— 重新填一次账号密码或 API Key 再保存"
+};
 
 function cfgBaselineRow(item = {}, readOnly = false) {
   const ro = readOnly ? "readonly" : "";
@@ -9211,6 +9224,20 @@ document.addEventListener("click", async (event) => {
       await api(`/api/task-groups/${encodeURIComponent(target.dataset.task)}/config/reset`, {method: "POST", body: "{}"});
       await loadPage();
       toast.success("已重置任务组配置");
+      return;
+    }
+    if (action === "repo-test-connection") {
+      // 测的是【已保存】的配置：表单里没保存的改动不参与。不先说清，人改了地址再点测试，会以为测的是新地址。
+      if (formTouched) { toast.info("测试用的是已保存的仓库配置 —— 先点「保存项目配置」，再测"); return; }
+      const projectId = target.closest("form[data-form='project-config']")?.dataset.project || currentProjectId;
+      const repoId = target.dataset.repo;
+      const result = await api(`/api/projects/${encodeURIComponent(projectId)}/repositories/${encodeURIComponent(repoId)}/connection-test`, {method: "POST", body: "{}"});
+      if (result?.ok === true) {
+        toast.success(`仓库 ${repoId} 连接成功：远端有 ${result.refCount} 个分支，默认分支${result.defaultBranchFound ? "存在" : "还不存在（首次推送时会新建）"}`);
+      } else {
+        const why = REPO_CONNECTION_REASON_TEXT[result?.reason] || `原因未归类（${result?.reason || "服务端没给原因"}）`;
+        toast.error(`仓库 ${repoId} 连不上：${why}${result?.detail ? `。git 说：${result.detail}` : ""}`);
+      }
       return;
     }
     if (action === "cfg-add") {

@@ -26,6 +26,7 @@ import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps
 import { clampEnvNumber } from "../apps/control-plane-ui/lib/env-number.mjs";
 import { removeGlobalRemoteMcpClients, gitAuthEnvFor } from "../apps/agent-runtime/runtime.mjs";
 import { buildExecutionContentBundle as buildBundleForCheck, isSafeGitRemoteUrl, dispatchRepositoryCredential } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
+import { classifyGitRemoteFailure, scrubConnectionDetail, testRepositoryConnection, REPOSITORY_CONNECTION_REASONS } from "../apps/control-plane-ui/lib/git-connection-test.mjs";
 import { publicAgentNode, agentRuntimeOutdated, REQUIRED_AGENT_RUNTIME_VERSION } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { recordAgentExecutionEvent } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { PROJECT_SHARD_COLLECTION_LIMITS } from "../apps/control-plane-ui/lib/state-store.mjs";
@@ -823,6 +824,79 @@ run(verifyHeartbeatDoesNotHideFailedSelfCheck);
 run(verifyTaskGroupBlockersStayBounded);
 run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
+// 【项目仓库测试连接】：用已保存的地址与凭证跑 git ls-remote，把 git 的英文归成人能处置的原因；
+// 密钥只走 askpass 环境变量（脚本不含密钥、跑完即删）、响应里的 detail 不含密钥。
+async function verifyRepositoryConnectionTest(output) {
+  const base = mkdtempSync(join(tmpdir(), "aimac-conn-test-"));
+  try {
+    const remote = join(base, "remote.git");
+    const work = join(base, "work");
+    execFileSync("git", ["init", "--bare", remote], {stdio: "pipe"});
+    execFileSync("git", ["init", "-b", "main", work], {stdio: "pipe"});
+    writeFileSync(join(work, "README.md"), "# conn\n");
+    const gitEnv = {...process.env, GIT_AUTHOR_NAME: "c", GIT_AUTHOR_EMAIL: "c@local", GIT_COMMITTER_NAME: "c", GIT_COMMITTER_EMAIL: "c@local"};
+    execFileSync("git", ["-C", work, "add", "README.md"], {stdio: "pipe"});
+    execFileSync("git", ["-C", work, "commit", "-q", "-m", "init"], {stdio: "pipe", env: gitEnv});
+    execFileSync("git", ["-C", work, "push", "-q", remote, "HEAD:refs/heads/main"], {stdio: "pipe"});
+    const runtimeDir = join(base, "runtime");
+    const secret = "conn-test-s3cret-" + Date.now().toString(36);
+    const ok = await testRepositoryConnection({url: remote, defaultBranch: "main", mode: "api_key", username: "", secret, runtimeDir, timeoutMs: 20000});
+    if (ok.ok !== true || ok.refCount !== 1 || ok.defaultBranchFound !== true) {
+      output.push(`能连上的本地裸仓库没有报成功（应 ok/1 个分支/默认分支存在）：${JSON.stringify(ok)}`);
+    }
+    if (JSON.stringify(ok).includes(secret)) output.push("测试连接的成功回执里带出了密钥");
+    const leftovers = existsSync(join(runtimeDir, "git-connection-test")) ? readdirSync(join(runtimeDir, "git-connection-test")) : [];
+    if (leftovers.length) output.push(`测试连接跑完 askpass 目录有残留（${leftovers.length} 个）—— 密钥虽不在脚本里，残留目录也不该留`);
+    const missing = await testRepositoryConnection({url: join(base, "missing.git"), defaultBranch: "main", mode: "none", runtimeDir, timeoutMs: 20000});
+    if (missing.ok !== false || missing.reason !== "repository_not_found") {
+      output.push(`不存在的仓库没有归成 repository_not_found：${JSON.stringify(missing)}`);
+    }
+    if (!REPOSITORY_CONNECTION_REASONS.includes(missing.reason)) output.push(`回执 reason ${missing.reason} 不在 REPOSITORY_CONNECTION_REASONS 词表里 —— 界面给不出中文`);
+    // askpass 脚本本身不得含密钥：把写脚本这一步单独拦下来看内容（mode 非 none 才写）。
+    const seen = [];
+    const spyDir = join(runtimeDir, "git-connection-test");
+    const spyPromise = testRepositoryConnection({url: remote, defaultBranch: "main", mode: "account_password", username: "alice", secret, runtimeDir, timeoutMs: 20000});
+    // 脚本在 ls-remote 结束前一直存在：轮询直到看到它（本地裸仓库通常几十毫秒内完成，所以先抢读）。
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const dirs = existsSync(spyDir) ? readdirSync(spyDir) : [];
+      for (const dir of dirs) {
+        const script = join(spyDir, dir, "askpass.sh");
+        if (existsSync(script)) seen.push({content: readFileSync(script, "utf8"), mode: statSync(script).mode & 0o777});
+      }
+      if (seen.length) break;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 2));
+    }
+    await spyPromise;
+    if (!seen.length) output.push("没抓到 askpass 脚本（写得太快或没写）—— 下面「脚本不含密钥」这条在空转");
+    for (const item of seen) {
+      if (item.content.includes(secret)) output.push("测试连接的 askpass 脚本里写进了密钥（应只引用环境变量）");
+      if ((item.mode & 0o077) !== 0) output.push(`askpass 脚本对组/其他用户可见（mode ${item.mode.toString(8)}）`);
+    }
+    const cases = [
+      ["fatal: Authentication failed for 'https://x/y.git/'", "repository_auth_failed"],
+      ["remote: Permission to a/b.git denied to u.\nfatal: unable to access 'https://github.com/a/b.git/': The requested URL returned error: 403", "repository_auth_failed"],
+      ["git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.", "repository_auth_failed"],
+      ["fatal: repository 'https://github.com/a/nope.git/' not found", "repository_not_found"],
+      ["fatal: '/tmp/nope.git' does not appear to be a git repository", "repository_not_found"],
+      ["fatal: unable to access 'https://nohost.invalid/a.git/': Could not resolve host: nohost.invalid", "repository_unreachable"],
+      ["ssh: connect to host 10.0.0.9 port 22: Connection refused", "repository_unreachable"],
+      ["something entirely new", "repository_connection_failed"]
+    ];
+    for (const [stderr, expected] of cases) {
+      const got = classifyGitRemoteFailure(stderr);
+      if (got !== expected) output.push(`git 报错归类错了：「${stderr.slice(0, 60)}」应为 ${expected}（认证失败/找不到/够不着），得到 ${got}`);
+    }
+    if (classifyGitRemoteFailure("fatal: Authentication failed", {timedOut: true}) !== "repository_connection_timeout") {
+      output.push("超时被杀的 git 没有归成 repository_connection_timeout");
+    }
+    const scrubbed = scrubConnectionDetail(`fatal: unable to access 'https://bob:${secret}@host/a.git/': 403 ${secret}`, secret);
+    if (scrubbed.includes(secret) || /bob:/u.test(scrubbed)) output.push(`detail 抹密钥没抹干净：${scrubbed}`);
+  } finally {
+    rmSync(base, {recursive: true, force: true});
+  }
+}
+runAsync(verifyRepositoryConnectionTest);
 runAsync(verifyAgentRuntimeGuardsRefuseRealAttacks);
 runAsync(verifyTestServersDieWithTheirParent);
 run(verifyRuntimeConstantsSitBeforeItsTopLevelAwait);
@@ -16675,7 +16749,8 @@ function verifyWriteActionsAreConfirmedOrRegistered(output) {
     "logout": "登出只作废自己这次会话，clearSession 已提示共用设备找管理员吊销",
     "sync-skill-source": "同步只是按固定提交重新拉取技能源，不改已有数据",
     "orchestrator-run": "跑一拍编排是推进既定流程，不删不改既有记录（被挡住会如实说）",
-    "decide-model": "记录一次模型选择决策，可被下一次决策覆盖"
+    "decide-model": "记录一次模型选择决策，可被下一次决策覆盖",
+    "repo-test-connection": "测试仓库连接只对远端跑一次 ls-remote 读操作，服务端只落审计与幂等回执，不改任何配置或记录"
   };
   const TYPED_CONFIRMATION_CONSOLE_ACTIONS = {
     "bootstrap-init": "重置运行态：用「按当前真实规模逐字输入」的更强确认（confirmToken），不是普通弹窗"

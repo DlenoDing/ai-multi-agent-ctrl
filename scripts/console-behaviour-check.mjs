@@ -15,6 +15,7 @@
 import { accountEffectivePermissions, consoleVocabularies, effectiveProjectConfig, effectiveTaskGroupConfig } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import { AUDIT_LOG_CAP } from "../apps/control-plane-ui/lib/audit-ledger.mjs";
 import { mcpToolNames } from "../apps/control-plane-ui/lib/mcp-tool-catalog.mjs";
+import { REPOSITORY_CONNECTION_REASONS } from "../apps/control-plane-ui/lib/git-connection-test.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
@@ -1564,6 +1565,80 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     // 会触发 check 的参数顺序自守卫抛错、连带把整门打崩、掩盖同一轮里别的断言（cfgSource=config 变异下实测）。
     Boolean(repoUrlInput) && /\breadonly\b/u.test(repoUrlInput[0]),
     `只读成员的仓库地址输入不是 readonly：${repoUrlInput ? repoUrlInput[0].slice(0, 100) : "（没找到 repoUrl 输入）"}`);
+  check("只读成员的仓库行不许有「测试连接」按钮（服务端按改配置权限拒，按了只会看到 403）",
+    !/data-action="repo-test-connection"/u.test(roHtml),
+    "只读成员的仓库行上渲染了「测试连接」按钮");
+}
+
+// 【项目仓库「测试连接」】。凭证配错此前要等派发失败才知道。按钮只给已保存的仓库行（测的是已保存的配置）；
+// 结果按 reason 给中文；ok 不是严格 true 一律按失败说（认不出的原因原样带出，不许当成功）；表单有未保存改动时不发请求。
+{
+  const ctRoot = el("div");
+  const ctProbe = loadConsole(ctRoot, {realI18n: true});
+  const ctAdmin = {accountId: "u_ct", email: "ct@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default",
+    permissions: ["*"], effectivePermissions: ["*"]};
+  const ctSeed = {projects: [{id: "p1", name: "连接测试项目", organizationId: "org_default", status: "active"}],
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
+    accounts: [], accessGrants: [], taskGroups: [], agentJoinTokens: [], truncatedCollections: [], fleet: {online: 0, total: 0}};
+  const ctCfg = {repositories: [{id: "r1", url: "https://example.test/repo.git", defaultBranch: "main", credentialMode: "api_key", credential: {mode: "api_key", apiKeySet: true}}],
+    baselineData: [], defaultRoles: []};
+  const ctFetch = async (target) => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+    json: async () => String(target).includes("/config") ? {projectId: "p1", config: ctCfg, configVersion: 1} : ctSeed,
+    text: async () => JSON.stringify(ctSeed)});
+  await ctProbe.loadWithFetch(ctSeed, ctAdmin, "p1", "proj-settings", ctFetch);
+  const ctHtml = String(ctRoot.innerHTML || "");
+  check("已保存的仓库行要有「测试连接」按钮且指向该仓库 ID",
+    /data-action="repo-test-connection" data-repo="r1"/u.test(ctHtml),
+    `项目设置的仓库行上没有 repo-test-connection 按钮（${ctHtml.length} 字）`);
+  const successToasts = [];
+  const errorToasts = [];
+  const infoToasts = [];
+  ctProbe.captureToastKind("success", (message) => successToasts.push(String(message)));
+  ctProbe.captureToastKind("error", (message) => errorToasts.push(String(message)));
+  ctProbe.captureToastKind("info", (message) => infoToasts.push(String(message)));
+  const recorded = [];
+  let reply = {ok: true, refCount: 3, defaultBranchFound: true};
+  ctProbe.setFetch(async (url, init = {}) => {
+    recorded.push({url: String(url), method: init.method || "GET"});
+    return {ok: true, status: 200, statusText: "OK", headers: {get: () => null}, json: async () => reply};
+  });
+  const mkButton = () => {
+    const button = {dataset: {action: "repo-test-connection", repo: "r1"}, disabled: false, textContent: "测试连接", classList: {add() {}, remove() {}}};
+    button.closest = (selector) => (selector === "[data-action]" ? button : null);
+    return button;
+  };
+  ctProbe.setFormTouched(false);
+  await ctProbe.click({target: mkButton(), preventDefault: () => {}});
+  const post = recorded.find((item) => item.method === "POST" && /\/api\/projects\/p1\/repositories\/r1\/connection-test$/u.test(item.url));
+  check("「测试连接」要真的 POST 到该项目该仓库的 connection-test",
+    Boolean(post),
+    `没记录到请求（${JSON.stringify(recorded).slice(0, 160)}）`);
+  check("连接成功要说清远端分支数与默认分支是否存在",
+    successToasts.some((message) => /连接成功/u.test(message) && /3 个分支/u.test(message) && /默认分支存在/u.test(message)),
+    `成功提示不对：${JSON.stringify(successToasts).slice(0, 200)}`);
+  reply = {ok: false, reason: "repository_auth_failed", detail: "fatal: Authentication failed for 'https://***@example.test/repo.git/'"};
+  await ctProbe.click({target: mkButton(), preventDefault: () => {}});
+  check("认证失败要按原因给人话并附上 git 原话",
+    errorToasts.some((message) => /拒绝了这份凭证/u.test(message) && /Authentication failed/u.test(message)),
+    `认证失败的提示不对：${JSON.stringify(errorToasts).slice(0, 240)}`);
+  reply = {reason: "weird_new_reason"};
+  await ctProbe.click({target: mkButton(), preventDefault: () => {}});
+  check("认不出的原因（或没有 ok 字段）一律按失败说、原因原样带出（不许当成功）",
+    !successToasts.some((message) => /weird_new_reason/u.test(message) || successToasts.length > 1)
+      && errorToasts.some((message) => /原因未归类/u.test(message) && /weird_new_reason/u.test(message)),
+    `认不出的原因没按失败说：success=${JSON.stringify(successToasts).slice(0, 120)} error=${JSON.stringify(errorToasts).slice(-160)}`);
+  const before = recorded.length;
+  ctProbe.setFormTouched(true);
+  await ctProbe.click({target: mkButton(), preventDefault: () => {}});
+  ctProbe.setFormTouched(false);
+  check("表单有未保存改动时不发请求、要说明测的是已保存的配置",
+    recorded.length === before && infoToasts.some((message) => /已保存的仓库配置/u.test(message)),
+    `未保存改动时仍发了请求或没说明（多发 ${recorded.length - before} 次；info=${JSON.stringify(infoToasts).slice(0, 120)}）`);
+  const reasonSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const missingReasons = REPOSITORY_CONNECTION_REASONS.filter((reason) => !new RegExp(`\\n\\s*${reason}: "`, "u").test(reasonSource));
+  check("测试连接的每个 reason 都要有中文（词表以 lib/git-connection-test.mjs 为准）",
+    missingReasons.length === 0 && REPOSITORY_CONNECTION_REASONS.length >= 7,
+    `这些 reason 在 app.js 里没有中文：${missingReasons.join("、") || "（词表本身太短）"}`);
 }
 
 // 【组织概览显示的必须是这个账号自己的组织】。它原先取 state.organizations[0] —— 今天服务端
