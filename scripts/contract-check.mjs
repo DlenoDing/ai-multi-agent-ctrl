@@ -6473,6 +6473,45 @@ function verifyAgentGatewayContracts(output) {
       !implicitArchitectureDecision.classifierBasis?.matchedSignals?.includes("implicit_architecture_decision")) {
     output.push("隐含架构/公共契约类任务没有触发模型分档分类：未明说'方案'的权限模型/队列接入会被当成普通实现派发");
   }
+  // Agent 档案里的模型偏好必须进入真实选型，但只能是软偏好：硬约束和显式任务选择始终优先。
+  {
+    const preferenceState = JSON.parse(JSON.stringify(seedState));
+    ensureRuntimeCollections(preferenceState, {root});
+    const baseModel = preferenceState.modelCapabilities.find((model) => model.availability === "available")
+      || preferenceState.modelCapabilities[0];
+    const otherModel = {...baseModel, providerId: "provider_agent_other", modelId: "custom:agent-other"};
+    const preferredModel = {...baseModel, providerId: "provider_agent_preferred", modelId: "custom:agent-preferred"};
+    preferenceState.modelCapabilities = [otherModel, preferredModel];
+    const projectAgent = {schemaVersion: "agent/v1", id: "agent_project_orchestrator_preference", name: "项目总控 Agent",
+      role: "orchestrator", model: preferredModel.modelId, status: "active", trustScore: 0.9, capacity: "ready",
+      organizationId: "org_default", projectId: "prj_control_plane"};
+    preferenceState.agents.push(projectAgent);
+    const request = {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", roleId: "orchestrator",
+      workItem: {id: "work_agent_preference", title: "实现固定范围代码", ownerRole: "orchestrator", requirements: ["bounded implementation"]}};
+    const preferred = selectModel(preferenceState, request, {persist: false});
+    if (preferred.selectedAgentId !== projectAgent.id || preferred.agentModelPreference !== preferredModel.modelId
+      || preferred.selectedModel?.modelId !== preferredModel.modelId
+      || preferred.scoreBreakdown?.agentPreference !== 1) {
+      output.push(`Agent 模型偏好没有进入动态选型或决策记录：${JSON.stringify({agent: preferred.selectedAgentId,
+        preference: preferred.agentModelPreference, model: preferred.selectedModel?.modelId,
+        score: preferred.scoreBreakdown?.agentPreference})}`);
+    }
+    const pinned = selectModel(preferenceState, {...request, pinnedModelId: otherModel.modelId}, {persist: false});
+    if (pinned.selectedModel?.modelId !== otherModel.modelId || pinned.selectedAgentId !== projectAgent.id) {
+      output.push("Agent 模型偏好越过了任务显式钉模型，或钉模型时丢失了 Agent 档案绑定");
+    }
+    projectAgent.model = "auto_fast";
+    const modeFromAgent = selectModel(preferenceState, request, {persist: false});
+    const explicitMode = selectModel(preferenceState, {...request, selectionMode: "cost_aware"}, {persist: false});
+    if (modeFromAgent.selectionMode !== "auto_fast" || explicitMode.selectionMode !== "cost_aware") {
+      output.push(`Agent 动态模式没有作为缺省生效，或覆盖了任务显式模式（缺省=${modeFromAgent.selectionMode}，显式=${explicitMode.selectionMode}）`);
+    }
+    projectAgent.status = "inactive";
+    const organizationFallback = selectModel(preferenceState, request, {persist: false});
+    if (organizationFallback.selectedAgentId !== "agent_orchestrator") {
+      output.push(`项目级 Agent 停用后没有回退到组织级同角色 Agent（实际 ${organizationFallback.selectedAgentId || "未绑定"}）`);
+    }
+  }
   // 残缺/被写坏的能力档案（评分信号非数值）不得毒化整个排序：totalScore 必须始终有限。
   // rankModel 的 clamp 是 Math.max(0, Math.min(1, X))，而 Math.max(0, Math.min(1, NaN)) 是 NaN ——
   // 钳不住 NaN。totalScore 一旦 NaN 就流进 selectModel 的 `b.totalScore - a.totalScore` 比较器＝返回

@@ -4767,6 +4767,15 @@ async function runPendingTruncationCase() {
       check("执行监控按派发 ID 分别提供运行与阻塞任务控制", /data-dispatch-id="run1" data-command="pause_dispatch"/u.test(multiMonitor)
         && /data-dispatch-id="run2" data-command="resume_dispatch"/u.test(multiMonitor)
         && (multiMonitor.match(/data-command="cancel_dispatch"/gu) || []).length === 2, textOf(multiMonitor).slice(0, 500));
+      const modelMonitor = objectProbe.renderMonitorInventoryWith({...multiState,
+        agents: [{id: "agent_project_review", name: "项目评审 Agent", role: "reviewer", model: "auto_fast", status: "active", projectId: "p1"}],
+        modelSelectionDecisions: [{decisionId: "msd1", taskGroupId: "tg1", workItemId: "w1", roleId: "reviewer",
+          selectedAgentId: "agent_project_review", agentModelPreference: "auto_fast", status: "selected",
+          selectedModel: {modelId: "openai:gpt-5.5"}, modelDecision: "modelDecision: fixed writeSet -> openai:gpt-5.5 / medium"}]}, orgAdmin, "p1", ["runs"]);
+      check("模型选择记录显示逻辑 Agent 档案、偏好和实际模型",
+        /项目评审 Agent/u.test(modelMonitor) && /agent_project_review/u.test(modelMonitor)
+          && /偏好：自动快速/u.test(modelMonitor) && /openai:gpt-5.5/u.test(modelMonitor),
+        textOf(modelMonitor).slice(0, 500));
       const dispatchControlProbe = loadConsole(el("div"), {realI18n: true});
       dispatchControlProbe.renderProjectAgentsInventoryWith(multiState, orgAdmin, "p1", "table", ["nodes"]);
       const controlPosts = [];
@@ -5043,6 +5052,10 @@ async function runPendingTruncationCase() {
     check("逻辑 Agent 默认模型预设显示中文标签",
       /自动最优/u.test(projectProfiles) && !/模型策略[^<]{0,120}auto_best/u.test(projectProfiles),
       textOf(projectProfiles).slice(0, 240));
+    check("项目可调配角色先汇总项目专属与组织共享档案构成",
+      /项目专属档案/u.test(projectProfiles) && /组织共享档案/u.test(projectProfiles)
+        && /活动档案/u.test(projectProfiles) && /覆盖执行角色/u.test(projectProfiles),
+      "角色多时不能要求操作者逐行统计作用域和活动状态");
     const namedOrgProfiles = probe.renderProjectAgentsInventoryWith({...overviewState, organizationContext: {id: "org_default", name: "研发组织"}}, systemAdmin, "p1", "table", ["profiles"]);
     check("项目 Agent 页用组织名称说明共享档案范围并解释模型预设",
       /组织级：研发组织/u.test(namedOrgProfiles) && /自动最优（auto_best）/u.test(namedOrgProfiles)
@@ -5132,6 +5145,7 @@ async function runPendingTruncationCase() {
       const detail = projectMemberProbe.renderProjectMembersInventoryWith(orgScopeState, orgAdmin, "p1", orgMembers, ["list"]);
       check("项目成员详情集中项目角色、任务组角色、角色变更和移出操作",
         /返回项目成员列表/u.test(detail) && /当前项目角色/u.test(detail) && /当前任务组角色/u.test(detail)
+          && /账号状态[\s\S]*已启用/u.test(textOf(detail))
           && /data-form="project-member"/u.test(detail)
           && /name="accountId" value="acct_member"/u.test(detail)
           && /data-action="project-member-revoke" data-project="p1" data-account="acct_member"/u.test(detail)
@@ -5142,6 +5156,9 @@ async function runPendingTruncationCase() {
           && /name="replaceExisting" value="true"/u.test(detail),
         "对象详情不应要求再次选择同一个成员，也不能继续叠加旧角色");
     }
+    check("项目成员列表提供成员与角色筛选",
+      /data-filter-key="project-members"/u.test(projectMemberPane),
+      "成员规模增大后不能要求操作者逐行翻找");
     const orgMemberCreatePane = probe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["create"]);
     const orgMemberListPane = probe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["list"]);
     const orgMemberMatrixPane = probe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["grants"]);

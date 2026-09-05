@@ -3830,9 +3830,9 @@ function renderAgentProfileForm({projectId = "", title = "创建 Agent 档案", 
         <div class="form-row"><label>${esc(title)}名称</label><input name="name" placeholder="例如：后端实现 Agent"></div>
         <div class="form-row"><label>执行角色</label><input name="role" list="agent-role-options" required placeholder="例如：agent-runtime">
           <datalist id="agent-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
-        <div class="form-row"><label>默认模型</label><input name="model" list="agent-model-options" value="auto_best" placeholder="auto_best 或实际模型 ID">
+        <div class="form-row"><label>模型偏好</label><input name="model" list="agent-model-options" value="auto_best" placeholder="auto_best 或实际模型 ID">
           <datalist id="agent-model-options">${modelOptionsHtml()}</datalist>
-          <div class="small muted">自动最优（auto_best）· 自动快速（auto_fast）· 成本优先（cost_aware），或填写模型能力列表中的实际模型 ID。</div></div>
+          <div class="small muted">自动最优（auto_best）· 自动快速（auto_fast）· 成本优先（cost_aware），或填写模型能力列表中的实际模型 ID。偏好只在满足任务硬约束和模型上限的候选中生效。</div></div>
         <div class="form-row"><label>信任分</label><input name="trustScore" type="number" step="0.01" min="0" max="1" value="0.85"></div>
       </div>
       <div class="form-row"><label>角色 Skill 引用（可选）</label><input name="roleSkillRef" list="agent-role-skill-options" placeholder="默认使用技能源内匹配角色">
@@ -4251,7 +4251,7 @@ function renderOrgAgents() {
     panel("组织级 Agent 档案", `
       <div class="stack">
         <div class="notice">角色档案定义可承担的工作。组织共享节点在“注册共享节点”接入，项目专属节点在对应项目接入，两类节点可使用本组织的角色档案。</div>
-        ${table(["档案", "角色", "默认模型", "作用域", "状态", {label: "信任分", c: "num"}, "Skill", "操作"],
+        ${table(["档案", "角色", "模型偏好", "作用域", "状态", {label: "信任分", c: "num"}, "Skill", "操作"],
           agentProfileRows(scopedAgents), {emptyText: "当前组织还没有组织级 Agent 档案。可先创建通用角色档案，项目特殊角色再到项目页创建。"})}
         ${renderAgentProfileForm({title: "创建组织级 Agent 档案", readOnly: !hasPerm("agent:activate")})}
       </div>
@@ -4283,6 +4283,19 @@ function renderProjectAgentsSummary(project, nodes) {
     </div>
     <div class="small muted">查看顺序：先看在线率、异常节点和待用令牌；新机器只通过本页“注册 agent”签发一次性加入令牌，脚本由服务端生成。</div>
   `, {wide: true});
+}
+
+function renderProjectAgentProfileSummary(project, agents) {
+  const projectProfiles = agents.filter((agent) => agent.projectId === project.id);
+  const organizationProfiles = agents.filter((agent) => !agent.projectId);
+  const activeProfiles = agents.filter((agent) => agent.status === "active");
+  const activeRoles = new Set(activeProfiles.map((agent) => agent.role));
+  return `<div class="metric-grid" aria-label="可调配 Agent 档案摘要">
+    <div class="metric"><span>项目专属档案</span><strong>${projectProfiles.length}</strong></div>
+    <div class="metric"><span>组织共享档案</span><strong>${organizationProfiles.length}</strong></div>
+    <div class="metric"><span>活动档案</span><strong>${activeProfiles.length}/${agents.length}</strong></div>
+    <div class="metric"><span>覆盖执行角色</span><strong>${activeRoles.size}</strong></div>
+  </div>`;
 }
 
 function renderProjectAgentsActionBoard(project, nodes) {
@@ -4415,8 +4428,9 @@ function renderProjectAgents() {
       ["Agent 接入与运行闭环（5 步）", "agent 节点处置流程（6 步）"]),
     panel("可调配 Agent 档案", `
       <div class="stack">
+        ${renderProjectAgentProfileSummary(project, scopedAgents)}
         <div class="notice">任务组执行时，总控可在当前项目级 Agent 和本组织级 Agent 中选择合适角色；项目级档案只服务当前项目，组织级档案可跨本组织项目复用。</div>
-        ${table(["档案", "角色", "默认模型", "作用域", "状态", {label: "信任分", c: "num"}, "Skill", "操作"],
+        ${table(["档案", "角色", "模型偏好", "作用域", "状态", {label: "信任分", c: "num"}, "Skill", "操作"],
           agentProfileRows(scopedAgents), {emptyText: "当前项目还没有可调配 Agent 档案。可在这里创建项目级档案，或到组织页创建组织级档案。"})}
         ${renderAgentProfileForm({projectId: project.id, title: "创建项目级 Agent 档案", readOnly: !hasPerm("agent:activate")})}
       </div>
@@ -4753,8 +4767,8 @@ function renderProjectMembers() {
     </div>` + (memberRows
       ? table(["成员", "项目角色", "角色影响", "操作"], memberRows)
       : `<div class="notice warn-notice">当前项目还没有成员授权。没有成员角色时，任务组控制、人工审核和 Agent 操作入口会缺少负责人。</div>`), {wide: true,
-      headerSide: hasPerm("project:grant") ? `<button class="primary-button" data-jump-panel="项目成员授权">添加项目成员</button>
-        <button class="secondary-button" data-jump-panel="任务组权限授权">授任务组权限</button>` : ""}),
+      headerSide: `${filterInput("按成员、角色过滤…", "project-members")}${hasPerm("project:grant") ? `<button class="primary-button" data-jump-panel="项目成员授权">添加项目成员</button>
+        <button class="secondary-button" data-jump-panel="任务组权限授权">授任务组权限</button>` : ""}`}),
     panel("项目成员授权", grantPanel),
     panel("任务组权限授权", hasPerm("project:grant")
       ? renderTaskGroupGrantForm(project)
@@ -7546,6 +7560,11 @@ function renderMonitor() {
     esc(t(decision.roleId)) + (decision.policyFallback
       ? `<div class="small warn-text">套用了 ${esc(decision.policyFallback.boundTo || "别的角色")} 的选型策略（本角色没有专属策略）</div>`
       : ""),
+    decision.selectedAgentId
+      ? `<strong>${esc((state.agents || []).find((agent) => agent.id === decision.selectedAgentId)?.name || decision.selectedAgentId)}</strong>
+        <div class="small muted mono">${esc(decision.selectedAgentId)}</div>
+        <div class="small muted">偏好：${esc(AGENT_MODEL_PRESET_LABEL[decision.agentModelPreference] || decision.agentModelPreference || "未设置")}</div>`
+      : `<span class="muted">未绑定档案</span>`,
     `<span class="mono">${esc(decision.workItemId || "-")}</span>`,
     `<span class="mono">${esc(decision.selectedModel?.modelId || "-")}</span>`,
     badge(decision.status),
@@ -7780,7 +7799,7 @@ function renderMonitor() {
         : `<div class="small muted">没有待处置的死信条目。命令重试超限时才会在这里出现，非终态会挡住任务组关闭。</div>`, {wide: true});
     })(),
     panel("agent 节点", table(["节点", "状态", "准入", {label: "最近心跳", c: "nowrap"}, "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…", "runtime-nodes")}),
-    panel("模型选择记录", table(["角色", "工作项", "模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText(decisionsInScope.length, 10, "modelSelectionDecisions")})),
+    panel("模型选择记录", table(["角色", "Agent 档案", "工作项", "实际模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText(decisionsInScope.length, 10, "modelSelectionDecisions")})),
     panel("会话放置记录", table(["工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态"], placements, {moreText: moreText(placementsInScope.length, 10, "sessionPlacementDecisions")})),
     panel("准入决策", table(["工作项", "判定", "分类", {label: "原因", c: "text-clip"}], admissions, {moreText: moreText(admissionsInScope.length, 12, "admissionDecisions")}), {wide: true}),
     panel("检查点（Git 证据）", table(["任务组", "工作项", "提交", "推送", {label: "产出清单", c: "text-clip"}, {label: "时间", c: "nowrap"}], checkpointRows, {moreText: moreText(filterSource((state.checkpoints || []).filter((cp) => groups.some((taskGroup) => taskGroup.id === cp.taskGroupId)), "checkpoints").length, 20, "checkpoints")}), {wide: true, headerSide: filterInput("按工作项、提交过滤…", "checkpoints")}),

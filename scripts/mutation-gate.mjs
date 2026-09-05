@@ -969,8 +969,8 @@ const MUTATIONS = [
     name: "模型评分 totalScore 的 clamp 必须钳得住 NaN",
     check: "verifyAgentGatewayContracts",
     file: CORE,
-    from: "Number((weighted / 12).toFixed(4)) || 0)),",
-    to: "Number((weighted / 12).toFixed(4)))),",
+    from: "Number((weighted / scoreWeight).toFixed(4)) || 0)),",
+    to: "Number((weighted / scoreWeight).toFixed(4)))),",
     expect: "模型评分 clamp 钳不住 NaN"
   },
   {
@@ -1000,6 +1000,22 @@ const MUTATIONS = [
     from: 'fallbackPolicy: {onNoModel: "request_decision"',
     to: 'fallbackPolicy: {onNoModel: "split_task"',
     expect: "声明与实现不一致"
+  },
+  {
+    name: "Agent 动态模型模式必须进入缺省选型",
+    check: "verifyAgentGatewayContracts",
+    file: CORE,
+    from: "  const selectionMode = normalizeSelectionMode(request.selectionMode ?? agentSelectionMode);",
+    to: "  const selectionMode = normalizeSelectionMode(request.selectionMode);",
+    expect: "Agent 动态模式没有作为缺省生效"
+  },
+  {
+    name: "Agent 实际模型软偏好必须影响合格候选排序",
+    check: "verifyAgentGatewayContracts",
+    file: CORE,
+    from: "    + agentPreference * 0.75;",
+    to: "    + agentPreference * 0;",
+    expect: "Agent 模型偏好没有进入动态选型"
   },
   {
     name: "人工补充要求要有上限（否则每次派发都背着它）",

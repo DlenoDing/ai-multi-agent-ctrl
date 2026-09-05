@@ -129,6 +129,14 @@
       "type": "string",
       "minLength": 1
     },
+    "selectedAgentId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agentModelPreference": {
+      "type": "string",
+      "minLength": 1
+    },
     "selectedModel": {
       "type": "object",
       "additionalProperties": false,
@@ -322,6 +330,9 @@
           "$ref": "#/$defs/score"
         },
         "risk": {
+          "$ref": "#/$defs/score"
+        },
+        "agentPreference": {
           "$ref": "#/$defs/score"
         }
       }

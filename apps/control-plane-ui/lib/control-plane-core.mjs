@@ -516,6 +516,7 @@ function ensureServices(state, endpoint) {
 
 function ensureDefaultAgents(state) {
   state.agents ||= [];
+  const legacyDefaultModelAliases = {balanced: "auto_best", deep: "auto_best", fast: "auto_fast"};
   const defaults = [
     ["agent_orchestrator", "Orchestrator Runtime", "orchestrator", "auto_best"],
     ["agent_scheduler", "Scheduler Agent", "scheduler", "auto_fast"],
@@ -526,7 +527,14 @@ function ensureDefaultAgents(state) {
     ["agent_monitor", "Monitor Agent", "monitor", "auto_fast"]
   ];
   for (const [id, name, role, model] of defaults) {
-    if (state.agents.some((agent) => agent.id === id)) continue;
+    const existing = state.agents.find((agent) => agent.id === id);
+    if (existing) {
+      if (legacyDefaultModelAliases[existing.model]) {
+        existing.model = legacyDefaultModelAliases[existing.model];
+        existing.updatedAt = new Date().toISOString();
+      }
+      continue;
+    }
     state.agents.push({schemaVersion: "agent/v1", id, name, role, model, status: "active", trustScore: 0.9, capacity: "ready"});
   }
 }
@@ -783,6 +791,12 @@ export function selectModel(state, request = {}, options = {}) {
   const roleSkill = resolveRoleSkill(state, roleId, request);
   const taskExecution = classifyTaskExecution(workItem, request);
   const modelCeiling = modelCeilingForTask(taskExecution, request);
+  const selectedAgent = agentForRole(state, roleId, {projectId: request.projectId || workItem.projectId,
+    organizationId: request.organizationId});
+  const agentModelPreference = String(selectedAgent?.model || "").trim();
+  const agentSelectionMode = ["auto_best", "auto_fast", "cost_aware"].includes(agentModelPreference)
+    ? agentModelPreference : null;
+  const preferredModelId = agentModelPreference && !agentSelectionMode ? agentModelPreference : null;
   const requiredCapabilities = unique([
     ...(request.requiredCapabilities || []),
     ...(policy?.requiredCapabilities || []),
@@ -792,8 +806,9 @@ export function selectModel(state, request = {}, options = {}) {
   // （workItem.pinnedModelId）—— 于是「建工作项时指定模型」在这个工作项被派发时会自动生效，无需改派发路径。
   const pinnedModelId = request.pinnedModelId ?? request.hardConstraints?.pinnedModelId ?? workItem.pinnedModelId ?? null;
   const hardConstraints = {...(policy?.hardConstraints || {}), ...(request.hardConstraints || {}), ...(pinnedModelId ? {pinnedModelId} : {}), maxReasoningLevel: modelCeiling.maxReasoningLevel};
-  const selectionMode = normalizeSelectionMode(request.selectionMode);
-  const candidates = state.modelCapabilities.map((candidateModel) => rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstraints, selectionMode, taskExecution, modelCeiling, policy?.fallbackPolicy || {}));
+  const selectionMode = normalizeSelectionMode(request.selectionMode ?? agentSelectionMode);
+  const candidates = state.modelCapabilities.map((candidateModel) => rankModel(candidateModel, roleSkill,
+    requiredCapabilities, hardConstraints, selectionMode, taskExecution, modelCeiling, policy?.fallbackPolicy || {}, preferredModelId));
   candidates.sort((a, b) => Number(b.eligible) - Number(a.eligible) || b.totalScore - a.totalScore);
   const selected = candidates.find((candidate) => candidate.eligible);
   const at = new Date().toISOString();
@@ -808,6 +823,7 @@ export function selectModel(state, request = {}, options = {}) {
     ...decisionScope,
     status: selected ? "selected" : "rejected",
     roleId,
+    ...(selectedAgent ? {selectedAgentId: selectedAgent.id, agentModelPreference} : {}),
     roleSkillRef: roleSkill.roleSkillId,
     roleSkillDigest: roleSkill.contentDigest,
     taskExecutionClass: taskExecution.taskExecutionClass,
@@ -866,7 +882,7 @@ export function selectModel(state, request = {}, options = {}) {
   return decision;
 }
 
-function rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstraints, selectionMode, taskExecution, modelCeiling, fallbackPolicy = {}) {
+function rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstraints, selectionMode, taskExecution, modelCeiling, fallbackPolicy = {}, preferredModelId = null) {
   const reasons = [];
   const availability = candidateModel.availability || "available";
   if (availability === "unavailable") reasons.push("availability_unavailable");
@@ -895,8 +911,11 @@ function rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstrai
   const quota = quotaScore(candidateModel.costSignals.quotaClass);
   const reliability = candidateModel.qualitySignals.reliabilityScore * availabilityScore(availability, fallbackPolicy);
   const risk = ["ollama", "vllm"].includes(candidateModel.providerClass) ? 0.92 : 0.84;
-  const scoreBreakdown = {capabilityFit, roleSkillFit, quality, latency, cost, quota, reliability, risk};
-  const weighted = capabilityFit * 2 + roleSkillFit * 2 + quality * 2 + latency + cost + quota + reliability * 2 + risk;
+  const agentPreference = preferredModelId && candidateModel.modelId === preferredModelId ? 1 : 0;
+  const scoreBreakdown = {capabilityFit, roleSkillFit, quality, latency, cost, quota, reliability, risk, agentPreference};
+  const weighted = capabilityFit * 2 + roleSkillFit * 2 + quality * 2 + latency + cost + quota + reliability * 2 + risk
+    + agentPreference * 0.75;
+  const scoreWeight = preferredModelId ? 12.75 : 12;
   return {
     providerClass: candidateModel.providerClass,
     providerId: candidateModel.providerId,
@@ -905,7 +924,7 @@ function rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstrai
     // 能力档案：reasoningScore="abc" 之类）都会让 weighted→NaN，totalScore 随之 NaN，流进下面 sort 的
     // `b.totalScore - a.totalScore` 比较器＝返回 NaN、候选排序失序（可能把更差的可选模型排到前面被选中）。
     // `|| 0` 把 NaN 兜成 0（NaN falsy），让这类档案排到同等可选里的最末，而不是搅乱整个排序。
-    totalScore: Math.max(0, Math.min(1, Number((weighted / 12).toFixed(4)) || 0)),
+    totalScore: Math.max(0, Math.min(1, Number((weighted / scoreWeight).toFixed(4)) || 0)),
     eligible: reasons.length === 0,
     capabilityProfileRef: `${candidateModel.providerId}/${candidateModel.modelId}`,
     availability,
@@ -1007,7 +1026,7 @@ function hardConstraintResults(hardConstraints, selected) {
 }
 
 function emptyScoreBreakdown() {
-  return {capabilityFit: 0, roleSkillFit: 0, quality: 0, latency: 0, cost: 0, quota: 0, reliability: 0, risk: 0};
+  return {capabilityFit: 0, roleSkillFit: 0, quality: 0, latency: 0, cost: 0, quota: 0, reliability: 0, risk: 0, agentPreference: 0};
 }
 
 function overlapScore(required, available) {
@@ -1494,7 +1513,8 @@ export function buildTaskContract(state, request = {}) {
     taskGroupId: contract.taskGroupId,
     workItemId: contract.workId,
     roleId: contract.roleId,
-    agentId: agentForRole(state, contract.roleId, {projectId: contract.projectId})?.id || `agent_unassigned_${contract.roleId}`,
+    agentId: modelDecision.selectedAgentId || agentForRole(state, contract.roleId, {projectId: contract.projectId})?.id
+      || `agent_unassigned_${contract.roleId}`,
     placement: placementDecision.placement,
     laneId: acquiredLaneId,
     status: "active",
