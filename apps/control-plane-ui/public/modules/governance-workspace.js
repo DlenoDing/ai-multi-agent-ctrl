@@ -131,7 +131,7 @@
         <div class="metric-grid">
           <div class="metric"><span>项目角色</span><strong>${esc(h.grantRoleLabel(membership.role))}</strong></div>
           <div class="metric"><span>任务组角色</span><strong>${taskGroupGrants.length}</strong></div>
-          <div class="metric"><span>账号状态</span><strong>${esc(account?.status ? h.t(account.status) : "可用")}</strong></div>
+          <div class="metric"><span>账号状态</span><strong>${account?.status ? h.statusBadge("account", account.status) : esc("可用")}</strong></div>
           <div class="metric"><span>成员类型</span><strong>${isOwner ? "项目负责人" : "项目成员"}</strong></div>
         </div>
       </section>
