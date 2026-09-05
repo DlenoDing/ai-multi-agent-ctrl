@@ -4620,6 +4620,11 @@ function workflowGuidePanel(project, groups) {
   const workItemCount = groups.reduce((sum, taskGroup) => sum + Number(taskGroup.workItemCount ?? (taskGroup.workItems || []).length), 0);
   const dispatches = (state.agentDispatches || []).filter((item) => item.projectId === project.id || groupIds.has(item.taskGroupId)).length;
   const todo = pendingForMe();
+  // 「待你处理」的桶各有去向页：定稿/授权/审批/发现项在人工审核页；评审计划/评审包/质量门豁免/规则来源/升级候选/
+  // 卡住的执行方案/共享定义在执行监控页。把总数全算成"人工审核"会让找"复核"的人去错页——按去向页分开算、分开指路。
+  const countOn = (pageId) => (todo.buckets || []).filter((bucket) => bucket.page === pageId).reduce((sum, bucket) => sum + Number(bucket.count || 0), 0);
+  const reviewTodo = countOn("review");
+  const recheckTodo = countOn("monitor");
   const queuedDirectives = (state.humanDirectives || []).filter((item) => item.status === "queued" && groupIds.has(item.taskGroupId)).length;
   const openBarriers = (state.closeBarriers || []).filter((item) => groupIds.has(item.taskGroupId) && (item.blockers || []).length).length;
   const visible = new Set(menuForCurrentSection(perspectiveOf(currentAccount), page).filter((item) => item.id).map((item) => item.id));
@@ -4639,8 +4644,10 @@ function workflowGuidePanel(project, groups) {
       // 人在这里就能推一拍：同一个动作、同一套回执（被挡/推进 N 项/无事可做）；只对能编排的账号摆，看得到却按不动＝杠杆不可达。
       action: hasPerm("task_group:orchestrate") && workItemCount > 0 ? `<button class="secondary-button" data-action="orchestrator-run">推进一拍</button>` : "",
       state: dispatches ? `已派发 ${dispatches} 次` : (workItemCount && online ? "还没派发：后台每拍自动推进；等不及可到「执行监控」点「运行自治循环」" : "有工作项且有在线 agent 后自动开始")},
-    {title: "人工审核 / 定稿", done: todo.total === 0, attention: todo.total > 0, page: "review",
-      state: todo.total ? `${todo.total}${todo.partial ? "+" : ""} 项等你处理` : "暂无等你处理的审核项"},
+    {title: "人工审核 / 定稿", done: reviewTodo === 0, attention: reviewTodo > 0, page: "review",
+      state: reviewTodo ? `${reviewTodo}${todo.partial ? "+" : ""} 项等你处理（定稿 / 授权 / 审批 / 发现项）` : "暂无等你处理的审核项"},
+    {title: "人工复核 / 阻塞处置", done: recheckTodo === 0, attention: recheckTodo > 0, page: "monitor",
+      state: recheckTodo ? `${recheckTodo} 项等你收尾（评审计划 / 评审包 / 卡住的执行方案 / 质量门豁免等）` : "暂无等你收尾的复核项"},
     {title: "人工指令", done: queuedDirectives === 0, attention: queuedDirectives > 0, page: "directives",
       state: queuedDirectives ? `${queuedDirectives} 条指令待编排消费` : "需要干预（暂停/纠偏/调优先级）时在这里下达"},
     {title: "收口关闭", done: groups.length > 0 && openBarriers === 0, attention: openBarriers > 0, page: "monitor",

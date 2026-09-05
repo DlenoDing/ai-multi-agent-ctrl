@@ -630,6 +630,24 @@ const MUTATIONS = [
     expect: "签发了令牌却还说尚未接入"
   },
   {
+    // 把复核类计数掐成 0 → 第 6 步永远"暂无"，找复核的人不知道它在监控页。
+    name: "流程导航必须把复核类待办算进「人工复核」这一步",
+    file: APP,
+    gate: "console",
+    from: "  const recheckTodo = countOn(\"monitor\");",
+    to: "  const recheckTodo = 0;",
+    expect: "复核项没有算进人工复核这一步"
+  },
+  {
+    // 把总数塞回审核步 → 复核项被算进人工审核，人去审核页找、那里没有。
+    name: "流程导航的「人工审核」不得把复核类待办混进来",
+    file: APP,
+    gate: "console",
+    from: "  const reviewTodo = countOn(\"review\");",
+    to: "  const reviewTodo = todo.total;",
+    expect: "复核项被算进了人工审核"
+  },
+  {
     // 推送与否骗人后果最重：把"未推送"写死成"已推送"，人会以为改动已经到远端。
     name: "工作项结果行必须如实区分已推送与未推送",
     file: APP,

@@ -1924,6 +1924,16 @@ function runWorkflowGuideCase() {
   check("流程导航：在线但另有离线时要一并说",
     /2 台在线，另 1 台离线/u.test(guideOf(probe.renderProjectOverviewWith(busy, admin, "p1"))),
     "有离线节点却只报在线数");
+  // 复核类（评审计划/评审包等）的处置表单在执行监控页，不在人工审核页：导航要分开算、分开指路，
+  // 否则找"复核"的人会去错页。一条开着的评审计划 → 第 6 步说 1 项等你收尾并指向监控页，第 5 步仍说暂无。
+  const withPlan = {...busy, reviewPlans: [{reviewPlanId: "rp1", taskGroupId: "tg1", status: "open"}]};
+  const planGuide = guideOf(probe.renderProjectOverviewWith(withPlan, admin, "p1"));
+  check("流程导航：待收尾的评审计划要算进「人工复核 / 阻塞处置」并指向执行监控页",
+    /人工复核 \/ 阻塞处置/u.test(planGuide) && /1 项等你收尾/u.test(planGuide) && /data-menu="monitor"/u.test(planGuide),
+    "复核项没有算进人工复核这一步：找复核的人不知道它在执行监控页");
+  check("流程导航：复核项不该混进「人工审核 / 定稿」的计数",
+    /暂无等你处理的审核项/u.test(planGuide),
+    "复核项被算进了人工审核：人去人工审核页找，那里没有");
 }
 
 
