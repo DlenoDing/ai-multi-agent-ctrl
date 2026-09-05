@@ -43,8 +43,11 @@
 - `project-command-center.js`：项目当前主操作的状态优先级和单一操作区。
 - `agent-profile-workspace.js`：Agent 档案表格、对象详情与编辑表单。
 - `operational-stats.js`：按状态快照缓存的任务组运行、待审和受阻统计索引。
+- `execution-object-workspace.js`：工作会话／Agent 派发对象头、关系链、调度决定、规则、事件、控制 ACK 与证据工作区。
+- `monitor-workspace.js`：项目执行总览与任务组执行监控的范围对象头和关键运行指标。
+- `runtime-node-workspace.js`：运行节点健康、调配边界、能力、活动派发、Agent 档案、控制命令与事件详情。
 
-`app.js` 从这些模块读取公共能力和本轮对象级功能，保留历史会话状态、API、尚未拆出的页面渲染、弹窗、表单和事件装配。2026-09-06 复核时仍有 10,591 行，不能宣称主文件已经彻底拆完；本轮新增对象模板和统计已独立，后续只能按功能继续迁移并保持行为门兼容。
+`app.js` 从这些模块读取公共能力和对象级功能，保留历史会话状态、API、尚未拆出的页面渲染、弹窗、表单和事件装配。2026-09-06 本轮最终复核时有 10,556 行，不能宣称主文件已经彻底拆完；新增对象模板和统计已独立，后续只能按功能继续迁移并保持行为门兼容。
 
 ### 服务端公共模块
 
@@ -61,6 +64,8 @@
 - `apps/control-plane-ui/lib/language-policy.mjs`：任务组语言策略、语言别名、语言策略下发指令。
 - `apps/control-plane-ui/lib/skill-source-catalog.mjs`：默认 `DlenoDing/agency-agents-zh` skill 源、同步策略、覆盖层级和完整性要求。
 - `apps/control-plane-ui/lib/management-surface-catalog.mjs`：系统管理系统与用户管理系统的默认界面分区、能力项和风险提示。
+- `apps/control-plane-ui/lib/execution-object-detail.mjs`：会话／派发单对象的有界关联投影，不加载无限事件历史。
+- `apps/control-plane-ui/lib/runtime-node-detail.mjs`：组织／项目作用域的运行节点详情投影，按项目过滤负载、命令、事件和档案。
 
 `server.mjs` 继续保留业务路由、鉴权、状态读写、MCP、实时通道和编排循环。
 `control-plane-core.mjs` 继续作为兼容门面导出模型目录、语言策略、skill 源和管理界面目录相关符号，避免破坏现有调用方。

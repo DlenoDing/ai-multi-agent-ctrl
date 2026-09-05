@@ -45,6 +45,10 @@
 #/project/<projectId>/task-groups/<taskGroupId>
 #/project/<projectId>/tasks/<taskGroupId>/<workItemId>
 #/project/<projectId>/monitor/<taskGroupId>
+#/project/<projectId>/monitor/<taskGroupId>/session/<sessionId>
+#/project/<projectId>/monitor/<taskGroupId>/dispatch/<dispatchId>
+#/project/<projectId>/agents/runtime/<nodeId>
+#/organization/agents/runtime/<nodeId>
 ```
 
 登录后按当前账号重新鉴权和读取对象；无权、已删除或跨组织对象必须给出明确提示并回到最近可见上级。浏览器前进/后退必须恢复页面、栏目和对象，不依赖旧账号的本地缓存。
@@ -90,11 +94,12 @@
 - Agent 档案新增 `POST /api/agents/:id/profile`。可更新名称、角色、模型偏好、信任分和 Skill；ID、组织/项目作用域、状态与容量不可改写，启停走独立接口。项目空间只能查看组织共享档案，必须回组织空间修改。
 - Agent 档案更新为真人专属治理动作；运行中的总控仍只产生任务级模型与 Skill 决策，不持久改写档案。
 - 项目/任务组运行统计改为按状态快照一次建索引，侧栏、项目主操作和任务组详情复用，避免按任务组重复扫描全部派发与审核记录。
+- 会话、派发和运行节点现已补齐独立对象详情、服务端单对象投影与安全深链接；任务、监控表格和节点负载都进入同一条执行对象链。项目／任务组监控使用不同对象头，不再只靠范围下拉区分。
 
 ## 验证与互审
 
-- 控制台行为门最终覆盖 717 条断言；契约门 277 条；写路由鉴权门覆盖 88 条改状态路由；真人专属动作共 37 条。
-- 变异锚点共 1465 条保持唯一；本轮新增的对象路由、持续上下文、移动栏目、项目主操作、Agent 管理、权限负例、统计缓存和窗口外任务组补回均已逐条运行真实变异并证明判别力。
+- 控制台行为门最终覆盖 723 条断言；契约门 277 条；写路由鉴权门覆盖 88 条改状态路由；真人专属动作共 37 条。
+- 变异锚点共 1480 条保持唯一；本轮新增的对象路由、持续上下文、移动栏目、项目主操作、Agent 管理、执行对象／节点详情、权限负例、统计缓存和窗口外对象补回均已逐条运行真实变异并证明判别力。
 - 完整 `npm run validate` 通过，包含初始化启动、分片、并发写、崩溃恢复、真实 Agent 注册/Skill 同步/领活/过程事件/Git 推送/检查点回送和跨组织隔离。
 - 隔离 Playwright 真实创建组织、组织管理员、项目、任务组、任务、组织共享 Agent 和项目 Agent；系统管理员与组织管理员分别登录。390×844 的系统组织详情、共享 Agent 编辑、任务详情及 1440×960 项目 Agent 编辑均无页面级横向溢出或浏览器错误。
 - 内置浏览器验证任务深链接刷新、任务到监控跳转、浏览器后退恢复任务，以及系统/项目空间历史切换。
@@ -102,4 +107,4 @@
 
 ## 代码边界
 
-本轮新增 `context-navigation.js`、`workspace-route.js`、`project-command-center.js`、`agent-profile-workspace.js` 和 `operational-stats.js`，对象模板与统计不继续堆入主文件。历史 `app.js` 仍承担页面状态、数据加载和事件装配，当前 10,591 行；这不是“已彻底消除大文件”的声明，后续拆分仍需保持现有全量门和浏览器行为不变。
+本轮新增 `context-navigation.js`、`workspace-route.js`、`project-command-center.js`、`agent-profile-workspace.js`、`operational-stats.js`、`execution-object-workspace.js`、`monitor-workspace.js` 和 `runtime-node-workspace.js`。服务端详情聚合拆入 `execution-object-detail.mjs` 与 `runtime-node-detail.mjs`。历史 `app.js` 仍承担页面状态、数据加载和事件装配，当前 10,556 行；这不是“已彻底消除大文件”的声明，后续拆分仍需保持现有全量门和浏览器行为不变。
