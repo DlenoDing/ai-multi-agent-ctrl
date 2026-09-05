@@ -125,6 +125,8 @@ try {
   const removed = await request(`/api/projects/${orgProject.id}/members/${memberId}/revoke`, {method: "POST", body: {}});
   assert.ok(removed.revokedProjectGrants >= 1 && removed.revokedTaskGroupGrants >= 1,
     "removing a project member must revoke project and child task-group grants");
+  assert.equal((await request(`/api/projects/${orgProject.id}/members/${memberId}/revoke`, {method: "POST", status: 404, body: {}})).error,
+  "project_member_not_found");
   const membersAfterRemoval = await request("/api/org/members");
   assert.equal(membersAfterRemoval.members.find((member) => member.accountId === memberId)?.defaultProjectId, null,
     "removing the default project membership must clear the default project pointer");

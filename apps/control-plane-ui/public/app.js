@@ -722,6 +722,7 @@ function requestFailureHint(payload) {
       ? `（其中 ${payload.nodes} 台节点 + ${payload.outstandingJoinTokens} 张未使用的加入令牌）` : "";
     hint += `（${kindLabel} ${payload.usage}/${payload.quota} 已满${breakdown}：到「组织管理」页调高这一项配额，`
       + `${freeUp}，再重试）`;
+    if (payload.projectedUsage !== undefined) hint += `（本次操作完成后预计用量：${payload.projectedUsage}/${payload.quota}）`;
   }
   // 服务端在不少错误里写了给人看的说明（message / reason / required），前端原先只取 error 一个字段，
   // 把它们全丢了 —— 于是一条本来说清了"为什么、接下来怎么办"的 409，到人眼前只剩一串英文枚举。

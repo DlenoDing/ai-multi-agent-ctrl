@@ -520,6 +520,7 @@ const ARCHIVED_PROJECT_WRITE_POLICY = {
   agent_node_revoke: {allowed: "收尾：把还挂着的节点摘掉"},
   agent_control_command_create: {allowed: "收尾：停掉还在跑的东西这件事，任何时候都不该被挡"},
   project_member_grant: {blocked: "项目成员路由对归档项目拒绝新授权，既有授权与历史读取保留"},
+  project_member_revoke: {allowed: "收尾：归档后仍必须能撤销成员及其任务组授权，不能让终态项目变成权限孤岛"},
   shared_definition_contract_create: {allowed: "规则层记录，归档项目上它不驱动任何工作；挡它只是多一道没必要的门"},
   contract_publish: {allowed: "把【已经存在】的定义推到生效，属收尾而非新建"},
   project_archive: {allowed: "对已归档项目再归档一次直接回 200（幂等），不算新工作"},
@@ -8313,7 +8314,7 @@ function verifyMcpInputDictionaryHasNoGhosts(output) {
 
 // 【签发凭据摘要的地方必须同时写下过期时间】。登录判据是
 // `!credentialExpiresAt || 未过期` —— 字段【缺失】等于这张票永不过期。
-// 今天五处签发都成对写了，所以那条兜底目前不可达；但只要有人加第六处忘了写过期，
+// 当前六处签发都成对写了，所以那条兜底目前不可达；但只要有人加新签发点忘了写过期，
 // 那张票就永远有效，而且不会有任何东西报警（所有正常登录照旧成功）。
 // 判据按【窗口】取（±12 行）：这里宁可漏报也不要误报 —— 窗口太小会把成对写的判成缺失。
 function verifyIssuedCredentialsAlwaysExpire(output) {
@@ -8342,7 +8343,7 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
     });
   }
   // 数量钉死而不是 >=：少一个签发点意味着它换了写法、从视野里溜走了，那正是要防的那件事。
-  const EXPECTED_SITES = 5;
+  const EXPECTED_SITES = 6;
   if (sites.length !== EXPECTED_SITES) {
     output.push(`按过期时间管的凭据签发点有 ${sites.length} 处（登记 ${EXPECTED_SITES} 处）：${sites.join("、")} —— `
       + (sites.length < EXPECTED_SITES
