@@ -4468,7 +4468,7 @@ async function handleApi(req, res) {
       json(res, guard.status, guard.payload);
       return;
     }
-    const sanitizedGrant = sanitizeGrantRequest(state, guard.actor, {...body, resourceType: "project", resourceId: project.id}, projectScope(project.id));
+    const sanitizedGrant = sanitizeGrantRequest(state, guard.actor, {...body, subjectId: accountId, resourceType: "project", resourceId: project.id}, projectScope(project.id));
     if (!sanitizedGrant.ok) {
       json(res, sanitizedGrant.status, {error: sanitizedGrant.error,
         // 拒绝报文要带上合法取值 —— 这两处此前只转发 error 和 permissions，
@@ -6534,7 +6534,7 @@ async function handleApi(req, res) {
     return;
   }
 
-  // 【项目仓库测试连接】：用已保存的地址与凭证跑一次 git ls-remote。此前凭证配错要等派发失败才知道，
+  // 项目仓库诊断使用已保存的凭证；verifyWrite 显式为 true 时额外创建并清理临时测试分支。
   // 而 agent 那边只报 git_command_failed。要解开密钥、命中远端，权限与改配置同级（能改配置的人才能拿它去探）。
   // 结果是诊断，不是请求错误：HTTP 200 + {ok, reason, detail}，reason 词表见 lib/git-connection-test.mjs。
   const repositoryConnectionTestMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/repositories\/([^/]+)\/connection-test$/);
@@ -6566,12 +6566,16 @@ async function handleApi(req, res) {
     // 测试连接的墙钟比检查点验证短得多：人在页面上等着，30 秒还握不上手就该报「没应答」而不是让人干等 10 分钟。
     const timeoutMs = Math.min(clampEnvNumber(process.env.AIMAC_GIT_COMMAND_TIMEOUT_MS, 60000, 600000), 30000);
     const result = precheck || await testRepositoryConnection({url: repository.url, defaultBranch: repository.defaultBranch || "main",
-      mode, username: repository.credential?.username || repository.username || "", secret, runtimeDir, timeoutMs});
+      mode, username: repository.credential?.username || repository.username || "", secret, runtimeDir, timeoutMs, verifyWrite: body.verifyWrite === true});
     secret = null;
     const payload = {projectId: project.id, repositoryId, mode, checkedAt: now(), ...result};
-    audit(state, guard.actor, "project_repository_connection_test", `Project:${project.id}`);
-    finishGuardedWrite(state, guard, 200, payload);
-    writeState(state);
+    // 网络检测期间别的任务仍可推进；回执应写入最新状态，不能用检测前的快照覆盖或报冲突。
+    const completionState = readState();
+    const completionGuard = beginGuardedWrite(req, completionState, "project_config_update", `Project:${project.id}`, projectScope(project.id));
+    if (completionGuard.status) return json(res, completionGuard.status, completionGuard.payload);
+    audit(completionState, completionGuard.actor, "project_repository_connection_test", `Project:${project.id}`);
+    finishGuardedWrite(completionState, completionGuard, 200, payload);
+    writeState(completionState);
     json(res, 200, payload);
     return;
   }

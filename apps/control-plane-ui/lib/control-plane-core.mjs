@@ -1484,7 +1484,7 @@ export function buildTaskContract(state, request = {}) {
     taskGroupId: contract.taskGroupId,
     workItemId: contract.workId,
     roleId: contract.roleId,
-    agentId: agentForRole(state, contract.roleId)?.id || "agent_orchestrator",
+    agentId: agentForRole(state, contract.roleId, {projectId: contract.projectId})?.id || `agent_unassigned_${contract.roleId}`,
     placement: placementDecision.placement,
     laneId: acquiredLaneId,
     status: "active",
@@ -4687,8 +4687,18 @@ function findWorkItem(state, taskGroupId, workItemId) {
   return workItem ? {...workItem, taskGroupId, projectId: taskGroup.projectId} : null;
 }
 
-function agentForRole(state, roleId) {
-  return state.agents.find((agent) => agent.role === roleId && agent.status === "active") || state.agents.find((agent) => agent.status === "active");
+function agentForRole(state, roleId, scope = {}) {
+  const projectId = String(scope.projectId || "").trim();
+  const project = projectId ? (state.projects || []).find((item) => item.id === projectId) : null;
+  if (projectId && !project) return null;
+  const organizationId = String(project?.organizationId || scope.organizationId || DEFAULT_ORGANIZATION_ID);
+  const candidates = (state.agents || []).filter((agent) => agent.role === roleId && agent.status === "active"
+    && (agent.organizationId || DEFAULT_ORGANIZATION_ID) === organizationId);
+  if (projectId) {
+    const projectAgent = candidates.find((agent) => agent.projectId === projectId);
+    if (projectAgent) return projectAgent;
+  }
+  return candidates.find((agent) => !agent.projectId) || null;
 }
 
 function appendEvent(state, type, subjectType, subjectId, actorId, payload, extra = {}) {

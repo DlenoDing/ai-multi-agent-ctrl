@@ -3688,6 +3688,37 @@ try {
         throw new Error(`本地裸仓库的测试连接没报成功（HTTP ${connOk.response.status} ${JSON.stringify(connOk.payload).slice(0, 200)}）`);
       }
       if (JSON.stringify(connOk.payload).includes(connSecret)) throw new Error("测试连接回执里带出了仓库密钥");
+      const probeHook = join(doctorRepo.remote, "hooks", "pre-receive");
+      const probeStarted = join(doctorRepo.base, "connection-write-started");
+      if (existsSync(probeHook)) throw new Error("写入检测夹具已有钩子，拒绝覆盖");
+      const quotaBefore = (await jsonFetch(port, "/api/orgs", {headers: {authorization: systemAuth}})).payload.organizations
+        .find((org) => org.orgId === "org_default").quotas.maxMembers;
+      writeFileSync(probeHook, `#!${process.execPath}\nimport {writeFileSync} from "node:fs";\nwriteFileSync(${JSON.stringify(probeStarted)}, "started");\nAtomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 600);\n`, {mode: 0o700});
+      let writeProbe;
+      try {
+        writeProbe = jsonFetch(port, "/api/projects/prj_control_plane/repositories/repo_doctor_conn_ok/connection-test", {
+          method: "POST", headers: {"Idempotency-Key": "doctor-conn-write", authorization: systemAuth}, body: JSON.stringify({verifyWrite: true})});
+        const deadline = Date.now() + 5000;
+        while (!existsSync(probeStarted) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+        if (!existsSync(probeStarted)) throw new Error(`推送检测没有到达真实远端钩子：${JSON.stringify((await writeProbe).payload).slice(0, 600)}`);
+        const concurrent = await jsonFetch(port, "/api/orgs/org_default/quotas", {method: "POST",
+          headers: {"Idempotency-Key": "doctor-conn-concurrent", authorization: systemAuth}, body: JSON.stringify({quotas: {maxMembers: quotaBefore + 1}})});
+        if (concurrent.response.status !== 200) throw new Error("检测期间的并发写入没有成功");
+        const checked = await writeProbe;
+        if (checked.response.status !== 200 || checked.payload?.write?.push?.ok !== true || checked.payload?.write?.cleanup?.ok !== true || checked.payload?.ok !== true) {
+          throw new Error(`并发写入时仓库检测结果丢失或失败：${checked.response.status}/${JSON.stringify(checked.payload).slice(0, 300)}`);
+        }
+        if (JSON.stringify(checked.payload).includes(connSecret)) throw new Error("写入检测回执泄露密钥");
+        const quotaAfter = (await jsonFetch(port, "/api/orgs", {headers: {authorization: systemAuth}})).payload.organizations
+          .find((org) => org.orgId === "org_default").quotas.maxMembers;
+        if (quotaAfter !== quotaBefore + 1) throw new Error("仓库检测覆盖了并发写入的组织配额");
+        if (git(doctorRepo.work, ["ls-remote", doctorRepo.remote, "refs/heads/aimac-connection-check/*"], "")) throw new Error("写入检测没有清理临时分支");
+        console.log("  ok  仓库真实推送验证：临时分支写入及清理成功，检测期间并发改配额不丢结果、不覆盖状态、回执无密钥");
+      } finally {
+        if (writeProbe) await writeProbe.catch(() => {});
+        rmSync(probeHook, {force: true});
+        rmSync(probeStarted, {force: true});
+      }
       const connMissing = await jsonFetch(port, "/api/projects/prj_control_plane/repositories/repo_doctor_conn_missing/connection-test", {
         method: "POST", headers: {"Idempotency-Key": "doctor-conn-missing", authorization: systemAuth}, body: "{}"});
       if (connMissing.response.status !== 200 || connMissing.payload?.ok !== false || connMissing.payload?.reason !== "repository_not_found") {

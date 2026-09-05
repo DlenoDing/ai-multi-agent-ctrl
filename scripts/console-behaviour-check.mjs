@@ -356,6 +356,7 @@ globalThis.__probe = {
     return renderProjectSettings();
   },
   blockerGuide: (type) => blockerGuide(type),
+  repositoryWriteResultHtml,
   renderMonitorWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; return renderMonitor(); },
   setAuth: (token, account) => { authToken = token; currentAccount = account; },
   stashDraft: (pageId, projectId) => { page = pageId; currentProjectId = projectId; stashDraftForExpiredSession(); },
@@ -1617,7 +1618,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     Boolean(post),
     `没记录到请求（${JSON.stringify(recorded).slice(0, 160)}）`);
   check("连接成功要说清远端分支数与默认分支是否存在",
-    successToasts.some((message) => /连接成功/u.test(message) && /3 个分支/u.test(message) && /默认分支存在/u.test(message)),
+    successToasts.some((message) => /连接成功/u.test(message) && /3 个分支/u.test(message) && /默认分支存在/u.test(message) && /尚未验证推送权限/u.test(message)),
     `成功提示不对：${JSON.stringify(successToasts).slice(0, 200)}`);
   reply = {ok: false, reason: "repository_auth_failed", detail: "fatal: Authentication failed for 'https://***@example.test/repo.git/'"};
   await ctProbe.click({target: mkButton(), preventDefault: () => {}});
@@ -1642,6 +1643,14 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
   check("测试连接的每个 reason 都要有中文（词表以 lib/git-connection-test.mjs 为准）",
     missingReasons.length === 0 && REPOSITORY_CONNECTION_REASONS.length >= 7,
     `这些 reason 在 app.js 里没有中文：${missingReasons.join("、") || "（词表本身太短）"}`);
+  check("已保存的仓库可显式发起推送验证",
+    /data-verify-write="true"/u.test(ctHtml) && /验证推送/u.test(ctHtml), "缺少显式写权限检测入口");
+  const writeFailure = ctProbe.repositoryWriteResultHtml("r1", {ok: false, read: {ok: true}, reason: "repository_auth_failed", write: {
+    probeRef: "refs/heads/aimac-connection-check/test", commit: "abc123", dryRun: {ok: true}, push: {ok: true}, cleanup: {ok: false, attempted: true}
+  }});
+  check("清理失败必须展示待核对的分支，不能报读写验证通过",
+    /需要核对/u.test(writeFailure) && /refs\/heads\/aimac-connection-check\/test/u.test(writeFailure)
+      && !/>读写验证通过</u.test(writeFailure) && /目标分支的保护规则/u.test(writeFailure), "写入或清理结果被误报，或丢失待清理分支");
 }
 
 // 【组织概览显示的必须是这个账号自己的组织】。它原先取 state.organizations[0] —— 今天服务端
@@ -7527,6 +7536,16 @@ await runCodedApiErrorCase();
       return /some_brand_new_code/.test(html) && /细节还在/.test(html);
     })(),
     "词表里没有的前缀被吃掉了 —— 人连原始错误码都拿不到，没法搜也没法上报");
+  const authFailure = structuredClone(withCodedFailure);
+  Object.assign(authFailure.agentDispatches[0], {projectId: "p_d", repositoryOutputTargetRef: "out_d", failureReason: "git_auth_failed:投递凭证被拒"});
+  authFailure.repositoryOutputs = [{targetId: "out_d", projectId: "p_d", repositoryId: "repo_d"}];
+  const authHtml = probe.renderMonitorWith(authFailure, account, "p_d");
+  check("凭证拒绝的派发提供所属项目仓库配置的可点击入口",
+    /data-project="p_d" data-target-menu="proj-settings" data-repo-focus="repo_d"/u.test(authHtml)
+      && /检查仓库凭证/u.test(authHtml), "失败只剩指路文字，没有项目/仓库定位按钮");
+  authFailure.agentDispatches[0].projectId = "foreign_project";
+  check("项目与任务组归属不符的事件不得生成凭证配置跳转",
+    !/检查仓库凭证/u.test(probe.renderMonitorWith(authFailure, account, "p_d")), "接受了执行消息中的跨项目定位");
 }
 
 // 控制面挂掉时，这一屏此前只弹一次 toast：toast 消失之后，画面还挂着上一次成功时的数据，

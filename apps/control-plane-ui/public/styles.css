@@ -290,7 +290,7 @@ html, body {
 }
 
 .panel-header h2 { margin: 0; font-size: 15px; }
-.member-counts { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 12px; color: var(--text-secondary); font-size: 13px; }
+.member-counts { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 12px; color: var(--text-sub); font-size: 13px; }
 .member-counts span { white-space: nowrap; }
 .panel-header .header-side { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .panel-body { padding: 16px 18px; }
@@ -805,6 +805,8 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   -webkit-box-orient: vertical;
   overflow-wrap: anywhere;
 }
+.data-table td.text-clip:has(.repository-recovery) { display: table-cell; overflow: visible; -webkit-line-clamp: unset; }
+.repository-recovery { margin-top: 6px; }
 .data-table td.empty-cell { text-align: center; color: var(--text-sub); padding: 24px 10px; }
 .data-table tbody tr:hover td.empty-cell { background: transparent; }
 /* 表格截断提示 */

@@ -11889,8 +11889,11 @@ function verifyGateReferencesResolve(output) {
     .filter((file) => /\.(mjs|js)$/u.test(file) && !file.endsWith("mutation-gate.mjs"))
     .map((file) => [file.slice(root.length + 1), readFileSync(file, "utf8")]);
   const declared = new Set();
+  const dataBindings = new Set();
   for (const [, src] of files) {
     for (const match of src.matchAll(/function\s+(verify[A-Za-z0-9]+)/gu)) declared.add(match[1]);
+    // 同前缀的局部变量（例如仓库写入检测开关）不是判据引用。
+    for (const match of src.matchAll(/\b(?:const|let)\s+(verify[A-Z][A-Za-z0-9]+)\s*=/gu)) dataBindings.add(match[1]);
   }
   const stale = [];
   for (const [rel, src] of files) {
@@ -11898,7 +11901,7 @@ function verifyGateReferencesResolve(output) {
     lines.forEach((line, index) => {
       if (/已删除|已改名|已并入/u.test(line)) return;
       for (const match of line.matchAll(/\b(verify[A-Z][A-Za-z0-9]+)\b/gu)) {
-        if (!declared.has(match[1])) stale.push(`${rel}:${index + 1}: ${match[1]}`);
+        if (!declared.has(match[1]) && !dataBindings.has(match[1])) stale.push(`${rel}:${index + 1}: ${match[1]}`);
       }
     });
   }
@@ -13290,6 +13293,7 @@ function verifyOperatorCliRejectsUnknownFlags(output) {
   const NOT_OPERATOR_CLIS = {
     "scripts/mutation-gate.mjs": "验证代码（--anchors-only 只给门链自己用）",
     "scripts/mutate-probe.mjs": "验证代码（判别力探针）",
+    "scripts/org-agent-dispatch-check.mjs": "端到端验证代码（--keep-runtime 仅保留隔离测试运行态供浏览器复验，不操作生产运行态）",
     "scripts/run-with-env.mjs": "透传壳，自己不解析参数",
     "scripts/concurrent-writer-gate.mjs": "门；argv[2] 是工作目录，不是具名参数",
     "scripts/crash-consistency-gate.mjs": "门；同上",
@@ -16783,7 +16787,7 @@ function verifyWriteActionsAreConfirmedOrRegistered(output) {
     "sync-skill-source": "同步只是按固定提交重新拉取技能源，不改已有数据",
     "orchestrator-run": "跑一拍编排是推进既定流程，不删不改既有记录（被挡住会如实说）",
     "decide-model": "记录一次模型选择决策，可被下一次决策覆盖",
-    "repo-test-connection": "测试仓库连接只对远端跑一次 ls-remote 读操作，服务端只落审计与幂等回执，不改任何配置或记录"
+    "repo-test-connection": "读取检测只落审计与幂等回执；写入检测由 verifyWrite 显式开启，并先确认临时分支写入与清理"
   };
   const TYPED_CONFIRMATION_CONSOLE_ACTIONS = {
     "bootstrap-init": "重置运行态：用「按当前真实规模逐字输入」的更强确认（confirmToken），不是普通弹窗"

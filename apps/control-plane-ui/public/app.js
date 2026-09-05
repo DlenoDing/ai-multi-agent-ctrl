@@ -1771,7 +1771,9 @@ function renderSystemManagementHub(overview) {
 }
 
 function renderOrgManagementHub(org, projects, openTaskGroups) {
-  const members = (orgMembers || []).filter((account) => account.accountType !== "service_account");
+  const members = (orgMembers || []).filter((account) => account.accountType !== "service_account"
+    && !["disabled", "suspended", "retired"].includes(account.status));
+  const memberCount = org?.usage?.members ?? members.length;
   const aliveNodes = (orgAgentNodes || []).filter((node) => node.status !== "revoked");
   const onlineNodes = aliveNodes.filter((node) => node.status === "online").length;
   const activeProjects = (projects || []).filter((project) => project.status !== "archived").length;
@@ -1787,7 +1789,7 @@ function renderOrgManagementHub(org, projects, openTaskGroups) {
       `活跃任务组 ${esc(openTaskGroups.length)}`
     ],
     modules: [
-      {pageId: "org-members", title: "成员管理", metric: `${members.length}`, detail: "创建成员、重发邀请、停用或注销账号", action: "管理成员", tone: members.length ? "blue" : "gray"},
+      {pageId: "org-members", title: "成员管理", metric: `${memberCount}`, detail: "启用及待接受邀请的成员；创建、邀请与账号管理", action: "管理成员", tone: memberCount ? "blue" : "gray"},
       {pageId: "org-agents", title: "AI 智能体", metric: aliveNodes.length ? `${onlineNodes}/${aliveNodes.length}` : "0", detail: "节点状态、自检、令牌审计与吊销", action: "管理节点", tone: onlineNodes ? "green" : "orange"},
       {pageId: "org-projects", title: "项目列表", metric: `${activeProjects}/${projects.length}`, detail: "创建项目、归档项目、补充分配授权", action: "管理项目", tone: activeProjects ? "blue" : "gray"},
       {pageId: "proj-overview", title: "项目空间", metric: `${(state.taskGroups || []).length}`, detail: "进入当前项目的任务组、审核、指令和监控", action: "进入项目", tone: projects.length ? "blue" : "gray"}
@@ -3028,8 +3030,8 @@ function renderOrgOverview() {
   const projects = state.projects || [];
   const openTaskGroups = (state.taskGroups || []).filter((taskGroup) => !["closed", "aborted"].includes(taskGroup.status));
   const activeProjects = projects.filter((project) => project.status !== "archived");
-  const memberCount = (orgMembers || []).filter((account) => account.accountType !== "service_account"
-    && !["retired", "disabled"].includes(account.status)).length;
+  const memberCount = org?.usage?.members ?? (orgMembers || []).filter((account) => account.accountType !== "service_account"
+    && !["retired", "disabled", "suspended"].includes(account.status)).length;
   const aliveNodes = (orgAgentNodes || []).filter((node) => node.status !== "revoked");
   const onlineNodes = aliveNodes.filter((node) => node.status === "online").length;
   const quotaPanel = org
@@ -4545,7 +4547,7 @@ function renderProjectOverview() {
     {v: fmtTime(event.createdAt), c: "nowrap"},
     badge(event.eventType, "blue"),
     badge(event.status),
-    {v: esc(event.summary || "-"), c: "text-clip"}
+    {v: esc(event.summary || "-") + repositoryFailureAction(event), c: "text-clip"}
   ])).join("");
 
   return [
@@ -5127,6 +5129,7 @@ function renderTaskGroupDetail(taskGroup) {
                 ${Number(item.attempts) > 1 ? `<span>第 ${esc(item.attempts)} 次尝试</span>` : ""}
                 ${item.failureReason ? `<span>失败：${esc(explainCoded(item.failureReason))}</span>` : ""}
                 ${item.blockedReason ? `<span>受阻：${esc(explainCoded(item.blockedReason))}</span>` : ""}
+                ${repositoryFailureAction(item)}
                 <span>派发：<span class="mono">${esc(item.dispatchId)}</span></span>
                 <button class="secondary-button" data-action="show-dispatch-events" data-dispatch-id="${esc(item.dispatchId)}">实时事件</button>
                 <button class="secondary-button" data-action="show-dispatch-rules" data-dispatch-id="${esc(item.dispatchId)}">${dispatchRuleSummaries[item.dispatchId] ? "收起规则" : "规则"}</button>
@@ -7012,6 +7015,20 @@ function renderMonitorRealtimeGuide({eventsShown, sessionsAll, dispatchesAll, co
   `, {wide: true});
 }
 
+function repositoryFailureAction(item) {
+  const reason = String(item?.failureReason || item?.blockedReason || item?.summary || "");
+  if (!/(?:git_auth_failed|repository_auth_failed|credential_missing|repository_credential_unreadable)(?::|\b)/u.test(reason)) return "";
+  const group = taskGroupById(item.taskGroupId);
+  const project = (state.projects || []).find((entry) => entry.id === group?.projectId);
+  if (!project || (item.projectId && item.projectId !== project.id)) return "";
+  const dispatch = item.dispatchId
+    ? (state.agentDispatches || []).find((entry) => entry.dispatchId === item.dispatchId && entry.projectId === project.id)
+    : null;
+  const output = (state.repositoryOutputs || []).find((entry) => entry.targetId === dispatch?.repositoryOutputTargetRef && entry.projectId === project.id);
+  return `<div class="repository-recovery"><button class="secondary-button" data-action="open-project-page"
+    data-project="${esc(project.id)}" data-target-menu="proj-settings" data-repo-focus="${esc(output?.repositoryId || "")}">检查仓库凭证</button></div>`;
+}
+
 function renderMonitor() {
   // 一个项目都没有时，这一页原先摆出十一张"暂无数据"的空表和一个空的监听范围下拉 ——
   // 屏幕上全是表头，没有一句话说明为什么什么都没有、下一步该做什么。
@@ -7042,7 +7059,7 @@ function renderMonitor() {
     // 证据引用此前从不渲染，而执行方恰恰在这里上报了"这次提示词里实际包含了哪几份规则文件"
     // （prompt-includes:system/rules.md 之类）。人在控制台上只看得到 summary 里那句"含 N 个规则文件"，
     // 看不到是哪几个 —— 而"人写下的那份规则有没有真的到达模型"正是要从这里回答的。
-    {v: `${esc(event.summary || "-")}${evidenceRefsHint(event)}`, c: "text-clip"},
+    {v: `${esc(event.summary || "-")}${evidenceRefsHint(event)}${repositoryFailureAction(event)}`, c: "text-clip"},
     {v: fmtTime(event.createdAt), c: "nowrap"}
   ])).join("");
 
@@ -7066,7 +7083,7 @@ function renderMonitor() {
     session.laneId ? {v: `<span class="mono">${esc(session.laneId)}</span>`, c: "nowrap"} : "-",
     badge(session.status),
     // 会话的阻塞原因此前只写在记录里、从不渲染：人看到一个 needs_decision 的徽标，看不出为什么。
-    esc(explainCoded(session.blockedReason)),
+    esc(explainCoded(session.blockedReason)) + repositoryFailureAction(session),
     `<button class="secondary-button" data-action="show-session-events" data-session-id="${esc(session.sessionId)}">事件</button>`
   ])).join("");
 
@@ -7092,6 +7109,7 @@ function renderMonitor() {
     // 新持有者的 reset --hard origin/<branch> 会把那些提交当作基线继续往上做，而没有任何人复核过它们。
     [
       esc(explainCoded(dispatch.blockedReason || dispatch.failureReason)),
+      repositoryFailureAction(dispatch),
       // 卡在人工确认上时，控制面【知道】是哪一张卡挡住的（dispatch.humanConfirmationRef），
       // 而这里从来没显示过它 —— 人只看到"到人工审核页定稿对应的确认卡"，
       // 却不知道是哪一张；审核页上同时挂着好几张时，只能一张张点开比对。
@@ -7552,7 +7570,8 @@ function cfgRepoRow(repo = {}, readOnly = false) {
       <input name="repoPassword" type="password" placeholder="${esc(passwordPlaceholder)}" value="${esc(password)}" ${ro} autocomplete="new-password">
       <input name="repoApiKey" type="password" placeholder="${esc(apiKeyPlaceholder)}" value="${esc(apiKey)}" ${ro} autocomplete="new-password">
       ${readOnly ? "" : `<button type="button" class="danger-button" data-action="cfg-del">删除</button>`}
-      ${!readOnly && repo.id ? `<button type="button" class="secondary-button" data-action="repo-test-connection" data-repo="${esc(repo.id)}" title="用已保存的地址与凭证跑一次 git ls-remote，看远端认不认这份凭证">测试连接</button>` : ""}
+      ${!readOnly && repo.id ? `<button type="button" class="secondary-button" data-action="repo-test-connection" data-repo="${esc(repo.id)}" title="验证已保存的仓库地址和读取权限；推送权限请单独验证">测试连接</button>
+        <button type="button" class="secondary-button" data-action="repo-test-connection" data-repo="${esc(repo.id)}" data-verify-write="true" title="真实创建并清理临时测试分支，验证推送权限">验证推送</button>` : ""}
     </div>
   `;
 }
@@ -7568,6 +7587,25 @@ const REPO_CONNECTION_REASON_TEXT = {
   credential_missing: "选了需要凭证的模式，但从没填过密钥（密码 / API Key 留空只是保留原值，从没填过就是空）",
   repository_credential_unreadable: "已保存的凭证解不开（控制面换过凭证密钥）—— 重新填一次账号密码或 API Key 再保存"
 };
+
+function repositoryWriteResultHtml(repoId, result) {
+  const step = (value) => value?.ok === true ? customBadge("通过", "green")
+    : value?.ok === false ? customBadge("未通过", "red") : customBadge("未执行", "gray");
+  const write = result?.write;
+  const passed = result?.ok === true && result?.read?.ok === true && write?.push?.ok === true && write?.cleanup?.ok === true;
+  const uncertainCleanup = write?.probeRef && write?.cleanup?.ok !== true && write?.cleanup?.status !== "not_needed" && (write?.push || write?.cleanup?.uncertain);
+  const why = REPO_CONNECTION_REASON_TEXT[result?.reason] || `原因未归类（${result?.reason || "服务端没给原因"}）`;
+  return `<div class="stack"><div><strong>${esc(repoId)}</strong> ${passed ? customBadge("读写验证通过", "green") : customBadge("读写验证未通过", "red")}</div>
+    ${table(["检测项目", "结果"], [
+      row(["读取仓库", step(result?.read)]),
+      row(["推送预检", step(write?.dryRun)]),
+      row(["实际推送临时分支", step(write?.push)]),
+      row(["清理临时分支", uncertainCleanup ? customBadge("需要核对", "red") : write?.cleanup?.status === "not_needed" ? customBadge("无需清理", "gray") : step(write?.cleanup)])
+    ].join(""))}
+    ${passed ? "" : `<div class="notice warn-notice">${esc(why)}${result?.detail ? `：${esc(result.detail)}` : ""}</div>`}
+    ${uncertainCleanup ? `<div class="notice warn-notice">临时分支尚未确认清理，请仓库管理员核对。分支：<code>${esc(write.probeRef)}</code>${write.commit ? `；测试提交：<code>${esc(write.commit)}</code>` : ""}。</div>` : ""}
+    <div class="small muted">本次验证仅针对临时测试分支。目标分支的保护规则、合并审批和服务端钩子仍可能拒绝实际任务推送。</div></div>`;
+}
 
 function cfgBaselineRow(item = {}, readOnly = false) {
   const ro = readOnly ? "readonly" : "";
@@ -8728,6 +8766,15 @@ document.addEventListener("click", async (event) => {
       formTouched = false;
       stopExecPolling();
       await loadPage();
+      if (targetPage === "proj-settings" && target.dataset.repoFocus !== undefined) {
+        const repoRow = [...document.querySelectorAll("[data-cfg-kind='repo']")]
+          .find((element) => element.querySelector("[name='repoId']")?.value === target.dataset.repoFocus);
+        const configForm = document.querySelector("form[data-form='project-config']");
+        const focusTarget = repoRow || configForm;
+        focusTarget?.scrollIntoView({behavior: "smooth", block: "center"});
+        const connectionButton = focusTarget?.querySelector("[data-action='repo-test-connection']");
+        connectionButton?.focus({preventScroll: true});
+      }
       return;
     }
     if (action === "open-audit-archive") {
@@ -9087,9 +9134,16 @@ document.addEventListener("click", async (event) => {
       if (formTouched) { toast.info("测试用的是已保存的仓库配置 —— 先点「保存项目配置」，再测"); return; }
       const projectId = target.closest("form[data-form='project-config']")?.dataset.project || currentProjectId;
       const repoId = target.dataset.repo;
-      const result = await api(`/api/projects/${encodeURIComponent(projectId)}/repositories/${encodeURIComponent(repoId)}/connection-test`, {method: "POST", body: "{}"});
+      const verifyWrite = target.dataset.verifyWrite === "true";
+      if (verifyWrite && !(await confirmDialog({title: "验证仓库推送权限", message: `验证仓库 ${repoId} 的推送权限？`,
+        sub: "将创建一个仅含测试文本的临时分支并自动删除。不会修改业务分支，但可能触发仓库的推送通知或 CI。", confirmText: "开始验证"}))) return;
+      const result = await api(`/api/projects/${encodeURIComponent(projectId)}/repositories/${encodeURIComponent(repoId)}/connection-test`, {method: "POST", body: JSON.stringify(verifyWrite ? {verifyWrite: true} : {})});
+      if (verifyWrite) {
+        openModal("仓库读写验证", repositoryWriteResultHtml(repoId, result));
+        return;
+      }
       if (result?.ok === true) {
-        toast.success(`仓库 ${repoId} 连接成功：远端有 ${result.refCount} 个分支，默认分支${result.defaultBranchFound ? "存在" : "还不存在（首次推送时会新建）"}`);
+        toast.success(`仓库 ${repoId} 连接成功：远端有 ${result.refCount} 个分支，默认分支${result.defaultBranchFound ? "存在" : "还不存在（首次推送时会新建）"}。仅验证读取，尚未验证推送权限`);
       } else {
         const why = REPO_CONNECTION_REASON_TEXT[result?.reason] || `原因未归类（${result?.reason || "服务端没给原因"}）`;
         toast.error(`仓库 ${repoId} 连不上：${why}${result?.detail ? `。git 说：${result.detail}` : ""}`);
