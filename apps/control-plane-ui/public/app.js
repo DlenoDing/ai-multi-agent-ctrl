@@ -4252,8 +4252,8 @@ function renderOrgAgents() {
     panel("组织级 Agent 档案", `
       <div class="stack">
         <div class="notice">角色档案定义可承担的工作。组织共享节点在“注册共享节点”接入，项目专属节点在对应项目接入，两类节点可使用本组织的角色档案。</div>
-        ${table(["档案", "角色", "模型偏好", "作用域", "状态", {label: "信任分", c: "num"}, "Skill", "操作"],
-          agentProfileRows(scopedAgents), {emptyText: "当前组织还没有组织级 Agent 档案。可先创建通用角色档案，项目特殊角色再到项目页创建。"})}
+        <div class="agent-profile-table">${table(["档案", "角色", "模型偏好", "作用域", "状态", {label: "信任分", c: "num"}, "Skill", "操作"],
+          agentProfileRows(scopedAgents), {emptyText: "当前组织还没有组织级 Agent 档案。可先创建通用角色档案，项目特殊角色再到项目页创建。"})}</div>
         ${renderAgentProfileForm({title: "创建组织级 Agent 档案", readOnly: !hasPerm("agent:activate")})}
       </div>
     `, {wide: true, headerSide: filterInput("按档案、角色、模型过滤…", "org-agent-profiles")}),
@@ -4431,8 +4431,8 @@ function renderProjectAgents() {
       <div class="stack">
         ${renderProjectAgentProfileSummary(project, scopedAgents)}
         <div class="notice">任务组执行时，总控可在当前项目级 Agent 和本组织级 Agent 中选择合适角色；项目级档案只服务当前项目，组织级档案可跨本组织项目复用。</div>
-        ${table(["档案", "角色", "模型偏好", "作用域", "状态", {label: "信任分", c: "num"}, "Skill", "操作"],
-          agentProfileRows(scopedAgents), {emptyText: "当前项目还没有可调配 Agent 档案。可在这里创建项目级档案，或到组织页创建组织级档案。"})}
+        <div class="agent-profile-table">${table(["档案", "角色", "模型偏好", "作用域", "状态", {label: "信任分", c: "num"}, "Skill", "操作"],
+          agentProfileRows(scopedAgents), {emptyText: "当前项目还没有可调配 Agent 档案。可在这里创建项目级档案，或到组织页创建组织级档案。"})}</div>
         ${renderAgentProfileForm({projectId: project.id, title: "创建项目级 Agent 档案", readOnly: !hasPerm("agent:activate")})}
       </div>
     `, {wide: true, headerSide: filterInput("按档案、角色、模型过滤…", "project-agent-profiles")}),

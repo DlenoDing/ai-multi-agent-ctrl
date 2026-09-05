@@ -33,6 +33,7 @@
 .organization-table .org-quota-grid .progress-line { min-width: 120px; }
 .organization-table details summary { cursor: pointer; color: var(--text-sub); font-size: 12px; }
 .organization-table details code { display: block; max-width: 150px; overflow-wrap: anywhere; font-size: 11px; }
+.agent-profile-table .data-table { min-width: 860px; }
 @media (max-width: 860px) {
   .workspace-nav { display: none; }
   .workspace-mobile-nav { grid-column: 1 / -1; display: flex; gap: 4px; overflow-x: auto; padding: 4px 0; }
