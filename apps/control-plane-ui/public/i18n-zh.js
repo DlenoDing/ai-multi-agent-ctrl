@@ -1266,6 +1266,9 @@
 
     /* ---------- 失败原因里 "code:detail" 的那一段前缀（由 explainCoded 取用） ---------- */
     git_command_failed: "git 命令失败",
+    git_auth_failed: "git 认证被远端拒绝：仓库凭证不对、已过期或没有这个仓库的权限（说明里写着用的是项目仓库配置投递的凭证还是 agent 主机自己的）",
+    git_repository_not_found: "远端说没有这个仓库：地址写错、仓库被删或改名，或这份凭证看不到它",
+    git_remote_unreachable: "够不着 git 远端：域名解析不了、端口不通或网络被拦",
     /* ---------- agent 运行时抛出的失败原因（同样经派发失败原因显示给人） ---------- */
     content_bundle_sync_failed: "内容包同步失败，没有同步到规则就不允许执行",
     content_bundle_manifest_mismatch: "内容包整包摘要对不上",

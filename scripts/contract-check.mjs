@@ -15633,7 +15633,7 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
       + " verifySkillFiles, classifyPushPermissionDenial, inside,"
       + " retryableControlPlaneError, retryableAgentRequest, syncContentBundle, syncSkillWorkset,"
       + " applyPermissionResolution, mcpToolCall, prepareRepository,"
-      + " syncContentBundleGitTransfer, writeArtifactManifest,"
+      + " syncContentBundleGitTransfer, writeArtifactManifest, gitFailure, classifyGitFailure,"
       + " ensureCleanWorktree, buildExecutionPrompt, runKnownModelCli, jsonHead, syncJson, removeSessionDirectoryPath, safeName};\n");
     const rt = await import(pathToFileURL(copy).href);
     const refusalOf = (fn) => { try { fn(); return null; } catch (error) { return String(error.message).split(":")[0]; } };
@@ -16040,6 +16040,39 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
           + "再往下做会把这次的活提交并推到另一个仓库里");
       }
     }
+
+    // ⑪b git 失败归类（agent 侧）：认证被拒 / 仓库不在 / 够不着要带各自的码，与控制面孪生实现对齐。
+    // agent 侧的 git 失败归类是控制面这份的孪生实现（agent 不引控制面代码）：同一组样本两边必须得出同一类。
+    const twinMap = {auth: "repository_auth_failed", not_found: "repository_not_found", unreachable: "repository_unreachable"};
+    for (const [stderr] of [
+      ["fatal: Authentication failed for 'https://x/y.git/'"],
+      ["git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository."],
+      ["fatal: repository 'https://github.com/a/nope.git/' not found"],
+      ["fatal: unable to access 'https://nohost.invalid/a.git/': Could not resolve host: nohost.invalid"],
+      ["ssh: connect to host 10.0.0.9 port 22: Connection refused"],
+      ["something entirely new"]
+    ]) {
+      const control = classifyGitRemoteFailure(stderr);
+      const agent = twinMap[rt.classifyGitFailure({stderr})] || "repository_connection_failed";
+      if (control !== agent) output.push(`git 失败归类两边不一致：「${stderr.slice(0, 50)}」控制面 ${control}、agent ${agent} —— 孪生实现漂了`);
+    }
+    const gitFailureThrown = (stderr) => { try { rt.gitFailure("git clone", {stderr, status: 128}, "退出码 128：x"); } catch (error) { return error; } return null; };
+    const authFailure = gitFailureThrown("fatal: Authentication failed for 'https://x/y.git/'");
+    if (!String(authFailure?.message).startsWith("git_auth_failed:")) output.push(`agent 侧认证失败没有归成 git_auth_failed：${authFailure?.message}`);
+    if (!/主机自己的 git 凭证|投递的凭证/u.test(String(authFailure?.message))) output.push(`agent 侧认证失败没说用的是谁的凭证：${authFailure?.message}`);
+    if (!String(authFailure?.message).includes("退出码 128")) output.push("agent 侧 git 失败丢了 gitFailureDetail 取出的结论行");
+    if (!String(gitFailureThrown("fatal: repository 'https://github.com/a/nope.git/' not found")?.message).startsWith("git_repository_not_found:")) output.push("agent 侧仓库不存在没有归成 git_repository_not_found");
+    if (!String(gitFailureThrown("fatal: unable to access 'https://h/a.git/': Could not resolve host: h")?.message).startsWith("git_remote_unreachable:")) output.push("agent 侧够不着远端没有归成 git_remote_unreachable");
+    if (!String(gitFailureThrown("weird")?.message).startsWith("git_command_failed:")) output.push("agent 侧认不出的 git 失败没有保留 git_command_failed");
+    // 内容传输那一处的 git 失败此前整族逃过提取（throw Object.assign 形态），从没在门里造出来过：这里真调一次 ——
+    // 指向本机 1 号端口（没人听，立刻拒连、不碰外网），fetch 那步失败，正好走到 content_bundle_git_transfer_failed。
+    const transferBundleDir = join(dir, "transfer-failed-bundle");
+    let transferFailure = null;
+    try { rt.syncContentBundleGitTransfer({}, {gitTransfer: {enabled: true, repositoryUrl: "git://127.0.0.1:1/nope.git", ref: "main", paths: []}}, transferBundleDir); } catch (error) { transferFailure = error; }
+    if (!String(transferFailure?.message).startsWith("content_bundle_git_transfer_failed:")) {
+      output.push(`内容传输的 git 失败没有带 content_bundle_git_transfer_failed 码：${String(transferFailure?.message).slice(0, 120)}`);
+    }
+    if (String(transferFailure?.message).includes(transferBundleDir)) output.push("内容传输的 git 失败报文里带着 agent 本机路径");
 
     // ⑫ 内容包的 git 传输：控制面可以让 agent 去另一个仓库取内容。地址与引用名都是外部输入，
     // 而它们最终会拼进 git 命令行 —— 这两道此前零覆盖。
@@ -17277,8 +17310,9 @@ function verifyAgentFailureCodeCoverageRatchet(output) {
   // 「有没有门提到过这个码」不等于「这条路被走过」，但它是能自动量的那一半：
   // 一个码在整套 scripts/ 里一次都没出现过，说明它失效时不会有任何东西变红。
   const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  // `throw Object.assign(new Error(\`码:…\`), {cause})` 也是带码抛错（git 那一族全是这形态），此前整族逃过提取。
   const codes = [...new Set([...runtime.matchAll(
-    /throw (?:new Error|permissionBlockedError)\(\s*[`"]([a-z0-9_]{6,})(?::|["`])/gu)].map((match) => match[1]))];
+    /throw (?:Object\.assign\()?(?:new Error|permissionBlockedError)\(\s*[`"]([a-z0-9_]{6,})(?::|["`])/gu)].map((match) => match[1]))];
   if (codes.length < 30) {
     output.push(`agent 失败码只提取到 ${codes.length} 个（应 30+）—— 提取脱节，这条棘轮在空转`);
     return;
@@ -17321,7 +17355,7 @@ function verifyAgentFailureReasonsAreCoded(output) {
   // 码本身由规范门核「有没有中文」；这里核的是另一半：还有没有【压根没带码】的。
   const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
   const bare = [];
-  for (const match of runtime.matchAll(/throw (?:new Error|permissionBlockedError)\(\s*([`"])([^`"]*)\1/gu)) {
+  for (const match of runtime.matchAll(/throw (?:Object\.assign\()?(?:new Error|permissionBlockedError)\(\s*([`"])([^`"]*)\1/gu)) {
     const message = match[2];
     // 两种都算：`码:中文说明`，以及只有一个码（那时中文全靠 i18n 词表，规范门会核）。
     if (/^[a-z0-9_]{6,}(?::|$)/u.test(message)) continue;
@@ -17333,7 +17367,7 @@ function verifyAgentFailureReasonsAreCoded(output) {
       + "写成 `码:中文说明`（码要在 i18n-zh 里有词条），或者确认它只给装机的人看、登记进 AGENT_RUNTIME_CLI_THROWS");
   }
   // 提取脱节要自报：一条都没扫到多半是写法变了，而不是真的一条不带码的都没有。
-  const coded = [...runtime.matchAll(/throw (?:new Error|permissionBlockedError)\(\s*[`"][a-z0-9_]{6,}(?::|["`])/gu)].length;
+  const coded = [...runtime.matchAll(/throw (?:Object\.assign\()?(?:new Error|permissionBlockedError)\(\s*[`"][a-z0-9_]{6,}(?::|["`])/gu)].length;
   if (coded < 20) {
     output.push(`agent 抛错只提取到 ${coded} 条带码的（应当 20+）—— 提取逻辑多半与代码脱节，这一条在空转`);
   }

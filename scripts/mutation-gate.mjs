@@ -694,6 +694,30 @@ const MUTATIONS = [
     expect: "isSealed 判定不严"
   },
   {
+    name: "agent 侧 git 认证失败必须归成 git_auth_failed（不然人只看到「git 命令失败」）",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    file: "apps/agent-runtime/runtime.mjs",
+    from: "  if (kind === \"auth\") throw Object.assign(new Error(`git_auth_failed:",
+    to: "  if (kind === \"auth\") throw Object.assign(new Error(`git_command_failed:",
+    expect: "认证失败没有归成 git_auth_failed"
+  },
+  {
+    name: "agent 侧 git 认证失败要说清用的是谁的凭证",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    file: "apps/agent-runtime/runtime.mjs",
+    from: "被远端拒绝认证（${gitCredentialHint()}；${detail}）",
+    to: "被远端拒绝认证（${detail}）",
+    expect: "没说用的是谁的凭证"
+  },
+  {
+    name: "内容传输的 git 失败必须带 content_bundle_git_transfer_failed 码（此前这形态整族逃过提取）",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    file: "apps/agent-runtime/runtime.mjs",
+    from: "    throw Object.assign(new Error(`content_bundle_git_transfer_failed:（${gitFailureDetail(error)}）`), {cause: error});",
+    to: "    throw error;",
+    expect: "content_bundle_git_transfer_failed 码"
+  },
+  {
     name: "测试连接：认证失败必须归成 repository_auth_failed（不然人看到的是「原因没归类」）",
     check: "verifyRepositoryConnectionTest",
     file: "apps/control-plane-ui/lib/git-connection-test.mjs",
@@ -1145,8 +1169,8 @@ const MUTATIONS = [
     name: "agent 运行时每处起 git 子进程的地方都要取失败原因",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyGitFailureSaysWhyWithoutLeakingPaths",
-    from: 'new Error(`git_command_failed:git clone（${gitFailureDetail(error)}）`)',
-    to: 'new Error(`git_command_failed:git clone`)',
+    from: '      throw gitFailure("git clone", error, gitFailureDetail(error));',
+    to: '      throw gitFailure("git clone", error, "");',
     expect: "直接起 git 子进程却不取失败原因"
   },
   {

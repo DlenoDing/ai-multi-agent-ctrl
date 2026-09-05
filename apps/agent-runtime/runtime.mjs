@@ -1746,7 +1746,7 @@ function prepareRepository(config, target) {
     try {
       execFileSync("git", ["clone", target.repositoryUrl, repositoryRoot], {stdio: "pipe", timeout: gitNetworkTimeoutMs(), env: {...process.env, ...gitAuthEnv(), GIT_ALLOW_PROTOCOL: "file:https:ssh:git"}});
     } catch (error) {
-      throw Object.assign(new Error(`git_command_failed:git clone（${gitFailureDetail(error)}）`), {cause: error});
+      throw gitFailure("git clone", error, gitFailureDetail(error));
     }
   }
   const remote = target.remote || "origin";
@@ -2376,9 +2376,37 @@ function git(root, gitArgs) {
   try {
     return execFileSync("git", ["-C", root, ...gitArgs], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 32 * 1024 * 1024, env: {...process.env, ...gitAuthEnv()}}).trim();
   } catch (error) {
-    throw Object.assign(new Error(`git_command_failed:git ${gitArgs.join(" ")}（${gitFailureDetail(error)}）`),
-      {cause: error, stderr: error?.stderr, status: error?.status});
+    throw gitFailure(`git ${gitArgs.join(" ")}`, error, gitFailureDetail(error));
   }
+}
+
+// git 失败按 stderr 归成人能处置的几类。此前一律 git_command_failed，凭证配错的人看到的只是「git 命令失败」，
+// 分不清是凭证被拒、仓库不在还是网不通。与控制面 lib/git-connection-test.mjs 的归类是孪生实现（agent 运行时
+// 不引控制面代码，要能单机跑），契约门按同一组样本核两边对齐。认证排在找不到之前：托管平台对没权限的
+// 私有仓库也回 404，但同一段 stderr 通常先有 Authentication failed / Permission denied。
+function classifyGitFailure(error) {
+  const text = String(error?.stderr || "");
+  if (/authentication failed|could not read username|could not read password|invalid username or password|permission denied|access denied|returned error: 40[13]\b|http 40[13]\b/iu.test(text)) return "auth";
+  if (/does not appear to be a git repository|not a git repository|repository .*not found|returned error: 404\b|no such file or directory|could not read from remote repository/iu.test(text)) return "not_found";
+  if (/could not resolve host|unable to access|connection refused|connection timed out|network is unreachable|failed to connect|name or service not known|no route to host/iu.test(text)) return "unreachable";
+  return null;
+}
+
+// 认证被拒时要说清用的是谁的凭证：项目仓库配置投递来的，还是这台主机自己的 —— 人才知道去改哪一边。
+function gitCredentialHint() {
+  const env = gitAuthEnv();
+  if (env.GIT_ASKPASS) return `用的是项目仓库配置里投递的凭证（用户名 ${env.AIMAC_GIT_USERNAME || "空"}）—— 到项目设置的仓库行点「测试连接」核对`;
+  return "派发没带项目仓库凭证，用的是这台 agent 主机自己的 git 凭证（凭证助手 / SSH 密钥）";
+}
+
+// 造带码的 git 失败：码在冒号前（控制台按码给中文），说明里带 gitFailureDetail 取出的结论行。
+function gitFailure(label, error, detail) {
+  const kind = classifyGitFailure(error);
+  const props = {cause: error, stderr: error?.stderr, status: error?.status};
+  if (kind === "auth") throw Object.assign(new Error(`git_auth_failed:${label} 被远端拒绝认证（${gitCredentialHint()}；${detail}）`), props);
+  if (kind === "not_found") throw Object.assign(new Error(`git_repository_not_found:${label} 远端说没有这个仓库（地址写错、被删或改名，或这份凭证看不到它；${detail}）`), props);
+  if (kind === "unreachable") throw Object.assign(new Error(`git_remote_unreachable:${label} 够不着远端（域名解析不了、端口不通或网络被拦；${detail}）`), props);
+  throw Object.assign(new Error(`git_command_failed:${label}（${detail}）`), props);
 }
 
 // 只取 git 的结论行：进度输出里带着本机路径（"Cloning into '/Users/…'"），不该进给人看的报文。
