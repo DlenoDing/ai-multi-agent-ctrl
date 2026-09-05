@@ -4997,6 +4997,13 @@ async function runPendingTruncationCase() {
       const groupDetail = objectProbe.renderTaskGroupsWith(objectGroups, orgAdmin, "p1", "tg1", {taskGroupId: "tg1", progress: {workItems: []}, config: {}, roomMessages: []}, ["list"]);
       check("任务组列表是对象表格，独立详情不混入其他任务组卡片", /<table/u.test(groupList) && /另一个任务组/u.test(groupList)
         && /aria-label="任务组工作区"/u.test(groupDetail) && /返回任务组列表/u.test(groupDetail) && !/另一个任务组/u.test(groupDetail), textOf(groupDetail).slice(0, 240));
+      const groupShell = objectProbe.renderObjectShellWith(objectGroups, orgAdmin,
+        {page: "tg", projectId: "p1", groupId: "tg1", expanded: true, workspace: "list"},
+        {taskGroupId: "tg1", progress: {taskGroup: objectGroups.taskGroups[0], workItems: []}, config: {}, roomMessages: []});
+      check("任务组详情使用对象局部功能栏而不是丢失入口或恢复横向 Tab",
+        /class="object-detail-layout"/u.test(groupShell) && /class="object-section-nav"/u.test(groupShell)
+          && /任务列表/u.test(groupShell) && /角色与规则/u.test(groupShell) && /执行控制/u.test(groupShell),
+        textOf(groupShell).slice(0, 420));
       const stalePermissionProbe = loadConsole(el("div"), {realI18n: true});
       stalePermissionProbe.renderTaskGroupsWith(objectGroups, orgAdmin, "p1", "tg1", {taskGroupId: "tg1", progress: {taskGroup: {...objectGroups.taskGroups[0], canControl: true}, workItems: []}, config: {}, roomMessages: []}, ["list"]);
       stalePermissionProbe.stubNavigation();

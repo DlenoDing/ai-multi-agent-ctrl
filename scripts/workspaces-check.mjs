@@ -242,6 +242,13 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
     check(`group detail title maps to a real pane: ${title}`, ids.includes(owner),
       `owner=${owner}; panes=${ids.join(", ")}`);
   }
+  workspaces.select("group-detail", "config");
+  const objectNav = workspaces.objectNavigation("group-detail");
+  check("task-group detail has a desktop object rail and one mobile local picker",
+    /class="object-section-nav"/u.test(objectNav) && /class="workspace-mobile-picker"/u.test(objectNav)
+      && (objectNav.match(/object-section-nav-item active/gu) || []).length === 1
+      && /data-workspace="config" aria-current="page"/u.test(objectNav), objectNav);
+  workspaces.select("group-detail", "tasks");
 }
 
 {

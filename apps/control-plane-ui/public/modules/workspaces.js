@@ -88,11 +88,18 @@
       `<button class="workspace-nav-item${current(page)?.id === entry.id ? " active" : ""}" data-workspace-page="${esc(page)}" data-workspace="${esc(entry.id)}" aria-current="${current(page)?.id === entry.id ? "page" : "false"}">${esc(entry.label)}</button>`).join("")}</div>`;
   }
 
+  function objectNavigation(page, options = {}) {
+    const entries = (catalog[page] || []).filter((entry) => options.canCreate !== false || !["create", "register"].includes(entry.id));
+    if (!entries.length) return "";
+    return `<nav class="object-section-nav" aria-label="当前对象功能">${entries.map((entry) =>
+      `<button class="object-section-nav-item${current(page)?.id === entry.id ? " active" : ""}" data-workspace-page="${esc(page)}" data-workspace="${esc(entry.id)}" aria-current="${current(page)?.id === entry.id ? "page" : "false"}">${esc(entry.label)}</button>`).join("")}</nav>${navigation(page, true, options)}`;
+  }
+
   function heading(page, options = {}) {
     const entry = current(page);
     if (!entry) return "";
     return entry.titles.includes(entry.label) ? "" : `<div class="workspace-heading"><h2>${esc(entry.label)}</h2></div>`;
   }
 
-  window.AIMAC_WORKSPACES = {catalog, current, select, setAccount, owner, allows, run, showGuide, showHub, navigation, heading};
+  window.AIMAC_WORKSPACES = {catalog, current, select, setAccount, owner, allows, run, showGuide, showHub, navigation, objectNavigation, heading};
 })();

@@ -2164,9 +2164,9 @@ function renderContent() {
   const groupDetail = page === "tg" && expandedTaskGroupId;
   const activeWorkspace = groupDetail ? "list" : workspaces.current(page)?.id || "";
   const functionalMenu = menuForCurrentSection(perspective, page).filter((item) => item.divider || menuItemAvailable(item));
-  return context + (groupDetail ? "" : mobileMenuHtml(functionalMenu, page, activeWorkspace))
-    + (groupDetail ? workspaces.navigation("group-detail", true, workspaceOptions()) : "")
-    + managementScopeBar() + workspaces.run(page, renderPageContent);
+  const pageBody = managementScopeBar() + workspaces.run(page, renderPageContent);
+  if (groupDetail) return context + `<div class="object-detail-layout"><aside class="object-section-rail">${workspaces.objectNavigation("group-detail", workspaceOptions())}</aside><div class="object-detail-content">${pageBody}</div></div>`;
+  return context + mobileMenuHtml(functionalMenu, page, activeWorkspace) + pageBody;
 }
 
 function menuItemAvailable(item) {

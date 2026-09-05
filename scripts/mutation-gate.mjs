@@ -11743,8 +11743,8 @@ const MUTATIONS = [
     name: "窄屏主要功能必须收敛成单一全局选择器",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '  return context + (groupDetail ? "" : mobileMenuHtml(functionalMenu, page, activeWorkspace))',
-    to: '  return context + ""',
+    from: "  return context + mobileMenuHtml(functionalMenu, page, activeWorkspace) + pageBody;",
+    to: "  return context + pageBody;",
     expect: "窄屏主要功能只使用一个全局选择器"
   },
   {
@@ -11786,6 +11786,14 @@ const MUTATIONS = [
     from: '  if (["tg", "tasks", "monitor", "review", "directives"].includes(nextPage)) {\n    managementGroupId = "";\n    selectedWork = null;\n    directiveTaskGroupId = "";\n    directiveWorkItemId = "";\n  }',
     to: "",
     expect: "稳定功能菜单点击会同时切换页面与具体功能"
+  },
+  {
+    name: "任务组详情必须保留对象局部功能栏",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "workspace",
+    from: '    return `<nav class="object-section-nav" aria-label="当前对象功能">${entries.map((entry) =>',
+    to: '    return `<nav class="object-section-nav-removed" aria-label="当前对象功能">${entries.map((entry) =>',
+    expect: "task-group detail has a desktop object rail and one mobile local picker"
   },
   {
     name: "任务深链接必须保留任务对象",

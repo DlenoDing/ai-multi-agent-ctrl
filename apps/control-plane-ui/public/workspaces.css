@@ -32,6 +32,13 @@
 .workspace-scope select { max-width: 100%; min-width: 180px; }
 .workspace-mobile-picker { display: none; }
 .mobile-function-picker { display: none; }
+.object-detail-layout { grid-column: 1 / -1; display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 20px; min-width: 0; }
+.object-section-rail { min-width: 0; }
+.object-section-nav { position: sticky; top: 78px; display: grid; gap: 2px; padding: 4px 0; border-right: 1px solid var(--card-border); }
+.object-section-nav-item { border: 0; border-right: 3px solid transparent; background: transparent; color: var(--text-sub); padding: 9px 12px; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.object-section-nav-item:hover { background: var(--gray-bg); color: var(--text-main); }
+.object-section-nav-item.active { border-right-color: var(--blue); background: var(--blue-bg); color: var(--blue); font-weight: 600; }
+.object-detail-content { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; }
 .task-list { display: grid; gap: 0; }
 .task-list-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--card-border); }
 .task-list-row:last-child { border-bottom: 0; }
@@ -58,6 +65,8 @@
 .organization-table details code { display: block; max-width: 150px; overflow-wrap: anywhere; font-size: 11px; }
 .agent-profile-table .data-table { min-width: 860px; }
 @media (max-width: 860px) {
+  .object-detail-layout { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .object-section-nav { display: none; }
   .workspace-nav { display: none; }
   .workspace-mobile-picker { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; color: var(--text-sub); font-size: 12px; }
   .workspace-mobile-picker select { width: 100%; min-width: 0; }
