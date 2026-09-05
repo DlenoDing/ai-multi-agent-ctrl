@@ -3817,7 +3817,7 @@ function modelOptionsHtml() {
     "claude-sonnet-4.5", "claude-opus-4.1", "gemini-2.5-pro", "gemini-2.5-flash",
     "grok-4", "deepseek-v3.1", "deepseek-r1"];
   const ids = [...common, ...(state.modelCapabilities || []).map((profile) => profile.modelId)].filter(Boolean);
-  return [...new Set(ids)].map((id) => `<option value="${esc(id)}">${esc(t(id) || id)}</option>`).join("");
+  return [...new Set(ids)].map((id) => `<option value="${esc(id)}">${esc(AGENT_MODEL_PRESET_LABEL[id] || id)}</option>`).join("");
 }
 
 function renderAgentProfileForm({projectId = "", title = "创建 Agent 档案", readOnly = false} = {}) {

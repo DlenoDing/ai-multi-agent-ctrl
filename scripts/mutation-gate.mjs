@@ -1066,6 +1066,14 @@ const MUTATIONS = [
     expect: "真实模型 ID 按协议标识展示且不污染漏译告警"
   },
   {
+    name: "Agent 模型选择列表不得把实际模型 ID 当作待翻译文案",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '${esc(AGENT_MODEL_PRESET_LABEL[id] || id)}</option>',
+    to: '${esc(t(id) || id)}</option>',
+    expect: "真实模型 ID 按协议标识展示且不污染漏译告警"
+  },
+  {
     name: "任务组角色 Skill 必须优先于 Agent 档案",
     check: "verifyAgentGatewayContracts",
     file: CORE,
