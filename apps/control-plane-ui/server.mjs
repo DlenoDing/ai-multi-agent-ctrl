@@ -1384,6 +1384,7 @@ const HUMAN_ONLY_ACTIONS = [
   // active 的契约会进入每个后续任务契约与指令包，且不在阻塞集里，不会留下任何可见阻塞。
   "contract_publish",
   // 与上面同因：改角色技能/技能源就是改规则层，必须真人。
+  "agent_profile_update",
   "role_skill_overlay_create",
   "skill_source_sync",
   // 退役比同步更不可逆：它会摘掉这个源带来的全部角色技能、终态化指向它们的叠加规则。
@@ -2380,7 +2381,7 @@ function permissionForAction(action) {
   if (action === "project_create") return "project:create";
   if (action === "project_member_grant" || action === "project_member_revoke") return "member:invite";
   if (action === "access_grant_create" || action === "access_grant_revoke") return "project:grant";
-  if (action === "agent_create" || action === "agent_activation_update") return "agent:activate";
+  if (["agent_create", "agent_profile_update", "agent_activation_update"].includes(action)) return "agent:activate";
   if (action === "agent_join_token_create" || action === "agent_join_token_revoke" || action === "agent_node_revoke" || action === "agent_control_command_create") return "agent:activate";
   if (action.startsWith("task_group_")) return "task_group:control";
   if (action === "repository_output_target_select") return "project:*";
@@ -3197,7 +3198,7 @@ async function handleApi(req, res) {
       ...(nodeHealth.overdueNodes.length ? [{kind: "agent_node_heartbeat_overdue", nodes: nodeHealth.overdueNodes,
         hint: "这些节点的心跳已经超过阈值、只是还没被扫描标成 offline：它们名下的活不会推进。先看节点机器是不是还活着，再决定重启节点或撤销它"}] : []),
       ...(skillSourceFaults.length ? [{kind: "skill_source_stale", sources: skillSourceFaults,
-        hint: "技能源同步不上：agent 用的还是上一次同步下来的技能。按 lastSyncError 排查（地址 / 认证 / 分支 / 网络），修好后在「AI 智能体」页点「同步」，或等自治周期重试"}] : []),
+        hint: "技能源同步不上：agent 用的还是上一次同步下来的技能。按 lastSyncError 排查（地址 / 认证 / 分支 / 网络），修好后在「系统设置」→「技能源」点「同步」，或等自治周期重试"}] : []),
       ...(mcpFault ? [{kind: "mcp_audit_write_failed", lostEntries: mcpFault.lostEntries,
         error: mcpFault.error, at: mcpFault.at,
         hint: mcpFault.kind === "lock_timeout"
@@ -4863,6 +4864,68 @@ async function handleApi(req, res) {
     writeState(state);
     json(res, 200, payload);
     return;
+  }
+
+  const agentProfileMatch = url.pathname.match(/^\/api\/agents\/([^/]+)\/profile$/);
+  if (req.method === "POST" && agentProfileMatch) {
+    if (!requireAuthenticated(req, state, res)) return;
+    const agent = state.agents.find((item) => item.id === agentProfileMatch[1]);
+    if (!agent) {
+      const denial = missingRecordDenial(req, state, "agent_not_found", "policy_denied");
+      return json(res, denial.status, denial.payload);
+    }
+    const guardScope = agent.projectId ? projectScope(agent.projectId)
+      : {resourceType: "organization", resourceId: agent.organizationId || DEFAULT_ORGANIZATION_ID};
+    const guard = beginGuardedWrite(req, state, "agent_profile_update", `Agent:${agent.id}`, guardScope);
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const editableFields = ["name", "role", "model", "trustScore", "roleSkillRef"];
+    if (["id", "projectId", "organizationId", "status", "capacity"].some((field) => Object.prototype.hasOwnProperty.call(body, field))) {
+      return json(res, 400, {error: "agent_profile_scope_immutable",
+        message: "Agent 档案的 ID、组织/项目作用域和启停状态不能通过配置表单改写；启停请使用独立操作"});
+    }
+    if (!editableFields.some((field) => Object.prototype.hasOwnProperty.call(body, field))) {
+      return json(res, 400, {error: "agent_profile_update_empty",
+        message: "没有要更新的 Agent 档案字段；可修改名称、角色、模型偏好、信任分或角色 Skill"});
+    }
+    if (body.role !== undefined) {
+      const unknownRoles = unknownOwnerRoles([String(body.role || "")]);
+      if (unknownRoles.length) return json(res, 400, {error: "agent_role_not_registered", unknownRoles,
+        supported: REGISTERED_OWNER_ROLES,
+        message: `智能体角色「${unknownRoles.join("、")}」不在已登记的执行角色里 —— 可用：${REGISTERED_OWNER_ROLES.join("、")}`});
+    }
+    const nextRoleSkillRef = body.roleSkillRef === undefined ? agent.roleSkillRef : String(body.roleSkillRef || "").trim();
+    if (nextRoleSkillRef && !(state.roleSkills || []).some((skill) => skill.roleSkillId === nextRoleSkillRef
+      && !["retired", "quarantined"].includes(skill.status))) {
+      return json(res, 400, {error: "role_skill_not_found", roleSkillRef: nextRoleSkillRef,
+        message: "指定的角色 Skill 不在当前活动技能注册表中；请重新选择，或先在服务端同步技能源"});
+    }
+    const nextTrustScore = body.trustScore === undefined ? agent.trustScore : Number(body.trustScore);
+    if (!Number.isFinite(nextTrustScore) || nextTrustScore < 0 || nextTrustScore > 1) {
+      return json(res, 400, {error: "agent_trust_score_invalid",
+        message: `信任分必须是 0 到 1 之间的数（收到的是「${String(body.trustScore).slice(0, 60)}」）`});
+    }
+    if (body.model !== undefined && !String(body.model || "").trim()) {
+      return json(res, 400, {error: "agent_model_required", message: "模型偏好不能为空；请选择自动模式或填写实际模型 ID"});
+    }
+    if (body.name !== undefined && !String(body.name || "").trim()) {
+      return json(res, 400, {error: "agent_name_required", message: "Agent 档案名称不能为空"});
+    }
+    if (agent.projectId) {
+      const project = state.projects.find((item) => item.id === agent.projectId);
+      const archived = projectArchivedRefusal(project, "不能再修改项目 Agent 档案");
+      if (archived) return json(res, 409, archived);
+    }
+    if (body.name !== undefined) agent.name = assertHumanTextWithinLimit(body.name, "agent_name", 200);
+    if (body.role !== undefined) agent.role = String(body.role);
+    if (body.model !== undefined) agent.model = String(body.model).trim();
+    agent.trustScore = nextTrustScore;
+    if (nextRoleSkillRef) agent.roleSkillRef = nextRoleSkillRef;
+    else delete agent.roleSkillRef;
+    agent.updatedAt = now();
+    audit(state, guard.actor, "agent_profile_update", `Agent:${agent.id}`);
+    finishGuardedWrite(state, guard, 200, agent);
+    writeState(state);
+    return json(res, 200, {agent});
   }
 
   const agentMatch = url.pathname.match(/^\/api\/agents\/([^/]+)\/(?:activate|activation)$/);

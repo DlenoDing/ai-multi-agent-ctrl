@@ -13,7 +13,7 @@ const RUNTIME_VERSION = "0.3.0";
 const runtimeFilePath = fileURLToPath(import.meta.url);
 const args = parseArgs(process.argv.slice(2));
 const command = args._[0] || "run";
-const JOIN_TOKEN_ORIGIN = "AI 智能体加入令牌由控制台签发：项目节点找项目管理员，组织共享节点找组织管理员；保存成文件后传 --join-token-file";
+const JOIN_TOKEN_ORIGIN = "加入令牌由控制台签发：项目节点到「项目管理」→「项目 Agent」→「注册项目节点」，组织共享节点到「组织管理」→「共享 Agent」→「注册共享节点」；保存成文件后传 --join-token-file";
 // 认不出的命令要把可用的命令列出来：装机的人打错一个词（agentctl start）时，原先只看到
 // "unknown command: start"，既不知道有哪几个命令、也不知道旋钮在哪儿查。
 const USAGE = [
@@ -97,8 +97,8 @@ function explainAgentFailure(error) {
   const status = error?.status;
   const detail = String(error?.message || error || "").slice(0, 200);
   const known = {
-    join_token_invalid: "这张入网票不对（或已经不在服务端了）—— 找项目管理员进入目标项目「项目管理」→「AI 智能体」→「注册 agent」重新签发一张",
-    join_token_expired: "这张入网票已经过期 —— 找项目管理员进入目标项目「项目管理」→「AI 智能体」→「注册 agent」重新签发",
+    join_token_invalid: "这张入网票不对（或已经不在服务端了）—— 找项目管理员进入目标项目「项目管理」→「项目 Agent」→「注册项目节点」重新签发一张",
+    join_token_expired: "这张入网票已经过期 —— 找项目管理员进入目标项目「项目管理」→「项目 Agent」→「注册项目节点」重新签发",
     join_token_consumed: "这张入网票已经被用过了（一次性）—— 换机器要在目标项目重新签发一张；同一台机器重跑安装命令不用重签（会拿回同一个节点）",
     join_token_not_active: "这张入网票已被吊销 —— 找项目管理员确认后在目标项目重新签发",
     join_token_must_be_one_time: "这张票不是一次性票，服务端拒绝用它注册 —— 重新签发",

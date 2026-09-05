@@ -4681,6 +4681,51 @@ try {
     if (!agentId || agentStatus !== "active") {
       throw new Error(`新建的智能体状态不对（${agentStatus}）：${JSON.stringify(created.payload).slice(0, 200)}`);
     }
+    const emptyUpdate = await jsonFetch(port, `/api/agents/${encodeURIComponent(agentId)}/profile`, {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-agent-profile-empty", authorization: doctorSystemAuth},
+      body: "{}"
+    });
+    if (emptyUpdate.response.status !== 400 || emptyUpdate.payload?.error !== "agent_profile_update_empty") {
+      throw new Error(`Agent 空档案更新没有被具名拒绝（${emptyUpdate.response.status}/${emptyUpdate.payload?.error}）`);
+    }
+    const scopeUpdate = await jsonFetch(port, `/api/agents/${encodeURIComponent(agentId)}/profile`, {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-agent-profile-scope", authorization: doctorSystemAuth},
+      body: JSON.stringify({name: "越界移动", projectId: "prj_other"})
+    });
+    if (scopeUpdate.response.status !== 400 || scopeUpdate.payload?.error !== "agent_profile_scope_immutable") {
+      throw new Error(`Agent 档案作用域能被配置更新改写或静默忽略（${scopeUpdate.response.status}/${scopeUpdate.payload?.error}）`);
+    }
+    const invalidSkillUpdate = await jsonFetch(port, `/api/agents/${encodeURIComponent(agentId)}/profile`, {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-agent-profile-skill", authorization: doctorSystemAuth},
+      body: JSON.stringify({roleSkillRef: "skill_missing_on_update"})
+    });
+    if (invalidSkillUpdate.response.status !== 400 || invalidSkillUpdate.payload?.error !== "role_skill_not_found") {
+      throw new Error(`Agent 档案更新接受了不在活动注册表的 Skill（${invalidSkillUpdate.response.status}/${invalidSkillUpdate.payload?.error}）`);
+    }
+    for (const [field, code] of [["name", "agent_name_required"], ["model", "agent_model_required"]]) {
+      const rejected = await jsonFetch(port, `/api/agents/${encodeURIComponent(agentId)}/profile`, {
+        method: "POST",
+        headers: {"Idempotency-Key": `doctor-agent-profile-empty-${field}`, authorization: doctorSystemAuth},
+        body: JSON.stringify({[field]: ""})
+      });
+      if (rejected.response.status !== 400 || rejected.payload?.error !== code) {
+        throw new Error(`Agent 档案更新接受了空 ${field}（${rejected.response.status}/${rejected.payload?.error}，期望 ${code}）`);
+      }
+    }
+    const updated = await jsonFetch(port, `/api/agents/${encodeURIComponent(agentId)}/profile`, {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-agent-profile-update", authorization: doctorSystemAuth},
+      body: JSON.stringify({name: "质量复核 Agent", role: "reviewer", model: "auto_fast", trustScore: 0.72, roleSkillRef: ""})
+    });
+    const updatedAgent = updated.payload?.agent;
+    if (!updated.response.ok || updatedAgent?.name !== "质量复核 Agent" || updatedAgent?.role !== "reviewer"
+      || updatedAgent?.model !== "auto_fast" || updatedAgent?.trustScore !== 0.72
+      || updatedAgent?.projectId !== "prj_control_plane" || updatedAgent?.roleSkillRef) {
+      throw new Error(`Agent 档案没有按允许字段更新或作用域发生漂移：${JSON.stringify(updated.payload).slice(0, 260)}`);
+    }
     // 停用要真的落下去：界面上的启停按钮只认 active/inactive，落成别的取值那个按钮就永远显示「启用」。
     const deactivated = await jsonFetch(port, `/api/agents/${encodeURIComponent(agentId)}/activate`, {
       method: "POST",

@@ -17,7 +17,7 @@
     {id: "proj-overview", label: "项目概览"},
     {divider: "准备与接入"},
     {id: "proj-members", label: "成员权限"},
-    {id: "proj-agents", label: "AI 智能体"},
+    {id: "proj-agents", label: "项目 Agent"},
     {divider: "执行推进"},
     {id: "tg", label: "任务组"},
     {id: "tasks", label: "任务工作台"},
@@ -38,7 +38,7 @@
   const ORG_MENU = [
     {id: "org-overview", label: "组织概览"},
     {id: "org-members", label: "成员管理"},
-    {id: "org-agents", label: "AI 智能体"},
+    {id: "org-agents", label: "共享 Agent"},
     {id: "org-projects", label: "项目列表"}
   ];
 
@@ -55,7 +55,7 @@
     "sys-accounts": ["账号与授权", "历史兼容入口：日常账号、项目和 Agent 管理应进入组织或项目空间"],
     "org-overview": ["组织概览", "配额用量、活跃项目与任务组统计"],
     "org-members": ["成员管理", "创建成员、权限分配、停用与一次性登录令牌"],
-    "org-agents": ["AI 智能体", "组织内 agent 节点：运行状态、健康度、令牌审计与吊销"],
+    "org-agents": ["共享 Agent", "组织级 Agent 档案、共享运行节点、注册与令牌治理"],
     "org-projects": ["项目列表", "创建项目、基础配置与成员授权"],
     "proj-overview": ["项目概览", "总进度、健康度、任务组平均进度与待人工确认数"],
     "proj-members": ["成员权限", "当前项目成员、角色授权、任务组控制与审核权限入口"],
@@ -64,7 +64,7 @@
     "review": ["人工审核", "集中处理执行过程中提交的人工确认请求"],
     "directives": ["人工指令", "通过独立通道向系统下达结构化指令"],
     "monitor": ["执行监控", "会话、派发、控制通道与实时执行事件流"],
-    "proj-agents": ["AI 智能体", "当前项目的 agent 节点、加入令牌、注册脚本与运行控制"],
+    "proj-agents": ["项目 Agent", "项目专属档案、可调配共享档案、运行节点与注册控制"],
     "proj-settings": ["项目设置", "仓库与访问凭据、基线数据、规则与默认角色"]
   };
 

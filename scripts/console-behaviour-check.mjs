@@ -38,6 +38,7 @@ const consoleModuleFiles = [
   "modules/object-workspace.js",
   "modules/project-command-center.js",
   "modules/governance-workspace.js",
+  "modules/agent-profile-workspace.js",
   "modules/task-group-workspace.js",
   "modules/task-workbench.js"
 ];
@@ -358,6 +359,7 @@ globalThis.__probe = {
   setMemberFocus: (accountId) => { memberGrantAccountId = accountId; },
   setMemberDetail: (accountId) => { selectedOrgMemberId = accountId; memberGrantAccountId = accountId; },
   setProjectMemberDetail: (accountId) => { selectedProjectMemberId = accountId; },
+  setAgentProfileDetail: (agentId) => { selectedAgentProfileId = agentId; },
   setOrganizationDetail: (orgId) => { selectedOrganizationId = orgId; },
   setTaskOrigin: (origin) => { taskReturnContext = origin; managementGroupId = origin?.taskGroupId || ""; },
   resetTaskNavigation: () => resetTaskWorkbench(),
@@ -3566,7 +3568,7 @@ function runNoVisibleProjectCase() {
           + "照着做的人会在自己的菜单里找一个不存在的入口");
       if (who === "系统管理员") {
         check("系统管理员：刚装完的指路要指向项目级智能体注册入口",
-          /项目管理」→「AI 智能体」→「注册 agent/.test(banner)
+          /项目管理」→「项目 Agent」→「注册项目节点/.test(banner)
             && !/项目设置」→「智能体接入/.test(banner),
           `它让人去旧入口而这一屏的导航里没有这几页 —— 横幅是：${banner}`);
       }
@@ -4751,7 +4753,7 @@ async function runPendingTruncationCase() {
       "一个能干活的节点都没有，界面却只显示'执行中' —— 人会一直等一件永远不会发生的事");
     check("提示要说清已注册几个、以及该去哪儿看",
       /已注册 2 个/.test(offlineView)
-        && /AI 智能体/.test(offlineView)
+        && /项目 Agent|共享 Agent/.test(offlineView)
         && /刷新自检/.test(offlineView)
         && /恢复目标 agent 主机\/进程心跳/.test(offlineView)
         && !/项目设置」→「智能体接入/.test(offlineView)
@@ -4763,7 +4765,7 @@ async function runPendingTruncationCase() {
     noRegistered.fleet = {online: 0, total: 0};
     const noRegisteredView = probe.renderMonitorWith(noRegistered, admin, "p1");
     check("一个 agent 都没注册时，监控页出口要直接指向项目注册脚本",
-      /注册 agent/.test(noRegisteredView)
+      /注册项目节点/.test(noRegisteredView)
         && /加入令牌/.test(noRegisteredView)
         && !/接入或恢复节点/.test(noRegisteredView),
       "没有注册节点时还说恢复节点，项目负责人不知道安装脚本从哪里来");
@@ -5002,7 +5004,7 @@ async function runPendingTruncationCase() {
         && !/项目进度 ·/u.test(objectOverview) && !/class="module-card/u.test(objectOverview)
         && /任务组平均进度/u.test(objectOverview) && /待人工确认/u.test(objectOverview), textOf(objectOverview).slice(0, 300));
   check("项目资源摘要取实际配置与服务端节点范围，不把产出记录数当仓库数",
-      /仓库 1 个/u.test(objectOverview) && /AI 智能体 2\/3 在线/u.test(objectOverview), textOf(objectOverview));
+      /仓库 1 个/u.test(objectOverview) && /Agent 节点 2\/3 在线/u.test(objectOverview), textOf(objectOverview));
     const legacyRepositoryProject = {...objectOverviewState.projects[0], config: {repositories: []},
       repositories: [{id: "repo_legacy", url: "https://example.test/repo.git"}]};
     const repositoryScopeProbe = loadConsole(el("div"), {realI18n: true});
@@ -5041,6 +5043,77 @@ async function runPendingTruncationCase() {
     const projectRegister = probe.renderProjectAgentsInventoryWith(overviewState, systemAdmin, "p1", "table", ["register"]);
     check("组织共享节点注册表单提交 organization scope", /registrationScope" value="organization/u.test(projectRegister + renderPane(overviewState, orgAdmin, "org-agents", "register")) && /共享节点/u.test(orgRegister), orgRegister.slice(0, 160));
     check("项目节点注册表单绑定当前项目", /name="projectId" value="p1"/u.test(projectRegister) && /签发一次性加入令牌/u.test(projectRegister), textOf(projectRegister).slice(0, 160));
+
+    const agentProfileState = {...overviewState, agents: [
+      {id: "agent_org_profile", name: "组织评审 Agent", role: "reviewer", model: "auto_best", status: "active", capacity: "ready", trustScore: 0.9, organizationId: "org_default"},
+      {id: "agent_project_profile", name: "项目开发 Agent", role: "agent-runtime", model: "auto_fast", status: "inactive", capacity: "standby", trustScore: 0.8, organizationId: "org_default", projectId: "p1", roleSkillRef: "reviewer"}
+    ]};
+    const profileProbe = loadConsole(el("div"), {realI18n: true});
+    const profileList = profileProbe.renderProjectAgentsInventoryWith(agentProfileState, systemAdmin, "p1", "table", ["profiles"]);
+    check("Agent 档案列表以对象详情为管理入口，不再摆无处理器的启停按钮",
+      /data-action="open-agent-profile" data-agent="agent_project_profile"/u.test(profileList)
+        && /data-action="open-agent-profile" data-agent="agent_org_profile"/u.test(profileList)
+        && !/data-action="agent-activate"/u.test(profileList),
+      textOf(profileList).slice(0, 400));
+    profileProbe.setAgentProfileDetail("agent_project_profile");
+    const projectProfileDetail = profileProbe.renderProjectAgentsInventoryWith(agentProfileState, systemAdmin, "p1", "table", ["profiles"]);
+    const agentFormStart = projectProfileDetail.indexOf('data-form="agent-profile-update"');
+    const agentForm = agentFormStart < 0 ? "" : projectProfileDetail.slice(agentFormStart, projectProfileDetail.indexOf("</form>", agentFormStart));
+    check("项目 Agent 档案详情可修改名称、角色、模型、信任分和 Skill",
+      /aria-label="Agent 档案详情"/u.test(projectProfileDetail)
+        && /data-form="agent-profile-update" data-agent="agent_project_profile"/u.test(projectProfileDetail)
+        && ["name", "role", "model", "trustScore", "roleSkillRef"].every((field) => agentForm.includes(`name="${field}"`))
+        && ["项目开发 Agent", "agent-runtime", "auto_fast", "0.8", "reviewer"].every((value) => agentForm.includes(`value="${value}"`))
+        && /data-action="toggle-agent" data-agent="agent_project_profile"/u.test(projectProfileDetail),
+      textOf(projectProfileDetail).slice(0, 500));
+    profileProbe.setAgentProfileDetail("agent_org_profile");
+    const sharedProfileDetail = profileProbe.renderProjectAgentsInventoryWith(agentProfileState, systemAdmin, "p1", "table", ["profiles"]);
+    check("项目空间对组织共享 Agent 档案保持只读并指回组织管理",
+      /这是组织共享档案/u.test(sharedProfileDetail) && /共享 Agent/u.test(sharedProfileDetail)
+        && textOf(sharedProfileDetail).includes("当前状态 已启用")
+        && textOf(sharedProfileDetail).includes("容量状态 就绪")
+        && !/data-form="agent-profile-update"/u.test(sharedProfileDetail),
+      textOf(sharedProfileDetail).slice(0, 400));
+    const agentRoute = profileProbe.routeBuild({page: "proj-agents", projectId: "p1", agentId: "agent_project_profile", workspace: "profiles"});
+    check("Agent 档案详情具有独立地址",
+      agentRoute === "#/project/p1/agents/agent_project_profile?pane=profiles"
+        && profileProbe.routeParse(agentRoute)?.agentId === "agent_project_profile",
+      agentRoute);
+
+    const agentActionProbe = loadConsole(el("div"), {realI18n: true});
+    agentActionProbe.renderProjectAgentsInventoryWith(agentProfileState, systemAdmin, "p1", "table", ["profiles"]);
+    agentActionProbe.stubNavigation();
+    const agentRequests = [];
+    agentActionProbe.setFetch(async (url, init = {}) => {
+      agentRequests.push({url: String(url), body: init.body ? JSON.parse(init.body) : null});
+      return {ok: true, status: 200, statusText: "OK", headers: {get: () => null}, json: async () => ({agent: {status: "active"}})};
+    });
+    await agentActionProbe.click({target: el("button", {dataset: {action: "toggle-agent", agent: "agent_project_profile"}}), preventDefault: () => {}});
+    check("Agent 档案启停按钮调用真实 activate 接口",
+      agentRequests.some((request) => request.url.endsWith("/api/agents/agent_project_profile/activate") && request.body?.active === true),
+      JSON.stringify(agentRequests));
+    const agentUpdateProbe = loadConsole(el("div"), {realI18n: true});
+    agentUpdateProbe.renderProjectAgentsInventoryWith(agentProfileState, systemAdmin, "p1", "table", ["profiles"]);
+    agentUpdateProbe.stubNavigation();
+    const updateRequests = [];
+    agentUpdateProbe.setFetch(async (url, init = {}) => {
+      updateRequests.push({url: String(url), body: init.body ? JSON.parse(init.body) : null});
+      return {ok: true, status: 200, statusText: "OK", headers: {get: () => null}, json: async () => ({agent: {id: "agent_project_profile"}})};
+    });
+    const updateForm = el("form", {dataset: {form: "agent-profile-update", agent: "agent_project_profile"}}, [
+      el("input", {name: "name", value: "项目研发 Agent"}),
+      el("input", {name: "role", value: "agent-runtime"}),
+      el("input", {name: "model", value: "gpt-5.5"}),
+      el("input", {name: "trustScore", value: "0.77"}),
+      el("input", {name: "roleSkillRef", value: "reviewer"}),
+      el("button", {type: "submit"})
+    ]);
+    await agentUpdateProbe.submit({target: updateForm, submitter: updateForm.children[5], preventDefault: () => {}});
+    check("Agent 档案编辑表单调用 profile 接口且不夹带作用域或状态",
+      updateRequests.some((request) => request.url.endsWith("/api/agents/agent_project_profile/profile")
+        && request.body?.name === "项目研发 Agent" && request.body?.model === "gpt-5.5" && request.body?.trustScore === 0.77
+        && request.body?.roleSkillRef === "reviewer" && request.body?.projectId === undefined && request.body?.status === undefined),
+      JSON.stringify(updateRequests));
 
     const formSlice = (html, marker) => {
       const at = String(html || "").indexOf(marker);
@@ -5674,7 +5747,7 @@ async function runPendingTruncationCase() {
     const freshBanner = freshView.slice(freshView.indexOf("还没有任何执行记录"), freshView.indexOf("还没有任何执行记录") + 260);
     check("一件执行记录都没有时，监控页要说清这是正常的以及下一步",
       /还没有任何执行记录/.test(freshBanner)
-        && /项目管理」→「AI 智能体」→「注册 agent/.test(freshBanner)
+        && /项目管理」→「项目 Agent」→「注册项目节点/.test(freshBanner)
         && !/项目设置」→「智能体接入/.test(freshBanner)
         && /签发一次性加入令牌/.test(freshBanner),
       "十一张「暂无数据」并排，人分不清「还没开始跑」和「跑了但没取回来」");
@@ -6740,7 +6813,7 @@ await runCodedApiErrorCase();
     "进度条不会再动，而这一页一个字都不说 —— 人会一直等，并且会以为是 agent 在慢慢做");
   check("要说清它们不会有进展、以及去哪儿看",
     /不会有任何进展/.test(stalled)
-      && /AI 智能体/.test(stalled)
+      && /项目 Agent|共享 Agent/.test(stalled)
       && /刷新自检/.test(stalled)
       && /恢复目标 agent 主机\/进程心跳/.test(stalled)
       && !/项目设置」→「智能体接入/.test(stalled)
@@ -6749,7 +6822,7 @@ await runCodedApiErrorCase();
     "只说没节点，不说这对他意味着什么、下一步做什么");
   const neverRegistered = probe.renderTaskGroupsWith(withCells("assigned", {online: 0, total: 0}), account, "p1", null, {});
   check("一个 agent 都没注册时，任务组页出口要直接指向项目注册脚本",
-    /注册 agent/.test(neverRegistered)
+    /注册项目节点/.test(neverRegistered)
       && /加入令牌/.test(neverRegistered)
       && !/接入或恢复节点/.test(neverRegistered),
     "单元已交出去但项目没有节点时还说恢复节点，项目负责人不知道先去哪儿拿脚本");
@@ -6812,8 +6885,8 @@ await runCodedApiErrorCase();
     "后端按额度把单元判成 resource_queued，界面却什么都不说 —— 人只看到单元不动，无从判断是背压还是坏了");
   check("要说清这是背压、会自己恢复，以及想更宽怎么做",
     /不需要你动手/.test(wipFull)
-      && /AI 智能体/.test(wipFull)
-      && /注册 agent/.test(wipFull)
+      && /项目 Agent|共享 Agent/.test(wipFull)
+      && /注册项目节点/.test(wipFull)
       && /刷新自检/.test(wipFull)
       && /准入/u.test(wipFull)
       && !/接入或恢复节点/.test(wipFull),

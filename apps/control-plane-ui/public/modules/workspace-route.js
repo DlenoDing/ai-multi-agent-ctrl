@@ -41,7 +41,7 @@
     }
     if (parts[0] === "organization") {
       if (parts[1] === "members") return {page: "org-members", accountId: parts[2] || "", workspace: workspace || "list"};
-      if (parts[1] === "agents") return {page: "org-agents", workspace: workspace || "nodes"};
+      if (parts[1] === "agents") return {page: "org-agents", agentId: parts[2] || "", workspace: workspace || "nodes"};
       if (parts[1] === "projects") return {page: "org-projects", workspace: workspace || "list"};
       return {page: "org-overview", workspace: workspace || "overview"};
     }
@@ -56,6 +56,7 @@
     if (segment === "tasks") route.workId = parts[4] || "";
     if (segment === "directives") route.workId = parts[4] || "";
     if (segment === "members") route.accountId = parts[3] || "";
+    if (segment === "agents") route.agentId = parts[3] || "";
     return route;
   }
 
@@ -69,7 +70,7 @@
     if (route.page === "sys-settings") return `#/system/settings${pane}`;
     if (route.page === "sys-overview" || route.page === "sys-accounts") return `#/system/overview${pane}`;
     if (route.page === "org-members") return `#/organization/members${route.accountId ? `/${encoded(route.accountId)}` : ""}${pane}`;
-    if (route.page === "org-agents") return `#/organization/agents${pane}`;
+    if (route.page === "org-agents") return `#/organization/agents${route.agentId ? `/${encoded(route.agentId)}` : ""}${pane}`;
     if (route.page === "org-projects") return `#/organization/projects${pane}`;
     if (route.page === "org-overview") return `#/organization/overview${pane}`;
     const segment = PAGE_SEGMENTS[route.page] || "overview";
@@ -78,7 +79,8 @@
     const group = route.groupId ? `/${encoded(route.groupId)}` : "";
     const work = route.workId && ["tasks", "directives"].includes(route.page) ? `/${encoded(route.workId)}` : "";
     const account = route.accountId && route.page === "proj-members" ? `/${encoded(route.accountId)}` : "";
-    return `#/project/${project}/${segment}${account || group}${work}${pane}`;
+    const agent = route.agentId && route.page === "proj-agents" ? `/${encoded(route.agentId)}` : "";
+    return `#/project/${project}/${segment}${agent || account || group}${work}${pane}`;
   }
 
   function write(route, {replace = false} = {}) {

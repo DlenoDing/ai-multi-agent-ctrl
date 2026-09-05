@@ -6681,7 +6681,7 @@ const MUTATIONS = [
     name: "刚装完的指路要指这个账号点得到的那一页",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '    system: "先打开「项目管理」→「AI 智能体」→「注册 agent」",',
+    from: '    system: "先打开「项目管理」→「项目 Agent」→「注册项目节点」",',
     to: '    system: "先打开「项目管理」→「项目设置」→「智能体接入」",',
     expect: "而这一屏的导航里没有这几页"
   },
@@ -10022,7 +10022,7 @@ const MUTATIONS = [
     name: "agentctl 指的入口要写成页+面板+按钮（否则判据看不见它）",
     file: "scripts/agentctl.mjs",
     check: "verifyGuidanceNamesRealPages",
-    from: "到目标项目的「项目管理」→「AI 智能体」→「注册 agent」面板点「签发一次性加入令牌」，",
+    from: "到目标项目的「项目管理」→「项目 Agent」→「注册项目节点」面板点「签发一次性加入令牌」，",
     to: "项目管理界面上点「发加入令牌」，",
     expect: "没有这个按钮"
   },
@@ -10070,7 +10070,7 @@ const MUTATIONS = [
     name: "不许用没加书名号的英文页名指路（「到 agent 页」实测 4 处）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyGuidanceNamesRealPages",
-    from: '    + "装好后有项目 agent 管理权限的人可到「项目管理」→「AI 智能体」对该节点点「刷新自检」；"',
+    from: '    + "装好后有项目 agent 管理权限的人可到「项目管理」→「项目 Agent」对该节点点「刷新自检」；"',
     to: '    + "装好后有项目 agent 管理权限的人可到 agent 页对该节点点「刷新自检」；"',
     expect: "没加书名号"
   },
@@ -10150,7 +10150,7 @@ const MUTATIONS = [
     name: "产品报文不得指路到界面上没有的页（实测「运行时」页 10 处）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyGuidanceNamesRealPages",
-    from: "装好后有项目 agent 管理权限的人可到「项目管理」→「AI 智能体」对该节点点「刷新自检」；\"\n    + \"没有项目控制权时，让组织管理员到「组织管理」→「AI 智能体」点「刷新自检」确认它认出来了",
+    from: "装好后有项目 agent 管理权限的人可到「项目管理」→「项目 Agent」对该节点点「刷新自检」；\"\n    + \"没有项目控制权时，让组织管理员到「组织管理」→「共享 Agent」点「刷新自检」确认它认出来了",
     to: "装好后到「运行时」页对该节点点「刷新自检」；\"\n    + \"没有项目控制权时，让组织管理员到「运行时」页点「刷新自检」确认它认出来了",
     expect: "界面上没有这个"
   },
@@ -10208,7 +10208,7 @@ const MUTATIONS = [
     name: "首屏指引不得点名界面上没有的页（我第一版就写错了这句）",
     file: "scripts/init-control-plane.mjs",
     check: "verifyFirstScreenPointsAtRealPlaces",
-    from: "「项目管理」→「AI 智能体」→「注册 agent」",
+    from: "「项目管理」→「项目 Agent」→「注册项目节点」",
     to: "「项目设置」→「智能体接入」",
     expect: "仍指向旧入口"
   },
@@ -11835,6 +11835,78 @@ const MUTATIONS = [
     from: '<div class="stack"><div class="task-detail-header"><button class="secondary-button" data-close-work>返回任务列表</button></div>',
     to: '<div class="stack"><div class="task-detail-header"><button class="secondary-button" data-close-work>返回任务列表</button><button>任务组监控</button></div>',
     expect: "任务详情不重复渲染侧栏已有的任务组跳转"
+  },
+  {
+    name: "Agent 档案列表必须进入对象详情",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '<button class="primary-button" data-action="open-agent-profile" data-agent="${esc(agent.id)}">查看与管理</button>',
+    to: '<button data-action="agent-activate" data-agent="${esc(agent.id)}">启停</button>',
+    expect: "Agent 档案列表以对象详情为管理入口"
+  },
+  {
+    name: "项目空间不得编辑组织共享 Agent 档案",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: 'return renderAgentProfileDetail(selectedProfile, {editable: ownProjectProfile && hasPerm("agent:activate"),',
+    to: 'return renderAgentProfileDetail(selectedProfile, {editable: hasPerm("agent:activate"),',
+    expect: "项目空间对组织共享 Agent 档案保持只读"
+  },
+  {
+    name: "Agent 档案启停必须调用真实接口",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: 'await api(`/api/agents/${encodeURIComponent(target.dataset.agent)}/activate`, {method: "POST", body: JSON.stringify({active: agent?.status !== "active"})});',
+    to: 'await api(`/api/agents/${encodeURIComponent(target.dataset.agent)}/profile`, {method: "POST", body: JSON.stringify({active: agent?.status !== "active"})});',
+    expect: "Agent 档案启停按钮调用真实 activate 接口"
+  },
+  {
+    name: "Agent 档案表单必须调用 profile 接口",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: 'await api(`/api/agents/${encodeURIComponent(form.dataset.agent)}/profile`, {method: "POST", body: JSON.stringify({',
+    to: 'await api(`/api/agents/${encodeURIComponent(form.dataset.agent)}/activate`, {method: "POST", body: JSON.stringify({',
+    expect: "Agent 档案编辑表单调用 profile 接口"
+  },
+  {
+    name: "Agent 档案地址必须保留 Agent ID",
+    file: "apps/control-plane-ui/public/modules/workspace-route.js",
+    gate: "console",
+    from: '    const agent = route.agentId && route.page === "proj-agents" ? `/${encoded(route.agentId)}` : "";',
+    to: '    const agent = "";',
+    expect: "Agent 档案详情具有独立地址"
+  },
+  {
+    name: "Agent 档案更新不得改写作用域和状态",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (["id", "projectId", "organizationId", "status", "capacity"].some((field) => Object.prototype.hasOwnProperty.call(body, field))) {',
+    to: '    if (false && ["id", "projectId", "organizationId", "status", "capacity"].some((field) => Object.prototype.hasOwnProperty.call(body, field))) {',
+    expect: "Agent 档案作用域能被配置更新改写或静默忽略"
+  },
+  {
+    name: "Agent 档案允许字段必须真实更新",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (body.model !== undefined) agent.model = String(body.model).trim();',
+    to: '    if (body.model !== undefined) agent.model = agent.model;',
+    expect: "Agent 档案没有按允许字段更新"
+  },
+  {
+    name: "Agent 档案更新必须保持真人专属",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    from: '  "agent_profile_update",\n  "role_skill_overlay_create",',
+    to: '  "role_skill_overlay_create",',
+    expect: "未分类"
+  },
+  {
+    name: "Agent 档案详情必须使用 Agent 状态语义",
+    file: "apps/control-plane-ui/public/modules/agent-profile-workspace.js",
+    gate: "console",
+    from: '<dt>当前状态</dt><dd>${h.statusBadge("agent", agent.status)}</dd>',
+    to: '<dt>当前状态</dt><dd>${esc(h.t(agent.status))}</dd>',
+    expect: "项目空间对组织共享 Agent 档案保持只读"
   },
   {
     name: "MCP 工具崩溃不得伪装成正当拒绝（要回 server_error、打日志、说清别重试）",
