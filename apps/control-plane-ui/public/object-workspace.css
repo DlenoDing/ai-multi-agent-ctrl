@@ -16,6 +16,22 @@
 .member-grant-focus { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 0; }
 .member-grant-focus select { min-width: 160px; max-width: 100%; }
 .member-grant-focus strong { overflow-wrap: anywhere; }
+.governance-object-workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; grid-column: 1 / -1; min-width: 0; }
+.governance-object-header { padding: 4px 0 12px; border-bottom: 1px solid var(--card-border); }
+.governance-object-header h2 { margin: 8px 0 6px; font-size: 22px; overflow-wrap: anywhere; }
+.governance-eyebrow { margin-top: 12px; }
+.governance-object-band { padding: 2px 0; }
+.governance-object-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; min-width: 0; }
+.governance-object-columns > * { min-width: 0; }
+.governance-actions { margin-top: 14px; }
+.governance-quota-list { display: grid; gap: 16px; }
+.governance-quota-list .record-title { justify-content: space-between; }
+.governance-permission-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.governance-permission-columns h3 { margin: 0 0 10px; font-size: 15px; }
+.governance-grant-list { display: grid; border-top: 1px solid var(--card-border); }
+.governance-grant-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, auto) auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--card-border); min-width: 0; }
+.governance-grant-row > * { min-width: 0; overflow-wrap: anywhere; }
+.metric-time { font-size: 16px !important; }
 @media (max-width: 700px) {
   .topbar .topbar-actions { display: flex; flex-wrap: wrap; justify-content: flex-start; }
   .topbar-actions .account-chip { flex: 1 1 100%; max-width: 100%; overflow: visible; white-space: normal; overflow-wrap: anywhere; }
@@ -23,4 +39,7 @@
   .object-context > button, .project-object-resources { flex-basis: auto; }
   .project-object-resources { justify-content: flex-start; }
   .project-object-identity h2 { font-size: 18px; }
+  .governance-object-columns, .governance-permission-columns { grid-template-columns: minmax(0, 1fr); }
+  .governance-object-header h2 { font-size: 18px; }
+  .governance-grant-row { grid-template-columns: minmax(0, 1fr); }
 }

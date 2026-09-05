@@ -34,6 +34,7 @@ const consoleModuleFiles = [
   "modules/workspaces.js",
   "modules/workspace-location.js",
   "modules/object-workspace.js",
+  "modules/governance-workspace.js",
   "modules/task-group-workspace.js",
   "modules/task-workbench.js"
 ];
@@ -342,6 +343,8 @@ globalThis.__probe = {
     storedProjectId: sessionStorage.getItem("aimac.projectId"), storedPage: sessionStorage.getItem("aimac.page")}),
   selectWorkspace: (pageId, paneId) => workspaces.select(pageId, paneId),
   setMemberFocus: (accountId) => { memberGrantAccountId = accountId; },
+  setMemberDetail: (accountId) => { selectedOrgMemberId = accountId; memberGrantAccountId = accountId; },
+  setOrganizationDetail: (orgId) => { selectedOrganizationId = orgId; },
   setTaskOrigin: (origin) => { taskReturnContext = origin; managementGroupId = origin?.taskGroupId || ""; },
   resetTaskNavigation: () => resetTaskWorkbench(),
   setObjectLocation: (value) => { page = value.page; if (value.projectId !== undefined) currentProjectId = value.projectId; managementGroupId = value.groupId; expandedTaskGroupId = value.expanded ? value.groupId : ""; selectedWork = value.workId ? {taskGroupId: value.groupId, workItemId: value.workId} : null; },
@@ -850,6 +853,24 @@ function check(name, condition, detail) {
   probe.workspaceSetAccount("acct_workspace_b");
   check("账号 B 保留账号 B 自己的栏目", probe.workspaceCurrent("proj-members") === "groups",
     `切回后实际栏目=${probe.workspaceCurrent("proj-members")}`);
+}
+
+{
+  const probe = loadConsole(el("div"), {realI18n: true});
+  const account = {accountId: "acct_system", accountType: "system_admin", permissions: ["system:*"]};
+  const admin = {accountId: "acct_org_admin", accountType: "org_admin", displayName: "组织初始管理员",
+    email: "org-admin@example.test", status: "invited", authPolicy: {passwordSet: false}};
+  const org = {orgId: "org_workspace", name: "治理对象组织", status: "active", initialAdminAccountId: admin.accountId,
+    quotas: {maxMembers: 10, maxProjects: 5, maxTaskGroups: 30, maxAgents: 8},
+    usage: {members: 3, projects: 4, taskGroups: 8, agents: 2, agentsReserved: 1}, createdAt: "2026-09-06T00:00:00.000Z"};
+  probe.setOrganizationDetail(org.orgId);
+  const html = probe.renderSysOrgsInventoryWith({accounts: [admin]}, account, [org], ["list"]);
+  check("系统组织详情集中展示初始管理员、配额和启停治理",
+    /返回组织列表/u.test(html) && /初始组织管理员/u.test(html) && /配额与用量/u.test(html)
+      && /data-action="member-reissue-invite" data-account="acct_org_admin"/u.test(html)
+      && /data-action="org-quota" data-org="org_workspace"/u.test(html)
+      && /data-action="org-status" data-org="org_workspace"/u.test(html),
+    String(html).replace(/<[^>]+>/gu, " ").slice(0, 500));
 }
 
 // 【暂停与恢复按当前状态二选一】。两个按钮一直摆着的话，总有一个按了什么都不会发生：
@@ -4270,11 +4291,12 @@ async function runSelfRowHasNoActionsCase() {
   if (!rowFor("mate@probe.local").includes("data-account=\"acct_mate\"")) {
     failures.push("自己那一行: 成员表没渲染出同事那一行 —— 夹具没触达被测代码，本条在空转");
   } else {
-    check("成员列表不给自己那一行发操作按钮（同事那一行有，才证明不是整表都没按钮）",
+    check("成员列表不给自己那一行发停用或权限按钮，但仍可打开只读账号详情",
       !/data-action="member-status" data-account="acct_me"/u.test(html)
         && !/data-action="member-perms" data-account="acct_me"/u.test(html)
-        && /data-action="member-status" data-account="acct_mate"/u.test(html),
-      "自己那一行也给了停用/权限按钮 —— 点下去就是把自己登出");
+        && /data-action="open-member-detail" data-account="acct_me"/u.test(html)
+        && /data-action="open-member-detail" data-account="acct_mate"/u.test(html),
+      "自己不该有危险操作；自己与同事都应能进入各自的对象详情");
     check("自己那一行要标出「本人」，否则人分不清哪一行是自己",
       rowFor("me@probe.local").includes("本人"),
       "成员表里认不出哪一行是自己");
@@ -5080,9 +5102,10 @@ async function runPendingTruncationCase() {
         && !/name="perm" value="project:grant"/u.test(orgMemberCreatePane)
         && !/name="perm" value="task_group:review"/u.test(orgMemberCreatePane),
       textOf(orgMemberCreatePane).slice(0, 260));
-    check("组织成员行保留账号能力按钮和项目任务组授权入口",
-      /data-action="member-perms" data-account="acct_member"[\s\S]*账号能力/u.test(orgMemberListPane)
-        && /data-action="member-grants" data-account="acct_member"[\s\S]*项目与任务组授权/u.test(orgMemberListPane),
+    check("组织成员列表只负责定位成员对象，不再把全部管理动作堆在一行",
+      /data-action="open-member-detail" data-account="acct_member"[\s\S]*查看与管理/u.test(orgMemberListPane)
+        && !/data-action="member-status" data-account="acct_member"/u.test(orgMemberListPane)
+        && !/data-action="member-retire" data-account="acct_member"/u.test(orgMemberListPane),
       textOf(orgMemberListPane).slice(0, 260));
     check("组织成员权限矩阵合并直接能力、项目角色和任务组角色",
       /子账户项目 \/ 任务组权限矩阵/u.test(orgMemberMatrixPane)
@@ -5096,6 +5119,24 @@ async function runPendingTruncationCase() {
         && /任务组：评审人/u.test(orgMemberMatrixText)
         && /data-action="member-grants" data-account="acct_member"/u.test(orgMemberMatrixPane),
       orgMemberMatrixText.slice(0, 320));
+    {
+      const detailProbe = loadConsole(el("div"), {realI18n: true});
+      detailProbe.setMemberDetail("acct_member");
+      const memberDetail = detailProbe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["list"]);
+      check("成员详情固定成员上下文并在同页提供项目与任务组授权",
+        /返回成员列表/u.test(memberDetail)
+          && /账号资料与生命周期/u.test(memberDetail)
+          && /项目与任务组权限/u.test(memberDetail)
+          && /分配项目角色/u.test(memberDetail)
+          && /分配任务组角色/u.test(memberDetail)
+          && /value="acct_member" selected/u.test(memberDetail),
+        textOf(memberDetail).slice(0, 500));
+      check("成员详情集中放置账号生命周期操作",
+        /data-action="member-perms" data-account="acct_member"/u.test(memberDetail)
+          && /data-action="member-status" data-account="acct_member"/u.test(memberDetail)
+          && /data-action="member-retire" data-account="acct_member"/u.test(memberDetail),
+        "成员列表收起动作后，详情里必须完整保留账号能力、停用与注销入口");
+    }
     {
       const focusedProbe = loadConsole(el("div"), {realI18n: true});
       focusedProbe.setMemberFocus("acct_member");

@@ -96,8 +96,10 @@ let state = emptyState();
 let systemOverview = null;
 let systemOverviewStatus = "unloaded"; // unloaded | loaded | failed
 let organizations = [];
+let selectedOrganizationId = "";
 let orgAgentNodes = [];
 let orgMembers = [];
+let selectedOrgMemberId = "";
 let projConfig = null;
 // null 同时代表"还没取过""取失败了""没选项目"三件事，而界面把三者一律说成"配置接口加载失败" ——
 // 人会去追一个并不存在的故障（实测：渲染一个全新项目的设置页，第一眼就是这句）。分成三态。
@@ -969,8 +971,10 @@ function clearSession() {
   systemOverview = null;
   systemOverviewStatus = "unloaded";
   organizations = [];
+  selectedOrganizationId = "";
   orgAgentNodes = [];
   orgMembers = [];
+  selectedOrgMemberId = "";
   projConfig = null;
   projConfigStatus = "unloaded";
   instructionState = null;
@@ -1874,9 +1878,13 @@ function renderContent() {
     && taskReturnContext?.accountId === currentAccount?.accountId && taskReturnContext.projectId === currentProjectId && taskReturnContext.taskGroupId === group.id ? taskReturnContext : null;
   const context = window.AIMAC_OBJECT_WORKSPACE.trail({organization: state.organizationContext, project, group: project && ["tg", "tasks", "monitor", "review", "directives"].includes(page) ? group : null,
     work: page === "tasks" && selectedWork ? taskWorkDetail?.workItem : null, pageLabel: PAGE_META[page]?.[0] || "", returnTask});
+  const governanceObjectOpen = (page === "sys-orgs" && selectedOrganizationId)
+    || (page === "org-members" && selectedOrgMemberId);
   if (PROJECT_PAGES.has(page) && hasNoVisibleProject()) return context + renderPanel(PAGE_META[page]?.[0] || "项目管理", noVisibleProjectNotice(), {wide: true});
   const groupDetail = page === "tg" && expandedTaskGroupId;
-  return context + workspaces.navigation(groupDetail ? "group-detail" : page, true, workspaceOptions()) + (groupDetail ? "" : workspaces.heading(page, workspaceOptions())) + managementScopeBar() + workspaces.run(page, renderPageContent);
+  return context + workspaces.navigation(groupDetail ? "group-detail" : page, true, workspaceOptions())
+    + (groupDetail || governanceObjectOpen ? "" : workspaces.heading(page, workspaceOptions()))
+    + managementScopeBar() + workspaces.run(page, renderPageContent);
 }
 
 function workspaceOptions() {
@@ -2308,6 +2316,17 @@ function renderSysOrgsLifecycleGuide({orgs, activeOrgs, suspendedOrgs, quotaPres
   `, {wide: true});
 }
 
+function systemOrganizationActions(org, initialAdmin) {
+  return [
+    `<button class="secondary-button" data-action="org-quota" data-org="${esc(org.orgId)}">调整配额</button>`,
+    initialAdmin?.status === "invited"
+      ? `<button class="secondary-button" data-action="member-reissue-invite" data-account="${esc(org.initialAdminAccountId)}">重发管理员邀请</button>` : "",
+    org.status === "active"
+      ? `<button class="danger-button" data-action="org-status" data-org="${esc(org.orgId)}" data-status="suspended">停用组织</button>`
+      : `<button class="secondary-button" data-action="org-status" data-org="${esc(org.orgId)}" data-status="active">启用组织</button>`
+  ].filter(Boolean).join(" ");
+}
+
 function renderSysOrgs() {
   const initialAdminById = new Map((state.accounts || []).map((account) => [account.accountId, account]));
   const activeOrgs = organizations.filter((org) => org.status === "active").length;
@@ -2321,11 +2340,21 @@ function renderSysOrgs() {
     ];
     return pairs.some(([used, max]) => Number(max) > 0 && Number(used || 0) / Number(max) >= 0.8);
   }).length;
+  const selectedOrganization = organizations.find((org) => org.orgId === selectedOrganizationId);
+  if (selectedOrganizationId && !selectedOrganization) selectedOrganizationId = "";
+  if (selectedOrganization) {
+    const initialAdmin = initialAdminById.get(selectedOrganization.initialAdminAccountId) || null;
+    return window.AIMAC_GOVERNANCE_WORKSPACE.organizationDetail({
+      organization: selectedOrganization,
+      initialAdmin,
+      actionsHtml: systemOrganizationActions(selectedOrganization, initialAdmin),
+      helpers: {statusBadge, customBadge, fmtTime, quotaLine, panel: renderPanel}
+    });
+  }
   const orgRows = organizations.map((org) => row([
     `<div class="org-name"><strong>${esc(org.name)}</strong><details><summary>组织编号</summary><code>${esc(org.orgId)}</code></details></div>`,
     `<div class="org-admin"><strong>${esc(accountName(org.initialAdminAccountId))}</strong><div class="small muted">${esc(initialAdminById.get(org.initialAdminAccountId)?.email || "")}</div>
       ${initialAdminById.get(org.initialAdminAccountId)?.status ? statusBadge("account", initialAdminById.get(org.initialAdminAccountId).status) : ""}
-      ${initialAdminById.get(org.initialAdminAccountId)?.status === "invited" ? `<button class="secondary-button" data-action="member-reissue-invite" data-account="${esc(org.initialAdminAccountId)}">重发管理员邀请</button>` : ""}
       <details><summary>账号编号</summary><code>${esc(org.initialAdminAccountId || "-")}</code></details></div>`,
     statusBadge("organization", org.status),
     `<div class="org-quota-grid"><div><label>成员（含管理员）</label>${quotaLine(org.usage?.members, org.quotas?.maxMembers)}</div>
@@ -2333,12 +2362,7 @@ function renderSysOrgs() {
       <div><label>任务组</label>${quotaLine(org.usage?.taskGroups, org.quotas?.maxTaskGroups)}</div>
       <div><label>Agent 节点</label>${quotaLine(org.usage?.agents, org.quotas?.maxAgents, org.usage?.agentsReserved)}</div></div>`,
     {v: fmtTime(org.createdAt), c: "nowrap"},
-    `<div class="org-actions">` + [
-      `<button class="secondary-button" data-action="org-quota" data-org="${esc(org.orgId)}">配额</button>`,
-      org.status === "active"
-        ? `<button class="danger-button" data-action="org-status" data-org="${esc(org.orgId)}" data-status="suspended">停用</button>`
-        : `<button class="secondary-button" data-action="org-status" data-org="${esc(org.orgId)}" data-status="active">启用</button>`
-    ].join(" ") + "</div>"
+    `<div class="org-actions"><button class="primary-button" data-action="open-org-detail" data-org="${esc(org.orgId)}">查看与管理</button></div>`
   ])).join("");
 
   return [
@@ -3143,7 +3167,7 @@ function taskGroupGrantCandidates(project) {
 }
 
 function renderTaskGroupGrantForm(project) {
-  const groups = projectTaskGroups().filter((taskGroup) => taskGroup.projectId === project.id);
+  const groups = (state.taskGroups || []).filter((taskGroup) => taskGroup.projectId === project.id);
   const candidates = taskGroupGrantCandidates(project);
   if (!groups.length) {
     return `<div class="notice">当前项目还没有任务组。先到“任务组”页创建任务组，再按具体任务组授予控制、审核或监控权限。</div>`;
@@ -3173,7 +3197,7 @@ function renderTaskGroupGrantForm(project) {
 }
 
 function renderTaskGroupGrantList(project) {
-  const groupIds = new Set(projectTaskGroups().filter((taskGroup) => taskGroup.projectId === project.id).map((taskGroup) => taskGroup.id));
+  const groupIds = new Set((state.taskGroups || []).filter((taskGroup) => taskGroup.projectId === project.id).map((taskGroup) => taskGroup.id));
   const grants = (state.accessGrants || []).filter((grant) =>
     grant.status === "active" && grant.resource?.resourceType === "task_group" && groupIds.has(grant.resource.resourceId));
   const rows = grants.map((grant) => row([
@@ -3536,41 +3560,61 @@ function renderOrgMembersLifecycleGuide(members) {
   `, {wide: true});
 }
 
+function organizationMemberActions(account) {
+  const isSelf = account.accountId === currentAccount.accountId;
+  const manageable = account.accountType === "user_account" && !isSelf;
+  if (!manageable) return "";
+  return [
+    `<button class="secondary-button" data-action="member-perms" data-account="${esc(account.accountId)}">调整账号能力</button>`,
+    account.status === "invited" || account.invitationWithdrawn
+      ? `<button class="secondary-button" data-action="member-reissue-invite" data-account="${esc(account.accountId)}">重发邀请</button>` : "",
+    account.invitationWithdrawn ? "" : ["disabled", "suspended"].includes(account.status)
+      ? `<button class="secondary-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="active">启用账号</button>`
+      : `<button class="danger-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="suspended">停用账号</button>`,
+    account.status === "retired" ? ""
+      : `<button class="danger-button" data-action="member-retire" data-account="${esc(account.accountId)}">注销账号</button>`
+  ].filter(Boolean).join(" ");
+}
+
 function renderOrgMembers() {
   const members = (orgMembers || []).filter((account) => account.accountType !== "service_account");
   const stats = memberStats(members);
+  const selectedMember = members.find((account) => account.accountId === selectedOrgMemberId);
+  if (selectedOrgMemberId && !selectedMember) selectedOrgMemberId = "";
+  if (selectedMember) {
+    memberGrantAccountId = selectedMember.accountId;
+    const projects = assignableProjects().filter((project) => organizationOf(project) === organizationOf(selectedMember));
+    const chosenProject = projects.find((project) => project.id === memberGrantProjectId) || projects[0] || null;
+    if (chosenProject) memberGrantProjectId = chosenProject.id;
+    const projectSelectorHtml = chosenProject ? `<select id="member-detail-project" data-member-grant-project>${projects.map((project) =>
+      `<option value="${esc(project.id)}"${project.id === chosenProject.id ? " selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}</select>` : "";
+    const manageable = selectedMember.accountType === "user_account" && selectedMember.accountId !== currentAccount.accountId
+      && selectedMember.status !== "retired";
+    const readOnlyNotice = `<div class="notice">${selectedMember.accountId === currentAccount.accountId
+      ? "这是当前登录账号；为避免把自己锁在组织外，本页不提供自助停用、注销或改授权。"
+      : "该账号不是可授权的组织子账户，当前只展示已有身份和权限。"}</div>`;
+    return window.AIMAC_GOVERNANCE_WORKSPACE.memberDetail({
+      member: selectedMember,
+      project: chosenProject,
+      projectMemberships: projectMembershipsForAccount(selectedMember.accountId),
+      taskGroupGrants: taskGroupGrantsForAccount(selectedMember.accountId),
+      accountActionsHtml: organizationMemberActions(selectedMember),
+      projectSelectorHtml,
+      projectGrantFormHtml: manageable && chosenProject ? renderProjectMemberForm({projectId: chosenProject.id}) : readOnlyNotice,
+      taskGroupGrantFormHtml: manageable && chosenProject ? renderTaskGroupGrantForm(chosenProject) : readOnlyNotice,
+      helpers: {statusBadge, retiredNote, t, permLabel, grantRoleLabel, projectNameOf, taskGroupNameOf,
+        projectLink: window.AIMAC_OBJECT_WORKSPACE.projectLink, panel: renderPanel}
+    });
+  }
   const memberRows = members.map((account) => {
     const isSelf = account.accountId === currentAccount.accountId;
-    const manageable = account.accountType === "user_account" && !isSelf;
     return row([
       `<strong>${esc(account.displayName)}</strong>${isSelf ? ` ${customBadge("本人", "blue")}` : ""}`,
       esc(account.email),
       badge(account.accountType),
       `${statusBadge("account", account.status)}${retiredNote(account)}`,
       esc((account.roles || []).map((role) => t(role)).join("、")),
-      manageable ? [
-        `<button class="secondary-button" data-action="member-perms" data-account="${esc(account.accountId)}">账号能力</button>`,
-        `<button class="secondary-button" data-action="member-grants" data-account="${esc(account.accountId)}">项目与任务组授权</button>`,
-        // 邀请令牌只显示一次。丢了之后这一行原先只有「停用」——点它再点「启用」会撞 409，
-        // 人会以为自己把账号弄坏了。真正需要的是重发。
-        // 邀请被撤回（invited→停用）的账号同样从没接受过邀请：它唯一的出路也是重发，
-        // 而「启用」对它必然 409 —— 所以这一行给的是重发，不是启用。
-        account.status === "invited" || account.invitationWithdrawn
-          ? `<button class="secondary-button" data-action="member-reissue-invite" data-account="${esc(account.accountId)}">重发邀请</button>`
-          : "",
-        account.invitationWithdrawn
-          ? ""
-          // 状态名统一成规范里声明过的 suspended（此前写的是 disabled，而规范与状态机里都没有它）。
-          // 判断处两个都认：盘上还可能有没被归一过的旧记录。
-          : ["disabled", "suspended"].includes(account.status)
-            ? `<button class="secondary-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="active">启用</button>`
-            : `<button class="danger-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="suspended">停用</button>`,
-        // 注销：终态、不可撤销。后端有杠杆而界面没入口＝这个杠杆不存在，所以入口必须在这里。
-        // 已经注销过的不再给按钮 —— 给了也只会拿到 409，而人会以为是自己点错了。
-        account.status === "retired"
-          ? ""
-          : `<button class="danger-button" data-action="member-retire" data-account="${esc(account.accountId)}">注销</button>`
-      ].filter(Boolean).join(" ") : "-"
+      `<button class="primary-button" data-action="open-member-detail" data-account="${esc(account.accountId)}">${isSelf ? "查看账号" : "查看与管理"}</button>`
     ]);
   }).join("");
 
@@ -9104,6 +9148,14 @@ document.addEventListener("click", async (event) => {
   if (workspaceButton) {
     const nextPage = workspaceButton.dataset.workspacePage || page;
     const nextSection = workspaceButton.dataset.workspace;
+    const closesObjectDetail = (nextPage === "sys-orgs" && selectedOrganizationId)
+      || (nextPage === "org-members" && selectedOrgMemberId);
+    if (closesObjectDetail) {
+      selectedOrganizationId = "";
+      selectedOrgMemberId = "";
+      memberGrantAccountId = "";
+      if (nextPage === page && workspaces.current(page)?.id === nextSection) { render(); return; }
+    }
     if (nextPage === "group-detail" && page === "tg" && expandedTaskGroupId) {
       if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "任务组详情有未保存的修改，确认切换栏目？", danger: true, confirmText: "放弃并切换"}))) return;
       if (!workspaces.select(nextPage, nextSection)) return;
@@ -9149,6 +9201,8 @@ document.addEventListener("click", async (event) => {
   if (menuButton) {
     if (menuButton.dataset.menu !== page && formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前页面有未保存的修改，确认离开？", danger: true, confirmText: "放弃并离开"}))) return;
     page = menuButton.dataset.menu;
+    if (page === "sys-orgs") selectedOrganizationId = "";
+    if (page === "org-members") { selectedOrgMemberId = ""; memberGrantAccountId = ""; }
     if (page === "tg") { expandedTaskGroupId = ""; managementGroupId = ""; tgDetail = null; }
     sessionStorage.setItem("aimac.page", page);
     lastError = "";
@@ -9221,6 +9275,37 @@ document.addEventListener("click", async (event) => {
   const guardBtn = target.tagName === "BUTTON" ? target : null;
   if (guardBtn) { guardBtn.disabled = true; guardBtn.classList.add("is-loading"); }
   try {
+    if (action === "open-org-detail") {
+      const orgId = target.dataset.org || "";
+      if (!(organizations || []).some((org) => org.orgId === orgId)) return;
+      selectedOrganizationId = orgId;
+      render();
+      window.scrollTo?.({top: 0});
+      return;
+    }
+    if (action === "close-org-detail") {
+      selectedOrganizationId = "";
+      render();
+      window.scrollTo?.({top: 0});
+      return;
+    }
+    if (action === "open-member-detail") {
+      const accountId = target.dataset.account || "";
+      if (!(orgMembers || []).some((account) => account.accountId === accountId)) return;
+      selectedOrgMemberId = accountId;
+      memberGrantAccountId = accountId;
+      workspaces.select("org-members", "list");
+      render();
+      window.scrollTo?.({top: 0});
+      return;
+    }
+    if (action === "close-member-detail") {
+      selectedOrgMemberId = "";
+      memberGrantAccountId = "";
+      render();
+      window.scrollTo?.({top: 0});
+      return;
+    }
     if (action === "open-node-tasks") {
       workspaces.select("monitor", "runs");
       await focusManagementGroup("", "monitor");
@@ -9416,6 +9501,7 @@ document.addEventListener("click", async (event) => {
       if (action === "member-grants" && !member) return;
       if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "切换授权对象会丢失未保存的修改，确认继续？", danger: true, confirmText: "放弃并切换"}))) return;
       memberGrantAccountId = member?.accountId || "";
+      selectedOrgMemberId = "";
       formTouched = false;
       dirtyFormKinds.clear();
       workspaces.select("org-members", "grants");
