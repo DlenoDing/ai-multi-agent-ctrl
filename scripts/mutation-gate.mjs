@@ -558,6 +558,24 @@ const MUTATIONS = [
     expect: "截断窗口没有保留最新的那几条"
   },
   {
+    // 工作项卡的执行历史要最新在前。把 findWorkItemDispatches 的排序反过来即最旧在前。
+    name: "工作项执行历史必须最新在前",
+    file: APP,
+    gate: "console",
+    from: "    .sort((left, right) => String(right.createdAt || right.updatedAt || \"\").localeCompare(String(left.createdAt || left.updatedAt || \"\")));",
+    to: "    .sort((left, right) => String(left.createdAt || left.updatedAt || \"\").localeCompare(String(right.createdAt || right.updatedAt || \"\")));",
+    expect: "最新的派发没有排在最前"
+  },
+  {
+    // 执行历史要列出【全部】派发，不只是最新一次。把历史截成一条即回到"只看得到最新一次"。
+    name: "工作项执行历史必须列出全部派发",
+    file: APP,
+    gate: "console",
+    from: "          const history = findWorkItemDispatches(taskGroup.id, workItem.id);",
+    to: "          const history = findWorkItemDispatches(taskGroup.id, workItem.id).slice(0, 1);",
+    expect: "执行历史只显示了一次派发"
+  },
+  {
     // 项目设置的配置行（仓库/基线/角色）对只读成员必须收起「删除」：cfg-del 是本地暂存，保存已禁用，
     // 只读成员点了删本地行却存不下＝按了看不到效果的死动作。去掉 cfgRepoRow 的 readOnly 门即让删除对只读成员出现。
     name: "只读成员的配置行不许摆删除按钮",

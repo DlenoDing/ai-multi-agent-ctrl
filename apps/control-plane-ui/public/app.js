@@ -5172,7 +5172,6 @@ function renderTaskGroupDetail(taskGroup) {
   const embeddedTruncated = !progressData.workItems && taskGroup.workItemsTruncated === true;
   // 任务按时间线倒序：最新建的排最前（服务端下发的是插入序＝最旧在前）。两条数据路径（进度接口/列表内嵌）经同一个排序；slice 不改原数组。
   const workItems = (progressData.workItems || taskGroup.workItems || []).slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))).map((workItem) => {
-    const dispatch = findWorkItemDispatch(taskGroup.id, workItem.id);
     return `
       <div class="record">
         <div class="record-title"><strong>${esc(workItem.title)}</strong>${badge(workItem.status)}</div>
@@ -5204,10 +5203,28 @@ function renderTaskGroupDetail(taskGroup) {
             <div class="form-row"><label>理由（必填）</label><input name="justification" placeholder="例如：这涉及存储选型，做错了后面全要返工"></div>
             <button class="secondary-button" type="submit">保存</button>
           </form>` : ""}
-        ${dispatch ? `
-          <div class="record-meta"><span>派发：<span class="mono">${esc(dispatch.dispatchId)}</span></span><span>${badge(dispatch.status)} ${percentCell(dispatch.progressPercent)}</span></div>
-          <div class="button-row"><button class="secondary-button" data-action="show-dispatch-events" data-dispatch-id="${esc(dispatch.dispatchId)}">实时事件</button></div>
-        ` : ""}
+        ${(() => {
+          // 执行历史：这个任务先后交给了哪些 agent、每次用什么角色/模型、结果如何——全部派发按时间倒序，最新在前。
+          // 节点只展示 id：tg 页取的是 tasks 视图，里面没有 agentRuntimeNodes，不为一个名字多拉一份集合。
+          const history = findWorkItemDispatches(taskGroup.id, workItem.id);
+          if (!history.length) return "";
+          return `<div class="stack" style="margin-top:6px;">
+            <div class="small muted">执行历史（共 ${esc(history.length)} 次派发，最新在前）</div>
+            ${history.map((item) => `
+              <div class="record-meta">
+                <span>${esc(fmtTime(item.createdAt || item.updatedAt))}</span>
+                <span>${badge(item.status)} ${percentCell(item.progressPercent)}</span>
+                <span>节点：<span class="mono">${esc(item.assignedNodeId || "未分配")}</span></span>
+                <span>角色：${esc(t(item.roleId) || item.roleId || "-")}</span>
+                <span>模型：${esc(item.model || "自动")}</span>
+                ${Number(item.attempts) > 1 ? `<span>第 ${esc(item.attempts)} 次尝试</span>` : ""}
+                ${item.failureReason ? `<span>失败：${esc(explainCoded(item.failureReason))}</span>` : ""}
+                ${item.blockedReason ? `<span>受阻：${esc(explainCoded(item.blockedReason))}</span>` : ""}
+                <span>派发：<span class="mono">${esc(item.dispatchId)}</span></span>
+                <button class="secondary-button" data-action="show-dispatch-events" data-dispatch-id="${esc(item.dispatchId)}">实时事件</button>
+              </div>`).join("")}
+          </div>`;
+        })()}
       </div>
     `;
   }).join("");
@@ -5587,6 +5604,14 @@ function collectRuleFragments(form, layer) {
 // 它与真相源（state-machines.yaml 的 AgentDispatch.terminal）由 validate-specs 逐字核对，
 // 并且【整个前端只准有这一份】—— 原先另有一处内联抄写，已改成用这个集合。
 const terminalDispatchStatuses = new Set(["completed", "failed", "cancelled"]);
+
+// 一个工作项的【全部】派发（最新在前）：卡片上的「执行历史」用它——人要看的是这个任务先后交给了哪些 agent、
+// 每次用什么角色/模型、结果如何，而不只是最新那一次（findWorkItemDispatch 只取活跃的那一个，给监控页用）。
+function findWorkItemDispatches(taskGroupId, workItemId) {
+  return (state.agentDispatches || [])
+    .filter((dispatch) => dispatch.taskGroupId === taskGroupId && dispatch.workItemId === workItemId)
+    .sort((left, right) => String(right.createdAt || right.updatedAt || "").localeCompare(String(left.createdAt || left.updatedAt || "")));
+}
 
 function findWorkItemDispatch(taskGroupId, workItemId) {
   const candidates = (state.agentDispatches || [])

@@ -1839,6 +1839,33 @@ function runRuleTextareaAutoGrowCase() {
 }
 
 
+// 「每个任务也能看到完整执行流程，涉及哪些 agent 分别执行了什么」：工作项卡要列出这个任务的【全部】派发
+// （不只是最新一次），最新在前，每条带节点/角色/模型/尝试次数/失败原因。
+function runWorkItemDispatchHistoryCase() {
+  const probe = loadConsole(el("div"));
+  const group = {id: "tg_hist", projectId: "p1", roles: [], workItems: [{id: "w_hist", title: "历史探针单元", status: "in_progress", progress: 10, ownerRole: "agent-runtime"}]};
+  const older = {dispatchId: "adp_hist_old", taskGroupId: "tg_hist", workItemId: "w_hist", status: "failed", progressPercent: 40,
+    assignedNodeId: "node_alpha", roleId: "agent-runtime", model: "openai:gpt-5.5", attempts: 1, failureReason: "executor_produced_no_changes",
+    createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T01:00:00.000Z"};
+  const newer = {dispatchId: "adp_hist_new", taskGroupId: "tg_hist", workItemId: "w_hist", status: "running", progressPercent: 10,
+    assignedNodeId: "node_beta", roleId: "reviewer", model: "anthropic:claude-sonnet-4-5", attempts: 2,
+    createdAt: "2026-09-01T00:00:00.000Z", updatedAt: "2026-09-01T00:10:00.000Z"};
+  const html = probe.renderTaskGroupDetail({taskGroupId: "tg_hist", progress: {}, config: null, roomMessages: []}, group,
+    {projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [group], agentDispatches: [older, newer], workSessions: [], closeBarriers: [], qualityGates: [], findings: [],
+      humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []});
+  check("工作项卡要列出这个任务的全部派发（执行历史），不只是最新一次",
+    /执行历史（共 2 次派发/u.test(html) && html.includes("adp_hist_old") && html.includes("adp_hist_new"),
+    "执行历史只显示了一次派发：人看不到这个任务先后交给过哪些 agent、之前为什么失败");
+  check("执行历史最新在前",
+    html.indexOf("adp_hist_new") >= 0 && html.indexOf("adp_hist_new") < html.indexOf("adp_hist_old"),
+    "最新的派发没有排在最前：人找当前这一次要翻到最底下");
+  check("每次派发要说清节点/角色/模型/尝试次数/失败原因",
+    html.includes("node_beta") && html.includes("node_alpha") && /角色：/u.test(html)
+      && html.includes("anthropic:claude-sonnet-4-5") && html.includes("openai:gpt-5.5") && /第 2 次尝试/u.test(html) && /失败：/u.test(html),
+    "执行历史缺了节点、角色、模型、尝试次数或失败原因中的某一项——「涉及哪些 agent 分别执行了什么」答不上来");
+}
+
 function runRoomVisibilityCase() {
   const probe = loadConsole(el("div"));
   const spoken = "我建议把订单状态机换成事件溯源，评审那步可以跳过";
@@ -6049,6 +6076,7 @@ runNoDeadHelperCase();
 runPlanFinalizationNoticeCase();
 runWorkItemOrderCase();
 runRuleTextareaAutoGrowCase();
+runWorkItemDispatchHistoryCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();
