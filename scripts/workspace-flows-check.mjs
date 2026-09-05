@@ -84,6 +84,56 @@ try {
   sessionToken = (await request("/api/auth/login", {method: "POST",
     body: {email: organization.adminAccount.email, token: organization.accountToken}})).sessionToken;
   const orgProject = await request("/api/org/projects", {method: "POST", status: 201, body: {name: "组织导航项目"}});
+  const siblingProject = await request("/api/org/projects", {method: "POST", status: 201, body: {name: "成员保留权限项目"}});
+  const orgAdminSession = sessionToken;
+  const invitedMember = await request("/api/org/members", {method: "POST", status: 201,
+    body: {displayName: "权限替换成员", email: "permission-replace-member@example.test", defaultProjectId: orgProject.id}});
+  const memberId = invitedMember.account.accountId;
+  await request(`/api/projects/${orgProject.id}/members`, {method: "POST", body: {accountId: memberId, role: "project_admin"}});
+  await request(`/api/projects/${siblingProject.id}/members`, {method: "POST", body: {accountId: memberId, role: "viewer"}});
+  await request(`/api/projects/${orgProject.id}/members`, {method: "POST", body: {accountId: memberId, role: "viewer"}});
+  let permissionState = await request(`/api/state?view=projects&projectId=${orgProject.id}`);
+  const projectGrants = permissionState.accessGrants.filter((grant) => grant.subjectRef?.subjectId === memberId
+    && grant.resource?.resourceType === "project" && grant.resource?.resourceId === orgProject.id);
+  assert.equal(projectGrants.filter((grant) => grant.status === "active").length, 1, "project role replacement must leave one active grant");
+  assert.equal(projectGrants.find((grant) => grant.status === "active")?.role, "viewer");
+  assert.ok(projectGrants.some((grant) => grant.status === "revoked" && grant.role === "project_admin"
+    && grant.revokedReason === "project_role_replaced"), "old project admin grant must be revoked on downgrade");
+  const ownerId = organization.adminAccount.accountId;
+  assert.equal((await request(`/api/projects/${orgProject.id}/members`, {method: "POST", status: 409,
+    body: {accountId: ownerId, role: "viewer"}})).error, "project_owner_role_immutable");
+  assert.equal((await request(`/api/projects/${orgProject.id}/members/${ownerId}/revoke`, {method: "POST", status: 409,
+    body: {}})).error, "project_owner_cannot_be_removed");
+
+  const permissionGroup = (await request("/api/task-groups", {method: "POST", status: 201,
+    body: {projectId: orgProject.id, name: "权限替换任务组", objective: "验证任务组角色替换", roles: ["agent-runtime"], startPaused: true}})).taskGroup;
+  await request("/api/access-grants", {method: "POST", status: 201,
+    body: {subjectId: memberId, resourceType: "task_group", resourceId: permissionGroup.id, role: "reviewer", replaceExisting: true}});
+  await request("/api/access-grants", {method: "POST", status: 201,
+    body: {subjectId: memberId, resourceType: "task_group", resourceId: permissionGroup.id, role: "viewer", replaceExisting: true}});
+  permissionState = await request(`/api/state?view=projects&projectId=${orgProject.id}`);
+  const groupGrants = permissionState.accessGrants.filter((grant) => grant.subjectRef?.subjectId === memberId
+    && grant.resource?.resourceType === "task_group" && grant.resource?.resourceId === permissionGroup.id);
+  assert.equal(groupGrants.filter((grant) => grant.status === "active").length, 1, "task-group role replacement must leave one active grant");
+  assert.equal(groupGrants.find((grant) => grant.status === "active")?.role, "viewer");
+  assert.ok(groupGrants.some((grant) => grant.status === "revoked" && grant.role === "reviewer"
+    && grant.revokedReason === "role_replaced"), "old task-group reviewer grant must be revoked on replacement");
+
+  const memberSession = (await request("/api/auth/login", {method: "POST",
+    body: {email: invitedMember.account.email, token: invitedMember.accountToken}})).sessionToken;
+  sessionToken = orgAdminSession;
+  const removed = await request(`/api/projects/${orgProject.id}/members/${memberId}/revoke`, {method: "POST", body: {}});
+  assert.ok(removed.revokedProjectGrants >= 1 && removed.revokedTaskGroupGrants >= 1,
+    "removing a project member must revoke project and child task-group grants");
+  const membersAfterRemoval = await request("/api/org/members");
+  assert.equal(membersAfterRemoval.members.find((member) => member.accountId === memberId)?.defaultProjectId, null,
+    "removing the default project membership must clear the default project pointer");
+  sessionToken = memberSession;
+  const memberProjectsAfterRemoval = await request("/api/state?view=projects");
+  assert.ok(!memberProjectsAfterRemoval.projects.some((project) => project.id === orgProject.id), "removed member must not see the removed project");
+  assert.ok(memberProjectsAfterRemoval.projects.some((project) => project.id === siblingProject.id), "removing one project must preserve access to other projects");
+  sessionToken = orgAdminSession;
+  console.log("ok: project/task-group role replacement revokes stale permissions; removing a member cascades only within that project");
   const orgView = await request(`/api/state?view=projects&projectId=${orgProject.id}`);
   assert.deepEqual(orgView.organizationContext, {id: organization.organization.orgId, name: "导航作用域验证组织", status: "active"});
   assert.ok(!orgView.projects.some((project) => project.id === projectId), "organization context must not introduce foreign projects");
@@ -94,7 +144,7 @@ try {
   console.log("ok: organization breadcrumb context follows the authorized project for org and system readers");
   console.log("workspace flows check passed");
 } catch (error) {
-  console.error(`workspace flows check failed: ${error.message}`);
+  console.error(`workspace flows check failed: ${error.stack || error.message}`);
   process.exitCode = 1;
 } finally {
   if (server.exitCode === null) server.kill("SIGTERM");

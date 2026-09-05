@@ -344,6 +344,7 @@ globalThis.__probe = {
   selectWorkspace: (pageId, paneId) => workspaces.select(pageId, paneId),
   setMemberFocus: (accountId) => { memberGrantAccountId = accountId; },
   setMemberDetail: (accountId) => { selectedOrgMemberId = accountId; memberGrantAccountId = accountId; },
+  setProjectMemberDetail: (accountId) => { selectedProjectMemberId = accountId; },
   setOrganizationDetail: (orgId) => { selectedOrganizationId = orgId; },
   setTaskOrigin: (origin) => { taskReturnContext = origin; managementGroupId = origin?.taskGroupId || ""; },
   resetTaskNavigation: () => resetTaskWorkbench(),
@@ -860,17 +861,22 @@ function check(name, condition, detail) {
   const account = {accountId: "acct_system", accountType: "system_admin", permissions: ["system:*"]};
   const admin = {accountId: "acct_org_admin", accountType: "org_admin", displayName: "组织初始管理员",
     email: "org-admin@example.test", status: "invited", authPolicy: {passwordSet: false}};
+  const child = {accountId: "acct_org_child", accountType: "user_account", organizationId: "org_workspace",
+    displayName: "组织子账户", email: "child@example.test", status: "suspended"};
   const org = {orgId: "org_workspace", name: "治理对象组织", status: "active", initialAdminAccountId: admin.accountId,
     quotas: {maxMembers: 10, maxProjects: 5, maxTaskGroups: 30, maxAgents: 8},
     usage: {members: 3, projects: 4, taskGroups: 8, agents: 2, agentsReserved: 1}, createdAt: "2026-09-06T00:00:00.000Z"};
   probe.setOrganizationDetail(org.orgId);
-  const html = probe.renderSysOrgsInventoryWith({accounts: [admin]}, account, [org], ["list"]);
+  const html = probe.renderSysOrgsInventoryWith({accounts: [admin, child]}, account, [org], ["list"]);
   check("系统组织详情集中展示初始管理员、配额和启停治理",
     /返回组织列表/u.test(html) && /初始组织管理员/u.test(html) && /配额与用量/u.test(html)
       && /data-action="member-reissue-invite" data-account="acct_org_admin"/u.test(html)
       && /data-action="org-quota" data-org="org_workspace"/u.test(html)
       && /data-action="org-status" data-org="org_workspace"/u.test(html),
     String(html).replace(/<[^>]+>/gu, " ").slice(0, 500));
+  check("系统组织详情区分初始管理员与组织子账户并展示状态构成",
+    /组织子账户概况/u.test(html) && /子账户总数[\s\S]*1/u.test(html) && /已停用[\s\S]*1/u.test(html),
+    "系统管理员需要看到子账户数量与状态，但不能在系统空间直接管理这些账号");
   admin.status = "active";
   admin.authPolicy.passwordSet = true;
   const activeHtml = probe.renderSysOrgsInventoryWith({accounts: [admin]}, account, [org], ["list"]);
@@ -5099,6 +5105,9 @@ async function runPendingTruncationCase() {
         && /data-form="grant-create" data-refresh-project-members="1"/u.test(taskGroupMemberPane)
         && /name="resourceType" value="task_group"/u.test(taskGroupMemberPane),
       "项目成员角色和任务组级权限又混回同一授权表单");
+    check("任务组角色表单明确使用替换语义，避免降级时叠加旧权限",
+      /name="replaceExisting" value="true"/u.test(taskGroupMemberPane),
+      "控制台如果不显式请求替换，先授评审人再授观察者会同时保留两种权限");
     check("项目成员授权 pane 绑定当前 projectId，任务组授权 pane 只列当前项目任务组",
       /type="hidden" name="projectId" value="p1"/u.test(projectMemberPane)
         && /value="tg1"/u.test(taskGroupMemberPane)
@@ -5116,6 +5125,22 @@ async function runPendingTruncationCase() {
         subjectRef: {subjectType: "account", subjectId: "acct_member"},
         resource: {resourceType: "task_group", resourceId: "tg1"}, role: "reviewer", permissions: ["task_group:review"]}]
     };
+    {
+      const projectMemberProbe = loadConsole(el("div"), {realI18n: true});
+      projectMemberProbe.setProjectMemberDetail("acct_member");
+      const detail = projectMemberProbe.renderProjectMembersInventoryWith(orgScopeState, orgAdmin, "p1", orgMembers, ["list"]);
+      check("项目成员详情集中项目角色、任务组角色、角色变更和移出操作",
+        /返回项目成员列表/u.test(detail) && /当前项目角色/u.test(detail) && /当前任务组角色/u.test(detail)
+          && /data-form="project-member"/u.test(detail)
+          && /name="accountId" value="acct_member"/u.test(detail)
+          && /data-action="project-member-revoke" data-project="p1" data-account="acct_member"/u.test(detail)
+          && /data-action="revoke-grant" data-grant="g_tg_member"/u.test(detail),
+        textOf(detail).slice(0, 600));
+      check("项目成员详情的任务组授权固定当前成员且使用替换语义",
+        /name="subjectId" value="acct_member"/u.test(detail)
+          && /name="replaceExisting" value="true"/u.test(detail),
+        "对象详情不应要求再次选择同一个成员，也不能继续叠加旧角色");
+    }
     const orgMemberCreatePane = probe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["create"]);
     const orgMemberListPane = probe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["list"]);
     const orgMemberMatrixPane = probe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["grants"]);

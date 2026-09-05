@@ -100,6 +100,7 @@ let selectedOrganizationId = "";
 let orgAgentNodes = [];
 let orgMembers = [];
 let selectedOrgMemberId = "";
+let selectedProjectMemberId = "";
 let projConfig = null;
 // null 同时代表"还没取过""取失败了""没选项目"三件事，而界面把三者一律说成"配置接口加载失败" ——
 // 人会去追一个并不存在的故障（实测：渲染一个全新项目的设置页，第一眼就是这句）。分成三态。
@@ -976,6 +977,7 @@ function clearSession() {
   orgAgentNodes = [];
   orgMembers = [];
   selectedOrgMemberId = "";
+  selectedProjectMemberId = "";
   projConfig = null;
   projConfigStatus = "unloaded";
   instructionState = null;
@@ -1882,7 +1884,8 @@ function renderContent() {
   const context = window.AIMAC_OBJECT_WORKSPACE.trail({organization: state.organizationContext, project, group: project && ["tg", "tasks", "monitor", "review", "directives"].includes(page) ? group : null,
     work: page === "tasks" && selectedWork ? taskWorkDetail?.workItem : null, pageLabel: PAGE_META[page]?.[0] || "", returnTask});
   const governanceObjectOpen = (page === "sys-orgs" && selectedOrganizationId)
-    || (page === "org-members" && selectedOrgMemberId);
+    || (page === "org-members" && selectedOrgMemberId)
+    || (page === "proj-members" && selectedProjectMemberId);
   if (PROJECT_PAGES.has(page) && hasNoVisibleProject()) return context + renderPanel(PAGE_META[page]?.[0] || "项目管理", noVisibleProjectNotice(), {wide: true});
   const groupDetail = page === "tg" && expandedTaskGroupId;
   return context + workspaces.navigation(groupDetail ? "group-detail" : page, true, workspaceOptions())
@@ -1976,6 +1979,7 @@ function resetTaskWorkbench() {
   taskRunDisclosure = {};
   taskReturnContext = null;
   memberGrantAccountId = "";
+  selectedProjectMemberId = "";
   workEventHistoryMode = false;
   workEventCursor = 0;
   workEventCursorStack = [];
@@ -2349,9 +2353,20 @@ function renderSysOrgs() {
   if (selectedOrganizationId && !selectedOrganization) selectedOrganizationId = "";
   if (selectedOrganization) {
     const initialAdmin = initialAdminById.get(selectedOrganization.initialAdminAccountId) || null;
+    const subaccounts = (state.accounts || []).filter((account) => account.accountId !== selectedOrganization.initialAdminAccountId
+      && account.accountType === "user_account"
+      && (account.organizationId || DEFAULT_ORGANIZATION_ID) === selectedOrganization.orgId);
+    const subaccountStats = {
+      total: subaccounts.length,
+      active: subaccounts.filter((account) => account.status === "active").length,
+      invited: subaccounts.filter((account) => account.status === "invited").length,
+      suspended: subaccounts.filter((account) => ["suspended", "disabled", "locked"].includes(account.status)).length,
+      retired: subaccounts.filter((account) => account.status === "retired").length
+    };
     return window.AIMAC_GOVERNANCE_WORKSPACE.organizationDetail({
       organization: selectedOrganization,
       initialAdmin,
+      subaccountStats,
       actionsHtml: systemOrganizationActions(selectedOrganization, initialAdmin),
       helpers: {statusBadge, customBadge, fmtTime, quotaLine, panel: renderPanel}
     });
@@ -3127,7 +3142,8 @@ function renderProjectMemberForm(options = {}) {
   const selectedOrg = organizationOf(chosen);
   const candidates = (orgMembers && orgMembers.length ? orgMembers : (state.accounts || []));
   // 已注销是终态：给它发授权后端会拒（grant_subject_account_retired），摆在这里就是把人往死路上引。
-  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg && account.status !== "retired");
+  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg
+    && account.status !== "retired" && account.accountId !== chosen.ownerAccountId);
   const elsewhere = candidates.length - grantable.length;
   return `
     ${grantable.length ? "" : `<div class="notice warn-notice">「${esc(chosen?.name || chosen?.id || "")}」`
@@ -3171,9 +3187,10 @@ function taskGroupGrantCandidates(project) {
   return candidates.filter((account) => organizationOf(account) === projectOrg && account.status !== "retired");
 }
 
-function renderTaskGroupGrantForm(project) {
+function renderTaskGroupGrantForm(project, options = {}) {
   const groups = (state.taskGroups || []).filter((taskGroup) => taskGroup.projectId === project.id);
   const candidates = taskGroupGrantCandidates(project);
+  const fixedAccount = options.accountId ? candidates.find((account) => account.accountId === options.accountId) : null;
   if (!groups.length) {
     return `<div class="notice">当前项目还没有任务组。先到“任务组”页创建任务组，再按具体任务组授予控制、审核或监控权限。</div>`;
   }
@@ -3183,11 +3200,13 @@ function renderTaskGroupGrantForm(project) {
   return `
     <form class="form-grid" data-form="grant-create" data-refresh-project-members="1">
       <input type="hidden" name="resourceType" value="task_group">
+      <input type="hidden" name="replaceExisting" value="true">
       <div class="form-row-inline">
         <div class="form-row"><label>任务组</label>${decisionSelect("resourceId",
           groups.map((taskGroup) => [taskGroup.id, taskGroup.name || taskGroup.id]), "请选择任务组…")}</div>
-        <div class="form-row"><label>账号</label>${decisionSelect("subjectId",
-          candidates.map((account) => [account.accountId, account.displayName || account.email || account.accountId]), "请选择账号…", {selected: memberGrantAccountId})}</div>
+        <div class="form-row"><label>账号</label>${fixedAccount
+          ? `<input type="hidden" name="subjectId" value="${esc(fixedAccount.accountId)}"><strong>${esc(fixedAccount.displayName || fixedAccount.email || fixedAccount.accountId)}</strong>`
+          : decisionSelect("subjectId", candidates.map((account) => [account.accountId, account.displayName || account.email || account.accountId]), "请选择账号…", {selected: memberGrantAccountId})}</div>
         <div class="form-row"><label>任务组角色</label>${decisionSelect("role", [
           ["task_group_owner", "任务组负责人（控制任务组与工作项）"],
           ["reviewer", "评审人（人工定稿 / 验收）"],
@@ -4614,6 +4633,33 @@ function projectMemberRoleStats(project) {
   };
 }
 
+function projectMemberRoleImpact(role) {
+  if (role === "project_owner" || role === "project_admin") return "项目配置、成员授权和管理入口";
+  if (role === "task_group_owner") return "任务组控制和工作项推进";
+  if (role === "reviewer") return "人工审核、定稿和验收";
+  if (role === "agent_operator") return "Agent 加入令牌和节点操作";
+  return "查看项目状态和执行记录";
+}
+
+function renderProjectMemberRoleForm(project, membership) {
+  const isOwner = membership.accountId === project.ownerAccountId || membership.role === "project_owner";
+  if (isOwner) return `<div class="notice">项目负责人身份不能通过普通角色表单修改。</div>`;
+  if (!hasPerm("project:grant")) return `<div class="notice warn-notice">当前账号没有项目授权管理权限，只能查看。</div>`;
+  return `<form class="form-grid" data-form="project-member">
+    <input type="hidden" name="projectId" value="${esc(project.id)}">
+    <input type="hidden" name="accountId" value="${esc(membership.accountId)}">
+    <div class="form-row"><label>新的项目角色</label>${decisionSelect("role", [
+      ["project_admin", "项目管理员"],
+      ["task_group_owner", "任务组负责人"],
+      ["reviewer", `${GRANT_ROLE_LABELS.reviewer}（可做人工定稿/验收）`],
+      ["agent_operator", "智能体操作员"],
+      ["viewer", "观察者"]
+    ], "请选择新的项目角色…", {selected: membership.role})}</div>
+    <div class="notice">保存后会撤销该成员在当前项目上的旧活动角色，只保留新的项目角色；不会改动其它项目。</div>
+    <button class="primary-button" type="submit">保存项目角色</button>
+  </form>`;
+}
+
 function renderProjectMembersLifecycleGuide(project, stats) {
   return panel("成员协作流程", `
     <div class="module-grid action-grid">
@@ -4666,14 +4712,33 @@ function renderProjectMembers() {
   const project = currentProject();
   if (!project) return panel("成员权限", noVisibleProjectNotice(), {wide: true});
   const stats = projectMemberRoleStats(project);
+  const selectedMembership = (project.members || []).find((member) => member.accountId === selectedProjectMemberId);
+  if (selectedProjectMemberId && !selectedMembership) selectedProjectMemberId = "";
+  if (selectedMembership) {
+    const account = (orgMembers || []).find((item) => item.accountId === selectedMembership.accountId)
+      || (state.accounts || []).find((item) => item.accountId === selectedMembership.accountId) || null;
+    const taskGroupGrants = taskGroupGrantsForAccount(selectedMembership.accountId, project.id);
+    const isOwner = selectedMembership.accountId === project.ownerAccountId || selectedMembership.role === "project_owner";
+    const canGrant = hasPerm("project:grant");
+    return window.AIMAC_GOVERNANCE_WORKSPACE.projectMemberDetail({
+      project,
+      membership: selectedMembership,
+      account,
+      taskGroupGrants,
+      roleFormHtml: renderProjectMemberRoleForm(project, selectedMembership),
+      taskGroupFormHtml: canGrant ? renderTaskGroupGrantForm(project, {accountId: selectedMembership.accountId})
+        : `<div class="notice warn-notice">当前账号没有项目授权管理权限，只能查看任务组角色。</div>`,
+      removeActionHtml: canGrant && !isOwner
+        ? `<button class="danger-button" data-action="project-member-revoke" data-project="${esc(project.id)}" data-account="${esc(selectedMembership.accountId)}">移出当前项目</button>` : "",
+      helpers: {statusBadge, customBadge, t, grantRoleLabel, taskGroupNameOf, roleImpact: projectMemberRoleImpact,
+        canGrant, panel: renderPanel}
+    });
+  }
   const memberRows = (project.members || []).map((member) => row([
     `<strong>${esc(accountName(member.accountId))}</strong><div class="small muted mono">${esc(member.accountId)}</div>`,
     esc(grantRoleLabel(member.role)),
-    member.role === "project_owner" || member.role === "project_admin" ? "项目配置、成员授权和管理入口"
-      : member.role === "task_group_owner" ? "任务组控制和工作项推进"
-        : member.role === "reviewer" ? "人工审核、定稿和验收"
-          : member.role === "agent_operator" ? "Agent 加入令牌和节点操作"
-            : "查看项目状态和执行记录"
+    projectMemberRoleImpact(member.role),
+    `<button class="primary-button" data-action="open-project-member-detail" data-account="${esc(member.accountId)}">查看权限</button>`
   ])).join("");
   const grantPanel = hasPerm("project:grant")
     ? renderProjectMemberForm({projectId: project.id})
@@ -4684,7 +4749,7 @@ function renderProjectMembers() {
       <span>任务组负责人 ${stats.owners}</span><span>评审人 ${stats.reviewers}</span>
       <span>智能体操作员 ${stats.agentOperators}</span><span>观察者 ${stats.viewers}</span>
     </div>` + (memberRows
-      ? table(["成员", "项目角色", "角色影响"], memberRows)
+      ? table(["成员", "项目角色", "角色影响", "操作"], memberRows)
       : `<div class="notice warn-notice">当前项目还没有成员授权。没有成员角色时，任务组控制、人工审核和 Agent 操作入口会缺少负责人。</div>`), {wide: true,
       headerSide: hasPerm("project:grant") ? `<button class="primary-button" data-jump-panel="项目成员授权">添加项目成员</button>
         <button class="secondary-button" data-jump-panel="任务组权限授权">授任务组权限</button>` : ""}),
@@ -9172,10 +9237,12 @@ document.addEventListener("click", async (event) => {
     const nextPage = workspaceButton.dataset.workspacePage || page;
     const nextSection = workspaceButton.dataset.workspace;
     const closesObjectDetail = (nextPage === "sys-orgs" && selectedOrganizationId)
-      || (nextPage === "org-members" && selectedOrgMemberId);
+      || (nextPage === "org-members" && selectedOrgMemberId)
+      || (nextPage === "proj-members" && selectedProjectMemberId);
     if (closesObjectDetail) {
       selectedOrganizationId = "";
       selectedOrgMemberId = "";
+      selectedProjectMemberId = "";
       memberGrantAccountId = "";
       if (nextPage === page && workspaces.current(page)?.id === nextSection) { render(); return; }
     }
@@ -9226,6 +9293,7 @@ document.addEventListener("click", async (event) => {
     page = menuButton.dataset.menu;
     if (page === "sys-orgs") selectedOrganizationId = "";
     if (page === "org-members") { selectedOrgMemberId = ""; memberGrantAccountId = ""; }
+    if (page === "proj-members") selectedProjectMemberId = "";
     if (page === "tg") { expandedTaskGroupId = ""; managementGroupId = ""; tgDetail = null; }
     sessionStorage.setItem("aimac.page", page);
     lastError = "";
@@ -9335,6 +9403,42 @@ document.addEventListener("click", async (event) => {
       document.querySelector(`[data-action="open-member-detail"][data-account="${CSS.escape(accountId)}"]`)?.focus();
       return;
     }
+    if (action === "open-project-member-detail") {
+      const accountId = target.dataset.account || "";
+      if (!(currentProject()?.members || []).some((member) => member.accountId === accountId)) return;
+      selectedProjectMemberId = accountId;
+      workspaces.select("proj-members", "list");
+      render();
+      window.scrollTo?.({top: 0});
+      document.querySelector("[data-governance-object-heading]")?.focus();
+      return;
+    }
+    if (action === "close-project-member-detail") {
+      const accountId = selectedProjectMemberId;
+      selectedProjectMemberId = "";
+      render();
+      window.scrollTo?.({top: 0});
+      document.querySelector(`[data-action="open-project-member-detail"][data-account="${CSS.escape(accountId)}"]`)?.focus();
+      return;
+    }
+    if (action === "project-member-revoke") {
+      const project = currentProject();
+      const accountId = target.dataset.account || "";
+      if (!project || project.id !== target.dataset.project) return;
+      const memberName = accountName(accountId);
+      if (!(await confirmDialog({
+        title: "移出项目成员",
+        message: `确认将“${memberName}”移出当前项目？`,
+        sub: "该成员在当前项目的项目角色和全部任务组角色会同时撤销，默认项目指向也会清除；组织账号和其它项目权限不受影响。",
+        danger: true,
+        confirmText: "确认移出"
+      }))) return;
+      await api(`/api/projects/${encodeURIComponent(project.id)}/members/${encodeURIComponent(accountId)}/revoke`, {method: "POST", body: "{}"});
+      selectedProjectMemberId = "";
+      await loadPage();
+      toast.success(`已将“${memberName}”移出当前项目`);
+      return;
+    }
     if (action === "open-node-tasks") {
       workspaces.select("monitor", "runs");
       await focusManagementGroup("", "monitor");
@@ -9409,6 +9513,7 @@ document.addEventListener("click", async (event) => {
       page = targetPage;
       if (targetWorkspace) workspaces.select(page, targetWorkspace);
       memberGrantAccountId = target.dataset.grantAccount || "";
+      selectedProjectMemberId = targetPage === "proj-members" ? memberGrantAccountId : "";
       if (targetPage === "proj-settings" && target.dataset.repoFocus !== undefined) workspaces.select(page, "repositories");
       sessionStorage.setItem("aimac.page", page);
       lastError = "";

@@ -1385,7 +1385,7 @@ const HUMAN_ONLY_ACTIONS = [
   // 但"谁能干什么"本身就不该由干活的一方来定，所以整族收归真人。
   "org_create", "org_member_create", "org_member_permissions_update", "org_member_status_update",
   "org_quota_update", "org_status_update",
-  "access_grant_create", "access_grant_revoke", "project_member_grant",
+  "access_grant_create", "access_grant_revoke", "project_member_grant", "project_member_revoke",
   // 【取消与中止】2026-08-26 人定：AI 可以暂停，取消只能由人发起。
   // 暂停/恢复是可恢复的节奏调节；而取消与中止会停掉整组在跑的派发，
   // 并连带作废其名下【人正在等着签字】的确认单 —— 「关闭任务组」早已是真人专属，
@@ -2360,7 +2360,7 @@ function permissionForAction(action) {
   // 组织管理员只会看到按钮点下去回一句没权限。
   if (action === "account_retire") return "member:invite";
   if (action === "project_create") return "project:create";
-  if (action === "project_member_grant") return "member:invite";
+  if (action === "project_member_grant" || action === "project_member_revoke") return "member:invite";
   if (action === "access_grant_create" || action === "access_grant_revoke") return "project:grant";
   if (action === "agent_create" || action === "agent_activation_update") return "agent:activate";
   if (action === "agent_join_token_create" || action === "agent_join_token_revoke" || action === "agent_node_revoke" || action === "agent_control_command_create") return "agent:activate";
@@ -4762,6 +4762,18 @@ async function handleApi(req, res) {
         ...(sanitizedGrant.supported ? {supported: sanitizedGrant.supported} : {})});
       return;
     }
+    if (accountId === project.ownerAccountId) {
+      return json(res, 409, {error: "project_owner_role_immutable",
+        message: "项目负责人是创建项目的人，不能通过普通成员授权改写；需要移交负责人时必须走独立的所有权移交流程"});
+    }
+    const at = now();
+    for (const existing of (state.accessGrants || []).filter((item) => item.status === "active"
+      && item.subjectRef?.subjectType === "account" && item.subjectRef?.subjectId === accountId
+      && item.resource?.resourceType === "project" && item.resource?.resourceId === project.id)) {
+      existing.status = "revoked";
+      existing.revokedReason = "project_role_replaced";
+      existing.updatedAt = at;
+    }
     project.members = project.members.filter((member) => member.accountId !== accountId);
     project.members.push({accountId, role: sanitizedGrant.role});
     state.accessGrants.unshift({
@@ -4774,13 +4786,64 @@ async function handleApi(req, res) {
       status: "active",
       policyDecisionRef: guard.policyDecision.id,
       auditRef: `audit:${guard.idempotencyKey}`,
-      createdAt: now(),
-      updatedAt: now()
+      createdAt: at,
+      updatedAt: at
     });
+    project.updatedAt = at;
     audit(state, guard.actor, "project_member_grant", `Project:${project.id}`);
     finishGuardedWrite(state, guard, 200, project);
     writeState(state);
     json(res, 200, project);
+    return;
+  }
+
+  const projectMemberRevokeMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/members\/([^/]+)\/revoke$/);
+  if (req.method === "POST" && projectMemberRevokeMatch) {
+    const projectId = projectMemberRevokeMatch[1];
+    const accountId = projectMemberRevokeMatch[2];
+    if (projectHiddenFromActor(req, state, projectId)) return json(res, 403, {error: "permission_denied"});
+    const authenticated = accountFromRequest(req, state);
+    if (!authenticated) return json(res, 401, {error: "auth_required"});
+    const project = state.projects.find((item) => item.id === projectId);
+    if (!project) {
+      const denial = missingProjectDenial(authenticated.account);
+      return json(res, denial.status, denial.payload);
+    }
+    const guard = beginGuardedWrite(req, state, "project_member_revoke", `Project:${project.id}:Account:${accountId}`, projectScope(project.id));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    if (accountId === project.ownerAccountId) {
+      return json(res, 409, {error: "project_owner_cannot_be_removed",
+        message: "项目负责人不能被移出项目；需要更换负责人时必须先完成独立的所有权移交"});
+    }
+    if (!(project.members || []).some((member) => member.accountId === accountId)) {
+      return json(res, 404, {error: "project_member_not_found"});
+    }
+    const at = now();
+    project.members = (project.members || []).filter((member) => member.accountId !== accountId);
+    const taskGroupIds = new Set((state.taskGroups || []).filter((taskGroup) => taskGroup.projectId === project.id)
+      .map((taskGroup) => taskGroup.id));
+    let revokedProjectGrants = 0;
+    let revokedTaskGroupGrants = 0;
+    for (const grant of (state.accessGrants || []).filter((item) => item.status === "active"
+      && item.subjectRef?.subjectType === "account" && item.subjectRef?.subjectId === accountId)) {
+      if (grant.resource?.resourceType === "project" && grant.resource.resourceId === project.id) revokedProjectGrants += 1;
+      else if (grant.resource?.resourceType === "task_group" && taskGroupIds.has(grant.resource.resourceId)) revokedTaskGroupGrants += 1;
+      else continue;
+      grant.status = "revoked";
+      grant.revokedReason = "project_membership_revoked";
+      grant.updatedAt = at;
+    }
+    const account = state.accounts.find((item) => accountIdOf(item) === accountId);
+    if (account?.defaultProjectId === project.id) {
+      account.defaultProjectId = null;
+      account.updatedAt = at;
+    }
+    project.updatedAt = at;
+    const payload = {project, accountId, revokedProjectGrants, revokedTaskGroupGrants};
+    audit(state, guard.actor, "project_member_revoke", `Project:${project.id}:Account:${accountId}`);
+    finishGuardedWrite(state, guard, 200, payload);
+    writeState(state);
+    json(res, 200, payload);
     return;
   }
 
@@ -5088,6 +5151,16 @@ async function handleApi(req, res) {
       return;
     }
     const at = now();
+    if (body.replaceExisting === true || body.replaceExisting === "true") {
+      for (const existing of (state.accessGrants || []).filter((item) => item.status === "active"
+        && item.subjectRef?.subjectType === "account" && item.subjectRef?.subjectId === body.subjectId
+        && item.resource?.resourceType === sanitizedGrant.resource.resourceType
+        && item.resource?.resourceId === sanitizedGrant.resource.resourceId)) {
+        existing.status = "revoked";
+        existing.revokedReason = "role_replaced";
+        existing.updatedAt = at;
+      }
+    }
     const grant = {
       schemaVersion: "access-control-grant/v1",
       grantId: createId("grant"),

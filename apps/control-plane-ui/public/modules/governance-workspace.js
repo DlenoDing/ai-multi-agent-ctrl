@@ -13,7 +13,7 @@
     </header>`;
   }
 
-  function organizationDetail({organization: org, initialAdmin, actionsHtml, helpers: h}) {
+  function organizationDetail({organization: org, initialAdmin, subaccountStats = {}, actionsHtml, helpers: h}) {
     const quotaItems = [
       ["成员（含管理员）", org.usage?.members, org.quotas?.maxMembers],
       ["项目", org.usage?.projects, org.quotas?.maxProjects],
@@ -30,7 +30,7 @@
       <section class="governance-object-band" aria-label="组织治理摘要">
         <div class="metric-grid">
           <div class="metric"><span>初始组织管理员</span><strong>${esc(initialAdmin?.displayName || "账号缺失")}</strong><div class="small muted">${adminStatus}</div></div>
-          <div class="metric"><span>成员数</span><strong>${esc(org.usage?.members ?? 0)}</strong><div class="small muted">含组织管理员</div></div>
+          <div class="metric"><span>组织子账户</span><strong>${esc(subaccountStats.total ?? 0)}</strong><div class="small muted">不含初始组织管理员</div></div>
           <div class="metric"><span>配额压力项</span><strong>${pressure}</strong><div class="small muted">使用达到 80% 的资源</div></div>
           <div class="metric"><span>创建时间</span><strong class="metric-time">${h.fmtTime(org.createdAt)}</strong></div>
         </div>
@@ -48,6 +48,13 @@
           `<div><div class="record-title"><strong>${esc(label)}</strong><span>${esc(Number(used || 0) + Number(reserved || 0))}/${esc(max ?? "-")}</span></div>
             ${h.quotaLine(used, max, reserved)}</div>`).join("")}</div>`, {wide: true})}
       </div>
+      ${h.panel("组织子账户概况", `<div class="metric-grid">
+        <div class="metric"><span>子账户总数</span><strong>${esc(subaccountStats.total ?? 0)}</strong></div>
+        <div class="metric"><span>已启用</span><strong>${esc(subaccountStats.active ?? 0)}</strong></div>
+        <div class="metric"><span>待接受邀请</span><strong>${esc(subaccountStats.invited ?? 0)}</strong></div>
+        <div class="metric"><span>已停用</span><strong>${esc(subaccountStats.suspended ?? 0)}</strong></div>
+        <div class="metric"><span>已注销</span><strong>${esc(subaccountStats.retired ?? 0)}</strong></div>
+      </div><div class="small muted">系统管理员只核对数量、配额和异常构成；子账户的创建、授权、停用与注销由组织管理员在组织空间处理。</div>`, {wide: true})}
       ${h.panel("治理边界", `<div class="notice">此处只处理组织启停、四类配额和初始组织管理员。子账户、项目、任务组、Agent、审核与执行数据不在系统管理空间跨组织操作。</div>`, {wide: true})}
     </div>`;
   }
@@ -105,5 +112,44 @@
     </div>`;
   }
 
-  window.AIMAC_GOVERNANCE_WORKSPACE = {organizationDetail, memberDetail};
+  function projectMemberDetail({project, membership, account, taskGroupGrants, roleFormHtml, taskGroupFormHtml,
+    removeActionHtml, helpers: h}) {
+    const isOwner = membership.role === "project_owner" || project.ownerAccountId === membership.accountId;
+    const groupRows = taskGroupGrants.map((grant) => ({
+      id: grant.resource?.resourceId || "-",
+      name: h.taskGroupNameOf(grant.resource?.resourceId),
+      role: h.grantRoleLabel(grant.role),
+      actionHtml: h.canGrant
+        ? `<button class="danger-button" data-action="revoke-grant" data-grant="${esc(grant.grantId)}">撤销任务组角色</button>` : ""
+    }));
+    return `<div class="governance-object-workspace">
+      ${identityHeader({eyebrow: `项目成员 / ${project.name || project.id}`,
+        title: account?.displayName || account?.email || membership.accountId,
+        statusHtml: account?.status ? h.statusBadge("account", account.status) : h.customBadge("项目成员", "blue"),
+        id: membership.accountId, backAction: "close-project-member-detail", backLabel: "返回项目成员列表"})}
+      <section class="governance-object-band" aria-label="项目成员权限摘要">
+        <div class="metric-grid">
+          <div class="metric"><span>项目角色</span><strong>${esc(h.grantRoleLabel(membership.role))}</strong></div>
+          <div class="metric"><span>任务组角色</span><strong>${taskGroupGrants.length}</strong></div>
+          <div class="metric"><span>账号状态</span><strong>${esc(account?.status ? h.t(account.status) : "可用")}</strong></div>
+          <div class="metric"><span>成员类型</span><strong>${isOwner ? "项目负责人" : "项目成员"}</strong></div>
+        </div>
+      </section>
+      <div class="governance-object-columns">
+        ${h.panel("当前项目角色", `<dl class="kv-list">
+          <dt>项目</dt><dd>${esc(project.name || project.id)}</dd>
+          <dt>成员</dt><dd>${esc(account?.displayName || membership.accountId)}</dd>
+          <dt>角色</dt><dd>${esc(h.grantRoleLabel(membership.role))}</dd>
+          <dt>角色影响</dt><dd>${esc(h.roleImpact(membership.role))}</dd>
+        </dl>${isOwner ? `<div class="notice">项目负责人是创建项目的人，不能通过普通成员授权降级或移出。</div>` : ""}
+        ${removeActionHtml ? `<div class="button-row governance-actions">${removeActionHtml}</div>` : ""}`, {wide: true})}
+        ${h.panel("变更项目角色", roleFormHtml, {wide: true})}
+      </div>
+      ${h.panel("当前任务组角色", grantRows(groupRows,
+        "尚未分配任务组角色。只有需要控制、审核或观察具体任务组时才需要补充。", h), {wide: true})}
+      ${h.panel("分配任务组角色", taskGroupFormHtml, {wide: true})}
+    </div>`;
+  }
+
+  window.AIMAC_GOVERNANCE_WORKSPACE = {organizationDetail, memberDetail, projectMemberDetail};
 })();
