@@ -4735,6 +4735,38 @@ function runPendingTruncationCase() {
         && /reviewer/u.test(projectSettingsHtml)
         && /禁掉 schema_change/u.test(projectSettingsHtml),
       "角色 Skill 叠加仍然只能在系统设置只读追踪或 API 里处理，项目管理员没有图形化入口");
+    {
+      // 【任务组卡三处收敛】：阅读路径九段默认收起；全部继承的规则区默认收起（本组有覆盖时展开）；只读身份不渲染禁用的定制表单。
+      const pathBundle = /<details class="guide-bundle"( open)?>([\s\S]*?)<\/details>/u.exec(taskGroupDetailHtml);
+      check("任务组卡的「详情阅读路径」要收进默认关闭的折叠块",
+        Boolean(pathBundle) && !pathBundle[1] && pathBundle[2].includes("任务组详情阅读路径"),
+        "每张展开的任务组卡都先摆九段阅读路径 —— 事项清单被推到下面");
+      const rulesBundle = /<details class="guide-bundle rules-bundle"( open)?>/u.exec(taskGroupDetailHtml);
+      check("本组没有规则覆盖时，任务组卡的规则区要默认收起并报条数",
+        Boolean(rulesBundle) && !rulesBundle[1] && /本组覆盖 0 条/u.test(taskGroupDetailHtml),
+        `全部继承的规则区没有收起（${rulesBundle ? "折叠块默认打开" : "没找到 rules-bundle 折叠块"}）—— 32 条全文把卡撑成几屏`);
+      const overriddenDetail = probe.renderTaskGroupsWith(detailState, admin, "p1", detailTaskGroup.id, {
+        taskGroupId: detailTaskGroup.id, progress: {workItems: [], roles: []},
+        config: {configSource: "customized", systemRules: [{ruleId: "sys.x", category: "system", title: "本组改写", content: "x", status: "active", enabled: true, source: "task_group"}],
+          businessRules: [], defaultRoles: [], repositories: [], baselineData: []},
+        roomMessages: []
+      }).replace(/<!--[\s\S]*?-->/gu, "");
+      const overriddenBundle = /<details class="guide-bundle rules-bundle"( open)?>/u.exec(overriddenDetail);
+      check("本组有自己的规则覆盖时，规则区要默认展开",
+        Boolean(overriddenBundle) && Boolean(overriddenBundle[1]) && /本组覆盖 1 条/u.test(overriddenDetail),
+        "本组明明有覆盖却把规则区收起来 —— 人来就是看这条覆盖的");
+      const roViewer = {accountId: "u_ro_tg", email: "ro@b.c", accountType: "user_account", displayName: "只读成员", organizationId: "org_default",
+        permissions: ["project:view", "task_group:read"], effectivePermissions: ["project:view", "task_group:read"]};
+      const readOnlyDetail = probe.renderTaskGroupsWith(detailState, roViewer, "p1", detailTaskGroup.id, {
+        taskGroupId: detailTaskGroup.id, progress: {workItems: [], roles: []},
+        config: {configSource: "inherited", systemRules: [], businessRules: [], defaultRoles: [], repositories: [], baselineData: []},
+        roomMessages: []
+      }).replace(/<!--[\s\S]*?-->/gu, "");
+      check("只读身份的任务组卡不渲染禁用的角色 Skill 定制表单，只说清为什么不能建",
+        /本任务组角色 Skill 定制/u.test(readOnlyDetail) && !/data-form="role-skill-overlay"/u.test(readOnlyDetail)
+          && /不能创建角色 Skill 定制/u.test(readOnlyDetail),
+        `只读身份仍渲染了六个禁用输入的定制表单，或没说清为什么不能建（有表单：${/data-form="role-skill-overlay"/u.test(readOnlyDetail)}）`);
+    }
     check("任务组详情必须提供本组角色 Skill 定制入口和任务组级提交表单",
       /本任务组角色 Skill 定制/u.test(taskGroupDetailHtml)
         && /项目级继承/u.test(taskGroupDetailHtml)

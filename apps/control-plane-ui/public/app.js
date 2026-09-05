@@ -5147,6 +5147,16 @@ function renderTaskGroupDetail(taskGroup) {
         ${roleSkillOverlayTable(taskGroupRoleSkillOverlays(taskGroup.id, taskGroup.projectId), {showScope: true})}
         ${roleSkillOverlayForm({scope: "task_group", projectId: taskGroup.projectId, taskGroupId: taskGroup.id, readOnly: !canControl})}
       `)}
+      ${(() => {
+        // 任务组卡里把项目/默认的全部规则（实测 32 条）整段全文渲染出来，即便本组一条覆盖都没有 —— 展开一张卡要滚几屏。
+        // 全部继承时默认收起（摘要报条数）；本组有自己的覆盖时展开，人正是来看它的。规则编辑器本身一字不改。
+        const systemRules = config.systemRules || [];
+        const businessRules = config.businessRules || [];
+        const overrides = [...systemRules, ...businessRules].filter((rule) => rule.source === "task_group").length;
+        const summary = `系统规则 ${systemRules.length} 条 · 业务规则 ${businessRules.length} 条（本组覆盖 ${overrides} 条）—— `
+          + (overrides ? "本组有自己的覆盖，已展开" : "全部继承自项目 / 默认，默认收起；点开查看，或在任务组层停用 / 改写 / 新增");
+        return `<details class="guide-bundle rules-bundle"${overrides ? " open" : ""}><summary class="guide-bundle-summary">${esc(summary)}</summary><div class="guide-bundle-body">`;
+      })()}
       ${sectionBlock("系统规则（默认 / 项目 / 任务组）", ruleEditorForm({
         rules: config.systemRules || [],
         listId: "tg-system-rules",
@@ -5165,6 +5175,7 @@ function renderTaskGroupDetail(taskGroup) {
         readOnly: !canControl,
         note: "任务组层可覆盖项目业务规则，或新增仅本任务组生效的规则。"
       }))}
+      </div></details>
       <form class="form-grid" data-form="tg-config" data-task="${esc(taskGroup.id)}">
         <div class="form-row"><label>默认角色（逗号分隔角色 ID）</label>
           <input name="defaultRoles" list="config-role-options" data-orig="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}" value="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}" ${editDisabled}>
@@ -5354,7 +5365,7 @@ function renderTaskGroupDetail(taskGroup) {
 
   return `
     <div class="stack" style="margin-top:8px;">
-      ${detailPathHtml}
+      ${guideBundle("详情阅读路径", [detailPathHtml], ["任务组详情阅读路径（9 段）"])}
       ${sectionBlock("事项清单", analysisHtml)}
       ${sectionBlock("角色列表", `<div class="stack">${roles}</div>`)}
       ${sectionBlock("配置（继承 / 自定义）", configHtml)}
@@ -7762,7 +7773,12 @@ function roleSkillOverlayTable(overlays, {showScope = false} = {}) {
 }
 
 function roleSkillOverlayForm({scope, projectId, taskGroupId, readOnly = false}) {
-  const disabled = readOnly ? "disabled" : "";
+  // 只读身份此前照样渲染整张表单（六个禁用输入 + 禁用按钮）：按不动的表单不是"只读"，是噪声。
+  // 已生效的定制在上表；这里只说清为什么不能建、找谁建。
+  if (readOnly) {
+    return `<div class="small muted">当前账号没有${scope === "task_group" ? "「任务组控制」" : "「项目更新」"}权限，不能创建角色 Skill 定制 —— 已生效的定制见上表；要加定制，找有权限的人操作。</div>`;
+  }
+  const disabled = "";
   const formAttrs = [
     `data-form="role-skill-overlay"`,
     `data-scope="${esc(scope)}"`,

@@ -750,6 +750,38 @@ const MUTATIONS = [
     expect: "抹密钥没抹干净"
   },
   {
+    name: "任务组卡的阅读路径必须折叠",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "      ${guideBundle(\"详情阅读路径\", [detailPathHtml], [\"任务组详情阅读路径（9 段）\"])}",
+    to: "      ${detailPathHtml}",
+    expect: "「详情阅读路径」要收进默认关闭的折叠块"
+  },
+  {
+    name: "任务组卡规则区：全部继承时必须收起（展开条件写反＝永远展开）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "        return `<details class=\"guide-bundle rules-bundle\"${overrides ? \" open\" : \"\"}>",
+    to: "        return `<details class=\"guide-bundle rules-bundle\" open>",
+    expect: "全部继承的规则区没有收起"
+  },
+  {
+    name: "任务组卡规则区：本组有覆盖时必须展开",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "        return `<details class=\"guide-bundle rules-bundle\"${overrides ? \" open\" : \"\"}>",
+    to: "        return `<details class=\"guide-bundle rules-bundle\">",
+    expect: "本组明明有覆盖却把规则区收起来"
+  },
+  {
+    name: "只读身份不许渲染禁用的角色 Skill 定制表单",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (readOnly) {\n    return `<div class=\"small muted\">当前账号没有",
+    to: "  if (false) {\n    return `<div class=\"small muted\">当前账号没有",
+    expect: "只读身份仍渲染了六个禁用输入的定制表单"
+  },
+  {
     name: "工作项卡的定稿要求表单必须默认收起",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
