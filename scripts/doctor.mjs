@@ -1852,6 +1852,47 @@ try {
   if (!reissuedLogin.response.ok) {
     throw new Error(`重发出来的令牌登录不了（${reissuedLogin.response.status}）—— 重发只是换了种方式把账号弄坏`);
   }
+  // 系统管理员必须能恢复【已激活】的初始组织管理员，但这条能力不能扩大到普通成员或组织管理员。
+  // 重置不是再发一个口令：旧密码与旧会话都要当场失效，新的一次性令牌才是唯一入口。
+  const resetAdminOrg = await jsonFetch(port, "/api/orgs", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-reset-initial-admin-org", authorization: systemAuth},
+    body: JSON.stringify({name: "初始管理员重置探针组织", quotas: {maxMembers: 2, maxProjects: 1, maxTaskGroups: 1, maxAgents: 1},
+      admin: {displayName: "重置探针管理员", email: "doctor.reset.initial.admin@local"}})
+  });
+  if (resetAdminOrg.response.status !== 201 || !resetAdminOrg.payload.accountToken) {
+    throw new Error(`创建初始管理员重置探针失败：${resetAdminOrg.response.status}`);
+  }
+  const resetAdminFirstAuth = await loginAs(port, "doctor.reset.initial.admin@local", resetAdminOrg.payload.accountToken);
+  const setResetAdminPassword = await jsonFetch(port, "/api/auth/change-password", {
+    method: "POST", headers: {"Idempotency-Key": "doctor-reset-initial-admin-password", authorization: resetAdminFirstAuth},
+    body: JSON.stringify({newPassword: "DoctorReset!2026"})
+  });
+  if (setResetAdminPassword.response.status !== 200) throw new Error(`初始管理员设置探针密码失败：${setResetAdminPassword.response.status}`);
+  const resetAdminPasswordLogin = await jsonFetch(port, "/api/auth/login", {
+    method: "POST", body: JSON.stringify({email: "doctor.reset.initial.admin@local", password: "DoctorReset!2026"})
+  });
+  if (resetAdminPasswordLogin.response.status !== 200) throw new Error(`初始管理员密码登录探针失败：${resetAdminPasswordLogin.response.status}`);
+  const resetAdminOldAuth = `Bearer ${resetAdminPasswordLogin.payload.sessionToken}`;
+  const resetAdminCredential = await jsonFetch(port,
+    `/api/org/members/${encodeURIComponent(resetAdminOrg.payload.adminAccount.accountId)}/reissue-invite`, {
+      method: "POST", headers: {"Idempotency-Key": "doctor-reset-initial-admin-login", authorization: systemAuth},
+      body: JSON.stringify({resetActiveInitialAdmin: true})
+    });
+  if (resetAdminCredential.response.status !== 200 || !resetAdminCredential.payload.accountToken) {
+    throw new Error(`系统管理员重置初始组织管理员失败：${resetAdminCredential.response.status}:${resetAdminCredential.payload.error || "no_token"}`);
+  }
+  const staleAdminPassword = await jsonFetch(port, "/api/auth/login", {
+    method: "POST", body: JSON.stringify({email: "doctor.reset.initial.admin@local", password: "DoctorReset!2026"})
+  });
+  const staleAdminSession = await jsonFetch(port, "/api/org/members", {headers: {authorization: resetAdminOldAuth}});
+  if (staleAdminPassword.response.status !== 401 || staleAdminSession.response.status !== 401) {
+    throw new Error(`初始管理员重置后旧凭据仍可用（密码=${staleAdminPassword.response.status}，会话=${staleAdminSession.response.status}）`);
+  }
+  const resetAdminNewLogin = await jsonFetch(port, "/api/auth/login", {
+    method: "POST", body: JSON.stringify({email: "doctor.reset.initial.admin@local", token: resetAdminCredential.payload.accountToken})
+  });
+  if (resetAdminNewLogin.response.status !== 200) throw new Error(`重置后的初始管理员一次性令牌无法登录：${resetAdminNewLogin.response.status}`);
   // 改密码必须撤销该账号已签发的全部会话 —— 它是"我怀疑被盗号"时唯一的自救手段，
   // 而原先它不动任何会话，已泄露的令牌最长还能再用 8 小时。
   const staleAfterPasswordChange = await jsonFetch(port, "/api/org/members", {
@@ -4731,8 +4772,15 @@ try {
     if (!orgAgents.payload.agentRuntimeNodes.length) {
       throw new Error("组织智能体取数口一个节点都没回 —— 本轮明明注册过节点，这条断言测不到 display 那一层");
     }
-    // 界面按 node.display?.X 渲染：可选链让「字段没了」在屏幕上表现为空白而不是报错。
-    const displayKeys = [...new Set([...appSource.matchAll(/\bnode\.display\?\.(\w+)/gu)].map((hit) => hit[1]))];
+    // 界面既直接按 node.display?.X 读，也在悬浮信息函数里先写 `const display = node.display || {}`
+    // 再按 display.X 读。只扫第一种语法会在模块拆分/局部别名之后少报字段，让这道投影完整性检查
+    // 误以为自己脱节。别在全文件扫裸 display.X（其它函数也可能有同名局部变量），只补这一个
+    // 明确绑定 node.display 的函数体。
+    const hoverDisplaySource = /function agentHoverPop\([^)]*\)\s*\{[\s\S]*?\n\}\n\nfunction nodeDispatchIds/u.exec(appSource)?.[0] || "";
+    const displayKeys = [...new Set([
+      ...[...appSource.matchAll(/\bnode\.display\?\.(\w+)/gu)].map((hit) => hit[1]),
+      ...[...hoverDisplaySource.matchAll(/\bdisplay\.(\w+)/gu)].map((hit) => hit[1])
+    ])];
     if (displayKeys.length < 3) {
       throw new Error(`只提取到 ${displayKeys.length} 个 node.display 字段 —— 提取脱节，这条断言在空转`);
     }

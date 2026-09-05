@@ -6417,9 +6417,18 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const member = reissueTarget.member;
     if (!member) return json(res, 404, {error: "org_member_not_found"});
+    const resetActiveInitialAdmin = body.resetActiveInitialAdmin === true;
+    const initialAdminOrganization = (state.organizations || []).find((organization) =>
+      organization.initialAdminAccountId === member.accountId && organization.orgId === member.organizationId);
+    const mayResetActiveInitialAdmin = resetActiveInitialAdmin && isSystemAccount(reissueActor)
+      && Boolean(initialAdminOrganization) && member.accountType === "org_admin";
+    if (resetActiveInitialAdmin && !mayResetActiveInitialAdmin) {
+      return json(res, 403, {error: "org_initial_admin_reset_forbidden",
+        message: "只有系统管理员可以重置组织的初始管理员登录凭据，且目标必须是该组织登记的初始管理员"});
+    }
     // 被撤回的邀请（invited→disabled）也走这里：它同样从没接受过，两条登录路径同样是断的，
     // 而"先停用再重新邀请"这句原话在没有这一支时是空的 —— 邮箱唯一性拦住重建、配额还占着。
-    if (member.status !== "invited" && !member.invitationWithdrawn) {
+    if (member.status !== "invited" && !member.invitationWithdrawn && !mayResetActiveInitialAdmin) {
       return json(res, 409, {error: "org_member_invite_reissue_not_applicable",
         message: "只有尚未接受邀请的成员可以重发邀请；已激活的账号请让本人用「修改密码」自行设置，或先停用再重新邀请"});
     }
@@ -6433,6 +6442,10 @@ async function handleApi(req, res) {
     // 人拿着它登录时账号还是 disabled，登不进来。
     member.status = "invited";
     delete member.invitationWithdrawn;
+    if (mayResetActiveInitialAdmin) {
+      delete member.passwordDigest;
+      member.authPolicy = {...(member.authPolicy || {}), method: "invite_token", passwordSet: false};
+    }
     member.updatedAt = reissuedAt;
     revokeAccountSessions(state, member.accountId, "invite_reissued");
     audit(state, guard.actor, "org_member_invite_reissue", `Account:${member.accountId}`);

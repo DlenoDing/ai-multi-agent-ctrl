@@ -2324,6 +2324,8 @@ function systemOrganizationActions(org, initialAdmin) {
     `<button class="secondary-button" data-action="org-quota" data-org="${esc(org.orgId)}">调整配额</button>`,
     initialAdmin?.status === "invited"
       ? `<button class="secondary-button" data-action="member-reissue-invite" data-account="${esc(org.initialAdminAccountId)}">重发管理员邀请</button>` : "",
+    initialAdmin && initialAdmin.status !== "invited"
+      ? `<button class="secondary-button" data-action="reset-initial-admin-login" data-account="${esc(org.initialAdminAccountId)}">重置管理员登录</button>` : "",
     org.status === "active"
       ? `<button class="danger-button" data-action="org-status" data-org="${esc(org.orgId)}" data-status="suspended">停用组织</button>`
       : `<button class="secondary-button" data-action="org-status" data-org="${esc(org.orgId)}" data-status="active">启用组织</button>`
@@ -9626,6 +9628,28 @@ document.addEventListener("click", async (event) => {
           <div class="command-box"><strong>登录账号</strong><pre>${esc(reissued.login?.email || "")}</pre></div>
           <div class="command-box"><strong>一次性令牌</strong><pre id="reissued-token">${esc(reissued.accountToken || "")}</pre></div>
           <div class="button-row"><button type="button" class="secondary-button" data-action="copy-el" data-copy-target="#reissued-token">复制令牌</button></div>
+        </div>
+      `, {protected: true});
+      return;
+    }
+    if (action === "reset-initial-admin-login") {
+      if (!(await confirmDialog({
+        title: "重置初始组织管理员登录",
+        message: "确认撤销该管理员的现有登录会话和密码，并重新签发一次性登录令牌？",
+        sub: "该管理员会被立即登出，原密码不再可用。新令牌只显示一次；管理员用它首次登录后应立即设置新密码。此操作只适用于组织登记的初始管理员。",
+        danger: true,
+        confirmText: "确认重置"
+      }))) return;
+      const reissued = await api(`/api/org/members/${encodeURIComponent(target.dataset.account)}/reissue-invite`, {
+        method: "POST", body: JSON.stringify({resetActiveInitialAdmin: true})
+      });
+      await loadPage();
+      openModal("初始组织管理员一次性登录凭据", `
+        <div class="stack">
+          <div class="notice warn-notice">原会话和密码已失效。以下凭据仅显示一次，请通过受控通道交给该组织管理员。</div>
+          <div class="command-box"><strong>登录账号</strong><pre>${esc(reissued.login?.email || "")}</pre></div>
+          <div class="command-box"><strong>一次性令牌</strong><pre id="reset-admin-token">${esc(reissued.accountToken || "")}</pre></div>
+          <div class="button-row"><button type="button" class="secondary-button" data-action="copy-el" data-copy-target="#reset-admin-token">复制令牌</button></div>
         </div>
       `, {protected: true});
       return;
