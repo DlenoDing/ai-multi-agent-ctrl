@@ -32,6 +32,7 @@ const consoleModuleFiles = [
   "modules/ui-config.js",
   "modules/ui-primitives.js",
   "modules/workspaces.js",
+  "modules/object-workspace.js",
   "modules/task-workbench.js"
 ];
 
@@ -329,9 +330,13 @@ globalThis.__probe = {
   captureToast: (sink) => { toast.info = (message) => sink(message); },
   captureToastKind: (kind, sink) => { toast[kind] = (message) => sink(message); },
   bodyChildren: () => document.body.children || [],
-  sessionState: () => ({page, currentProjectId, modalHtml, selectedWork, managementGroupId,
+  sessionState: () => ({page, currentProjectId, modalHtml, selectedWork, managementGroupId, workListGroupId, workListState,
+    projConfigVersion, directiveList,
     storedProjectId: sessionStorage.getItem("aimac.projectId"), storedPage: sessionStorage.getItem("aimac.page")}),
   selectWorkspace: (pageId, paneId) => workspaces.select(pageId, paneId),
+  setMemberFocus: (accountId) => { memberGrantAccountId = accountId; },
+  setTaskOrigin: (origin) => { taskReturnContext = origin; managementGroupId = origin?.taskGroupId || ""; },
+  resetTaskNavigation: () => resetTaskWorkbench(),
   workspacePaneIds: (pageId) => __workspacePaneIds(pageId),
   translate: (key) => t(key),
   filteredEmptyText: (query, hidden) => filteredEmptyText(query, hidden),
@@ -2605,8 +2610,8 @@ async function runErrorGuidanceCase() {
     "项目成员权限页仍只是成员表或授权表单，没有说明角色与 Agent、任务组、审核、监控之间的关系");
   check("项目成员权限页的授权表单要锁定当前项目，避免跨项目误授权",
     /data-form="project-member"/u.test(projectMembersHtml)
-      && /name="projectId" value="p1" readonly/u.test(projectMembersHtml)
-      && /当前项目：项目一/u.test(projectMembersHtml)
+      && /type="hidden" name="projectId" value="p1"/u.test(projectMembersHtml)
+      && /<strong>项目一<\/strong>/u.test(projectMembersHtml)
       && !/<select name="projectId">/u.test(String(projectMembersHtml).slice(projectMembersPanelAt("项目成员授权"))),
     "项目内授权表单仍允许在同一页切到别的项目，用户以为在当前项目授权但实际可能提交到别处");
   const styles = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/styles.css"), "utf8");
@@ -4642,6 +4647,77 @@ async function runPendingTruncationCase() {
       return String(root.innerHTML || "");
     };
     const containsAll = (html, values) => values.every((value) => String(html).includes(value));
+    for (const delayed of ["state", "config", "directives"]) {
+      const navigationRoot = el("div");
+      const navigationProbe = loadConsole(navigationRoot, {realI18n: true});
+      const oldView = {...overviewState, organizationContext: {name: "旧响应组织"},
+        projects: [...overviewState.projects, {id: "p2", name: "第二项目", status: "active", members: [], organizationId: "org_default"}]};
+      const newView = {...oldView, organizationContext: {name: "最新响应组织"}};
+      navigationProbe.renderFullPageWith(oldView, systemAdmin, "p1", "proj-overview");
+      let releaseOld;
+      let signalOld;
+      const oldRequested = new Promise((resolve) => { signalOld = resolve; });
+      const response = (payload) => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null}, json: async () => payload});
+      navigationProbe.setFetch(async (url) => {
+        const target = new URL(String(url), "http://localhost");
+        if (delayed === "state" && target.pathname === "/api/state" && target.searchParams.get("projectId") === "p1"
+          || delayed === "config" && target.pathname === "/api/projects/p1/config"
+          || delayed === "directives" && target.pathname.endsWith("/human-directives")) {
+          signalOld();
+          return await new Promise((resolve) => { releaseOld = () => resolve(response(delayed === "state" ? oldView
+            : delayed === "config" ? {config: {}, configVersion: "obsolete-version"} : {humanDirectives: [{directiveId: "obsolete-directive"}]})); });
+        }
+        return response(target.pathname === "/api/state" ? (target.searchParams.get("projectId") === "p1" ? oldView : newView) : {config: {}, configVersion: "test"});
+      });
+      const oldNavigation = navigationProbe.click({target: el("button", {dataset: {menu: delayed === "directives" ? "directives" : "proj-settings"}}), preventDefault: () => {}});
+      await oldRequested;
+      await navigationProbe.click({target: el("button", {dataset: {action: "open-project-page", project: "p2", targetMenu: "proj-overview"}}), preventDefault: () => {}});
+      releaseOld();
+      await oldNavigation;
+      check(`快速跨项目切页时旧 ${delayed} 响应不能覆盖最新上下文`, String(navigationRoot.innerHTML).includes("最新响应组织")
+        && !String(navigationRoot.innerHTML).includes("旧响应组织") && navigationProbe.sessionState().currentProjectId === "p2"
+        && navigationProbe.sessionState().projConfigVersion !== "obsolete-version"
+        && !navigationProbe.sessionState().directiveList.some((item) => item.directiveId === "obsolete-directive"), textOf(navigationRoot.innerHTML).slice(0, 500));
+    }
+
+    const objectOverviewState = {...overviewState, organizationContext: {id: "org_default", name: "当前组织"}, fleet: {online: 2, total: 3},
+      projects: [{...overviewState.projects[0], config: {repositories: [{id: "configured_repo"}]}}]};
+    const objectOverview = renderPane(objectOverviewState, orgAdmin, "proj-overview", "overview");
+    const objectActivity = renderPane(objectOverviewState, orgAdmin, "proj-overview", "activity");
+    const objectProjectList = renderPane(objectOverviewState, orgAdmin, "org-projects", "list");
+    check("项目概况只展示一份项目摘要，不再堆叠重复进度卡和菜单卡",
+      (objectOverview.match(/aria-label="项目摘要"/gu) || []).length === 1
+        && !/项目进度 ·/u.test(objectOverview) && !/class="module-card/u.test(objectOverview)
+        && /任务组平均进度/u.test(objectOverview) && /待人工确认/u.test(objectOverview), textOf(objectOverview).slice(0, 300));
+    check("项目资源摘要取实际配置与服务端节点范围，不把产出记录数当仓库数",
+      /仓库 1 个/u.test(objectOverview) && /AI 智能体 2\/3 在线/u.test(objectOverview), textOf(objectOverview));
+    check("最新执行栏目不重复项目摘要", !/aria-label="项目摘要"/u.test(objectActivity) && /最新执行事件/u.test(objectActivity), textOf(objectActivity));
+    check("组织项目列表本身具有进入、成员与设置入口，不依赖说明栏目",
+      /data-target-menu="proj-overview"[^>]*>进入项目/u.test(objectProjectList)
+        && /data-target-menu="proj-members" data-target-workspace="list"/u.test(objectProjectList)
+        && /data-target-menu="proj-settings" data-target-workspace="repositories"/u.test(objectProjectList), textOf(objectProjectList));
+    check("概况任务组行直达详情、任务和监控",
+      /data-focus-group="tg1" data-focus-page="tg"/u.test(objectOverview)
+        && /data-focus-group="tg1" data-focus-page="tasks"/u.test(objectOverview)
+        && /data-focus-group="tg1" data-focus-page="monitor"/u.test(objectOverview), textOf(objectOverview));
+
+    {
+      const returnProbe = loadConsole(el("div"), {realI18n: true});
+      returnProbe.renderFullPageWith(overviewState, orgAdmin, "p1", "monitor");
+      returnProbe.setTaskOrigin({accountId: orgAdmin.accountId, projectId: "p1", taskGroupId: "tg1", workItemId: "w1", title: "原任务", listGroupId: "", listState: {cursor: "page-two", stack: [""]}});
+      returnProbe.stubNavigation();
+      await returnProbe.click({target: el("button", {dataset: {returnWork: ""}}), preventDefault: () => {}});
+      check("真实返回任务处理器回到同一任务和任务组", returnProbe.sessionState().page === "tasks"
+        && returnProbe.sessionState().selectedWork?.workItemId === "w1" && returnProbe.sessionState().managementGroupId === "tg1", JSON.stringify(returnProbe.sessionState()));
+      check("返回任务后仍保留原列表范围和分页位置", returnProbe.sessionState().workListGroupId === ""
+        && returnProbe.sessionState().workListState?.cursor === "page-two" && returnProbe.sessionState().workListState?.stack?.length === 1, JSON.stringify(returnProbe.sessionState()));
+      returnProbe.resetTaskNavigation();
+      await returnProbe.click({target: el("button", {dataset: {returnWork: ""}}), preventDefault: () => {}});
+      check("项目或会话重置后旧任务来源不可再使用", returnProbe.sessionState().selectedWork === null, JSON.stringify(returnProbe.sessionState()));
+      returnProbe.setTaskOrigin({accountId: "another-account", projectId: "p1", taskGroupId: "tg1", workItemId: "foreign-work"});
+      await returnProbe.click({target: el("button", {dataset: {returnWork: ""}}), preventDefault: () => {}});
+      check("任务返回不接受另一账号的来源", returnProbe.sessionState().selectedWork === null, JSON.stringify(returnProbe.sessionState()));
+    }
 
     const orgRegister = textOf(renderPane(overviewState, orgAdmin, "org-agents", "register"));
     const projectRegister = probe.renderProjectAgentsInventoryWith(overviewState, systemAdmin, "p1", "table", ["register"]);
@@ -4841,7 +4917,7 @@ async function runPendingTruncationCase() {
         && /name="resourceType" value="task_group"/u.test(taskGroupMemberPane),
       "项目成员角色和任务组级权限又混回同一授权表单");
     check("项目成员授权 pane 绑定当前 projectId，任务组授权 pane 只列当前项目任务组",
-      /name="projectId" value="p1" readonly/u.test(projectMemberPane)
+      /type="hidden" name="projectId" value="p1"/u.test(projectMemberPane)
         && /value="tg1"/u.test(taskGroupMemberPane)
         && /task_group_owner/u.test(taskGroupMemberPane)
         && /reviewer/u.test(taskGroupMemberPane),
@@ -4869,11 +4945,11 @@ async function runPendingTruncationCase() {
       textOf(orgMemberCreatePane).slice(0, 260));
     check("组织成员行保留账号能力按钮和项目任务组授权入口",
       /data-action="member-perms" data-account="acct_member"[\s\S]*账号能力/u.test(orgMemberListPane)
-        && /data-jump-panel="子账户项目 \/ 任务组权限矩阵"[\s\S]*项目与任务组授权/u.test(orgMemberListPane),
+        && /data-action="member-grants" data-account="acct_member"[\s\S]*项目与任务组授权/u.test(orgMemberListPane),
       textOf(orgMemberListPane).slice(0, 260));
     check("组织成员权限矩阵合并直接能力、项目角色和任务组角色",
       /子账户项目 \/ 任务组权限矩阵/u.test(orgMemberMatrixPane)
-        && /组织权限/u.test(orgMemberMatrixPane)
+        && /账号能力/u.test(orgMemberMatrixPane)
         && /项目角色/u.test(orgMemberMatrixPane)
         && /任务组角色/u.test(orgMemberMatrixPane)
         && /创建项目/u.test(orgMemberMatrixText)
@@ -4881,8 +4957,26 @@ async function runPendingTruncationCase() {
         && /任务组人工审核/u.test(orgMemberMatrixText)
         && /项目：项目管理员/u.test(orgMemberMatrixText)
         && /任务组：评审人/u.test(orgMemberMatrixText)
-        && /data-action="open-project-page" data-project="p1" data-target-menu="proj-members"/u.test(orgMemberMatrixPane),
+        && /data-action="member-grants" data-account="acct_member"/u.test(orgMemberMatrixPane),
       orgMemberMatrixText.slice(0, 320));
+    {
+      const focusedProbe = loadConsole(el("div"), {realI18n: true});
+      focusedProbe.setMemberFocus("acct_member");
+      const focusedMatrix = focusedProbe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["grants"]);
+      const focusedProject = focusedProbe.renderProjectMembersInventoryWith(orgScopeState, orgAdmin, "p1", orgMembers, ["list"]);
+      const focusedGroup = focusedProbe.renderProjectMembersInventoryWith(orgScopeState, orgAdmin, "p1", orgMembers, ["groups"]);
+      check("成员定向授权保留成员和选择的项目，项目角色与任务组角色各有入口",
+        /data-member-grant-project/u.test(focusedMatrix)
+          && /data-target-workspace="list" data-grant-account="acct_member"/u.test(focusedMatrix)
+          && /data-target-workspace="groups" data-grant-account="acct_member"/u.test(focusedMatrix), textOf(focusedMatrix));
+      check("定向授权只预选成员，项目和任务组角色仍必须明确选择",
+        /value="acct_member" selected/u.test(focusedProject) && /value="acct_member" selected/u.test(focusedGroup)
+          && !/value="project_admin" selected/u.test(focusedProject) && !/value="task_group_owner" selected/u.test(focusedGroup), textOf(focusedProject));
+      focusedProbe.setMemberFocus("foreign_account");
+      const foreignFocus = focusedProbe.renderProjectMembersInventoryWith(orgScopeState, orgAdmin, "p1", orgMembers, ["list"]);
+      check("候选范围外的成员不能被默认选中", !/value="foreign_account"/u.test(foreignFocus)
+        && /value="" selected disabled/u.test(foreignFocus), textOf(foreignFocus));
+    }
     {
       const memberPermProbe = loadConsole(el("div"), {realI18n: true});
       memberPermProbe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["list"]);

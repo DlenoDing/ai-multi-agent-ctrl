@@ -78,6 +78,20 @@ try {
   const projectEvents = await request(`/api/projects/${projectId}/execution-events?limit=20`);
   assert.equal(projectEvents.projectId, projectId);
   assert.ok(Array.isArray(projectEvents.events));
+  const systemSession = sessionToken;
+  const organization = await request("/api/orgs", {method: "POST", status: 201,
+    body: {name: "导航作用域验证组织", admin: {email: "navigation-admin@example.test", displayName: "导航管理员"}}});
+  sessionToken = (await request("/api/auth/login", {method: "POST",
+    body: {email: organization.adminAccount.email, token: organization.accountToken}})).sessionToken;
+  const orgProject = await request("/api/org/projects", {method: "POST", status: 201, body: {name: "组织导航项目"}});
+  const orgView = await request(`/api/state?view=projects&projectId=${orgProject.id}`);
+  assert.deepEqual(orgView.organizationContext, {id: organization.organization.orgId, name: "导航作用域验证组织", status: "active"});
+  assert.ok(!orgView.projects.some((project) => project.id === projectId), "organization context must not introduce foreign projects");
+  sessionToken = systemSession;
+  assert.equal((await request("/api/state?view=system")).organizationContext, null, "global system management must not be labeled as an organization workspace");
+  const systemProjectView = await request(`/api/state?view=projects&projectId=${orgProject.id}`);
+  assert.deepEqual(systemProjectView.organizationContext, orgView.organizationContext, "system reader uses the target project's organization, not the reader's default organization");
+  console.log("ok: organization breadcrumb context follows the authorized project for org and system readers");
   console.log("workspace flows check passed");
 } catch (error) {
   console.error(`workspace flows check failed: ${error.message}`);

@@ -5830,10 +5830,18 @@ const MUTATIONS = [
     expect: "必须真的挂着那条横幅"
   },
   {
+    name: "过期页面读取不得覆盖最新导航",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "return () => generation === pageReadGeneration && token === authToken;",
+    to: "return () => true;",
+    expect: "旧 state 响应不能覆盖最新上下文"
+  },
+  {
     name: "取配置失败的原因不许被 catch 吞掉",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: ".catch((error) => { projConfigError = String(error?.message || error); return null; });",
+    from: ".catch((error) => { if (currentRead()) projConfigError = String(error?.message || error); return null; });",
     to: ".catch(() => null);",
     expect: "catch 不许把它吞掉"
   },

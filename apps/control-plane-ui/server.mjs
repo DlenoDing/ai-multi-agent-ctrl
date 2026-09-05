@@ -2017,6 +2017,11 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     schemaVersion: scoped.schemaVersion,
     stateVersion: scoped.stateVersion,
     runtime: liveRuntime,
+    organizationContext: (() => {
+      const orgId = scopeProjectId ? scoped.projects.find((project) => project.id === scopeProjectId)?.organizationId : isSystemAccount(account) ? null : account.organizationId;
+      const organization = (scoped.organizations || []).find((item) => item.orgId === orgId);
+      return organization ? {id: organization.orgId, name: organization.name, status: organization.status} : null;
+    })(),
     accountCapabilities: {canCreateProject: account.accountType === "user_account"
       && hasPermission(state, account.accountId, "project:create", {resourceType: "project", resourceId: "new"})},
     projectPermissions: scopeProjectId ? {projectId: scopeProjectId, permissions: KNOWN_PERMISSIONS

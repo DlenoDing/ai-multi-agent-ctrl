@@ -71,6 +71,7 @@ let page = sessionStorage.getItem("aimac.page") || "";
 let currentProjectId = sessionStorage.getItem("aimac.projectId") || "";
 let managementGroupId = "";
 let selectedWork = null;
+let taskReturnContext = null;
 let workListGroupId = "";
 let workListState = null;
 let taskSearch = "";
@@ -114,6 +115,8 @@ let lastLoadedAt = null;
 const pageLoadedAt = {};
 let lastLoadErrorToast = "";
 let loading = false;
+let pageReadGeneration = 0;
+let taskGroupReadGeneration = 0;
 let formTouched = false;
 // Which forms have unsaved edits. Submitting one form triggers a full loadPage() rebuild that discards
 // OTHER dirty forms on the same page; this set lets the submit handler warn before that loss. The key
@@ -873,6 +876,7 @@ const stateCache = new Map();
 // 也被系统设置页用，而后者要看的是【全部项目】的角色技能叠加（叠加记录带 projectId）。
 // 按视图名一刀切会让系统管理员只看得到当前项目的叠加，还以为别的项目没有改过角色规则。
 async function fetchState(view, options = {}) {
+  const currentRead = pageReadCheckpoint();
   const scopeProjectId = options.projectId || "";
   const path = `/api/state?view=${encodeURIComponent(view)}&limit=200`
     + (scopeProjectId ? `&projectId=${encodeURIComponent(scopeProjectId)}` : "");
@@ -883,13 +887,17 @@ async function fetchState(view, options = {}) {
   const cached = stateCache.get(cacheKey);
   if (etag && cached) headers["if-none-match"] = etag;
   const response = await fetch(path, {headers});
+  if (!currentRead()) throw new Error("页面读取已过期");
   noteServerClock(response);
   if (response.status === 304 && cached) return cached;
   if (!response.ok) {
     // 走回统一的错误处理（401 清会话、把服务端写的说明带给人）
-    return {...emptyState(), ...(await api(path))};
+    const result = await api(path);
+    if (!currentRead()) throw new Error("页面读取已过期");
+    return {...emptyState(), ...result};
   }
   const payload = {...emptyState(), ...(await response.json())};
+  if (!currentRead()) throw new Error("页面读取已过期");
   const nextEtag = response.headers.get("etag");
   if (nextEtag) { stateEtags.set(cacheKey, nextEtag); stateCache.set(cacheKey, payload); }
   else { stateEtags.delete(cacheKey); stateCache.delete(cacheKey); }
@@ -1187,7 +1195,15 @@ function projectTaskGroups() {
 
 /* ---------------- 页面数据加载 ---------------- */
 
+function pageReadCheckpoint() {
+  const generation = pageReadGeneration;
+  const token = authToken;
+  return () => generation === pageReadGeneration && token === authToken;
+}
+
 async function loadPage() {
+  pageReadGeneration += 1;
+  const currentRead = pageReadCheckpoint();
   dirtyFormKinds.clear(); // a full page (re)load rebuilds the DOM, discarding any in-progress form edits
   if (!authToken) {
     render();
@@ -1205,24 +1221,33 @@ async function loadPage() {
         api("/api/system/overview").catch((error) => { overviewFailure = error; return null; }),
         fetchState("system")
       ]);
+      if (!currentRead()) return;
       systemOverview = overviewResult;
       systemOverviewStatus = overviewResult ? "loaded" : "failed";
       state = systemState;
       if (overviewFailure) throw overviewFailure;
     } else if (page === "sys-orgs") {
       const [orgsResult, systemState] = await Promise.all([api("/api/orgs"), fetchState("system")]);
+      if (!currentRead()) return;
       organizations = orgsResult.organizations || [];
       state = systemState;
     } else if (page === "sys-settings") {
-      [state, instructionState] = await Promise.all([fetchState("runtime"), fetchState("instructions")]);
+      const [runtimeState, nextInstructions] = await Promise.all([fetchState("runtime"), fetchState("instructions")]);
+      if (!currentRead()) return;
+      state = runtimeState;
+      instructionState = nextInstructions;
     } else if (page === "sys-accounts") {
-      state = await fetchState("users");
+      const nextState = await fetchState("users");
+      if (!currentRead()) return;
+      state = nextState;
     } else if (page === "org-overview") {
       const [fullState, agentsResult] = await Promise.all([fetchState("orgs"), api("/api/org/agents")]);
+      if (!currentRead()) return;
       state = fullState;
       orgAgentNodes = agentsResult.agentRuntimeNodes || [];
     } else if (page === "org-members") {
       const [membersResult, projectState] = await Promise.all([api("/api/org/members"), fetchState("projects")]);
+      if (!currentRead()) return;
       orgMembers = membersResult.members || [];
       state = projectState;
     } else if (page === "org-agents") {
@@ -1231,6 +1256,7 @@ async function loadPage() {
         fetchState("projects"),
         api("/api/skill-registry").catch(() => ({roleSkillIndex: [], roleSkillOverlays: []}))
       ]);
+      if (!currentRead()) return;
       orgAgentNodes = agentsResult.agentRuntimeNodes || [];
       state = {
         ...projectState,
@@ -1239,10 +1265,13 @@ async function loadPage() {
       };
     } else if (page === "org-projects") {
       const [projectState, membersResult] = await Promise.all([fetchState("projects"), api("/api/org/members")]);
+      if (!currentRead()) return;
       state = projectState;
       orgMembers = membersResult.members || [];
     } else if (page === "proj-overview") {
-      state = await fetchState("tasks", {projectId: currentProjectId});
+      const nextState = await fetchState("tasks", {projectId: currentProjectId});
+      if (!currentRead()) return;
+      state = nextState;
       ensureProjectSelection();
       loadPendingConfirmCount();
     } else if (page === "proj-members") {
@@ -1252,6 +1281,7 @@ async function loadPage() {
         fetchState("projects", {projectId: currentProjectId}),
         shouldLoadGrantDirectory ? api("/api/org/members").catch(() => ({members: []})) : Promise.resolve({members: []})
       ]);
+      if (!currentRead()) return;
       state = {
         ...tasksState,
         accessGrants: projectState.accessGrants || [],
@@ -1267,6 +1297,7 @@ async function loadPage() {
         api("/api/model-registry").catch(() => ({modelCapabilities: []})),
         api("/api/skill-registry").catch(() => ({roleSkillIndex: [], roleSkillOverlays: []}))
       ]);
+      if (!currentRead()) return;
       state = {
         ...tasksState,
         modelCapabilities: modelRegistry.modelCapabilities || [],
@@ -1277,11 +1308,15 @@ async function loadPage() {
       if (page === "tasks" && workspaces.current("tasks")?.id !== "create") await loadTaskWorkbenchData();
       else if (expandedTaskGroupId) await loadTaskGroupDetail(expandedTaskGroupId);
     } else if (page === "review") {
-      state = await fetchState("tasks", {projectId: currentProjectId});
+      const nextState = await fetchState("tasks", {projectId: currentProjectId});
+      if (!currentRead()) return;
+      state = nextState;
       ensureProjectSelection();
       await loadReviewData();
     } else if (page === "directives") {
-      state = await fetchState("tasks", {projectId: currentProjectId});
+      const nextState = await fetchState("tasks", {projectId: currentProjectId});
+      if (!currentRead()) return;
+      state = nextState;
       ensureProjectSelection();
       await loadDirectiveData();
     } else if (page === "monitor") {
@@ -1289,6 +1324,7 @@ async function loadPage() {
         fetchState("tasks", {projectId: currentProjectId}),
         fetchState("runtime", {projectId: currentProjectId})
       ]);
+      if (!currentRead()) return;
       state = {
         ...tasksState,
         modelSelectionDecisions: runtimeState.modelSelectionDecisions || [],
@@ -1310,6 +1346,7 @@ async function loadPage() {
         fetchState("runtime", {projectId: currentProjectId}),
         api("/api/skill-registry").catch(() => ({roleSkillIndex: [], roleSkillOverlays: []}))
       ]);
+      if (!currentRead()) return;
       state = {
         ...tasksState,
         agentRuntimeNodes: runtimeState.agentRuntimeNodes || [],
@@ -1324,6 +1361,7 @@ async function loadPage() {
         fetchState("tasks", {projectId: currentProjectId}),
         api("/api/skill-registry").catch(() => ({roleSkillIndex: [], roleSkillOverlays: []}))
       ]);
+      if (!currentRead()) return;
       state = {
         ...tasksState,
         roleSkillIndex: skillRegistry.roleSkillIndex || [],
@@ -1334,7 +1372,8 @@ async function loadPage() {
         projConfigStatus = "unloaded";
         projConfigError = "";
         const configResult = await api(`/api/projects/${encodeURIComponent(currentProjectId)}/config`)
-          .catch((error) => { projConfigError = String(error?.message || error); return null; });
+          .catch((error) => { if (currentRead()) projConfigError = String(error?.message || error); return null; });
+        if (!currentRead()) return;
         projConfig = configResult?.config || null;
         projConfigStatus = projConfig ? "loaded" : "failed";
         // 记住"我读到的是哪一版"。保存时带回去，服务端据此判断这层配置在我打开之后有没有被别人改过 ——
@@ -1345,12 +1384,14 @@ async function loadPage() {
         projConfigStatus = "unloaded";
       }
     }
+    if (!currentRead()) return;
     ensureProjectSelection();
     lastError = "";
     lastLoadErrorToast = "";
     lastLoadedAt = Date.now();
     pageLoadedAt[page] = lastLoadedAt;
   } catch (error) {
+    if (!currentRead()) return;
     lastError = error?.message || String(error);
     lastErrorIsRequest = error?.requestFailure === true;
     // Surface authenticated page-load failures — previously the value was only rendered on the login
@@ -1377,6 +1418,8 @@ function reportBackgroundRefreshFailure(error) {
 }
 
 async function loadTaskGroupDetail(taskGroupId) {
+  const currentRead = pageReadCheckpoint();
+  const generation = ++taskGroupReadGeneration;
   // 房间消息是 agent 之间实际说过的话。它此前在控制台上完全没有入口：人只看得到最后送上来的
   // 那一个提案，看不到它是怎么谈出来的。而人工定稿这道闸门的前提恰恰是「人能看见 AI 的推理过程
   // 再决定」—— 看不见协商过程，定稿就退化成对结论点头。读取失败不阻断详情页：房间是旁证，
@@ -1400,6 +1443,7 @@ async function loadTaskGroupDetail(taskGroupId) {
     api(`/api/rooms/${encodeURIComponent(`room_${taskGroupId}`)}/messages?limit=50&tail=1`)
       .catch((error) => { roomFailure = error; return null; })
   ]);
+  if (!currentRead() || generation !== taskGroupReadGeneration) return;
   tgDetail = {
     taskGroupId,
     loadFailed: Boolean(progressFailure),
@@ -1422,6 +1466,7 @@ async function loadReviewData() {
 }
 
 async function loadDirectiveData() {
+  const currentRead = pageReadCheckpoint();
   const groups = projectTaskGroups();
   if (!groups.length) {
     directiveTaskGroupId = "";
@@ -1431,7 +1476,15 @@ async function loadDirectiveData() {
   if (!directiveTaskGroupId || !groups.some((taskGroup) => taskGroup.id === directiveTaskGroupId)) {
     directiveTaskGroupId = groups[0].id;
   }
-  const result = await api(`/api/task-groups/${encodeURIComponent(directiveTaskGroupId)}/human-directives`);
+  const targetGroupId = directiveTaskGroupId;
+  let result;
+  try {
+    result = await api(`/api/task-groups/${encodeURIComponent(targetGroupId)}/human-directives`);
+  } catch (error) {
+    if (currentRead() && targetGroupId === directiveTaskGroupId) throw error;
+    return;
+  }
+  if (!currentRead() || targetGroupId !== directiveTaskGroupId) return;
   directiveList = result.humanDirectives || [];
 }
 
@@ -1763,8 +1816,15 @@ function render() {
 }
 
 function renderContent() {
-  if (PROJECT_PAGES.has(page) && hasNoVisibleProject()) return renderPanel(PAGE_META[page]?.[0] || "项目管理", noVisibleProjectNotice(), {wide: true});
-  return workspaces.navigation(page, true, workspaceOptions()) + workspaces.heading(page, workspaceOptions()) + managementScopeBar() + workspaces.run(page, renderPageContent);
+  const project = PROJECT_PAGES.has(page) ? currentProject() : null;
+  const group = projectTaskGroups().find((item) => item.id === (managementGroupId || (page === "tg" ? expandedTaskGroupId : "")))
+    || (taskWorkDetail?.taskGroup?.projectId === currentProjectId && taskWorkDetail.taskGroup.id === managementGroupId ? taskWorkDetail.taskGroup : null);
+  const returnTask = ["monitor", "review", "directives", "tg"].includes(page) && group
+    && taskReturnContext?.accountId === currentAccount?.accountId && taskReturnContext.projectId === currentProjectId && taskReturnContext.taskGroupId === group.id ? taskReturnContext : null;
+  const context = window.AIMAC_OBJECT_WORKSPACE.trail({organization: state.organizationContext, project, group: project && ["tg", "tasks", "monitor", "review", "directives"].includes(page) ? group : null,
+    work: page === "tasks" && selectedWork ? taskWorkDetail?.workItem : null, pageLabel: PAGE_META[page]?.[0] || "", returnTask});
+  if (PROJECT_PAGES.has(page) && hasNoVisibleProject()) return context + renderPanel(PAGE_META[page]?.[0] || "项目管理", noVisibleProjectNotice(), {wide: true});
+  return context + workspaces.navigation(page, true, workspaceOptions()) + workspaces.heading(page, workspaceOptions()) + managementScopeBar() + workspaces.run(page, renderPageContent);
 }
 
 function workspaceOptions() {
@@ -1808,6 +1868,7 @@ function renderTaskWorkbench() {
 
 async function loadTaskWorkbenchData() {
   if (!currentProjectId) return;
+  const currentRead = pageReadCheckpoint();
   const generation = ++taskRequestGeneration;
   const projectId = currentProjectId;
   taskPageLoading = true;
@@ -1820,9 +1881,11 @@ async function loadTaskWorkbenchData() {
     const result = selectedWork
       ? await api(`/api/task-groups/${encodeURIComponent(selectedWork.taskGroupId)}/work-items/${encodeURIComponent(selectedWork.workItemId)}?${workEventHistoryMode ? `afterSequence=${workEventCursor}` : "latest=1"}&eventLimit=120`)
       : await api(`/api/projects/${encodeURIComponent(projectId)}/work-items?${query}`);
-    if (generation !== taskRequestGeneration || projectId !== currentProjectId || page !== "tasks") return;
+    if (!currentRead() || generation !== taskRequestGeneration || projectId !== currentProjectId || page !== "tasks") return;
     if (selectedWork) {
       taskWorkDetail = result;
+      taskReturnContext = {...selectedWork, accountId: currentAccount?.accountId, projectId,
+        title: result.workItem?.title || selectedWork.workItemId, listGroupId: workListGroupId, listState: workListState};
       for (const [key, id] of [["agentDispatches", "dispatchId"], ["workSessions", "sessionId"], ["repositoryOutputs", "targetId"], ["checkpoints", "runId"], ["agentRuntimeNodes", "nodeId"]]) {
         if (!Array.isArray(result[key])) continue;
         const incoming = new Set(result[key].map((item) => item[id]));
@@ -1834,11 +1897,13 @@ async function loadTaskWorkbenchData() {
       taskWorkDetail = null;
     }
   } catch (error) {
-    if (generation === taskRequestGeneration && projectId === currentProjectId && page === "tasks") throw error;
+    if (currentRead() && generation === taskRequestGeneration && projectId === currentProjectId && page === "tasks") throw error;
   } finally { if (generation === taskRequestGeneration) taskPageLoading = false; }
 }
 
 function resetTaskWorkbench() {
+  taskReturnContext = null;
+  memberGrantAccountId = "";
   workEventHistoryMode = false;
   workEventCursor = 0;
   workEventCursorStack = [];
@@ -2945,6 +3010,7 @@ function noProjectYetNotice(what) {
 }
 
 let memberGrantProjectId = "";
+let memberGrantAccountId = "";
 
 function renderProjectMemberForm(options = {}) {
   if (!(state.projects || []).length) return noProjectYetNotice("项目成员授权");
@@ -2980,14 +3046,14 @@ function renderProjectMemberForm(options = {}) {
     <form class="form-grid" data-form="project-member">
       <div class="form-row"><label>项目</label>
         ${scopedProjectId
-          ? `<input name="projectId" value="${esc(chosen?.id || scopedProjectId)}" readonly><div class="small muted">当前项目：${esc(chosen?.name || scopedProjectId)}。要给别的项目授权，请先切换顶部项目。</div>`
+          ? `<input type="hidden" name="projectId" value="${esc(chosen?.id || scopedProjectId)}"><strong>${esc(chosen?.name || scopedProjectId)}</strong>`
           : `<select name="projectId">${projects.map((project) =>
             `<option value="${esc(project.id)}"${project.id === chosen?.id ? " selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}</select>`}
       </div>
       <div class="form-row"><label>账号</label>
         ${decisionSelect("accountId",
           grantable.map((account) => [account.accountId, account.displayName || account.accountId]),
-          "请选择授权对象…")}
+          "请选择授权对象…", {selected: memberGrantAccountId})}
       </div>
       <div class="form-row"><label>项目角色</label>
         ${/* 默认停在 project_owner 上：不读就提交，等于把最高权限授予名单里排第一的人。
@@ -3031,7 +3097,7 @@ function renderTaskGroupGrantForm(project) {
         <div class="form-row"><label>任务组</label>${decisionSelect("resourceId",
           groups.map((taskGroup) => [taskGroup.id, taskGroup.name || taskGroup.id]), "请选择任务组…")}</div>
         <div class="form-row"><label>账号</label>${decisionSelect("subjectId",
-          candidates.map((account) => [account.accountId, account.displayName || account.email || account.accountId]), "请选择账号…")}</div>
+          candidates.map((account) => [account.accountId, account.displayName || account.email || account.accountId]), "请选择账号…", {selected: memberGrantAccountId})}</div>
         <div class="form-row"><label>任务组角色</label>${decisionSelect("role", [
           ["task_group_owner", "任务组负责人（控制任务组与工作项）"],
           ["reviewer", "评审人（人工定稿 / 验收）"],
@@ -3082,27 +3148,33 @@ function taskGroupGrantsForAccount(accountId, projectId = "") {
 }
 
 function renderOrgMemberScopeMatrix(members) {
-  const rows = members.map((account) => {
+  const selected = members.find((account) => account.accountId === memberGrantAccountId);
+  const projects = assignableProjects().filter((project) => !selected || organizationOf(project) === organizationOf(selected));
+  const chosen = projects.find((project) => project.id === memberGrantProjectId) || projects[0];
+  const focus = selected ? `<div class="member-grant-focus"><strong>${esc(selected.displayName || selected.email)}</strong>
+    <button class="secondary-button" data-action="clear-member-grants">全部成员</button></div>
+    ${chosen && selected.status !== "retired" ? `<div class="member-grant-focus"><label for="member-grant-project">授权项目</label><select id="member-grant-project" data-member-grant-project>${projects.map((project) => `<option value="${esc(project.id)}"${project.id === chosen.id ? " selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}</select>
+      ${window.AIMAC_OBJECT_WORKSPACE.projectLink(chosen, "分配项目角色", {page: "proj-members", workspace: "list", accountId: selected.accountId})}
+      ${window.AIMAC_OBJECT_WORKSPACE.projectLink(chosen, "分配任务组角色", {page: "proj-members", workspace: "groups", accountId: selected.accountId})}</div>` : ""}` : "";
+  const rows = (selected ? [selected] : members).map((account) => {
     const projectMemberships = projectMembershipsForAccount(account.accountId);
     const taskGroupGrants = taskGroupGrantsForAccount(account.accountId);
     return row([
       `<strong>${esc(account.displayName || account.accountId)}</strong><div class="small muted mono">${esc(account.accountId)}</div>`,
       `${statusBadge("account", account.status)}${retiredNote(account)}`,
-      esc((account.permissions || []).map((permission) => permLabel(permission)).join("、") || "无直接组织权限"),
+      esc((account.permissions || []).map((permission) => permLabel(permission)).join("、") || "无额外账号能力"),
       projectMemberships.length
         ? projectMemberships.map(({project, role}) => `${esc(project.name || project.id)}：${esc(grantRoleLabel(role))}`).join("<br>")
         : `<span class="muted">未分配项目</span>`,
       taskGroupGrants.length
         ? taskGroupGrants.map((grant) => `${esc(taskGroupNameOf(grant.resource.resourceId))}：${esc(grantRoleLabel(grant.role))}`).join("<br>")
         : `<span class="muted">未分配任务组角色</span>`,
-      projectMemberships.length
-        ? `<button class="secondary-button" data-action="open-project-page" data-project="${esc(projectMemberships[0].project.id)}" data-target-menu="proj-members">去项目授权</button>`
-        : `<button class="secondary-button" data-menu="org-projects">去项目列表</button>`
+      selected ? "-" : `<button class="secondary-button" data-action="member-grants" data-account="${esc(account.accountId)}">管理授权</button>`
     ]);
   }).join("");
   return panel("子账户项目 / 任务组权限矩阵", `
-    <div class="notice">这里按账号汇总组织直接权限、项目角色和任务组角色。项目和任务组授权必须在具体项目“成员权限”里落位，避免把组织账号生命周期和任务执行权限混在一起。</div>
-    ${table(["成员", "状态", "组织权限", "项目角色", "任务组角色", "授权入口"], rows,
+    ${focus}
+    ${table(["成员", "状态", "账号能力", "项目角色", "任务组角色", "授权入口"], rows,
       {emptyText: listEmptyText("成员权限矩阵")})}
   `, {wide: true, headerSide: filterInput("按成员、项目、任务组过滤…", "member-scope-matrix")});
 }
@@ -3417,7 +3489,7 @@ function renderOrgMembers() {
       esc((account.roles || []).map((role) => t(role)).join("、")),
       manageable ? [
         `<button class="secondary-button" data-action="member-perms" data-account="${esc(account.accountId)}">账号能力</button>`,
-        `<button class="secondary-button" data-jump-panel="子账户项目 / 任务组权限矩阵">项目与任务组授权</button>`,
+        `<button class="secondary-button" data-action="member-grants" data-account="${esc(account.accountId)}">项目与任务组授权</button>`,
         // 邀请令牌只显示一次。丢了之后这一行原先只有「停用」——点它再点「启用」会撞 409，
         // 人会以为自己把账号弄坏了。真正需要的是重发。
         // 邀请被撤回（invited→停用）的账号同样从没接受过邀请：它唯一的出路也是重发，
@@ -4329,16 +4401,16 @@ function renderOrgProjects() {
   const unhealthyProjects = projects.filter((project) => !["ok", "healthy", "normal"].includes(project.progress?.health)).length;
   const memberLinks = projects.reduce((sum, project) => sum + (project.members || []).length, 0);
   const projectRows = projects.map((project) => row([
-    `<strong>${esc(project.name)}</strong><div class="small muted mono">${esc(project.id)}</div>`,
+    window.AIMAC_OBJECT_WORKSPACE.projectLink(project, project.name || project.id, {primary: true}),
     badge(project.status),
     progressLine(project.progress?.percent),
     badge(project.progress?.phase),
     badge(project.progress?.health),
     esc((project.members || []).map((member) => `${accountName(member.accountId)}（${grantRoleLabel(member.role)}）`).join("、")),
     // 项目此前没有任何终结路径，于是组织的项目配额只增不减、建满之后再也建不了新的。
-    hasPerm("project:update") && project.status !== "archived"
+    `<div class="button-row">${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "进入项目")}${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "成员权限", {page: "proj-members", workspace: "list"})}${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "项目设置", {page: "proj-settings", workspace: "repositories"})}</div>` + (hasPerm("project:update") && project.status !== "archived"
       ? `<button class="secondary-button" data-action="project-archive" data-project="${esc(project.id)}">归档</button>`
-      : project.status === "archived" ? `<span class="small muted">已归档</span>` : "-"
+      : project.status === "archived" ? `<span class="small muted">已归档</span>` : "")
   ])).join("");
 
   return [
@@ -4494,90 +4566,13 @@ function renderProjectMembers() {
   ].join("");
 }
 
-function projectHubHtml(project, groups, openGroups, eventsInScope, repoTargets) {
-  const percent = Math.max(0, Math.min(100, Number(project.progress?.percent || 0)));
-  const groupIds = new Set(groups.map((taskGroup) => taskGroup.id));
-  const blockedDispatches = (state.agentDispatches || []).filter((item) => groupIds.has(item.taskGroupId) && item.status === "blocked").length;
-  const activeDispatches = (state.agentDispatches || []).filter((item) => groupIds.has(item.taskGroupId) && ["queued", "running", "blocked"].includes(item.status)).length;
-  const directives = (state.humanDirectives || []).filter((item) => groupIds.has(item.taskGroupId) && ["queued", "acknowledged"].includes(item.status)).length;
-  const eventLatest = eventsInScope[0]?.createdAt ? sinceText(eventsInScope[0].createdAt) : "暂无事件";
-  const agentStats = projectAgentStats(project.id);
-  return `
-    <section class="project-hub wide">
-      <div class="project-hub-main">
-        <div class="project-score" style="--score:${percent};"><strong>${percent}%</strong><span>总进度</span></div>
-        <div class="project-hub-text">
-          <div class="project-hub-title">${esc(project.name || project.id)}</div>
-          <div class="project-hub-meta">
-            <span>状态 ${badge(project.status)}</span>
-            <span>阶段 ${badge(project.progress?.phase)}</span>
-            <span>健康度 ${badge(project.progress?.health)}</span>
-            <span>更新 ${fmtTime(project.progress?.updatedAt)}</span>
-          </div>
-        </div>
-      </div>
-      <div class="module-grid">
-        ${projectModuleCard({
-          pageId: "tg",
-          title: "任务组",
-          metric: `${openGroups.length}/${groups.length}`,
-          detail: groups.length ? "管理目标、角色、工作项与执行控制" : "先创建任务组，再分配工作项",
-          action: "查看任务组",
-          tone: openGroups.length ? "blue" : "gray"
-        })}
-        ${projectModuleCard({
-          pageId: "proj-members",
-          title: "成员权限",
-          metric: `${(project.members || []).length}`,
-          detail: "查看本项目成员角色，补项目管理、任务组控制、审核和 Agent 操作权限",
-          action: "管理权限",
-          tone: (project.members || []).length ? "blue" : "orange"
-        })}
-        ${projectModuleCard({
-          pageId: "review",
-          title: "人工审核",
-          metric: `${pendingConfirmCount}`,
-          detail: pendingConfirmCount ? "有确认项等待处理" : "当前没有待确认项",
-          action: "处理审核",
-          tone: pendingConfirmCount ? "orange" : "green"
-        })}
-        ${projectModuleCard({
-          pageId: "directives",
-          title: "人工指令",
-          metric: `${directives}`,
-          detail: directives ? "有指令等待消费或确认" : "可向总控下达结构化指令",
-          action: "下达指令",
-          tone: directives ? "orange" : "blue"
-        })}
-        ${projectModuleCard({
-          pageId: "monitor",
-          title: "执行监控",
-          metric: `${activeDispatches}`,
-          detail: blockedDispatches ? `${blockedDispatches} 个派发被挡` : `最近事件：${eventLatest}`,
-          action: "实时监控",
-          tone: blockedDispatches ? "red" : activeDispatches ? "blue" : "green"
-        })}
-        ${projectModuleCard({
-          pageId: "proj-agents",
-          title: "AI 智能体",
-          metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : `${agentStats.liveTokens}`,
-          detail: agentStats.aliveNodes.length
-            ? "项目节点、加入令牌、注册脚本与控制操作"
-            : "进入「项目管理」→「AI 智能体」→「注册 agent」签发加入令牌并复制服务端安装脚本",
-          action: agentStats.aliveNodes.length ? "管理节点" : "注册 agent",
-          tone: agentStats.onlineNodes ? "green" : agentStats.aliveNodes.length ? "orange" : "red"
-        })}
-        ${projectModuleCard({
-          pageId: "proj-settings",
-          title: "项目设置",
-          metric: `${repoTargets.length}`,
-          detail: "仓库、规则、默认角色与授权边界",
-          action: "配置项目",
-          tone: repoTargets.length ? "blue" : "gray"
-        })}
-      </div>
-    </section>
-  `;
+function projectHubHtml(project) {
+  if (!workspaces.showHub()) return "";
+  return window.AIMAC_OBJECT_WORKSPACE.projectSummary({
+    project, agentOnline: Number(state.fleet?.online || 0), agentTotal: Number(state.fleet?.total || 0),
+    repositoryCount: (project.config?.repositories || project.repositories || []).length,
+    helpers: {badge, fmtTime, progressLine}
+  });
 }
 
 // 「项目操作路径」（7 张入口卡片 + 推荐顺序）已撤：与顶部「流程导航」是同一件事的两份说法，人不知道该看哪份。
@@ -4702,7 +4697,7 @@ function renderProjectOverview() {
   // 两个都有用（一个看整体、一个看有没有某个组在拖），但必须各自说清是怎么算的。
   const avgProgress = groups.length ? Math.round(groups.reduce((sum, taskGroup) => sum + Number(taskGroup.progress || 0), 0) / groups.length) : 0;
   const groupRows = groups.map((taskGroup) => row([
-    `<strong>${esc(taskGroup.name || taskGroup.id)}</strong>`,
+    window.AIMAC_OBJECT_WORKSPACE.groupLink(taskGroup, taskGroup.name || taskGroup.id, "tg", true),
     badge(taskGroup.status),
     badge(taskGroup.phase),
     progressLine(taskGroup.progress),
@@ -4716,7 +4711,8 @@ function renderProjectOverview() {
       const stuck = (state.agentDispatches || [])
         .filter((item) => item.taskGroupId === taskGroup.id && item.status === "blocked").length;
       return stuck ? `${blocked} <span class="warn-text">· 派发被挡 ${stuck}</span>` : String(blocked);
-    })(), c: "num"}
+    })(), c: "num"},
+    `<div class="button-row">${window.AIMAC_OBJECT_WORKSPACE.groupLink(taskGroup, "任务", "tasks")}${window.AIMAC_OBJECT_WORKSPACE.groupLink(taskGroup, "监控", "monitor")}</div>`
   ])).join("");
   const repoTargets = (state.repositoryOutputs || []).filter((target) => target.projectId === project.id);
   const repoRows = repoTargets.map((target) => row([
@@ -4747,24 +4743,13 @@ function renderProjectOverview() {
     // 提示复用同一个函数，措辞与那两页一致，人不必在不同页面上对同一件事建立两套理解。
     cellsWaitingWithNoAgentNotice(groups),
     wipCapacityNotice(groups),
-    projectHubHtml(project, groups, openGroups, eventsInScope, repoTargets),
-    panel(`项目进度 · ${esc(project.name)}`, `
-      <div class="stack">
-        ${progressLine(project.progress?.percent)}
-        <div class="record-meta">
-          <span>阶段：${badge(project.progress?.phase)}</span>
-          <span>健康度：${badge(project.progress?.health)}</span>
-          <span>项目状态：${badge(project.status)}</span>
-          <span>更新时间：${fmtTime(project.progress?.updatedAt)}</span>
-        </div>
-      </div>
-    `),
+    projectHubHtml(project),
     panel("关键指标", `
       <div class="metric-grid">
-        <div class="metric"><span>任务组</span><strong>${openGroups.length}/${groups.length}</strong></div>
+        <div class="metric">${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "任务组", {page: "tg", workspace: "list", primary: true})}<strong>${openGroups.length}/${groups.length}</strong></div>
         <div class="metric"><span>任务组平均进度</span><strong>${avgProgress}%</strong>
           <div class="small muted">按任务组平均；上面那个总进度是按工作项平均的，两者不一定相等</div></div>
-        <div class="metric"><span>受阻项</span><strong>${blockers.length}</strong>
+        <div class="metric">${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "受阻项", {page: "monitor", workspace: "barriers", primary: true})}<strong>${blockers.length}</strong>
           ${(() => {
             // 这一格数的是【任务组身上的 blockers】（关闭门那一套）。而「被挡住的派发」是另一回事，
             // 它出现在执行监控页上，那里明说「有执行被挡住，需要人处理」——
@@ -4777,7 +4762,7 @@ function renderProjectOverview() {
               + " 到「执行监控」页看它们卡在哪</div>";
           })()}
         </div>
-        <div class="metric"><span>待人工确认</span><strong>${pendingConfirmCount}</strong>
+        <div class="metric">${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "待人工确认", {page: "review", workspace: "pending", primary: true})}<strong>${pendingConfirmCount}</strong>
           ${(() => {
             // 这一格只数【确认单】一类。而等人拍板的东西有九类，散在人工审核与执行监控两页上 ——
             // 项目概览是人每天先看的那一屏，它显示 0 的时候人就不会再往下找了
@@ -4798,7 +4783,8 @@ function renderProjectOverview() {
           })()}</div>
       </div>
     `),
-    panel("任务组一览", table(["任务组", "状态", "阶段", "进度", "健康度", {label: "受阻数", c: "num"}], groupRows), {wide: true}),
+    panel("任务组一览", table(["任务组", "状态", "阶段", "进度", "健康度", {label: "受阻数", c: "num"}, "操作"], groupRows), {wide: true,
+      headerSide: `${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "全部任务组", {page: "tg", workspace: "list"})}${hasProjectPermission("task_group:control") && project.status !== "archived" ? `<button class="primary-button" data-workspace-page="tg" data-workspace="create">创建任务组</button>` : ""}`}),
     panel("最新执行事件", table([{label: "时间", c: "nowrap"}, "事件", "状态", {label: "摘要", c: "text-clip"}], events,
       {moreText: moreText(eventsInScope.length, 10, "agentExecutionEvents")})),
     renderRepositoryOutputOverview(repoTargets),
@@ -5541,11 +5527,12 @@ function renderTaskGroupDetailPath(summary) {
 // 用禁用的占位项 + required：浏览器会在提交前拦下，人必须说出他决定的是什么。
 // required 缺省为真：处置/授权类下拉空着不许提交。唯一的例外是「只对某一种类型生效」的下拉
 // （人工指令的处置方式）—— 浏览器的约束校验不看类型，required 会把别的类型也拦住。
-function decisionSelect(name, options, placeholder = "请选择处置方式…", {required = true} = {}) {
+function decisionSelect(name, options, placeholder = "请选择处置方式…", {required = true, selected = ""} = {}) {
+  const chosen = options.some(([value]) => value === selected) ? selected : "";
   return (required ? `<select name="${esc(name)}" required>` : `<select name="${esc(name)}">`)
-    + `<option value="" selected disabled>${esc(placeholder)}</option>`
+    + (chosen ? `<option value="" disabled>${esc(placeholder)}</option>` : `<option value="" selected disabled>${esc(placeholder)}</option>`)
     + options.map(([value, label, attrs]) =>
-      `<option value="${esc(value)}"${attrs ? ` ${attrs}` : ""}>${esc(label)}</option>`).join("")
+      `<option value="${esc(value)}"${value === chosen ? " selected" : ""}${attrs ? ` ${attrs}` : ""}>${esc(label)}</option>`).join("")
     + `</select>`;
 }
 
@@ -8828,6 +8815,11 @@ async function focusManagementGroup(groupId, nextPage = page, options = {}) {
 document.addEventListener("change", async (event) => {
   const target = event.target;
   try {
+    if (target.dataset.memberGrantProject !== undefined) {
+      memberGrantProjectId = target.value;
+      render();
+      return;
+    }
     if (target.dataset.managementGroup !== undefined) {
       if (!(await focusManagementGroup(target.value))) target.value = managementGroupId;
       return;
@@ -9008,6 +9000,18 @@ document.addEventListener("click", async (event) => {
     } else if (taskPageButton.dataset.taskPage === "previous" && taskCursorStack.length) taskPageCursor = taskCursorStack.pop();
     else return;
     try { await loadTaskWorkbenchData(); render(); } catch (error) { taskPageCursor = previous.cursor; taskCursorStack = previous.stack; showError(error); }
+    return;
+  }
+  const returnWorkButton = event.target.closest("[data-return-work]");
+  if (returnWorkButton) {
+    const origin = taskReturnContext;
+    if (!origin || origin.accountId !== currentAccount?.accountId || origin.projectId !== currentProjectId || origin.taskGroupId !== managementGroupId) return;
+    try {
+      if (await focusManagementGroup(origin.taskGroupId, "tasks", {workItemId: origin.workItemId})) {
+        workListGroupId = origin.listGroupId;
+        workListState = origin.listState;
+      }
+    } catch (error) { showError(error); }
     return;
   }
   const focusGroupButton = event.target.closest("[data-focus-group]");
@@ -9206,14 +9210,17 @@ document.addEventListener("click", async (event) => {
     if (action === "open-project-page") {
       const targetProjectId = target.dataset.project || "";
       const targetPage = target.dataset.targetMenu || "proj-overview";
-      if (targetProjectId && targetProjectId !== currentProjectId && formTouched
-        && !(await confirmDialog({title: "放弃未保存的修改", message: "切换项目将丢失当前页面未保存的修改，确认切换？", danger: true, confirmText: "放弃并切换"}))) return;
+      const targetWorkspace = target.dataset.targetWorkspace;
+      if ((targetProjectId && targetProjectId !== currentProjectId || targetPage !== page || targetWorkspace && targetWorkspace !== workspaces.current(page)?.id) && formTouched
+        && !(await confirmDialog({title: "放弃未保存的修改", message: "未保存的修改将丢失，确认继续切换？", danger: true, confirmText: "放弃并切换"}))) return;
       if (targetProjectId) {
         if (targetProjectId !== currentProjectId) resetTaskWorkbench();
         currentProjectId = targetProjectId;
         sessionStorage.setItem("aimac.projectId", currentProjectId);
       }
       page = targetPage;
+      if (targetWorkspace) workspaces.select(page, targetWorkspace);
+      memberGrantAccountId = target.dataset.grantAccount || "";
       if (targetPage === "proj-settings" && target.dataset.repoFocus !== undefined) workspaces.select(page, "repositories");
       sessionStorage.setItem("aimac.page", page);
       lastError = "";
@@ -9328,6 +9335,17 @@ document.addEventListener("click", async (event) => {
       openModal("创建项目", `<form class="form-grid" data-form="project-create">
         <div class="form-row"><label>项目名称</label><input name="name" maxlength="200" required></div>
         <button class="primary-button" type="submit">创建项目</button></form>`);
+      return;
+    }
+    if (action === "member-grants" || action === "clear-member-grants") {
+      const member = action === "member-grants" ? (orgMembers || []).find((account) => account.accountId === target.dataset.account) : null;
+      if (action === "member-grants" && !member) return;
+      if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "切换授权对象会丢失未保存的修改，确认继续？", danger: true, confirmText: "放弃并切换"}))) return;
+      memberGrantAccountId = member?.accountId || "";
+      formTouched = false;
+      dirtyFormKinds.clear();
+      workspaces.select("org-members", "grants");
+      render();
       return;
     }
     if (action === "member-perms") {

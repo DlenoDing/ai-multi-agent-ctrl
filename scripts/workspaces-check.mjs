@@ -42,6 +42,7 @@ function loadPublicModules() {
     "modules/labels.js",
     "modules/ui-config.js",
     "modules/workspaces.js",
+    "modules/object-workspace.js",
     "modules/task-workbench.js"
   ]) {
     vm.runInContext(readPublic(file), context, {filename: file});
@@ -67,6 +68,14 @@ const uiConfig = context.AIMAC_CONSOLE_UI_CONFIG || context.window.AIMAC_CONSOLE
 
 check("workspaces module is loaded", !!workspaces && typeof workspaces.run === "function");
 check("task workbench module is loaded", !!taskWorkbench && typeof taskWorkbench.render === "function");
+const objectWorkspace = context.AIMAC_OBJECT_WORKSPACE;
+check("object workspace module is loaded", typeof objectWorkspace?.trail === "function");
+const trail = objectWorkspace.trail({organization: {name: "组织甲"}, project: {id: "p1", name: "项目甲"}, group: {id: "tg1", name: "任务组甲"}, work: {title: "任务甲"}, pageLabel: "任务详情"});
+check("object breadcrumb retains all identity levels and real navigation actions", ["组织甲", "项目甲", "任务组甲", "任务甲", "任务详情", 'data-project="p1"', 'data-focus-group="tg1"'].every((value) => trail.includes(value)), trail);
+const maliciousTrail = objectWorkspace.trail({organization: {name: '<script>alert(1)</script>'}, pageLabel: "概览", returnTask: {title: '\" onclick=\"alert(1)'}});
+check("breadcrumb labels and return titles are escaped", !maliciousTrail.includes("<script>") && maliciousTrail.includes("&quot; onclick=&quot;"), maliciousTrail);
+workspaces.select("org-members", "list");
+check("member list does not duplicate its own primary create action in generic heading", !workspaces.heading("org-members").includes('data-workspace="create"'));
 check("member direct permission editor only offers project creation",
   JSON.stringify(uiConfig?.MEMBER_PERMISSION_OPTIONS || []) === JSON.stringify([["project:create", "允许创建项目"]]),
   JSON.stringify(uiConfig?.MEMBER_PERMISSION_OPTIONS || []));
@@ -315,7 +324,7 @@ const helpers = {
   check("stale async task responses are fenced before mutating task caches",
     /\+\+taskRequestGeneration/u.test(loadTasksBlock)
       && /generation !== taskRequestGeneration \|\| projectId !== currentProjectId \|\| page !== "tasks"/u.test(loadTasksBlock)
-      && /if \(generation === taskRequestGeneration && projectId === currentProjectId && page === "tasks"\) throw error/u.test(loadTasksBlock)
+      && /if \(currentRead\(\) && generation === taskRequestGeneration && projectId === currentProjectId && page === "tasks"\) throw error/u.test(loadTasksBlock)
       && /finally \{ if \(generation === taskRequestGeneration\) taskPageLoading = false; \}/u.test(loadTasksBlock),
     "task workbench async responses must not update list/detail caches after project/page/generation changed");
   check("task workbench reset clears scoped list/detail caches and invalidates in-flight requests",

@@ -1,0 +1,26 @@
+.object-context { display: flex; align-items: center; justify-content: space-between; gap: 12px; grid-column: 1 / -1; min-width: 0; }
+.object-context nav { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; color: var(--text-sub); font-size: 13px; }
+.object-context nav > * { max-width: 100%; overflow-wrap: anywhere; }
+.object-separator { color: #929aa6; }
+.object-name-link { border: 0; padding: 0; background: transparent; color: #2458b8; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.object-name-link:hover { text-decoration: underline; }
+.object-name-link:focus-visible { outline: 2px solid #2458b8; outline-offset: 3px; }
+.object-context > button { flex: 0 1 320px; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.project-object-summary { display: flex; justify-content: space-between; gap: 20px; padding: 18px 0; border-bottom: 1px solid var(--card-border); min-width: 0; }
+.project-object-identity { flex: 1; min-width: 0; }
+.project-object-identity h2 { margin: 0 0 10px; font-size: 20px; overflow-wrap: anywhere; }
+.project-object-progress { display: flex; align-items: center; gap: 12px; max-width: 520px; margin-top: 14px; font-size: 13px; }
+.project-object-progress > span { flex-shrink: 0; }
+.project-object-progress .progress-line { flex: 1; min-width: 0; }
+.project-object-resources { display: flex; flex-wrap: wrap; align-content: flex-start; justify-content: flex-end; gap: 8px; flex: 0 1 300px; }
+.member-grant-focus { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 0; }
+.member-grant-focus select { min-width: 160px; max-width: 100%; }
+.member-grant-focus strong { overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .topbar .topbar-actions { display: flex; flex-wrap: wrap; justify-content: flex-start; }
+  .topbar-actions .account-chip { flex: 1 1 100%; max-width: 100%; overflow: visible; white-space: normal; overflow-wrap: anywhere; }
+  .object-context, .project-object-summary { flex-direction: column; align-items: stretch; }
+  .object-context > button, .project-object-resources { flex-basis: auto; }
+  .project-object-resources { justify-content: flex-start; }
+  .project-object-identity h2 { font-size: 18px; }
+}
