@@ -1050,6 +1050,22 @@ const MUTATIONS = [
     expect: "高风险确认必须分别说清失去管理权和旧账号处置"
   },
   {
+    name: "Agent 档案的真实模型 ID 不得触发漏译告警",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const agents = (state.agents || []).map((agent) => row([\n    esc(agent.name),\n    esc(t(agent.role)),\n    agentModelCell(agent.model),",
+    to: "  const agents = (state.agents || []).map((agent) => row([\n    esc(agent.name),\n    esc(t(agent.role)),\n    esc(t(agent.model)),",
+    expect: "真实模型 ID 按协议标识展示且不污染漏译告警"
+  },
+  {
+    name: "节点支持的模型 ID 不得触发漏译告警",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '        <dt>支持模型</dt><dd>${esc((display.models || []).map((model) => String(model)).join("、") || "-")}</dd>',
+    to: '        <dt>支持模型</dt><dd>${esc((display.models || []).map((model) => t(model)).join("、") || "-")}</dd>',
+    expect: "真实模型 ID 按协议标识展示且不污染漏译告警"
+  },
+  {
     name: "任务组角色 Skill 必须优先于 Agent 档案",
     check: "verifyAgentGatewayContracts",
     file: CORE,

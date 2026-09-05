@@ -3038,7 +3038,7 @@ function renderSysAccounts() {
   const agents = (state.agents || []).map((agent) => row([
     esc(agent.name),
     esc(t(agent.role)),
-    esc(t(agent.model)),
+    agentModelCell(agent.model),
     statusBadge("agent", agent.status),
     `<button class="secondary-button" data-action="toggle-agent" data-agent="${esc(agent.id)}">${agent.status === "active" ? "停用" : "启用"}</button>`
   ])).join("");
@@ -3691,7 +3691,7 @@ function agentHoverPop(node) {
         <dt>CPU 核数</dt><dd>${esc(profile.cpuCount ?? "-")}</dd>
         <dt>内存</dt><dd>${fmtBytes(profile.memoryBytes)}</dd>
         <dt>磁盘可用</dt><dd>${fmtBytes(profile.diskFreeBytes)}</dd>
-        <dt>支持模型</dt><dd>${esc((display.models || []).map((model) => t(model)).join("、") || "-")}</dd>
+        <dt>支持模型</dt><dd>${esc((display.models || []).map((model) => String(model)).join("、") || "-")}</dd>
         <dt>网络速度</dt><dd>${display.networkSpeedMbps ? `${esc(display.networkSpeedMbps)} Mbps` : "-"}</dd>
         <dt>数据根路径</dt><dd class="mono">${esc(display.dataRoot || "-")}</dd>
         <dt>累计完成 / 失败</dt><dd>${esc(node.completedDispatchCount ?? 0)} / ${esc(node.failedDispatchCount ?? 0)}</dd>

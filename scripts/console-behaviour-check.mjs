@@ -5088,6 +5088,11 @@ async function runPendingTruncationCase() {
       /data-action="agent-control" data-node-id="node1" data-command="refresh_profile"/u.test(projectNodesTable)
         && /data-command="shutdown"/u.test(projectNodesTable),
       "节点表格缺少刷新自检或关停入口");
+    const modelDisplaySource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+    check("真实模型 ID 按协议标识展示且不污染漏译告警",
+      !/t\(agent\.model\)/u.test(modelDisplaySource)
+        && !/map\(\(model\) => t\(model\)\)/u.test(modelDisplaySource),
+      "模型 ID 不是自然语言枚举，送进 t() 会为每个供应商模型制造一条假漏译警告");
     check("项目 agent 卡片视图显示准入、健康、任务、心跳和控制入口",
       /agent-card/u.test(projectNodesCards)
         && /健康度/u.test(projectNodesCards)
