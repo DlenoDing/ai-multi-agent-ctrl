@@ -41,6 +41,7 @@
     }
     if (parts[0] === "organization") {
       if (parts[1] === "members") return {page: "org-members", accountId: parts[2] || "", workspace: workspace || "list"};
+      if (parts[1] === "agents" && parts[2] === "runtime") return {page: "org-agents", nodeId: parts[3] || "", workspace: workspace || "nodes"};
       if (parts[1] === "agents") return {page: "org-agents", agentId: parts[2] || "", workspace: workspace || "nodes"};
       if (parts[1] === "projects") return {page: "org-projects", workspace: workspace || "list"};
       return {page: "org-overview", workspace: workspace || "overview"};
@@ -60,7 +61,8 @@
     if (segment === "tasks") route.workId = parts[4] || "";
     if (segment === "directives") route.workId = parts[4] || "";
     if (segment === "members") route.accountId = parts[3] || "";
-    if (segment === "agents") route.agentId = parts[3] || "";
+    if (segment === "agents" && parts[3] === "runtime") route.nodeId = parts[4] || "";
+    else if (segment === "agents") route.agentId = parts[3] || "";
     return route;
   }
 
@@ -74,7 +76,7 @@
     if (route.page === "sys-settings") return `#/system/settings${pane}`;
     if (route.page === "sys-overview" || route.page === "sys-accounts") return `#/system/overview${pane}`;
     if (route.page === "org-members") return `#/organization/members${route.accountId ? `/${encoded(route.accountId)}` : ""}${pane}`;
-    if (route.page === "org-agents") return `#/organization/agents${route.agentId ? `/${encoded(route.agentId)}` : ""}${pane}`;
+    if (route.page === "org-agents") return `#/organization/agents${route.nodeId ? `/runtime/${encoded(route.nodeId)}` : route.agentId ? `/${encoded(route.agentId)}` : ""}${pane}`;
     if (route.page === "org-projects") return `#/organization/projects${pane}`;
     if (route.page === "org-overview") return `#/organization/overview${pane}`;
     const segment = PAGE_SEGMENTS[route.page] || "overview";
@@ -84,9 +86,10 @@
     const work = route.workId && ["tasks", "directives"].includes(route.page) ? `/${encoded(route.workId)}` : "";
     const account = route.accountId && route.page === "proj-members" ? `/${encoded(route.accountId)}` : "";
     const agent = route.agentId && route.page === "proj-agents" ? `/${encoded(route.agentId)}` : "";
+    const node = route.nodeId && route.page === "proj-agents" ? `/runtime/${encoded(route.nodeId)}` : "";
     const execution = route.page === "monitor" && route.groupId && ["session", "dispatch"].includes(route.executionType) && route.executionId
       ? `/${encoded(route.executionType)}/${encoded(route.executionId)}` : "";
-    return `#/project/${project}/${segment}${agent || account || group}${work}${execution}${pane}`;
+    return `#/project/${project}/${segment}${node || agent || account || group}${work}${execution}${pane}`;
   }
 
   function write(route, {replace = false} = {}) {

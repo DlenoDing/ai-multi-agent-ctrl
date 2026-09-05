@@ -48,7 +48,8 @@ function loadPublicModules() {
     "modules/task-group-workspace.js",
     "modules/task-workbench.js",
     "modules/execution-object-workspace.js",
-    "modules/monitor-workspace.js"
+    "modules/monitor-workspace.js",
+    "modules/runtime-node-workspace.js"
   ]) {
     vm.runInContext(readPublic(file), context, {filename: file});
   }
@@ -100,6 +101,12 @@ const locations = context.AIMAC_WORKSPACE_LOCATION;
     JSON.stringify(routes.parse(dispatchHash)) === JSON.stringify({page: "monitor", projectId: "p1", workspace: "events", groupId: "g1", executionType: "dispatch", executionId: "d1"}),
     JSON.stringify(routes.parse(dispatchHash)));
   check("unsafe execution object ids are rejected", routes.parse("#/project/p1/monitor/g1/session/%3Cscript%3E") === null);
+  const projectNodeHash = routes.build({page: "proj-agents", projectId: "p1", nodeId: "n1", workspace: "nodes"});
+  const orgNodeHash = routes.build({page: "org-agents", nodeId: "n2", workspace: "nodes"});
+  check("runtime node routes distinguish project and organization scope",
+    projectNodeHash === "#/project/p1/agents/runtime/n1?pane=nodes" && routes.parse(projectNodeHash)?.nodeId === "n1"
+      && orgNodeHash === "#/organization/agents/runtime/n2?pane=nodes" && routes.parse(orgNodeHash)?.nodeId === "n2",
+    `${projectNodeHash} | ${orgNodeHash}`);
 }
 
 check("workspaces module is loaded", !!workspaces && typeof workspaces.run === "function");
@@ -108,6 +115,8 @@ const executionWorkspace = context.AIMAC_EXECUTION_OBJECT_WORKSPACE;
 check("execution object workspace module is loaded", typeof executionWorkspace?.render === "function");
 const monitorWorkspace = context.AIMAC_MONITOR_WORKSPACE;
 check("monitor scope workspace module is loaded", typeof monitorWorkspace?.scopeHeader === "function");
+const runtimeNodeWorkspace = context.AIMAC_RUNTIME_NODE_WORKSPACE;
+check("runtime node workspace module is loaded", typeof runtimeNodeWorkspace?.render === "function");
 const objectWorkspace = context.AIMAC_OBJECT_WORKSPACE;
 check("object workspace module is loaded", typeof objectWorkspace?.trail === "function");
 const trail = objectWorkspace.trail({organization: {name: "组织甲"}, project: {id: "p1", name: "项目甲"}, group: {id: "tg1", name: "任务组甲"}, work: {title: "任务甲"}, pageLabel: "任务详情"});
@@ -150,6 +159,24 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
   check(`${page} declares panes`, ids.length > 0, `catalog: ${JSON.stringify(workspaces.catalog[page])}`);
   check(`${page} default pane is ${firstPane}`, workspaces.current(page)?.id === firstPane,
     `actual: ${workspaces.current(page)?.id || "(none)"}; panes: ${ids.join(", ")}`);
+}
+
+{
+  const html = runtimeNodeWorkspace.render({
+    detail: {
+      node: {nodeId: "node_1", nodeName: "构建节点", organizationId: "org_1", registrationScope: "organization", status: "online", admission: "full", runtimeVersion: "1.4.0", lastHeartbeatAt: "now", lastSelfCheckAt: "now", allowedRoles: ["reviewer"], allowedMcpTools: ["state.get"], effectiveProjectIds: ["p1"], profile: {cpuCount: 8, tools: [{name: "git", version: "2", available: true}], models: [{providerClass: "openai", available: true}], capabilityFlags: ["repo_write"]}},
+      scope: {type: "organization", id: "org_1"}, assignedDispatchCount: 1,
+      activeDispatches: [{dispatchId: "d1", projectId: "p1", taskGroupId: "g1", taskGroupName: "任务组", workItemId: "w1", workItemTitle: "执行任务", roleId: "reviewer", model: "model-a", status: "running", progressPercent: 33}],
+      agentProfiles: [{id: "a1", name: "评审 Agent", role: "reviewer", status: "active"}],
+      controlCommands: [{commandId: "c1", commandType: "refresh_profile", status: "acked", updatedAt: "now"}],
+      recentEvents: [{eventId: "e1", dispatchId: "d1", eventType: "progress", status: "running", summary: "已检查", createdAt: "now"}]
+    },
+    controls: '<button data-command="shutdown">关停</button>',
+    helpers: {badge: (value) => `<span>${value}</span>`, t: (value) => value, fmtTime: (value) => value, fmtBytes: (value) => value || "-", explainCoded: (value) => String(value || ""), evidenceRefsHint: () => ""}
+  });
+  check("runtime node detail exposes scope, health, capabilities, profiles, work and control ACK",
+    ["org_1", "node_1", "1.4.0", "openai", "git 2", "a1", "d1", "c1", "shutdown"].every((value) => html.includes(value))
+      && /data-action="open-execution-object"/u.test(html) && /data-action="open-agent-profile"/u.test(html), strip(html).slice(0, 800));
 }
 
 {

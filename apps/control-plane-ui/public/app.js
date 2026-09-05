@@ -105,6 +105,9 @@ let orgMembers = [];
 let selectedOrgMemberId = "";
 let selectedProjectMemberId = "";
 let selectedAgentProfileId = "";
+let selectedRuntimeNodeId = "";
+let runtimeNodeDetail = null;
+let runtimeNodeUnavailable = false;
 let projConfig = null;
 // null 同时代表"还没取过""取失败了""没选项目"三件事，而界面把三者一律说成"配置接口加载失败" ——
 // 人会去追一个并不存在的故障（实测：渲染一个全新项目的设置页，第一眼就是这句）。分成三态。
@@ -1297,6 +1300,34 @@ async function loadExecutionObjectDetail(currentRead) {
   if (!managementGroupId && detail.taskGroup?.id) managementGroupId = detail.taskGroup.id;
 }
 
+async function loadRuntimeNodeDetail(currentRead) {
+  runtimeNodeUnavailable = false;
+  if (!["org-agents", "proj-agents"].includes(page) || !selectedRuntimeNodeId) {
+    runtimeNodeDetail = null;
+    return;
+  }
+  const nodeId = selectedRuntimeNodeId;
+  const query = page === "proj-agents" && currentProjectId ? `?projectId=${encodeURIComponent(currentProjectId)}` : "";
+  let detail;
+  try {
+    detail = await api(`/api/agent-nodes/${encodeURIComponent(nodeId)}/detail${query}`);
+  } catch (error) {
+    if (currentRead() && nodeId === selectedRuntimeNodeId && [403, 404].includes(error.status)) {
+      runtimeNodeDetail = null;
+      runtimeNodeUnavailable = true;
+      return;
+    }
+    throw error;
+  }
+  if (!currentRead() || nodeId !== selectedRuntimeNodeId) return;
+  if (detail?.node?.nodeId !== nodeId || (page === "proj-agents" && detail.projectId !== currentProjectId)) {
+    runtimeNodeDetail = null;
+    runtimeNodeUnavailable = true;
+    return;
+  }
+  runtimeNodeDetail = detail;
+}
+
 async function loadPage() {
   pageReadGeneration += 1;
   const currentRead = pageReadCheckpoint();
@@ -1355,6 +1386,7 @@ async function loadPage() {
         roleSkillIndex: skillRegistry.roleSkillIndex || [],
         roleSkillOverlays: skillRegistry.roleSkillOverlays || []
       };
+      await loadRuntimeNodeDetail(currentRead);
     } else if (page === "org-projects") {
       const [projectState, membersResult] = await Promise.all([fetchState("projects"), api("/api/org/members")]);
       if (!currentRead()) return;
@@ -1452,6 +1484,7 @@ async function loadPage() {
         roleSkillOverlays: skillRegistry.roleSkillOverlays || []
       };
       ensureProjectSelection();
+      await loadRuntimeNodeDetail(currentRead);
     } else if (page === "proj-settings") {
       const [tasksState, skillRegistry] = await Promise.all([
         fetchState("tasks", {projectId: currentProjectId}),
@@ -1878,6 +1911,7 @@ function workspaceRouteSnapshot() {
     accountId: page === "org-members" ? selectedOrgMemberId
       : page === "proj-members" ? selectedProjectMemberId : "",
     agentId: ["org-agents", "proj-agents"].includes(page) ? selectedAgentProfileId : "",
+    nodeId: ["org-agents", "proj-agents"].includes(page) ? selectedRuntimeNodeId : "",
     executionType: page === "monitor" ? selectedExecutionObject.type : "",
     executionId: page === "monitor" ? selectedExecutionObject.id : ""
   };
@@ -1902,6 +1936,9 @@ function restoreWorkspaceRoute(route = window.AIMAC_WORKSPACE_ROUTE?.parse()) {
   selectedOrgMemberId = page === "org-members" ? route.accountId || "" : "";
   selectedProjectMemberId = page === "proj-members" ? route.accountId || "" : "";
   selectedAgentProfileId = ["org-agents", "proj-agents"].includes(page) ? route.agentId || "" : "";
+  selectedRuntimeNodeId = ["org-agents", "proj-agents"].includes(page) ? route.nodeId || "" : "";
+  runtimeNodeDetail = null;
+  runtimeNodeUnavailable = false;
   selectedExecutionObject = page === "monitor" && ["session", "dispatch"].includes(route.executionType) && route.executionId
     ? {type: route.executionType, id: route.executionId} : {type: "", id: ""};
   executionObjectDetail = null;
@@ -1952,6 +1989,12 @@ function reconcileRoutedObjectSelection() {
       selectedAgentProfileId = "";
       missing = "Agent 档案";
     }
+  }
+  if (!missing && ["org-agents", "proj-agents"].includes(page) && selectedRuntimeNodeId && runtimeNodeUnavailable) {
+    selectedRuntimeNodeId = "";
+    runtimeNodeDetail = null;
+    runtimeNodeUnavailable = false;
+    missing = "运行节点";
   }
   if (!missing && managementGroupId && ["tg", "tasks", "monitor", "review", "directives"].includes(page)
     && !projectTaskGroups().some((group) => group.id === managementGroupId)
@@ -2108,7 +2151,7 @@ function renderContent() {
   const governanceObjectOpen = (page === "sys-orgs" && selectedOrganizationId)
     || (page === "org-members" && selectedOrgMemberId)
     || (page === "proj-members" && selectedProjectMemberId)
-    || (["org-agents", "proj-agents"].includes(page) && selectedAgentProfileId);
+    || (["org-agents", "proj-agents"].includes(page) && (selectedAgentProfileId || selectedRuntimeNodeId));
   if (PROJECT_PAGES.has(page) && hasNoVisibleProject()) return context + renderPanel(PAGE_META[page]?.[0] || "项目管理", noVisibleProjectNotice(), {wide: true});
   const executionObjectOpen = page === "monitor" && selectedExecutionObject.id;
   const groupDetail = page === "tg" && expandedTaskGroupId;
@@ -2216,6 +2259,9 @@ function resetTaskWorkbench() {
   selectedExecutionObject = {type: "", id: ""};
   executionObjectDetail = null;
   executionObjectUnavailable = false;
+  selectedRuntimeNodeId = "";
+  runtimeNodeDetail = null;
+  runtimeNodeUnavailable = false;
   managementGroupId = "";
   selectedWork = null;
   workListGroupId = "";
@@ -3587,6 +3633,10 @@ function nodeDispatchIds(node) {
   return Array.isArray(node?.activeDispatchIds) ? node.activeDispatchIds : node?.display?.currentDispatchIds || [];
 }
 
+function runtimeNodeDetailButton(node, primary = false) {
+  return `<button class="${primary ? "primary-button" : "secondary-button"}" data-action="open-runtime-node" data-node-id="${esc(node.nodeId)}">查看详情</button>`;
+}
+
 function agentActions(node, options = {}) {
   if (node.status === "revoked") return "-";
   if (node.registrationScope === "organization" && perspectiveOf(currentAccount) === "user") return `<span class="small muted">组织共享节点，由组织管理员维护</span>`;
@@ -3615,6 +3665,17 @@ function agentActions(node, options = {}) {
     buttons.push(`<span class="small muted">吊销和立即切断在「组织管理」→「共享 Agent」处理</span>`);
   }
   return buttons.join(" ");
+}
+
+function renderRuntimeNodeObject(scope) {
+  if (!runtimeNodeDetail) return panel("运行节点", `<div class="notice">正在读取节点详情；若节点已删除或当前账号无权查看，系统会返回节点列表。</div>`, {wide: true});
+  const canControl = hasPerm("agent:activate");
+  const showDanger = scope === "organization" || perspectiveOf(currentAccount) !== "user";
+  return window.AIMAC_RUNTIME_NODE_WORKSPACE.render({
+    detail: runtimeNodeDetail,
+    controls: canControl ? agentActions(runtimeNodeDetail.node, {scope: scope === "organization" ? "org" : "project", showDanger, includeDispatchControl: false}) : "",
+    helpers: {badge, t, fmtTime, fmtBytes, explainCoded, evidenceRefsHint}
+  });
 }
 
 function orgAgentStats(nodes) {
@@ -3746,7 +3807,7 @@ function projectAgentCards(nodes, canControlNodes, options = {}) {
             </div>
             ${timedOut ? `<div class="small warn-text">上次状态仍为「${esc(t(node.status) || node.status)}」，但心跳已超过判死阈值。</div>` : ""}
             ${claimMissHint(node)}${selfCheckFailureHint(node)}${heartbeatStaleHint(node)}
-            <div class="button-row" style="margin-top:10px;">${canControlNodes ? agentActions(node, {scope: "project", showDanger: options.showDanger === true}) : `<span class="small muted">当前账号无节点控制权限</span>`}</div>
+            <div class="button-row" style="margin-top:10px;">${runtimeNodeDetailButton(node, true)}${canControlNodes ? agentActions(node, {scope: "project", showDanger: options.showDanger === true}) : `<span class="small muted">当前账号无节点控制权限</span>`}</div>
           </div>
         `;
       }).join("")}
@@ -4085,6 +4146,7 @@ function renderOrgAgentsLifecycleGuide(nodes) {
 function renderOrgAgents() {
   const nodes = orgAgentNodes;
   const scopedAgents = orgScopedAgents();
+  if (selectedRuntimeNodeId) return renderRuntimeNodeObject("organization");
   const selectedProfile = scopedAgents.find((agent) => agent.id === selectedAgentProfileId);
   if (selectedAgentProfileId && !selectedProfile) selectedAgentProfileId = "";
   if (selectedProfile) {
@@ -4114,7 +4176,7 @@ function renderOrgAgents() {
               <span>最近心跳：${fmtTime(node.lastHeartbeatAt)}</span>
             </div>
             ${timedOut ? `<div class="small warn-text">上次状态仍为「${esc(t(node.status) || node.status)}」，但心跳已超过判死阈值。</div>` : ""}
-            <div class="button-row" style="margin-top:10px;">${agentActions(node)}</div>
+            <div class="button-row" style="margin-top:10px;">${runtimeNodeDetailButton(node, true)}${agentActions(node)}</div>
           </div>
         `;}).join("")}
       </div>
@@ -4129,7 +4191,7 @@ function renderOrgAgents() {
       badge(timedOut ? "offline" : node.display?.health || node.status),
       {v: String(nodeDispatchIds(node).length), c: "num"},
       {v: fmtTime(node.lastHeartbeatAt), c: "nowrap"},
-      agentActions(node)
+      `<div class="button-row">${runtimeNodeDetailButton(node, true)}${agentActions(node)}</div>`
     ]);}).join("");
     bodyHtml = table(["名称", "运行状态", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"],
       nodeRows, {emptyText: listEmptyText("agent 节点")});
@@ -4279,6 +4341,7 @@ function renderProjectAgents() {
   if (!project) return panel("项目 Agent", noVisibleProjectNotice(), {wide: true});
   const nodes = projectAgentNodes(project.id);
   const scopedAgents = projectScopedAgents(project.id);
+  if (selectedRuntimeNodeId) return renderRuntimeNodeObject("project");
   const selectedProfile = scopedAgents.find((agent) => agent.id === selectedAgentProfileId);
   if (selectedAgentProfileId && !selectedProfile) selectedAgentProfileId = "";
   if (selectedProfile) {
@@ -4307,7 +4370,7 @@ function renderProjectAgents() {
       badge(timedOut ? "offline" : node.display?.health || node.status),
       {v: String(nodeDispatchIds(node).length), c: "num"},
       {v: `${fmtTime(node.lastHeartbeatAt)}${heartbeatStaleHint(node)}`, c: "nowrap"},
-      canControlNodes ? agentActions(node, {scope: "project", showDanger: !preferOrgGovernance}) : "-"
+      `<div class="button-row">${runtimeNodeDetailButton(node, true)}${canControlNodes ? agentActions(node, {scope: "project", showDanger: !preferOrgGovernance}) : `<span class="small muted">只读</span>`}</div>`
     ]);
   }).join("");
   const nodeNotice = nodes.length
@@ -9011,10 +9074,17 @@ async function focusManagementGroup(groupId, nextPage = page, options = {}) {
   return true;
 }
 
-async function focusExecutionObject(type, id, groupId, {history = false} = {}) {
+async function focusExecutionObject(type, id, groupId, {history = false, projectId = ""} = {}) {
   if (!["session", "dispatch"].includes(type) || !id) return false;
   if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "打开执行详情会离开当前表单，未保存的修改会丢失。确认继续？", danger: true, confirmText: "放弃并查看"}))) return false;
   requestRoutePush();
+  if (projectId) {
+    currentProjectId = projectId;
+    sessionStorage.setItem("aimac.projectId", currentProjectId);
+  }
+  selectedRuntimeNodeId = "";
+  runtimeNodeDetail = null;
+  runtimeNodeUnavailable = false;
   selectedExecutionObject = {type, id};
   executionObjectDetail = null;
   executionObjectUnavailable = false;
@@ -9048,7 +9118,8 @@ async function navigateWorkspace(nextPage, nextSection, options = {}) {
     || (nextPage === "org-members" && selectedOrgMemberId)
     || (nextPage === "proj-members" && selectedProjectMemberId)
     || (["org-agents", "proj-agents"].includes(nextPage) && selectedAgentProfileId)
-    || (nextPage === "monitor" && selectedExecutionObject.id);
+    || (nextPage === "monitor" && selectedExecutionObject.id)
+    || (["org-agents", "proj-agents"].includes(nextPage) && selectedRuntimeNodeId);
   if (closesObjectDetail) {
     selectedOrganizationId = "";
     selectedOrgMemberId = "";
@@ -9057,6 +9128,9 @@ async function navigateWorkspace(nextPage, nextSection, options = {}) {
     selectedExecutionObject = {type: "", id: ""};
     executionObjectDetail = null;
     executionObjectUnavailable = false;
+    selectedRuntimeNodeId = "";
+    runtimeNodeDetail = null;
+    runtimeNodeUnavailable = false;
     memberGrantAccountId = "";
     if (nextPage === page && workspaces.current(page)?.id === nextSection) { render(); return true; }
   }
@@ -9357,6 +9431,9 @@ document.addEventListener("click", async (event) => {
     selectedExecutionObject = {type: "", id: ""};
     executionObjectDetail = null;
     executionObjectUnavailable = false;
+    selectedRuntimeNodeId = "";
+    runtimeNodeDetail = null;
+    runtimeNodeUnavailable = false;
     page = nextPage;
     sessionStorage.setItem("aimac.page", page);
     lastError = "";
@@ -9373,6 +9450,9 @@ document.addEventListener("click", async (event) => {
     selectedExecutionObject = {type: "", id: ""};
     executionObjectDetail = null;
     executionObjectUnavailable = false;
+    selectedRuntimeNodeId = "";
+    runtimeNodeDetail = null;
+    runtimeNodeUnavailable = false;
     page = menuButton.dataset.menu;
     if (page === "sys-orgs") selectedOrganizationId = "";
     if (page === "org-members") { selectedOrgMemberId = ""; memberGrantAccountId = ""; }
@@ -9452,6 +9532,29 @@ document.addEventListener("click", async (event) => {
   const guardBtn = target.tagName === "BUTTON" ? target : null;
   if (guardBtn) { guardBtn.disabled = true; guardBtn.classList.add("is-loading"); }
   try {
+    if (action === "open-runtime-node") {
+      const nodeId = target.dataset.nodeId || "";
+      if (!nodeId) return;
+      requestRoutePush();
+      selectedAgentProfileId = "";
+      selectedRuntimeNodeId = nodeId;
+      runtimeNodeDetail = null;
+      runtimeNodeUnavailable = false;
+      workspaces.select(page, "nodes");
+      await loadPage();
+      window.scrollTo?.({top: 0});
+      document.querySelector("[data-runtime-node-heading]")?.focus();
+      return;
+    }
+    if (action === "close-runtime-node") {
+      requestRoutePush();
+      selectedRuntimeNodeId = "";
+      runtimeNodeDetail = null;
+      runtimeNodeUnavailable = false;
+      render();
+      window.scrollTo?.({top: 0});
+      return;
+    }
     if (action === "monitor-project-scope") {
       await focusManagementGroup("", "monitor");
       return;
@@ -9487,6 +9590,8 @@ document.addEventListener("click", async (event) => {
       requestRoutePush();
       selectedExecutionObject = {type: "", id: ""};
       executionObjectDetail = null;
+      selectedRuntimeNodeId = "";
+      runtimeNodeDetail = null;
       page = "proj-agents";
       selectedAgentProfileId = agentId;
       workspaces.select("proj-agents", "profiles");
@@ -9498,16 +9603,21 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "execution-open-node") {
+      const nodeId = target.dataset.node || "";
       requestRoutePush();
       selectedExecutionObject = {type: "", id: ""};
       executionObjectDetail = null;
       page = "proj-agents";
       selectedAgentProfileId = "";
+      selectedRuntimeNodeId = nodeId;
+      runtimeNodeDetail = null;
+      runtimeNodeUnavailable = false;
       workspaces.select("proj-agents", "nodes");
       sessionStorage.setItem("aimac.page", page);
       stopExecPolling();
       await loadPage();
       window.scrollTo?.({top: 0});
+      document.querySelector("[data-runtime-node-heading]")?.focus();
       return;
     }
     if (action === "open-org-detail") {
@@ -9693,6 +9803,9 @@ document.addEventListener("click", async (event) => {
       selectedExecutionObject = {type: "", id: ""};
       executionObjectDetail = null;
       executionObjectUnavailable = false;
+      selectedRuntimeNodeId = "";
+      runtimeNodeDetail = null;
+      runtimeNodeUnavailable = false;
       if (targetPage === "proj-settings" && target.dataset.repoFocus !== undefined) workspaces.select(page, "repositories");
       sessionStorage.setItem("aimac.page", page);
       lastError = "";
@@ -9955,6 +10068,9 @@ document.addEventListener("click", async (event) => {
       const agentId = target.dataset.agent || "";
       if (!visibleProfiles.some((agent) => agent.id === agentId)) return;
       requestRoutePush();
+      selectedRuntimeNodeId = "";
+      runtimeNodeDetail = null;
+      runtimeNodeUnavailable = false;
       selectedAgentProfileId = agentId;
       workspaces.select(page, page === "org-agents" ? "profiles" : "profiles");
       render();
@@ -10168,7 +10284,7 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "open-execution-object") {
-      await focusExecutionObject(target.dataset.executionType, target.dataset.executionId, target.dataset.task || "");
+      await focusExecutionObject(target.dataset.executionType, target.dataset.executionId, target.dataset.task || "", {projectId: target.dataset.project || ""});
       return;
     }
     if (action === "show-dispatch-events") {
@@ -10304,6 +10420,7 @@ function rememberWorkspaceLocation() {
     groupId: managementGroupId || (page === "tg" ? expandedTaskGroupId : ""), groupDetail: Boolean(page === "tg" && expandedTaskGroupId),
     workId: page === "tasks" ? selectedWork?.workItemId : "", directiveWorkId: page === "directives" ? directiveWorkItemId : "",
     executionType: page === "monitor" ? selectedExecutionObject.type : "", executionId: page === "monitor" ? selectedExecutionObject.id : "",
+    nodeId: ["org-agents", "proj-agents"].includes(page) ? selectedRuntimeNodeId : "",
     search: taskSearch, status: taskStatus, cursor: taskPageCursor, stack: taskCursorStack,
     listGroupId: workListGroupId, listCursor: workListState?.cursor, listStack: workListState?.stack});
 }
@@ -10322,6 +10439,9 @@ function restoreWorkspaceLocation() {
     ? {type: saved.executionType, id: saved.executionId} : {type: "", id: ""};
   executionObjectDetail = null;
   executionObjectUnavailable = false;
+  selectedRuntimeNodeId = ["org-agents", "proj-agents"].includes(page) ? saved.nodeId || "" : "";
+  runtimeNodeDetail = null;
+  runtimeNodeUnavailable = false;
   taskSearch = saved.search;
   taskStatus = saved.status;
   taskPageCursor = saved.cursor;

@@ -43,7 +43,8 @@ const consoleModuleFiles = [
   "modules/task-group-workspace.js",
   "modules/task-workbench.js",
   "modules/execution-object-workspace.js",
-  "modules/monitor-workspace.js"
+  "modules/monitor-workspace.js",
+  "modules/runtime-node-workspace.js"
 ];
 
 function readConsoleSource(file) {
@@ -358,7 +359,7 @@ globalThis.__probe = {
   captureToast: (sink) => { toast.info = (message) => sink(message); },
   captureToastKind: (kind, sink) => { toast[kind] = (message) => sink(message); },
   bodyChildren: () => document.body.children || [],
-  sessionState: () => ({page, currentProjectId, modalHtml, selectedWork, selectedAgentProfileId, selectedExecutionObject, managementGroupId, workListGroupId, workListState, expandedTaskGroupId, taskGroupDetailId: tgDetail?.taskGroupId || null,
+  sessionState: () => ({page, currentProjectId, modalHtml, selectedWork, selectedAgentProfileId, selectedRuntimeNodeId, selectedExecutionObject, managementGroupId, workListGroupId, workListState, expandedTaskGroupId, taskGroupDetailId: tgDetail?.taskGroupId || null,
     projConfigVersion, directiveList,
     storedProjectId: sessionStorage.getItem("aimac.projectId"), storedPage: sessionStorage.getItem("aimac.page")}),
   selectWorkspace: (pageId, paneId) => workspaces.select(pageId, paneId),
@@ -2795,6 +2796,25 @@ async function runErrorGuidanceCase() {
       && /aria-label="Agent 派发详情"/u.test(String(executionRoot.innerHTML || ""))
       && /窗口外执行任务/u.test(String(executionRoot.innerHTML || "")),
     `${JSON.stringify(executionProbe.sessionState())} ${String(executionRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").slice(0, 260)}`);
+  const nodeRoot = el("div");
+  const nodeProbe = loadConsole(nodeRoot, {realI18n: true});
+  const routedNode = {nodeId: "node_outside_window", nodeName: "窗口外运行节点", organizationId: "org_default", registrationScope: "project", projectIds: ["p1"], effectiveProjectIds: ["p1"], allowedRoles: ["reviewer"], allowedMcpTools: [], status: "online", admission: "full", profile: {tools: [], models: []}};
+  const nodeState = {...windowedState, agentRuntimeNodes: [routedNode], agents: [], agentJoinTokens: [], agentDispatches: []};
+  nodeProbe.renderFullPageWith(nodeState, systemAccount, "p1", "proj-overview");
+  nodeProbe.restoreRoute({page: "proj-agents", projectId: "p1", workspace: "nodes", nodeId: routedNode.nodeId});
+  nodeProbe.setFetch(async (url) => {
+    const target = new URL(String(url), "http://localhost");
+    let payload = nodeState;
+    if (target.pathname === "/api/skill-registry") payload = {roleSkillIndex: [], roleSkillOverlays: []};
+    if (target.pathname === `/api/agent-nodes/${routedNode.nodeId}/detail`) payload = {schemaVersion: "runtime-node-detail/v1", node: routedNode, projectId: "p1", scope: {type: "project", ids: ["p1"]}, activeDispatches: [], recentDispatches: [], assignedDispatchCount: 0, controlCommands: [], recentEvents: [], agentProfiles: []};
+    return {ok: true, status: 200, statusText: "OK", headers: {get: () => null}, json: async () => payload};
+  });
+  await nodeProbe.loadObjectLocation();
+  check("运行节点深链接必须重新读取项目投影并恢复独立详情",
+    nodeProbe.sessionState().selectedRuntimeNodeId === routedNode.nodeId
+      && /aria-label="运行节点详情"/u.test(String(nodeRoot.innerHTML || ""))
+      && /窗口外运行节点/u.test(String(nodeRoot.innerHTML || "")),
+    `${JSON.stringify(nodeProbe.sessionState())} ${String(nodeRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").slice(0, 260)}`);
   const browserRouteSource = objectProbe.browserRouteSource();
   check("浏览器历史恢复必须单飞并只排队最新路由",
     /if \(browserRouteBusy\)/u.test(browserRouteSource)
@@ -7372,7 +7392,8 @@ await runCodedApiErrorCase();
   const renderOf = new Map([...appSource.matchAll(/page === "([a-z-]+)"\) body = (render[A-Za-z]+)\(\)/gu)]
     .map((m) => [m[1], m[2]]));
   const branchOf = (page) => {
-    const at = appSource.indexOf(`page === "${page}"`);
+    const loadPageAt = appSource.indexOf("async function loadPage()");
+    const at = appSource.indexOf(`page === "${page}"`, loadPageAt);
     if (at < 0) return "";
     const next = appSource.slice(at).search(/\n {4}\} else if \(page ===|\n {4}\} else \{/u);
     return next < 0 ? appSource.slice(at, at + 2000) : appSource.slice(at, at + next);

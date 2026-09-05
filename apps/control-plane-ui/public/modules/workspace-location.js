@@ -12,7 +12,7 @@
     return {version: 1, accountId: text(value.accountId), projectId: text(value.projectId), page,
       workspace: text(value.workspace), groupWorkspace: text(value.groupWorkspace), groupId: text(value.groupId),
       groupDetail: value.groupDetail === true, workId: text(value.workId),
-      executionType, executionId: executionType ? text(value.executionId) : "",
+      executionType, executionId: executionType ? text(value.executionId) : "", nodeId: ["org-agents", "proj-agents"].includes(page) ? text(value.nodeId) : "",
       directiveWorkId: text(value.directiveWorkId),
       search: text(value.search, 300), status: text(value.status), cursor: cursor(value.cursor), stack: cursors(value.stack),
       listGroupId: text(value.listGroupId), listCursor: cursor(value.listCursor), listStack: cursors(value.listStack)};

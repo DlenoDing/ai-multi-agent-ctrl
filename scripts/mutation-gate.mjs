@@ -11764,6 +11764,46 @@ const MUTATIONS = [
     expect: "工作会话和派发必须是可复制、可恢复的执行对象地址"
   },
   {
+    name: "运行节点深链接必须保留组织或项目作用域",
+    file: "apps/control-plane-ui/public/modules/workspace-route.js",
+    gate: "workspace",
+    from: '    const node = route.nodeId && route.page === "proj-agents" ? `/runtime/${encoded(route.nodeId)}` : "";',
+    to: '    const node = "";',
+    expect: "runtime node routes distinguish project and organization scope"
+  },
+  {
+    name: "运行节点深链接必须走专用详情投影恢复",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "      ensureProjectSelection();\n      await loadRuntimeNodeDetail(currentRead);\n    } else if (page === \"proj-settings\") {",
+    to: "      ensureProjectSelection();\n      runtimeNodeDetail = null;\n    } else if (page === \"proj-settings\") {",
+    expect: "运行节点深链接必须重新读取项目投影并恢复独立详情"
+  },
+  {
+    name: "运行节点当前派发必须进入统一执行对象",
+    file: "apps/control-plane-ui/public/modules/runtime-node-workspace.js",
+    gate: "workspace",
+    from: '<button class="runtime-node-record" data-action="open-execution-object" data-execution-type="dispatch" data-execution-id="${esc(dispatch.dispatchId)}"',
+    to: '<button class="runtime-node-record" data-execution-id="${esc(dispatch.dispatchId)}"',
+    expect: "runtime node detail exposes scope, health, capabilities, profiles, work and control ACK"
+  },
+  {
+    name: "项目节点详情不得投影其它项目负载",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "task-api",
+    from: "      if (!runtimeNodeVisibleForProjectSet(state, node, new Set([requestedProjectId]))) {",
+    to: "      if (false) {",
+    expect: "GET /api/agent-nodes/node_detail/detail?projectId=prj_workbench_foreign"
+  },
+  {
+    name: "节点详情不得绕过账号可见范围",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "task-api",
+    from: "      if (!runtimeNodeVisibleToAccount(state, authenticated.account, node)) {",
+    to: "      if (false) {",
+    expect: "GET /api/agent-nodes/node_detail/detail"
+  },
+  {
     name: "窗口外执行对象必须走专用详情接口恢复",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

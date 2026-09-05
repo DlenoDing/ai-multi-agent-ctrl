@@ -458,6 +458,7 @@ try {
   const orgNodeObject = await request("/api/agent-nodes/node_detail/detail", viewerToken);
   assert.equal(orgNodeObject.node.nodeId, "node_detail");
   await request("/api/agent-nodes/node_detail/detail?projectId=prj_workbench_foreign", viewerToken, {status: 403});
+  await request("/api/agent-nodes/node_detail/detail?projectId=prj_workbench_foreign", systemToken, {status: 404});
   await request("/api/agent-nodes/node_detail/detail", foreignToken, {status: 403});
   await request("/api/agent-nodes/not_here/detail", viewerToken, {status: 403});
   await request("/api/agent-nodes/not_here/detail", systemToken, {status: 404});
