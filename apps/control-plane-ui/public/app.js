@@ -167,6 +167,8 @@ let pendingConfirmCount = 0;
 let agentViewMode = "table";
 
 let execScope = {type: "", id: ""};
+// 执行历史里按需展开的「规则」摘要缓存（dispatchId → /contract-summary 回执）；再点一次收起。
+const dispatchRuleSummaries = {};
 let execEvents = [];
 // 事件流是客户端的滚动窗口（只留最近 300 条）。丢弃发生过之后，页脚再报"共 N 条"就等于说
 // "总共只发生过这些"，而人正是在这张表上排查"那一步到底做了什么"。丢过就改口径。
@@ -5222,7 +5224,9 @@ function renderTaskGroupDetail(taskGroup) {
                 ${item.blockedReason ? `<span>受阻：${esc(explainCoded(item.blockedReason))}</span>` : ""}
                 <span>派发：<span class="mono">${esc(item.dispatchId)}</span></span>
                 <button class="secondary-button" data-action="show-dispatch-events" data-dispatch-id="${esc(item.dispatchId)}">实时事件</button>
-              </div>`).join("")}
+                <button class="secondary-button" data-action="show-dispatch-rules" data-dispatch-id="${esc(item.dispatchId)}">${dispatchRuleSummaries[item.dispatchId] ? "收起规则" : "规则"}</button>
+              </div>
+              ${dispatchRuleSummaries[item.dispatchId] ? ruleSummaryHtml(dispatchRuleSummaries[item.dispatchId]) : ""}`).join("")}
           </div>`;
         })()}
       </div>
@@ -5604,6 +5608,20 @@ function collectRuleFragments(form, layer) {
 // 它与真相源（state-machines.yaml 的 AgentDispatch.terminal）由 validate-specs 逐字核对，
 // 并且【整个前端只准有这一份】—— 原先另有一处内联抄写，已改成用这个集合。
 const terminalDispatchStatuses = new Set(["completed", "failed", "cancelled"]);
+
+// 「这次派发用了什么规则」：如实展示契约记录的治理件。契约不在当前运行态里（被容量淘汰）要说清，不能显示成"没规则"。
+function ruleSummaryHtml(summary) {
+  if (!summary || summary.found !== true) return `<div class="notice">这次派发的任务契约已不在当前运行态里（可能已被容量淘汰），查不到它当时用的规则。</div>`;
+  const list = (items, empty) => (items && items.length) ? items.map((x) => `<span class="mono">${esc(x)}</span>`).join("、") : empty;
+  return `<div class="record-meta stack" style="margin-left:12px;">
+    <span>角色技能：${esc(summary.roleSkill?.title || summary.roleSkill?.roleSkillId || "-")}${summary.roleSkill?.contentDigest ? `（摘要 ${esc(String(summary.roleSkill.contentDigest).slice(0, 12))}）` : ""}</span>
+    <span>生效规则件：${list(summary.activeRuleRefs, "无")}</span>
+    <span>规则集摘要：<span class="mono">${esc(String(summary.effectiveRulesDigest || summary.rulesetDigest || "-").slice(0, 16))}</span>${summary.rulesChangedAfterContract ? "　<b>签约后规则已变更</b>" : ""}</span>
+    <span>禁止动作：${list(summary.forbiddenActions, "无")}</span>
+    <span>验收要求：${list(summary.validationRequirements, "无")}</span>
+  </div>`;
+}
+
 
 // 一个工作项的【全部】派发（最新在前）：卡片上的「执行历史」用它——人要看的是这个任务先后交给了哪些 agent、
 // 每次用什么角色/模型、结果如何，而不只是最新那一次（findWorkItemDispatch 只取活跃的那一个，给监控页用）。
@@ -9149,6 +9167,13 @@ document.addEventListener("click", async (event) => {
       }
       await loadExecEvents({reset: true});
       startExecPolling();
+      render();
+      return;
+    }
+    if (action === "show-dispatch-rules") {
+      const dispatchId = target.dataset.dispatchId || "";
+      if (dispatchRuleSummaries[dispatchId]) { delete dispatchRuleSummaries[dispatchId]; render(); return; }
+      dispatchRuleSummaries[dispatchId] = await api(`/api/agent-dispatches/${encodeURIComponent(dispatchId)}/contract-summary`);
       render();
       return;
     }

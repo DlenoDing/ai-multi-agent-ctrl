@@ -662,6 +662,35 @@ export function newestWindow(items, cap) {
 }
 
 
+// 「这次派发用了什么规则」：按派发找契约（同 core 别处的找法：sessionId+runId，退一步按 sessionId）与 EIP，
+// 只摘出真正管住这次执行的治理件——角色技能、生效规则件引用、规则集摘要、禁止动作、验收要求。
+// 契约上没有一份"规则标题表"，不编；找不到契约要 found:false 如实说，不能静默回一份空的当"没规则"。
+export function dispatchContractSummary(state, dispatch) {
+  const contracts = state.agentTaskContracts || [];
+  const contract = contracts.find((item) => item.sessionId === dispatch.sessionId && item.runId === dispatch.runId)
+    || contracts.find((item) => item.sessionId === dispatch.sessionId) || null;
+  const packets = state.effectiveInstructionPackets || [];
+  const packet = contract
+    ? (packets.find((item) => item.packetId === contract.effectiveInstructionPacketRef)
+      || packets.find((item) => item.sessionId === dispatch.sessionId && item.workItemId === dispatch.workItemId) || null)
+    : null;
+  const skill = contract?.roleSkill || null;
+  return {
+    dispatchId: dispatch.dispatchId,
+    found: Boolean(contract),
+    roleId: contract?.roleId || dispatch.roleId || null,
+    roleSkill: skill ? {roleSkillId: skill.roleSkillId || null, title: skill.title || skill.name || null, contentDigest: skill.contentDigest || null} : null,
+    model: contract?.model || dispatch.model || null,
+    rulesetDigest: contract?.rulesetDigest || null,
+    effectiveRulesDigest: contract?.effectiveRulesDigest || null,
+    activeRuleRefs: contract?.actionBasis?.activeRuleRefs || packet?.activeRuleRefs || [],
+    forbiddenActions: packet?.forbiddenActions || contract?.actionBasis?.forbiddenActions || [],
+    validationRequirements: packet?.validationRequirements || contract?.actionBasis?.validationRequirements || [],
+    rulesChangedAfterContract: contract?.rulesChangedAfterContract || dispatch.rulesChangedAfterContract || null
+  };
+}
+
+
 function defaultModelSelectionPolicies() {
   const common = {
     schemaVersion: "model-selection-policy/v1",

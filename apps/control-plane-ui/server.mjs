@@ -141,7 +141,7 @@ import {
   STRING_LIST_MAX_ITEM_LENGTH,
   projectRepositories,
   isSafeGitRef,
-  noteWorkItemExecutionFailure, normalizePinnedModelId, newestWindow} from "./lib/control-plane-core.mjs";
+  noteWorkItemExecutionFailure, normalizePinnedModelId, newestWindow, dispatchContractSummary} from "./lib/control-plane-core.mjs";
 import { isTerminalDispatchStatus } from "./lib/lifecycle-states.mjs";
 
 // 真正绑上的端口（listen 回调写入）；localEndpoint 用它。放在模块顶部：读状态的路径在 listen 之前就会调它。
@@ -3881,6 +3881,21 @@ async function handleApi(req, res) {
     return;
   }
 
+  // 「这次派发用了什么规则」：只读，按派发判租户作用域（与上面派发事件路由同一道 requireRead）。
+  // 回的是契约记录的治理件（角色技能/生效规则件/规则集摘要/禁止动作/验收要求），不是一份人写的规则标题表。
+  const dispatchContractMatch = url.pathname.match(/^\/api\/agent-dispatches\/([^/]+)\/contract-summary$/);
+  if (req.method === "GET" && dispatchContractMatch) {
+    const dispatch = state.agentDispatches.find((item) => item.dispatchId === dispatchContractMatch[1]);
+    if (!dispatch) {
+      const denial = missingRecordDenial(req, state, "dispatch_not_found", "permission_denied");
+      return json(res, denial.status, denial.payload);
+    }
+    const reader = requireRead(req, state, taskGroupScope(state, dispatch.taskGroupId));
+    if (reader.status) return json(res, reader.status, reader.payload);
+    json(res, 200, dispatchContractSummary(state, dispatch));
+    return;
+  }
+
   const taskGroupEventsMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/execution-events$/);
   if (req.method === "GET" && taskGroupEventsMatch) {
     const taskGroup = state.taskGroups.find((item) => item.id === taskGroupEventsMatch[1]);
@@ -4501,7 +4516,13 @@ async function handleApi(req, res) {
     if (!authenticated) return json(res, 401, {error: "auth_required"});
     const requestedProjectId = String(body.projectId || "").trim();
     const requestedProject = requestedProjectId ? state.projects.find((item) => item.id === requestedProjectId) : null;
-    if (requestedProjectId && !requestedProject) return json(res, 404, {error: "project_not_found"});
+    if (requestedProjectId && !requestedProject) {
+      // 查无此项目与"存在但你看不见"必须同一个答案（否则挨个试 projectId 就能枚举别的租户的项目）；
+      // 系统账号例外拿准确的 404。与本文件别处的 missingRecordDenial 同一条不变式。
+      const denial = missingRecordDenial(req, state, "project_not_found", "permission_denied");
+      return json(res, denial.status, denial.payload);
+    }
+
     const agentGuardScope = requestedProjectId
       ? projectScope(requestedProjectId)
       : {resourceType: "organization", resourceId: authenticated.account.organizationId || DEFAULT_ORGANIZATION_ID};

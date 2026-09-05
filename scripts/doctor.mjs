@@ -837,8 +837,19 @@ try {
     headers: {"Idempotency-Key": "doctor-owner-cross-project-agent-denied", authorization: auth},
     body: JSON.stringify({projectId: "prj_other", name: "Other Project Agent", role: "reviewer", model: "auto_best"})
   });
-  if (ownerCrossProjectAgentDenied.response.status !== 403 || ownerCrossProjectAgentDenied.payload?.error !== "policy_denied") {
-    throw new Error(`expected workspace owner agent activation to stay project-scoped, got ${ownerCrossProjectAgentDenied.response.status}`);
+  // 项目不存在与"存在但你看不见"必须同一个答案（missingRecordDenial）：非系统账号一律 403 permission_denied，
+  // 否则挨个试 projectId 就能枚举别的租户的项目；系统账号例外拿准确的 404 project_not_found。两个方向都钉住。
+  if (ownerCrossProjectAgentDenied.response.status !== 403 || ownerCrossProjectAgentDenied.payload?.error !== "permission_denied") {
+    throw new Error(`expected workspace owner agent activation on a foreign/unknown project to be denied without leaking existence (403 permission_denied), got ${ownerCrossProjectAgentDenied.response.status} ${ownerCrossProjectAgentDenied.payload?.error}`);
+  }
+  const systemUnknownProjectAgent = await jsonFetch(port, "/api/agents", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-system-unknown-project-agent", authorization: doctorSystemAuth},
+    body: JSON.stringify({projectId: "prj_other", name: "Other Project Agent", role: "reviewer", model: "auto_best"})
+  });
+  if (systemUnknownProjectAgent.response.status !== 404 || systemUnknownProjectAgent.payload?.error !== "project_not_found") {
+    throw new Error(`系统账号对不存在的项目建 agent 应拿到准确的 404 project_not_found，实际 ${systemUnknownProjectAgent.response.status} ${systemUnknownProjectAgent.payload?.error}`);
+
   }
   // 建智能体时 status 与 trustScore 此前是【请求体直接落库】：status 想写什么写什么
   // （界面的启停按钮只认 active/inactive，别的取值会让它永远显示「启用」）；
@@ -3415,6 +3426,7 @@ try {
           && !["project", "task_group", "organization"].includes(grant.resource?.resourceType))},
       {method: "POST", path: (id) => `/api/agent-join-tokens/${id}/revoke`, id: pick("agentJoinTokens", "joinTokenId")},
       {method: "GET", path: (id) => `/api/agent-dispatches/${id}/events`, id: pick("agentDispatches", "dispatchId")},
+      {method: "GET", path: (id) => `/api/agent-dispatches/${id}/contract-summary`, id: pick("agentDispatches", "dispatchId")},
       {method: "GET", path: (id) => `/api/task-groups/${id}/execution-events`, id: pick("taskGroups", "id")},
       {method: "GET", path: (id) => `/api/work-sessions/${id}/execution-events`, id: pick("workSessions", "sessionId")},
       {method: "GET", path: (id) => `/api/task-groups/${id}/progress`, id: pick("taskGroups", "id")},
@@ -3547,7 +3559,8 @@ try {
       {path: foreignProject && `/api/projects/${foreignProject.id}/progress`, what: "项目进度"},
       {path: foreignProject && `/api/projects/${foreignProject.id}/config`, what: "项目配置"},
       {path: foreignSession && `/api/work-sessions/${foreignSession.sessionId}/execution-events`, what: "工作会话执行事件"},
-      {path: foreignDispatch && `/api/agent-dispatches/${foreignDispatch.dispatchId}/events`, what: "派发事件"}
+      {path: foreignDispatch && `/api/agent-dispatches/${foreignDispatch.dispatchId}/events`, what: "派发事件"},
+      {path: foreignDispatch && `/api/agent-dispatches/${foreignDispatch.dispatchId}/contract-summary`, what: "派发契约摘要"}
     ];
     const leaked = [];
     const unprobed = [];
@@ -4427,6 +4440,15 @@ try {
     // 游标必须给：没有它，前端每次都只能从头拉，或者干脆停在原地。
     if (dispatchEvents.payload.nextCursor === undefined) {
       throw new Error(`派发事件流没给出游标：${JSON.stringify(dispatchEvents.payload).slice(0, 200)}`);
+    }
+    // 「这次派发用了什么规则」：工作项卡执行历史里的「规则」就是按这条取数的。派发过就有契约，
+    // 所以 found 必须为真、生效规则件引用不能为空——空着回来界面会把它当成"没规则"。
+    const contractSummary = await jsonFetch(port,
+      `/api/agent-dispatches/${encodeURIComponent(anyDispatch.dispatchId)}/contract-summary`,
+      {headers: {authorization: doctorSystemAuth}});
+    if (!contractSummary.response.ok || contractSummary.payload?.found !== true
+      || !Array.isArray(contractSummary.payload?.activeRuleRefs) || !contractSummary.payload.activeRuleRefs.length) {
+      throw new Error(`派发契约摘要取不到或为空（${contractSummary.response.status}/${JSON.stringify(contractSummary.payload).slice(0, 160)}）—— 执行历史里「规则」就是按这条取数的`);
     }
     // 答的必须是【这个派发】的事件，不能把别的派发的也带出来。
     // 【但这套 e2e 里通常一条执行事件都没有】——执行事件由真节点上报，那是 agent 套件的事。

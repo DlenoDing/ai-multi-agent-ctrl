@@ -576,6 +576,24 @@ const MUTATIONS = [
     expect: "执行历史只显示了一次派发"
   },
   {
+    // 找不到契约必须 found:false 如实说。写死 true 即让界面把空的当成"没规则"。
+    name: "派发契约摘要找不到契约时必须如实报 found:false",
+    check: "verifyAgentGatewayContracts",
+    file: CORE,
+    from: "    found: Boolean(contract),",
+    to: "    found: true,",
+    expect: "没有契约的派发不能报成 found"
+  },
+  {
+    // 执行历史每条派发要有「规则」入口；去掉按钮即人看得到派给了谁、看不到按什么规则干的。
+    name: "工作项执行历史每条派发必须有「规则」入口",
+    file: APP,
+    gate: "console",
+    from: "                <button class=\"secondary-button\" data-action=\"show-dispatch-rules\" data-dispatch-id=\"${esc(item.dispatchId)}\">${dispatchRuleSummaries[item.dispatchId] ? \"收起规则\" : \"规则\"}</button>\n",
+    to: "",
+    expect: "执行历史没有「规则」入口"
+  },
+  {
     // 项目设置的配置行（仓库/基线/角色）对只读成员必须收起「删除」：cfg-del 是本地暂存，保存已禁用，
     // 只读成员点了删本地行却存不下＝按了看不到效果的死动作。去掉 cfgRepoRow 的 readOnly 门即让删除对只读成员出现。
     name: "只读成员的配置行不许摆删除按钮",

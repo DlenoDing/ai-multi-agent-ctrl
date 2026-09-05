@@ -1864,6 +1864,9 @@ function runWorkItemDispatchHistoryCase() {
     html.includes("node_beta") && html.includes("node_alpha") && /角色：/u.test(html)
       && html.includes("anthropic:claude-sonnet-4-5") && html.includes("openai:gpt-5.5") && /第 2 次尝试/u.test(html) && /失败：/u.test(html),
     "执行历史缺了节点、角色、模型、尝试次数或失败原因中的某一项——「涉及哪些 agent 分别执行了什么」答不上来");
+  check("执行历史每条派发要有「规则」入口",
+    (html.match(/data-action="show-dispatch-rules"/gu) || []).length === 2,
+    "执行历史没有「规则」入口：人看得到派给了谁、看不到按什么规则干的");
 }
 
 function runRoomVisibilityCase() {

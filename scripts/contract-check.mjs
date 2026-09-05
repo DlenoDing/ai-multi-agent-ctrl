@@ -146,6 +146,7 @@ import {
   selectModel,
   normalizePinnedModelId,
   newestWindow,
+  dispatchContractSummary,
   updateTaskGroupLanguagePolicy,
   createCommand,
   dispatchCommand,
@@ -6360,6 +6361,20 @@ function verifyAgentGatewayContracts(output) {
   const rejectedDecision = selectModel(unavailableState, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", roleId: "ui-console-service"});
   if (rejectedDecision.status !== "rejected" || !rejectedDecision.candidateRankings.some((item) => String(item.rejectionReason || "").includes("availability_unavailable"))) {
     output.push("Model selection did not fail closed when all models were unavailable");
+  }
+  // 「这次派发用了什么规则」：按派发找契约（sessionId+runId，退一步 sessionId）与 EIP，只摘治理件；
+  // 找不到契约必须 found:false 如实说，不能静默回一份空的当"没规则"。把 found 写死 true 即红。
+  {
+    const st = {agentTaskContracts: [{sessionId: "sess_r", runId: "run_1", roleId: "reviewer", model: "openai:gpt-5.5", rulesetDigest: "rs1", effectiveRulesDigest: "er1",
+        effectiveInstructionPacketRef: "eip_1", roleSkill: {roleSkillId: "rs_reviewer", contentDigest: "d1"}, actionBasis: {activeRuleRefs: ["state-machines:v1", "effective-ruleset:er1"]}}],
+      effectiveInstructionPackets: [{packetId: "eip_1", sessionId: "sess_r", workItemId: "w_r", forbiddenActions: ["self_patch_control_plane"], validationRequirements: ["schema_valid"]}]};
+    const hit = dispatchContractSummary(st, {dispatchId: "adp_r", sessionId: "sess_r", runId: "run_1", workItemId: "w_r", roleId: "reviewer"});
+    if (hit.found !== true || hit.roleSkill?.roleSkillId !== "rs_reviewer" || !hit.activeRuleRefs.includes("effective-ruleset:er1")
+      || !hit.forbiddenActions.includes("self_patch_control_plane") || hit.model !== "openai:gpt-5.5") {
+      output.push(`派发契约摘要没摘全治理件：${JSON.stringify(hit)}`);
+    }
+    const miss = dispatchContractSummary(st, {dispatchId: "adp_x", sessionId: "sess_none", runId: "run_9", workItemId: "w_x"});
+    if (miss.found !== false) output.push("没有契约的派发不能报成 found：摘要必须如实说查不到，否则界面会把空的当成\"没规则\"");
   }
   // 截断窗口必须保留最新的那几条（与界面"最新在前"自洽）：5 条取 3 → 最后 3 条；不超上限原样返回同一数组；
   // 上限 0 → 空（slice(-0) 会返回整份，这是个真坑）。把 slice(-limit) 改回 slice(0, limit) 即红。
