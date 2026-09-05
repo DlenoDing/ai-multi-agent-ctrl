@@ -1143,7 +1143,7 @@ const MUTATIONS = [
     gate: "workspace-flows",
     from: '      if (sanitizedGrant.role === "project_owner") {',
     to: '      if (false && sanitizedGrant.role === "project_owner") {',
-    expect: "project_owner_assignment_requires_project_creation"
+    expect: "POST /api/access-grants: 201"
   },
   {
     name: "通用 REST 授权不得改写项目负责人",
@@ -1151,7 +1151,7 @@ const MUTATIONS = [
     gate: "workspace-flows",
     from: "      if (targetProject?.ownerAccountId === body.subjectId) {",
     to: "      if (false && targetProject?.ownerAccountId === body.subjectId) {",
-    expect: "project_owner_grant_immutable"
+    expect: "POST /api/access-grants: 201"
   },
   {
     name: "通用 MCP 授权不得铸造第二个项目负责人",
