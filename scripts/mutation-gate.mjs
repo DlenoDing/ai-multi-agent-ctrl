@@ -841,8 +841,8 @@ const MUTATIONS = [
     name: "组织成员页的授权流程指引必须折叠",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "    guideBundle(\"授权流程指引\", [renderOrgMembersLifecycleGuide(members)], [\"成员授权流程（6 步）\"]),",
-    to: "    renderOrgMembersLifecycleGuide(members),",
+    from: "    guideBundle(\"授权流程指引\", [renderOrgMembersLifecycleGuide(members), panel(\"说明\", `",
+    to: "    guideBundle(\"授权流程指引\", [panel(\"说明\", `",
     expect: "「成员授权流程」要收进默认关闭的折叠块"
   },
   {

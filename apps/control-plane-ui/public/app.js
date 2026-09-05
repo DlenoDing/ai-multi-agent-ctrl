@@ -3154,79 +3154,6 @@ function memberStats(members) {
   return {activeMembers, invitedMembers, suspendedMembers, retiredMembers, assignableProjects: assignableProjects().length};
 }
 
-function renderOrgMembersSummary(members) {
-  const stats = memberStats(members);
-  const self = members.find((account) => account.accountId === currentAccount?.accountId);
-  return panel("成员管理总览", `
-    <div class="metric-grid">
-      ${summaryMetric("成员总数", members.length, "不含 service_account")}
-      ${summaryMetric("启用成员", stats.activeMembers, "可登录并参与项目管理")}
-      ${summaryMetric("待接受邀请", stats.invitedMembers, "需要重发或等待首次登录")}
-      ${summaryMetric("已停用", stats.suspendedMembers, "暂时不能登录")}
-      ${summaryMetric("已注销", stats.retiredMembers, "终态，不可恢复")}
-      ${summaryMetric("可授权项目", stats.assignableProjects, "可作为默认项目或授权目标")}
-    </div>
-    <div class="small muted">当前登录：${esc(self?.displayName || currentAccount?.displayName || "-")}。先查看“成员列表”的状态和风险，再创建新成员或调整权限。</div>
-  `, {wide: true});
-}
-
-function renderOrgMembersActionBoard(members) {
-  const stats = memberStats(members);
-  return panel("成员管理操作看板", `
-    <div class="module-grid action-grid">
-      ${jumpModuleCard({
-        title: "待接受邀请",
-        metric: `${stats.invitedMembers}`,
-        detail: stats.invitedMembers ? "需要重发或等待首次登录" : "当前没有待接受邀请",
-        panelTitle: "成员列表",
-        tone: stats.invitedMembers ? "orange" : "green",
-        action: "查看邀请"
-      })}
-      ${jumpModuleCard({
-        title: "启用成员",
-        metric: `${stats.activeMembers}`,
-        detail: "可登录并参与项目管理",
-        panelTitle: "成员列表",
-        tone: stats.activeMembers ? "blue" : "gray",
-        action: "查看成员"
-      })}
-      ${jumpModuleCard({
-        title: "已停用",
-        metric: `${stats.suspendedMembers}`,
-        detail: stats.suspendedMembers ? "暂时不能登录，需要核对原因" : "当前没有停用成员",
-        panelTitle: "成员列表",
-        tone: stats.suspendedMembers ? "orange" : "green",
-        action: "查看状态"
-      })}
-      ${jumpModuleCard({
-        title: "已注销",
-        metric: `${stats.retiredMembers}`,
-        detail: "终态，不可恢复",
-        panelTitle: "成员列表",
-        tone: stats.retiredMembers ? "gray" : "green",
-        action: "查看历史"
-      })}
-      ${jumpModuleCard({
-        title: "可授权项目",
-        metric: `${stats.assignableProjects}`,
-        detail: "可作为默认项目或授权目标",
-        panelTitle: "说明",
-        tone: stats.assignableProjects ? "blue" : "orange",
-        action: "查看边界"
-      })}
-      ${jumpModuleCard({
-        title: "创建成员",
-        metric: "入口",
-        detail: "签发一次性登录令牌",
-        panelTitle: "创建成员",
-        tone: "blue",
-        action: "创建"
-      })}
-    </div>
-    <div class="small muted">处理顺序：先核对邀请、停用和注销状态，再创建成员或调整权限。</div>
-  `, {wide: true});
-}
-
 function renderOrgMembersLifecycleGuide(members) {
   const stats = memberStats(members);
   const activeProjects = assignableProjects().length;
@@ -3291,6 +3218,7 @@ function renderOrgMembersLifecycleGuide(members) {
 
 function renderOrgMembers() {
   const members = (orgMembers || []).filter((account) => account.accountType !== "service_account");
+  const stats = memberStats(members);
   const memberRows = members.map((account) => {
     const isSelf = account.accountId === currentAccount.accountId;
     const manageable = account.accountType === "user_account" && !isSelf;
@@ -3326,11 +3254,15 @@ function renderOrgMembers() {
   }).join("");
 
   return [
-    renderOrgMembersSummary(members),
-    renderOrgMembersActionBoard(members),
-    guideBundle("授权流程指引", [renderOrgMembersLifecycleGuide(members)], ["成员授权流程（6 步）"]),
-    panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows,
-      {emptyText: listEmptyText("成员列表")}), {wide: true, headerSide: filterInput("按姓名、邮箱过滤…", "members")}),
+    panel("成员列表", `<div class="member-counts" aria-label="组织成员统计">
+      <span>共 <strong>${members.length}</strong> 人</span>
+      <span>启用 ${stats.activeMembers}</span>
+      <span>待接受邀请 ${stats.invitedMembers}</span>
+      <span>已停用 ${stats.suspendedMembers}</span>
+      <span>已注销 ${stats.retiredMembers}</span>
+    </div>` + table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows,
+      {emptyText: listEmptyText("成员列表")}), {wide: true, headerSide: `${filterInput("按姓名、邮箱过滤…", "members")}
+        <button class="primary-button" data-jump-panel="创建成员">创建成员</button>`}),
     renderOrgMemberScopeMatrix(members),
     panel("创建成员", `
       <form class="form-grid" data-form="member-create">
@@ -3349,12 +3281,12 @@ function renderOrgMembers() {
         <button class="primary-button" type="submit">创建成员</button>
       </form>
     `),
-    panel("说明", `
+    guideBundle("授权流程指引", [renderOrgMembersLifecycleGuide(members), panel("说明", `
       <div class="stack">
         <div class="record"><div class="record-title"><strong>一次性令牌</strong></div><div class="record-meta"><span>成员首次使用令牌登录后令牌即失效，可在顶栏“修改密码”设置个人密码。</span></div></div>
         <div class="record"><div class="record-title"><strong>权限边界</strong></div><div class="record-meta"><span>成员权限不可包含系统级与组织级通配权限；项目、任务组细粒度授权优先在目标项目「成员权限」补充，系统管理只做跨项目身份和服务账号治理。</span></div></div>
       </div>
-    `)
+    `)], ["成员授权流程（6 步）", "账号与权限说明"])
   ].join("");
 }
 
@@ -4288,76 +4220,6 @@ function projectMemberRoleStats(project) {
   };
 }
 
-function renderProjectMembersSummary(project, stats) {
-  return panel("成员权限总览", `
-    <div class="metric-grid">
-      ${summaryMetric("项目成员", stats.total, "已授权进入当前项目的账号")}
-      ${summaryMetric("项目管理员", stats.admins, "可管理项目配置和成员授权")}
-      ${summaryMetric("任务组负责人", stats.owners, "可控制任务组与工作项推进")}
-      ${summaryMetric("评审人", stats.reviewers, "可处理人工审核、定稿和验收")}
-      ${summaryMetric("智能体操作员", stats.agentOperators, "可签发 agent 加入令牌并操作节点")}
-      ${summaryMetric("观察者", stats.viewers, "只读查看项目执行状态")}
-    </div>
-    <div class="small muted">本页只管理当前项目的成员角色；组织账号的创建、停用和邀请重发仍在「组织管理」→「成员管理」。Agent 注册仍在「项目管理」→「AI 智能体」。</div>
-  `, {wide: true});
-}
-
-function renderProjectMembersActionBoard(project, stats) {
-  return panel("成员权限操作看板", `
-    <div class="module-grid action-grid">
-      ${jumpModuleCard({
-        title: "当前成员",
-        metric: stats.total,
-        detail: "查看本项目已有成员和角色",
-        panelTitle: "项目成员列表",
-        tone: stats.total ? "blue" : "orange",
-        action: "看成员"
-      })}
-      ${jumpModuleCard({
-        title: "补授权",
-        metric: hasPerm("project:grant") ? "可操作" : "只读",
-        detail: hasPerm("project:grant") ? "给组织成员授予当前项目角色" : "当前账号没有项目授权管理权限",
-        panelTitle: "项目成员授权",
-        tone: hasPerm("project:grant") ? "blue" : "gray",
-        action: "去授权"
-      })}
-      ${projectModuleCard({
-        pageId: "proj-agents",
-        title: "Agent 操作",
-        metric: stats.agentOperators,
-        detail: "需要智能体操作员或项目管理员来签发加入令牌",
-        tone: stats.agentOperators || stats.admins ? "blue" : "orange",
-        action: "看 Agent"
-      })}
-      ${projectModuleCard({
-        pageId: "review",
-        title: "人工审核",
-        metric: stats.reviewers,
-        detail: "需要评审人处理定稿、验收和审批",
-        tone: stats.reviewers ? "blue" : "orange",
-        action: "看审核"
-      })}
-      ${projectModuleCard({
-        pageId: "tg",
-        title: "任务组控制",
-        metric: stats.owners,
-        detail: "需要任务组负责人推进任务组和工作项",
-        tone: stats.owners ? "blue" : "orange",
-        action: "看任务组"
-      })}
-      ${projectModuleCard({
-        pageId: "monitor",
-        title: "执行回看",
-        metric: "实时",
-        detail: "授权后到执行监控确认按钮、派发和事件是否按角色生效",
-        tone: "green",
-        action: "看监控"
-      })}
-    </div>
-    <div class="small muted">处理顺序：先看当前成员，再补项目角色；授权不会直接启动任务，后续按钮是否出现仍由项目、任务组和角色权限共同决定。</div>
-  `, {wide: true});
-}
-
 function renderProjectMembersLifecycleGuide(project, stats) {
   return panel("成员协作流程", `
     <div class="module-grid action-grid">
@@ -4402,7 +4264,7 @@ function renderProjectMembersLifecycleGuide(project, stats) {
         action: "看监控"
       })}
     </div>
-    <div class="small muted">成员权限是项目执行的入口条件之一：它不替代 Agent 注册、任务组配置或人工指令，只决定谁能在这些页面看到和执行对应操作。</div>
+    <div class="small muted">授权不会直接启动任务。成员权限决定谁能管理 Agent、任务组、人工审核和执行监控；组织账号的创建、停用和邀请重发在「组织管理」→「成员管理」。</div>
   `, {wide: true});
 }
 
@@ -4423,17 +4285,21 @@ function renderProjectMembers() {
     ? renderProjectMemberForm({projectId: project.id})
     : `<div class="notice warn-notice">当前账号没有“项目授权管理(project:grant)”权限，只能查看本项目成员角色。需要补授权时，请项目管理员或组织管理员处理。</div>`;
   return [
-    renderProjectMembersSummary(project, stats),
-    renderProjectMembersActionBoard(project, stats),
-    guideBundle("协作流程指引", [renderProjectMembersLifecycleGuide(project, stats)], ["成员协作流程（5 步）"]),
-    panel("项目成员列表", memberRows
+    panel("项目成员列表", `<div class="member-counts" aria-label="项目成员统计">
+      <span>共 <strong>${stats.total}</strong> 人</span><span>管理员 ${stats.admins}</span>
+      <span>任务组负责人 ${stats.owners}</span><span>评审人 ${stats.reviewers}</span>
+      <span>智能体操作员 ${stats.agentOperators}</span><span>观察者 ${stats.viewers}</span>
+    </div>` + (memberRows
       ? table(["成员", "项目角色", "角色影响"], memberRows)
-      : `<div class="notice warn-notice">当前项目还没有成员授权。没有成员角色时，任务组控制、人工审核和 Agent 操作入口会缺少负责人。</div>`, {wide: true}),
+      : `<div class="notice warn-notice">当前项目还没有成员授权。没有成员角色时，任务组控制、人工审核和 Agent 操作入口会缺少负责人。</div>`), {wide: true,
+      headerSide: hasPerm("project:grant") ? `<button class="primary-button" data-jump-panel="项目成员授权">添加项目成员</button>
+        <button class="secondary-button" data-jump-panel="任务组权限授权">授任务组权限</button>` : ""}),
     panel("项目成员授权", grantPanel),
     panel("任务组权限授权", hasPerm("project:grant")
       ? renderTaskGroupGrantForm(project)
       : `<div class="notice warn-notice">当前账号没有“项目授权管理(project:grant)”权限，只能查看任务组授权列表。</div>`, {wide: true}),
-    panel("任务组权限列表", renderTaskGroupGrantList(project), {wide: true, headerSide: filterInput("按任务组、账号、角色过滤…", "task-group-grants")})
+    panel("任务组权限列表", renderTaskGroupGrantList(project), {wide: true, headerSide: filterInput("按任务组、账号、角色过滤…", "task-group-grants")}),
+    guideBundle("协作流程指引", [renderProjectMembersLifecycleGuide(project, stats)], ["成员协作流程（5 步）"]),
   ].join("");
 }
 

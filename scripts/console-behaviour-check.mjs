@@ -2530,13 +2530,14 @@ async function runErrorGuidanceCase() {
         && !bundles[0][2].includes("<h2>项目成员列表</h2>") && !bundles[0][2].includes("<h2>项目成员授权</h2>"),
       `折叠块 ${bundles.length} 个（默认打开 ${bundles.filter((m) => m[1]).length} 个）—— 成员列表被三层引导推到下面`);
   }
-  check("项目成员权限页要先总览、再看板、再流程、再成员列表、最后授权表单",
-    projectMembersPanelAt("成员权限总览") >= 0
-      && projectMembersPanelAt("成员权限总览") < projectMembersPanelAt("成员权限操作看板")
-      && projectMembersPanelAt("成员权限操作看板") < projectMembersPanelAt("成员协作流程")
-      && projectMembersPanelAt("成员协作流程") < projectMembersPanelAt("项目成员列表")
-      && projectMembersPanelAt("项目成员列表") < projectMembersPanelAt("项目成员授权"),
-    "项目成员权限页没有按普通用户先看现状、再看动作、再看流程、最后操作的顺序组织");
+  check("项目成员权限页首个面板必须是成员列表，统计与授权入口合并，指引放在操作之后",
+    projectMembersHtml.match(/<h2>(.*?)<\/h2>/u)?.[1] === "项目成员列表"
+      && projectMembersPanelAt("成员权限总览") === -1 && projectMembersPanelAt("成员权限操作看板") === -1
+      && /aria-label="项目成员统计"/u.test(projectMembersHtml)
+      && /data-jump-panel="任务组权限授权"/u.test(projectMembersHtml)
+      && projectMembersPanelAt("项目成员列表") < projectMembersPanelAt("项目成员授权")
+      && projectMembersPanelAt("任务组权限列表") < projectMembersPanelAt("成员协作流程"),
+    "项目成员列表仍被重复总览和引导挤下首屏，或缺少授权入口");
   check("项目成员权限页必须说明成员角色如何影响 Agent、任务组、审核和监控",
     /智能体操作员/u.test(projectMembersHtml)
       && /任务组负责人/u.test(projectMembersHtml)
@@ -4858,13 +4859,13 @@ function runPendingTruncationCase() {
       {...orgAdmin, status: "active"},
       {accountId: "acct_wait", accountType: "user_account", displayName: "待登录成员", email: "wait@example.com", status: "invited", roles: []}
     ], "p1").replace(/<!--[\s\S]*?-->/gu, "");
-    check("成员管理页先显示总览和列表，再显示创建表单",
-      panelAt(membersHtml, "成员管理总览") >= 0
-        && panelAt(membersHtml, "成员管理总览") < panelAt(membersHtml, "成员管理操作看板")
-        && panelAt(membersHtml, "成员管理操作看板") < panelAt(membersHtml, "成员授权流程")
-        && panelAt(membersHtml, "成员授权流程") < panelAt(membersHtml, "成员列表")
-        && panelAt(membersHtml, "成员列表") < panelAt(membersHtml, "创建成员"),
-      "成员管理页没有把邀请、停用、注销、授权边界和创建入口排成可点击操作看板与流程图");
+    check("组织成员列表置顶，统计合并，创建操作先于帮助",
+      membersHtml.match(/<h2>(.*?)<\/h2>/u)?.[1] === "成员列表"
+        && panelAt(membersHtml, "成员管理总览") === -1 && panelAt(membersHtml, "成员管理操作看板") === -1
+        && /aria-label="组织成员统计"/u.test(membersHtml)
+        && panelAt(membersHtml, "成员列表") < panelAt(membersHtml, "创建成员")
+        && panelAt(membersHtml, "创建成员") < panelAt(membersHtml, "成员授权流程"),
+      "组织成员列表仍被重复引导挤下首屏，或创建操作被藏进帮助");
     {
       const bundles = [...membersHtml.matchAll(/<details class="guide-bundle"( open)?>([\s\S]*?)<\/details>/gu)];
       check("组织成员页的「成员授权流程」要收进默认关闭的折叠块（成员列表与创建表单留在外面）",
@@ -4872,11 +4873,11 @@ function runPendingTruncationCase() {
           && !bundles[0][2].includes("<h2>成员列表</h2>") && !bundles[0][2].includes("<h2>创建成员</h2>"),
         `折叠块 ${bundles.length} 个（默认打开 ${bundles.filter((m) => m[1]).length} 个）—— 成员列表被三层引导推到下面`);
     }
-    check("成员管理操作看板要提供成员列表、创建成员和说明的跳转入口",
+    check("成员管理保留成员列表、创建成员入口与权限说明",
       /data-jump-panel="成员列表"/u.test(membersHtml)
         && /data-jump-panel="创建成员"/u.test(membersHtml)
-        && /data-jump-panel="说明"/u.test(membersHtml),
-      "成员管理操作看板只显示指标，没有接上成员列表、创建成员和说明面板的跳转");
+        && /<h2>说明<\/h2>/u.test(membersHtml),
+      "成员列表或创建入口与权限说明丢失");
     check("成员授权流程要说明组织成员、项目授权和任务组权限边界",
       /成员授权流程/u.test(membersHtml)
         && /创建成员只完成账号入网，不等于已经能参与某个项目/u.test(membersHtml)
