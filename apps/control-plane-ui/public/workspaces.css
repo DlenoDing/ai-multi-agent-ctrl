@@ -69,6 +69,6 @@
   .sidebar-object-context > .sidebar-project-state, .sidebar-object-context > .sidebar-progress { display: none; }
   .sidebar-object-card { grid-column: 1 / -1; margin-top: 2px; padding: 7px 0 0; }
   .sidebar-object-counts { grid-template-columns: repeat(4, auto); justify-content: start; }
-  .sidebar-work-card { display: none; }
+  .sidebar-work-card { padding-bottom: 0; }
   .execution-stages { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }

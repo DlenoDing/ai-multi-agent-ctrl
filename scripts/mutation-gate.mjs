@@ -11909,6 +11909,14 @@ const MUTATIONS = [
     expect: "项目空间对组织共享 Agent 档案保持只读"
   },
   {
+    name: "窄屏不得隐藏当前任务对象",
+    file: "apps/control-plane-ui/public/workspaces.css",
+    gate: "console",
+    from: "  .sidebar-work-card { padding-bottom: 0; }",
+    to: "  .sidebar-work-card { display: none; }",
+    expect: "移动端不得隐藏当前任务对象"
+  },
+  {
     name: "MCP 工具崩溃不得伪装成正当拒绝（要回 server_error、打日志、说清别重试）",
     file: "apps/mcp-server/server.mjs",
     gate: "contract",
