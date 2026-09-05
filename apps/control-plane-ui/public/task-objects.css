@@ -5,6 +5,9 @@
 .task-group-object-header .record-meta { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; }
 .task-group-object-objective { font-size: 14px; margin: 12px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .task-group-object-progress { flex: 0 1 260px; min-width: 160px; align-self: center; }
+.task-group-object-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--card-border); }
+.task-group-object-stats span { padding: 10px 12px; color: var(--text-sub); font-size: 12px; text-align: center; }
+.task-group-object-stats strong { display: block; color: var(--text-main); font-size: 18px; }
 .task-group-object-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 0; }
 .task-group-object-actions .button-row { display: contents; }
 .task-run-trace { display: grid; gap: 12px; }
@@ -19,5 +22,7 @@
   .task-group-object-header { flex-direction: column; gap: 12px; }
   .task-group-object-progress { flex: 1; align-self: stretch; }
   .task-group-object-header h2 { font-size: 18px; }
+  .task-group-object-stats span { padding: 8px 4px; }
+  .task-group-object-stats strong { font-size: 16px; }
   .task-run-summary-meta { width: 100%; padding-left: 24px; }
 }

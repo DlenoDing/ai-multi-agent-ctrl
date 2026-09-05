@@ -36,6 +36,7 @@ const consoleModuleFiles = [
   "modules/workspace-location.js",
   "modules/workspace-route.js",
   "modules/object-workspace.js",
+  "modules/project-command-center.js",
   "modules/governance-workspace.js",
   "modules/task-group-workspace.js",
   "modules/task-workbench.js"
@@ -282,6 +283,10 @@ globalThis.__probe = {
   routeSnapshot: () => workspaceRouteSnapshot(),
   restoreRoute: (route) => restoreWorkspaceRoute(route),
   currentRouteHash: () => window.location?.hash || "",
+  projectCommandDecision: (input) => window.AIMAC_PROJECT_COMMAND_CENTER.decide({...input,
+    statsFor: (group) => group.stats || {tasks: group.workItemCount || 0, runs: 0, reviews: 0, blocked: 0}}),
+  projectCommandHtml: (project, decision) => window.AIMAC_PROJECT_COMMAND_CENTER.render(project, decision),
+  projectRepositoryConfigs: (project) => projectRepositoryConfigs(project),
   grantRoleLabel: (role) => grantRoleLabel(role),
   joinTokenTargetProjects: (nextState) => { state = nextState; return joinTokenTargetProjects(); },
   canResumeTaskGroupAs: (taskGroup, accountType) => {
@@ -2697,6 +2702,9 @@ async function runErrorGuidanceCase() {
       && /data-focus-page="tasks"/u.test(objectAside) && /data-focus-page="monitor"/u.test(objectAside)
       && /data-focus-page="review"/u.test(objectAside) && /data-focus-page="directives"/u.test(objectAside),
     "进入任务后侧栏没有持续显示上级任务组、当前任务、运行/待审状态和上下文动作");
+  check("任务详情不重复渲染侧栏已有的任务组跳转",
+    !/>任务组监控</u.test(objectHtml) && !/>任务组审核</u.test(objectHtml) && !/>任务指令</u.test(objectHtml),
+    "任务组监控、审核和指令已经固定在对象侧栏，任务详情头再次堆一遍会形成两个导航源");
   check("对象工作区渲染后地址必须与当前任务一致",
     objectProbe.currentRouteHash() === "#/project/p1/tasks/tg_context/work_context?pane=list",
     `当前地址是 ${objectProbe.currentRouteHash() || "空"}`);
@@ -2722,6 +2730,30 @@ async function runErrorGuidanceCase() {
     objectProbe.routeParse("#/project/..%2Fsecret/tasks/tg_a/work_a") === null
       && objectProbe.routeParse("#/project/%E0%A4%A/tasks") === null,
     "地址里的对象 ID 可以注入路径分隔符或坏编码");
+  const commandProject = {id: "p_cmd", status: "active"};
+  const repo = [{id: "repo", credentialMode: "none"}];
+  const commandCases = [
+    ["配置项目仓库", {project: commandProject, groups: [], fleet: {total: 0, online: 0}, repositories: [], todos: {}, canControl: true}],
+    ["注册 Agent 节点", {project: commandProject, groups: [], fleet: {total: 0, online: 0}, repositories: repo, todos: {}, canControl: true}],
+    ["恢复 Agent 节点", {project: commandProject, groups: [], fleet: {total: 2, online: 0}, repositories: repo, todos: {}, canControl: true}],
+    ["创建任务组", {project: commandProject, groups: [], fleet: {total: 2, online: 1}, repositories: repo, todos: {}, canControl: true}],
+    ["创建任务", {project: commandProject, groups: [{id: "tg", name: "任务组", status: "active", stats: {tasks: 0, runs: 0, reviews: 0, blocked: 0}}], fleet: {total: 2, online: 1}, repositories: repo, todos: {}, canControl: true}],
+    ["启动任务组", {project: commandProject, groups: [{id: "tg", name: "任务组", status: "active", goalExecutionStatus: "active_paused_by_control", stats: {tasks: 1, runs: 0, reviews: 0, blocked: 0}}], fleet: {total: 2, online: 1}, repositories: repo, todos: {}, canControl: true}],
+    ["处理人工审核", {project: commandProject, groups: [{id: "tg", status: "active", stats: {tasks: 1, runs: 0, reviews: 1, blocked: 0}}], fleet: {total: 2, online: 1}, repositories: repo, todos: {review: {count: 1}}, canControl: true}],
+    ["处理执行阻塞", {project: commandProject, groups: [{id: "tg", status: "active", stats: {tasks: 1, runs: 0, reviews: 0, blocked: 2}}], fleet: {total: 2, online: 1}, repositories: repo, todos: {}, canControl: true}],
+    ["查看实时执行", {project: commandProject, groups: [{id: "tg", status: "active", stats: {tasks: 1, runs: 1, reviews: 0, blocked: 0}}], fleet: {total: 2, online: 1}, repositories: repo, todos: {}, canControl: true}],
+    ["查看任务结果", {project: commandProject, groups: [{id: "tg", status: "closed", stats: {tasks: 1, runs: 0, reviews: 0, blocked: 0}}], fleet: {total: 2, online: 1}, repositories: repo, todos: {}, canControl: true}]
+  ];
+  const commandResults = commandCases.map(([expected, input]) => ({expected, decision: objectProbe.projectCommandDecision(input)}));
+  check("项目主操作必须随真实执行阶段切换",
+    commandResults.every(({expected, decision}) => decision.title === expected),
+    commandResults.map(({expected, decision}) => `${expected}→${decision.title}`).join("；"));
+  const commandHtml = objectProbe.projectCommandHtml(commandProject, commandResults[0].decision);
+  check("项目概览只提供一个当前主操作",
+    /aria-label="项目当前主操作"/u.test(commandHtml)
+      && (commandHtml.match(/<button/gu) || []).length === 1
+      && /当前下一步/u.test(commandHtml) && /配置项目仓库/u.test(commandHtml),
+    "项目当前动作仍被铺成多张入口卡片，或没有给出唯一主按钮");
   const membersRoot = el("div");
   const membersProbe = loadConsole(membersRoot, {realI18n: true});
   const projectMemberState = {
@@ -4824,9 +4856,12 @@ async function runPendingTruncationCase() {
       await stalePermissionProbe.click({target: el("button", {dataset: {action: "tg-list"}}), preventDefault: () => {}});
       check("返回任务组列表会清除详情权限快照", stalePermissionProbe.sessionState().taskGroupDetailId === null
         && stalePermissionProbe.sessionState().expandedTaskGroupId === "", JSON.stringify(stalePermissionProbe.sessionState()));
-      check("任务组对象可直达任务、监控、审核、指令和当前项目 Agent",
-        ["tasks", "monitor", "review", "directives"].every((target) => groupDetail.includes(`data-focus-page="${target}"`))
-          && /data-target-menu="proj-agents" data-target-workspace="nodes"/u.test(groupDetail), textOf(groupDetail).slice(0, 400));
+      check("任务组详情保留实时摘要和状态操作，不重复侧栏对象导航",
+        /aria-label="任务组实时摘要"/u.test(groupDetail) && /task-group-object-stats/u.test(groupDetail)
+          && /<strong>2<\/strong>任务/u.test(groupDetail) && /<strong>1<\/strong>运行/u.test(groupDetail)
+          && !/data-focus-page="(?:tasks|monitor|review|directives)"/u.test(groupDetail)
+          && !/data-target-menu="proj-agents"/u.test(groupDetail),
+        textOf(groupDetail).slice(0, 400));
       const idleNodeState = {...overviewState, agentRuntimeNodes: [{nodeId: "idle", projectIds: ["p1"], status: "online", activeDispatchIds: [], lastHeartbeatAt: "2099-01-01T00:00:00Z"}]};
       const runningNodeState = {...idleNodeState, agentDispatches: [{dispatchId: "run1", taskGroupId: "tg1", assignedNodeId: "idle", status: "running"}],
         agentRuntimeNodes: [{...idleNodeState.agentRuntimeNodes[0], activeDispatchIds: ["run1"]}]};
@@ -4966,8 +5001,14 @@ async function runPendingTruncationCase() {
       (objectOverview.match(/aria-label="项目摘要"/gu) || []).length === 1
         && !/项目进度 ·/u.test(objectOverview) && !/class="module-card/u.test(objectOverview)
         && /任务组平均进度/u.test(objectOverview) && /待人工确认/u.test(objectOverview), textOf(objectOverview).slice(0, 300));
-    check("项目资源摘要取实际配置与服务端节点范围，不把产出记录数当仓库数",
+  check("项目资源摘要取实际配置与服务端节点范围，不把产出记录数当仓库数",
       /仓库 1 个/u.test(objectOverview) && /AI 智能体 2\/3 在线/u.test(objectOverview), textOf(objectOverview));
+    const legacyRepositoryProject = {...objectOverviewState.projects[0], config: {repositories: []},
+      repositories: [{id: "repo_legacy", url: "https://example.test/repo.git"}]};
+    const repositoryScopeProbe = loadConsole(el("div"), {realI18n: true});
+    check("项目概览与下一步使用服务端相同的仓库兼容口径",
+      repositoryScopeProbe.projectRepositoryConfigs(legacyRepositoryProject).length === 1,
+      "config.repositories 是空数组时覆盖了仍在生效的顶层仓库，概览会错误催人重复配置");
     check("最新执行栏目不重复项目摘要", !/aria-label="项目摘要"/u.test(objectActivity) && /最新执行事件/u.test(objectActivity), textOf(objectActivity));
     check("组织项目列表本身具有进入、成员与设置入口，不依赖说明栏目",
       /data-target-menu="proj-overview"[^>]*>进入项目/u.test(objectProjectList)

@@ -1752,6 +1752,26 @@ function renderLogin() {
 
 /* ---------------- 框架渲染 ---------------- */
 
+function taskGroupOperationalStats(group) {
+  if (!group) return {tasks: 0, runs: 0, reviews: 0, blocked: 0};
+  const taskItems = tgDetail?.taskGroupId === group.id && tgDetail?.progress?.workItems
+    ? tgDetail.progress.workItems : group.workItems || [];
+  const dispatches = (state.agentDispatches || []).filter((item) => item.taskGroupId === group.id);
+  const reviews = [
+    ...(state.humanConfirmationRequests || []),
+    ...(state.permissionRequests || []),
+    ...(state.approvalRequests || [])
+  ].filter((item) => item.taskGroupId === group.id && ["pending", "requested", "pending_approval"].includes(item.status)).length;
+  const blockedWork = taskItems.filter((item) => item.blockedReason || String(item.status || "").startsWith("blocked")).length;
+  const blockedRuns = dispatches.filter((item) => item.status === "blocked").length;
+  return {
+    tasks: group.workItemCount ?? taskItems.length,
+    runs: dispatches.filter((item) => !terminalDispatchStatuses.has(item.status)).length,
+    reviews,
+    blocked: Number(group.blockerCount ?? group.blockers?.length ?? 0) + blockedWork + blockedRuns
+  };
+}
+
 function sidebarContextHtml(perspective) {
   const currentSection = managementSectionOf(page, perspective);
   const accountOrganizationId = currentAccount?.organizationId || state.organizationContext?.id;
@@ -1776,21 +1796,13 @@ function sidebarContextHtml(perspective) {
     ? (taskWorkDetail?.workItem?.id === selectedWork.workItemId ? taskWorkDetail.workItem
       : taskItems.find((item) => item.id === selectedWork.workItemId))
     : null;
-  const activeRuns = group ? (state.agentDispatches || []).filter((item) => item.taskGroupId === group.id
-    && !terminalDispatchStatuses.has(item.status)).length : 0;
-  const pendingReviews = group ? [
-    ...(state.humanConfirmationRequests || []),
-    ...(state.permissionRequests || []),
-    ...(state.approvalRequests || [])
-  ].filter((item) => item.taskGroupId === group.id && item.status === "pending").length : 0;
-  const blocked = group ? Number(group.blockerCount ?? group.blockers?.length
-    ?? taskItems.filter((item) => item.blockedReason || String(item.status || "").startsWith("blocked")).length) : 0;
+  const stats = taskGroupOperationalStats(group);
   return {spaces, project: window.AIMAC_CONTEXT_NAVIGATION.projectContext({
     project,
     projects: selectableProjects(),
     group,
     work,
-    stats: {tasks: group?.workItemCount ?? taskItems.length, runs: activeRuns, reviews: pendingReviews, blocked},
+    stats,
     labels: {projectStatus: t(project.status), groupStatus: t(group?.goalExecutionStatus || group?.status), workStatus: t(work?.status)}
   })};
 }
@@ -4874,9 +4886,29 @@ function projectHubHtml(project) {
   if (!workspaces.showHub()) return "";
   return window.AIMAC_OBJECT_WORKSPACE.projectSummary({
     project, agentOnline: Number(state.fleet?.online || 0), agentTotal: Number(state.fleet?.total || 0),
-    repositoryCount: (project.config?.repositories || project.repositories || []).length,
+    repositoryCount: projectRepositoryConfigs(project).length,
     helpers: {badge, fmtTime, progressLine}
   });
+}
+
+function projectCommandCenterHtml(project, groups) {
+  if (workspaces.current("proj-overview")?.id !== "overview") return "";
+  const decision = window.AIMAC_PROJECT_COMMAND_CENTER.decide({
+    project,
+    groups,
+    fleet: state.fleet || {},
+    repositories: projectRepositoryConfigs(project),
+    todos: todoCountsByPage(),
+    statsFor: taskGroupOperationalStats,
+    canControl: hasProjectPermission("task_group:control") || groups.some((group) => hasGroupPerm(group.id, "task_group:control"))
+  });
+  return window.AIMAC_PROJECT_COMMAND_CENTER.render(project, decision);
+}
+
+function projectRepositoryConfigs(project) {
+  const configured = project?.config?.repositories;
+  return Array.isArray(configured) && configured.length ? configured
+    : Array.isArray(project?.repositories) ? project.repositories : [];
 }
 
 // 「项目操作路径」（7 张入口卡片 + 推荐顺序）已撤：与顶部「流程导航」是同一件事的两份说法，人不知道该看哪份。
@@ -4937,7 +4969,7 @@ function workflowGuidePanel(project, groups) {
   const visible = new Set(menuForCurrentSection(perspectiveOf(currentAccount), page).filter((item) => item.id).map((item) => item.id));
   const go = (id) => visible.has(id) ? `<button class="secondary-button" data-menu="${esc(id)}">前往</button>` : "";
   // 「项目操作路径」并入后的两步：仓库没配时 agent 的产出没有落点；选了凭证模式却没填密钥的仓库要点名（配了等于没配）。
-  const repos = project.config?.repositories || project.repositories || [];
+  const repos = projectRepositoryConfigs(project);
   const credentialMissing = repos.filter((repo) => {
     const mode = repo.credentialMode || repo.credential?.mode || "none";
     return mode !== "none" && !(repo.credential?.passwordSet || repo.credential?.apiKeySet || repo.credential?.sealedSecret);
@@ -5040,12 +5072,13 @@ function renderProjectOverview() {
   ])).join("");
 
   return [
+    projectCommandCenterHtml(project, groups),
     workflowGuidePanel(project, groups),
     // 项目概览是项目负责人一直盯着的那一页，也是最容易被"看起来一切正常"骗到的一页：
     // 实测真实数据下它显示"健康度 ok、完成度 75%"，而当时一个在线 agent 都没有、
     // 3 个单元交出去之后永远不会动 —— 任务组页和监控页都说了这件事，唯独这一页不说。
     // 提示复用同一个函数，措辞与那两页一致，人不必在不同页面上对同一件事建立两套理解。
-    cellsWaitingWithNoAgentNotice(groups),
+    projectRepositoryConfigs(project).length ? "" : cellsWaitingWithNoAgentNotice(groups),
     wipCapacityNotice(groups),
     projectHubHtml(project),
     panel("关键指标", `
@@ -5383,6 +5416,7 @@ function renderTaskGroups() {
   if (!workspaces.allows("任务组列表")) return notices + renderTaskGroupsSummary(groups)
     + renderTaskGroupAttentionBoard(groups) + renderTaskGroupLifecycleGuide(groups) + createPanels.join("");
   const helpers = {row, table, badge, progressLine, fmtTime, languageLabel, t, controls: taskGroupControls, quickControl: taskGroupLifecycleControl,
+    stats: taskGroupOperationalStats,
     project: currentProject(), projectLink: window.AIMAC_OBJECT_WORKSPACE.projectLink, groupLink: window.AIMAC_OBJECT_WORKSPACE.groupLink};
   if (expandedTaskGroupId) {
     const taskGroup = groups.find((group) => group.id === expandedTaskGroupId);

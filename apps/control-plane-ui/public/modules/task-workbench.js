@@ -79,10 +79,7 @@
     }).join("");
     const runIds = new Set(runs.map((run) => run.dispatchId));
     const archivedEvents = (state.agentExecutionEvents || []).filter((event) => event.taskGroupId === group.id && event.workItemId === work.id && !runIds.has(event.dispatchId));
-    return `<div class="stack"><div class="task-detail-header"><button class="secondary-button" data-close-work>返回任务列表</button>
-      <div class="button-row"><button class="secondary-button" data-focus-group="${esc(group.id)}" data-focus-page="monitor">任务组监控</button>
-      <button class="secondary-button" data-focus-group="${esc(group.id)}" data-focus-page="review">任务组审核</button>
-      <button class="secondary-button" data-focus-group="${esc(group.id)}" data-focus-page="directives" data-focus-work="${esc(work.id)}">任务指令</button></div></div>
+    return `<div class="stack"><div class="task-detail-header"><button class="secondary-button" data-close-work>返回任务列表</button></div>
       <div><h3>${esc(work.title || work.id)}</h3>${h.badge(work.status)} ${h.progressLine(work.progress)}
       <div class="task-list-meta"><span>任务组：${esc(group.name || group.id)}</span><span>执行角色：${esc(h.t(work.ownerRole))}</span><span class="mono">${esc(work.id)}</span></div></div>
       ${String(group.goalExecutionStatus || "").startsWith("active_paused") ? `<div class="notice warn-notice">任务组处于暂停状态。${group.canControl ? `<button class="primary-button" data-action="task-control" data-task="${esc(group.id)}" data-task-action="resume">启动任务组</button>` : "需要任务组负责人启动。"}</div>` : ""}

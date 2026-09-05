@@ -11789,6 +11789,54 @@ const MUTATIONS = [
     expect: "任务组和任务对象上下文必须跨页面持续显示"
   },
   {
+    name: "项目当前主操作必须先解决仓库落点",
+    file: "apps/control-plane-ui/public/modules/project-command-center.js",
+    gate: "console",
+    from: "    if (!repositories.length || credentialMissing) return {title: credentialMissing ? \"补全仓库凭证\" : \"配置项目仓库\",",
+    to: "    if (false && (!repositories.length || credentialMissing)) return {title: credentialMissing ? \"补全仓库凭证\" : \"配置项目仓库\",",
+    expect: "项目主操作必须随真实执行阶段切换"
+  },
+  {
+    name: "项目概览只能给出一个当前主操作",
+    file: "apps/control-plane-ui/public/modules/project-command-center.js",
+    gate: "console",
+    from: '<div class="project-command-action">${actionButton(project, decision.action)}</div>',
+    to: '<div class="project-command-action">${actionButton(project, decision.action)}${actionButton(project, decision.action)}</div>',
+    expect: "项目概览只提供一个当前主操作"
+  },
+  {
+    name: "项目概览仓库口径必须兼容顶层登记",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  return Array.isArray(configured) && configured.length ? configured\n    : Array.isArray(project?.repositories) ? project.repositories : [];",
+    to: "  return Array.isArray(configured) ? configured\n    : Array.isArray(project?.repositories) ? project.repositories : [];",
+    expect: "项目概览与下一步使用服务端相同的仓库兼容口径"
+  },
+  {
+    name: "任务组详情必须显示真实运行摘要",
+    file: "apps/control-plane-ui/public/modules/task-group-workspace.js",
+    gate: "console",
+    from: "    const stats = h.stats(group);",
+    to: "    const stats = {tasks: 0, runs: 0, reviews: 0, blocked: 0};",
+    expect: "任务组详情保留实时摘要和状态操作"
+  },
+  {
+    name: "任务组详情不得重复对象侧栏导航",
+    file: "apps/control-plane-ui/public/modules/task-group-workspace.js",
+    gate: "console",
+    from: '<div class="task-group-object-actions">${h.controls(group)}</div>',
+    to: '<div class="task-group-object-actions">${h.controls(group)}${h.groupLink(group, "监控", "monitor")}</div>',
+    expect: "任务组详情保留实时摘要和状态操作"
+  },
+  {
+    name: "任务详情不得重复任务组对象跳转",
+    file: "apps/control-plane-ui/public/modules/task-workbench.js",
+    gate: "console",
+    from: '<div class="stack"><div class="task-detail-header"><button class="secondary-button" data-close-work>返回任务列表</button></div>',
+    to: '<div class="stack"><div class="task-detail-header"><button class="secondary-button" data-close-work>返回任务列表</button><button>任务组监控</button></div>',
+    expect: "任务详情不重复渲染侧栏已有的任务组跳转"
+  },
+  {
     name: "MCP 工具崩溃不得伪装成正当拒绝（要回 server_error、打日志、说清别重试）",
     file: "apps/mcp-server/server.mjs",
     gate: "contract",
