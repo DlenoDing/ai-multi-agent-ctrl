@@ -13,6 +13,7 @@ import { AUDIT_LOG_CAP, appendAuditEntry, auditArchiveFault as sharedAuditArchiv
 import { json, jsonString, parseBody } from "./lib/http-utils.mjs";
 import { mcpServiceAllowedTools, mcpServiceAllowlistNotice } from "./lib/mcp-service-allowlist.mjs";
 import { createStaticAssetHandler } from "./lib/static-assets.mjs";
+import { buildExecutionObjectDetail, findExecutionObject } from "./lib/execution-object-detail.mjs";
 import { assertStateStoreConfig, consumeStateRebuildSignal, ensureStoredState, isStateStoreConflict, markRuntimeStorage, projectShardStorageFault, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
 import { appendProjectExecutionEvent, projectEventLogFault, projectExecutionEventStorageInfo, readProjectExecutionEventByKey, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
 import {
@@ -4161,6 +4162,22 @@ async function handleApi(req, res) {
     return;
   }
 
+  const dispatchDetailMatch = url.pathname.match(/^\/api\/agent-dispatches\/([^/]+)\/detail$/);
+  if (req.method === "GET" && dispatchDetailMatch) {
+    const dispatch = findExecutionObject(state, "dispatch", dispatchDetailMatch[1]);
+    if (!dispatch) {
+      const denial = missingRecordDenial(req, state, "dispatch_not_found", "permission_denied");
+      return json(res, denial.status, denial.payload);
+    }
+    const reader = requireRead(req, state, taskGroupScope(state, dispatch.taskGroupId));
+    if (reader.status) return json(res, reader.status, reader.payload);
+    return json(res, 200, buildExecutionObjectDetail(state, {
+      type: "dispatch", id: dispatch.dispatchId, taskGroupSummary,
+      publicNode: (node) => publicAgentNode(node, runtimeNodeProjectionOptionsForAccount(state, reader.account, node)),
+      contractSummary: dispatchContractSummary
+    }));
+  }
+
   // 「这次派发用了什么规则」：只读，按派发判租户作用域（与上面派发事件路由同一道 requireRead）。
   // 回的是契约记录的治理件（角色技能/生效规则件/规则集摘要/禁止动作/验收要求），不是一份人写的规则标题表。
   const dispatchContractMatch = url.pathname.match(/^\/api\/agent-dispatches\/([^/]+)\/contract-summary$/);
@@ -4252,6 +4269,22 @@ async function handleApi(req, res) {
     });
     json(res, 200, result);
     return;
+  }
+
+  const sessionDetailMatch = url.pathname.match(/^\/api\/work-sessions\/([^/]+)\/detail$/);
+  if (req.method === "GET" && sessionDetailMatch) {
+    const session = findExecutionObject(state, "session", sessionDetailMatch[1]);
+    if (!session) {
+      const denial = missingRecordDenial(req, state, "work_session_not_found", "permission_denied");
+      return json(res, denial.status, denial.payload);
+    }
+    const reader = requireRead(req, state, taskGroupScope(state, session.taskGroupId));
+    if (reader.status) return json(res, reader.status, reader.payload);
+    return json(res, 200, buildExecutionObjectDetail(state, {
+      type: "session", id: session.sessionId, taskGroupSummary,
+      publicNode: (node) => publicAgentNode(node, runtimeNodeProjectionOptionsForAccount(state, reader.account, node)),
+      contractSummary: dispatchContractSummary
+    }));
   }
 
   if (req.method === "POST" && url.pathname === "/api/bootstrap/init") {

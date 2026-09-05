@@ -224,12 +224,12 @@ function buildState() {
   ];
   state.agentDispatches = [
     ...(state.agentDispatches || []),
-    {dispatchId: "dsp_detail", projectId: "prj_workbench_api", taskGroupId: "tg_workbench_visible", workItemId: "w_outside_summary", sessionId: "sess_dsp_detail", runId: "run_dsp_detail", status: "running", createdAt: at(1), updatedAt: at(1)},
+    {dispatchId: "dsp_detail", projectId: "prj_workbench_api", taskGroupId: "tg_workbench_visible", workItemId: "w_outside_summary", sessionId: "sess_dsp_detail", runId: "run_dsp_detail", roleId: "archivist", model: "model_api", reasoning: "medium", modelDecision: "fixed work item implementation", modelSelectionDecisionRef: "msd_detail", repositoryOutputTargetRef: "rot_detail", assignedNodeId: "node_detail", status: "running", progressPercent: 62, createdAt: at(1), updatedAt: at(1)},
     {dispatchId: "dsp_sibling", projectId: "prj_workbench_api", taskGroupId: "tg_workbench_visible", workItemId: "w_page_001", sessionId: "sess_dsp_sibling", runId: "run_dsp_sibling", status: "running", createdAt: at(1), updatedAt: at(1)}
   ];
   state.workSessions = [
     ...(state.workSessions || []),
-    {sessionId: "sess_dsp_detail", projectId: "prj_workbench_api", taskGroupId: "tg_workbench_visible", workItemId: "w_outside_summary", status: "active", createdAt: at(1), updatedAt: at(1)},
+    {sessionId: "sess_dsp_detail", projectId: "prj_workbench_api", taskGroupId: "tg_workbench_visible", workItemId: "w_outside_summary", roleId: "archivist", agentId: "agent_detail", placement: "new_session", modelSelectionDecisionRef: "msd_detail", placementDecisionRef: "spd_detail", status: "active", createdAt: at(1), updatedAt: at(1)},
     {sessionId: "sess_dsp_sibling", projectId: "prj_workbench_api", taskGroupId: "tg_workbench_visible", workItemId: "w_page_001", status: "active", createdAt: at(1), updatedAt: at(1)}
   ];
   state.repositoryOutputs = [
@@ -241,6 +241,26 @@ function buildState() {
     ...(state.checkpoints || []),
     {checkpointId: "chk_detail", projectId: "prj_workbench_api", taskGroupId: "tg_workbench_visible", workId: "w_outside_summary", sessionId: "sess_dsp_detail", runId: "run_dsp_detail", summary: "detail checkpoint", createdAt: at(1)},
     {checkpointId: "chk_sibling", projectId: "prj_workbench_api", taskGroupId: "tg_workbench_visible", workId: "w_page_001", sessionId: "sess_dsp_sibling", runId: "run_dsp_sibling", summary: "sibling checkpoint", createdAt: at(1)}
+  ];
+  state.agents = [
+    ...(state.agents || []),
+    {schemaVersion: "agent/v1", id: "agent_detail", name: "Detail Archivist", role: "archivist", model: "auto_best", status: "active", trustScore: 0.91, capacity: "ready", roleSkillRef: "skill_archivist", organizationId: "org_api_a", createdAt: at(2), updatedAt: at(1)}
+  ];
+  state.agentRuntimeNodes = [
+    ...(state.agentRuntimeNodes || []),
+    {schemaVersion: "agent-runtime-node/v1", nodeId: "node_detail", nodeName: "Detail Node", organizationId: "org_api_a", registrationScope: "project", projectIds: ["prj_workbench_api"], allowedRoles: ["archivist"], allowedMcpTools: [], status: "online", admission: "full", runtimeVersion: "1.4.0", activeDispatchIds: ["dsp_detail"], lastHeartbeatAt: at(1), createdAt: at(2), updatedAt: at(1)}
+  ];
+  state.modelSelectionDecisions = [
+    ...(state.modelSelectionDecisions || []),
+    {decisionId: "msd_detail", projectId: "prj_workbench_api", taskGroupId: "tg_workbench_visible", workItemId: "w_outside_summary", roleId: "archivist", selectedAgentId: "agent_detail", roleSkillRef: "skill_archivist", roleSkillAssignmentSource: "agent", selectedModel: {modelId: "model_api", reasoningLevel: "medium", providerClass: "custom"}, modelDecision: "fixed work item implementation", status: "selected", createdAt: at(2), updatedAt: at(1)}
+  ];
+  state.sessionPlacementDecisions = [
+    ...(state.sessionPlacementDecisions || []),
+    {decisionId: "spd_detail", projectId: "prj_workbench_api", taskGroupId: "tg_workbench_visible", workItemId: "w_outside_summary", placement: "new_session", status: "selected", workerCarrierDecision: {carrier: "codex_thread", mode: "new_session"}, createdAt: at(2), updatedAt: at(1)}
+  ];
+  state.agentTaskContracts = [
+    ...(state.agentTaskContracts || []),
+    {sessionId: "sess_dsp_detail", runId: "run_dsp_detail", projectId: "prj_workbench_api", taskGroupId: "tg_workbench_visible", workId: "w_outside_summary", roleId: "archivist", roleSkill: {roleSkillId: "skill_archivist", title: "Archive evidence", contentDigest: "sha256:skill"}, model: {modelId: "model_api", reasoningLevel: "medium", modelDecision: "fixed work item implementation"}, rulesetDigest: "sha256:rules", effectiveRulesDigest: "sha256:effective", actionBasis: {activeRuleRefs: ["rule:archive"], forbiddenActions: ["scope_expand"], validationRequirements: ["checkpoint_registered"]}, createdAt: at(2)}
   ];
   return state;
 }
@@ -401,6 +421,31 @@ try {
   assert.deepEqual(sessionLatest.events.map((item) => item.sequence), [3, 4]);
   assert.equal(sessionLatest.total, 3);
   assert.equal(sessionLatest.historyTruncated, true);
+
+  const dispatchObject = await request("/api/agent-dispatches/dsp_detail/detail", viewerToken);
+  assert.equal(dispatchObject.schemaVersion, "execution-object-detail/v1");
+  assert.equal(dispatchObject.objectType, "dispatch");
+  assert.equal(dispatchObject.taskGroup.id, "tg_workbench_visible");
+  assert.equal(dispatchObject.workItem.id, "w_outside_summary");
+  assert.equal(dispatchObject.session.sessionId, "sess_dsp_detail");
+  assert.equal(dispatchObject.dispatch.dispatchId, "dsp_detail");
+  assert.equal(dispatchObject.agent.id, "agent_detail");
+  assert.equal(dispatchObject.node.nodeId, "node_detail");
+  assert.equal(dispatchObject.modelDecision.selectedModel.modelId, "model_api");
+  assert.equal(dispatchObject.placementDecision.placement, "new_session");
+  assert.equal(dispatchObject.contractSummary.roleSkill.roleSkillId, "skill_archivist");
+  assert.deepEqual(dispatchObject.checkpoints.map((item) => item.checkpointId), ["chk_detail"]);
+  assert.equal(dispatchObject.repositoryOutput.targetId, "rot_detail");
+  assert.equal(dispatchObject.settled, false);
+  const sessionObject = await request("/api/work-sessions/sess_dsp_detail/detail", viewerToken);
+  assert.equal(sessionObject.objectType, "session");
+  assert.equal(sessionObject.objectId, "sess_dsp_detail");
+  assert.equal(sessionObject.relatedDispatchCount, 1);
+  assert.deepEqual(sessionObject.relatedDispatches.map((item) => item.dispatchId), ["dsp_detail"]);
+  await request("/api/agent-dispatches/dsp_detail/detail", foreignToken, {status: 403});
+  await request("/api/work-sessions/sess_dsp_detail/detail", foreignToken, {status: 403});
+  await request("/api/agent-dispatches/not_here/detail", viewerToken, {status: 403});
+  await request("/api/work-sessions/not_here/detail", systemToken, {status: 404});
 
   const concurrentA = request("/api/task-groups/tg_workbench_visible/work-items/w_concurrent_a?afterSequence=4&eventLimit=5&waitMs=250", viewerToken);
   const concurrentB = request("/api/task-groups/tg_workbench_visible/work-items/w_concurrent_b?afterSequence=4&eventLimit=5&waitMs=250", viewerToken);
