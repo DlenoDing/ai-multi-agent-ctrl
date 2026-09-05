@@ -702,7 +702,7 @@ function requestFailureHint(payload) {
   // 于是人只看到"权限不足"，看不出该去要什么权限、找谁要 —— 报错指不到真正的原因。
   if (payload.requiredPermission) {
     const scope = payload.resourceScope ? `${payload.resourceScope.resourceType || "?"}:${payload.resourceScope.resourceId || "?"}` : "";
-    hint = `（需要 ${payload.requiredPermission}${scope ? ` @ ${scope}` : ""}${String(payload.requiredPermission).startsWith("task_group:") ? "；这类权限只能在「项目管理」→「成员权限」→「项目成员授权」里按角色授予，写在账号上的直接权限不生效" : ""}）`;
+    hint = `（需要 ${payload.requiredPermission}${scope ? ` @ ${scope}` : ""}${String(payload.requiredPermission).startsWith("task_group:") ? "；这类权限只能在「项目管理」→「任务组权限」按角色授予，写在账号上的直接权限不生效" : ""}）`;
   }
   if (Array.isArray(payload.permissions) && payload.permissions.length) hint += `（涉及：${payload.permissions.join("、")}）`;
   // 核心决策闸门上最容易并发的一步：两个人同时打开同一张确认单各自点定稿。CAS 只让一个写成，
@@ -2146,20 +2146,22 @@ function render() {
 
 function renderContent() {
   const project = PROJECT_PAGES.has(page) ? currentProject() : null;
+  const perspective = perspectiveOf(currentAccount);
+  const functionalWorkspace = page === "tg" && expandedTaskGroupId ? "list" : workspaces.current(page)?.id || "";
+  const functionalPageLabel = menuMeta(perspective, page, functionalWorkspace)[0];
   const group = projectTaskGroups().find((item) => item.id === (managementGroupId || (page === "tg" ? expandedTaskGroupId : "")))
     || (taskWorkDetail?.taskGroup?.projectId === currentProjectId && taskWorkDetail.taskGroup.id === managementGroupId ? taskWorkDetail.taskGroup : null);
   const returnTask = ["monitor", "review", "directives", "tg"].includes(page) && group
     && taskReturnContext?.accountId === currentAccount?.accountId && taskReturnContext.projectId === currentProjectId && taskReturnContext.taskGroupId === group.id ? taskReturnContext : null;
   const context = window.AIMAC_OBJECT_WORKSPACE.trail({organization: state.organizationContext, project, group: project && ["tg", "tasks", "monitor", "review", "directives"].includes(page) ? group : null,
-    work: page === "tasks" && selectedWork ? taskWorkDetail?.workItem : null, pageLabel: PAGE_META[page]?.[0] || "", returnTask});
+    work: page === "tasks" && selectedWork ? taskWorkDetail?.workItem : null, pageLabel: functionalPageLabel, returnTask});
   const governanceObjectOpen = (page === "sys-orgs" && selectedOrganizationId)
     || (page === "org-members" && selectedOrgMemberId)
     || (page === "proj-members" && selectedProjectMemberId)
     || (["org-agents", "proj-agents"].includes(page) && (selectedAgentProfileId || selectedRuntimeNodeId));
-  if (PROJECT_PAGES.has(page) && hasNoVisibleProject()) return context + renderPanel(PAGE_META[page]?.[0] || "项目管理", noVisibleProjectNotice(), {wide: true});
+  if (PROJECT_PAGES.has(page) && hasNoVisibleProject()) return context + renderPanel(functionalPageLabel || "项目管理", noVisibleProjectNotice(), {wide: true});
   const executionObjectOpen = page === "monitor" && selectedExecutionObject.id;
   const groupDetail = page === "tg" && expandedTaskGroupId;
-  const perspective = perspectiveOf(currentAccount);
   const activeWorkspace = groupDetail ? "list" : workspaces.current(page)?.id || "";
   const functionalMenu = menuForCurrentSection(perspective, page).filter((item) => item.divider || menuItemAvailable(item));
   return context + (groupDetail ? "" : mobileMenuHtml(functionalMenu, page, activeWorkspace))
@@ -2809,7 +2811,7 @@ function renderSysSettingsActionBoard(runtime, metrics) {
         action: "看归属"
       })}
     </div>
-    <div class="small muted">系统设置只做全局能力查看和治理，不签发项目 agent 脚本；项目级注册仍在「项目管理」→「项目 Agent」→「注册项目节点」。</div>
+    <div class="small muted">系统设置只做全局能力查看和治理，不签发项目 Agent 脚本；项目级注册直接进入「项目管理」→「注册 Agent」。</div>
   `, {wide: true});
 }
 
@@ -2872,7 +2874,7 @@ function renderSysSettingsLifecycleGuide(runtime, metrics) {
         pageId: "proj-agents",
         title: "6 Agent 注册",
         metric: "项目",
-        detail: "系统设置不签发加入令牌；注册脚本只在项目 Agent 页生成",
+        detail: "系统设置不签发加入令牌；注册脚本只在项目的“注册 Agent”生成",
         tone: "blue",
         action: "去注册"
       })}
@@ -2885,7 +2887,7 @@ function renderSysSettingsLifecycleGuide(runtime, metrics) {
         action: "看指标"
       })}
     </div>
-    <div class="small muted">系统设置是全局能力治理面板：集中 MCP、模型能力、技能源和公共定义在服务端统一维护；项目执行仍回到项目设置、项目 Agent、任务组和执行监控。</div>
+    <div class="small muted">系统设置是全局能力治理面板：集中 MCP、模型能力、技能源和公共定义在服务端统一维护；项目执行分别进入仓库凭据、Agent 档案、运行节点、任务组和项目监控。</div>
   `, {wide: true});
 }
 
@@ -3255,8 +3257,8 @@ function renderJoinTokenSection(options = {}) {
     .filter((token) => !scopedProjectId || token.projectId === scopedProjectId);
   const auditContext = options.context === "system" ? "system" : "org";
   const auditNotice = auditContext === "system"
-    ? "系统页只做跨项目令牌审计和撤销。常规注册请进入目标项目的「项目管理」→「项目 Agent」→「注册项目节点」签发一次性令牌，并复制服务端安装脚本。"
-    : "此栏目查看组织范围加入令牌与撤销记录。共享节点在组织“注册共享节点”接入；项目专属节点进入对应项目“注册项目节点”接入。";
+    ? "系统页只做跨项目令牌审计和撤销。常规注册请进入目标项目的「项目管理」→「注册 Agent」签发一次性令牌，并复制服务端安装脚本。"
+    : "此功能查看组织范围加入令牌与撤销记录。共享节点在组织“注册共享节点”接入；项目专属节点进入对应项目“注册 Agent”接入。";
   const tokens = scopedTokens.slice(0, 20).map((token) => {
     // 令牌过期只在【兑换时】才被标 expired（没人兑换就永停在 issued）。列表若按原始 status 显示，
     // 一张已过期的令牌会显示成「已签发」还带「撤销」按钮 —— 人以为它还在等 agent 来接，实际兑换必被拒。
@@ -3500,8 +3502,8 @@ function renderOrgMembersLifecycleGuide(members) {
         title: "3 分配项目",
         metric: activeProjects,
         detail: selectedProject
-          ? "已选项目时直接进入「成员权限」→「项目成员授权」；组织项目列表保留集中入口"
-          : "先在组织项目列表选定目标项目；进入项目后到「成员权限」→「项目成员授权」完成",
+          ? "已选项目时直接进入「项目管理」→「项目成员」；组织项目列表保留集中入口"
+          : "先在组织项目列表选定目标项目；进入项目后到“项目成员”完成",
         tone: activeProjects ? "blue" : "orange",
         action: "去授权"
       })}
@@ -3517,7 +3519,7 @@ function renderOrgMembersLifecycleGuide(members) {
         pageId: "proj-overview",
         title: "5 回项目操作",
         metric: "项目",
-        detail: "授权后回项目概览检查任务组、项目 Agent、监控和审核入口是否可用",
+        detail: "授权后回项目概览检查任务组、Agent 档案、项目监控和待我审核是否可用",
         tone: activeProjects ? "blue" : "gray",
         action: "进项目"
       })}
@@ -3531,7 +3533,7 @@ function renderOrgMembersLifecycleGuide(members) {
       })}
     </div>
     <div class="small muted">成员管理只处理组织账号生命周期；项目协作、Agent 操作、任务组控制和人工审核权限必须回到具体项目和任务组作用域。</div>
-    <div class="small muted">推荐闭环：邀请成员 → 首次登录 → 进入目标项目「成员权限」完成项目成员授权 → 回项目检查按钮是否出现 → 后续在成员列表停用、注销或重发邀请。</div>
+    <div class="small muted">推荐闭环：邀请成员 → 首次登录 → 进入目标项目“项目成员”分配角色 → 需要时再到“任务组权限”细分控制／审核／观察 → 后续在成员账户停用、注销或重发邀请。</div>
   `, {wide: true});
 }
 
@@ -3683,7 +3685,7 @@ function agentActions(node, options = {}) {
       `<button class="danger-button" data-action="force-revoke-agent-node" data-node-id="${esc(node.nodeId)}" title="不等节点确认，当场作废其凭据">立即切断</button>`
     );
   } else {
-    buttons.push(`<span class="small muted">吊销和立即切断在「组织管理」→「共享 Agent」处理</span>`);
+    buttons.push(`<span class="small muted">吊销和立即切断在「组织管理」→「共享运行节点」处理</span>`);
   }
   return buttons.join(" ");
 }
@@ -3833,7 +3835,7 @@ function projectAgentCards(nodes, canControlNodes, options = {}) {
         `;
       }).join("")}
     </div>
-  ` : `<div class="notice warn-notice">当前项目还没有任何 agent 节点。要让任务实际执行，请在下面“注册项目节点”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 agent 主机执行。</div>`;
+  ` : `<div class="notice warn-notice">当前项目还没有任何 Agent 节点。要让任务实际执行，请直接进入“注册 Agent”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 Agent 主机执行。</div>`;
 }
 
 function renderOrgAgentsBoundaryGuide() {
@@ -4046,7 +4048,7 @@ function renderOrgAgentsSummary(nodes) {
       ${summaryMetric("待用加入令牌", stats.liveTokens, "可注册到本组织项目的令牌")}
       ${summaryMetric("异常节点", stats.abnormalNodes, "离线、非健康或需排查的节点")}
     </div>
-    <div class="small muted">组织共享节点在“注册共享节点”接入，项目专属节点从目标项目的「项目 Agent」接入。两种节点的控制、运行状态和加入令牌均按各自作用域管理。</div>
+    <div class="small muted">组织共享节点在“注册共享节点”接入，项目专属节点从目标项目的“注册 Agent”接入。两种节点的控制、运行状态和加入令牌均按各自作用域管理。</div>
   `, {wide: true});
 }
 
@@ -4098,7 +4100,7 @@ function renderOrgAgentsActionBoard(nodes) {
         pageId: "proj-agents",
         title: "当前项目接入入口",
         metric: "项目",
-        detail: "进入后先在侧栏确认目标项目，再到「项目管理」→「项目 Agent」→「注册项目节点」签发脚本",
+        detail: "进入后先在侧栏确认目标项目，再直接打开「项目管理」→「注册 Agent」签发脚本",
         tone: "blue",
         action: "确认后注册"
       })}
@@ -4257,7 +4259,7 @@ function renderProjectAgentsSummary(project, nodes) {
       ${summaryMetric("待用加入令牌", stats.liveTokens, "可注册到当前项目的一次性令牌")}
       ${summaryMetric("异常节点", stats.abnormalNodes, "离线、非健康或需排查的节点")}
     </div>
-    <div class="small muted">查看顺序：先看在线率、异常节点和待用令牌；新机器只通过本页“注册项目节点”签发一次性加入令牌，脚本由服务端生成。</div>
+    <div class="small muted">查看顺序：先看在线率、异常节点和待用令牌；新机器从“注册 Agent”签发一次性加入令牌，脚本由服务端生成。</div>
   `, {wide: true});
 }
 
@@ -4398,7 +4400,7 @@ function renderProjectAgents() {
     ? `<div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>`
     : agentViewMode === "cards"
       ? ""
-      : `<div class="notice warn-notice">当前项目还没有任何 agent 节点。要让任务实际执行，请在下面“注册项目节点”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 agent 主机执行。</div>`;
+      : `<div class="notice warn-notice">当前项目还没有任何 Agent 节点。要让任务实际执行，请直接进入“注册 Agent”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 Agent 主机执行。</div>`;
   const bodyHtml = agentViewMode === "cards"
     ? projectAgentCards(nodes, canControlNodes, {showDanger: !preferOrgGovernance})
     : table(["名称", "运行状态", "准入", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"], nodeRows, {emptyText: "当前项目暂无 agent 节点"});
@@ -4435,7 +4437,7 @@ function renderOrgProjectsActionBoard({projects, activeProjects, archivedProject
       ${jumpModuleCard({
         title: "在用项目",
         metric: `${activeProjects.length}`,
-        detail: activeProjects.length ? "可继续创建任务组，并在「项目管理」→「项目 Agent」→「注册项目节点」注册 agent" : "当前没有可继续推进的项目",
+        detail: activeProjects.length ? "可继续创建任务组，并在「项目管理」→「注册 Agent」接入执行节点" : "当前没有可继续推进的项目",
         panelTitle: "项目列表",
         tone: activeProjects.length ? "blue" : "orange",
         action: "查看项目"
@@ -4517,7 +4519,7 @@ function renderOrgProjectsLifecycleGuide({projects, activeProjects, archivedProj
         pageId: "proj-agents",
         title: "4 Agent 接入",
         metric: "注册",
-        detail: "一次性加入令牌和 sh 安装命令只在目标项目 Agent 页生成",
+        detail: "一次性加入令牌和 sh 安装命令只在目标项目的“注册 Agent”生成",
         tone: activeProjects.length ? "green" : "gray",
         action: "去注册"
       })}
@@ -4540,7 +4542,7 @@ function renderOrgProjectsLifecycleGuide({projects, activeProjects, archivedProj
         action: "看项目"
       })}
     </div>
-    <div class="small muted">组织项目页负责项目生命周期治理；项目内部执行仍回到项目设置、项目 Agent、任务组和执行监控。不要在组织项目页寻找 Agent 注册脚本，脚本必须绑定具体项目后签发。</div>
+    <div class="small muted">组织项目页负责项目生命周期治理；项目内部执行分别进入仓库凭据、Agent 档案、运行节点、任务组和项目监控。不要在组织项目页寻找 Agent 注册脚本，脚本必须在具体项目的“注册 Agent”签发。</div>
     <div class="small muted">当前可授权在用项目：${esc(assignableCount)} 个；在用项目：${esc(activeProjects.length)} 个；健康异常：${esc(unhealthyProjects)} 个。</div>
   `, {wide: true});
 }
@@ -4705,7 +4707,7 @@ function renderProjectMembersLifecycleGuide(project, stats) {
         action: "看监控"
       })}
     </div>
-    <div class="small muted">授权不会直接启动任务。成员权限决定谁能管理 Agent、任务组、人工审核和执行监控；组织账号的创建、停用和邀请重发在「组织管理」→「成员管理」。</div>
+    <div class="small muted">授权不会直接启动任务。项目成员和任务组权限决定谁能管理 Agent、任务组、审核和监控；组织账号的创建、停用和邀请重发在「组织管理」→「成员账户」。</div>
   `, {wide: true});
 }
 
@@ -4977,7 +4979,7 @@ function renderProjectOverview() {
             const stuck = (state.agentDispatches || []).filter((item) => item.status === "blocked").length;
             if (!stuck) return "";
             return `<div class="small warn-text">另有 ${stuck}${countSuffix("agentDispatches")} 个派发被挡住 ——`
-              + " 到「执行监控」页看它们卡在哪</div>";
+              + " 到“执行会话”或“阻塞与门禁”看它们卡在哪</div>";
           })()}
         </div>
         <div class="metric">${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "待人工确认", {page: "review", workspace: "pending", primary: true})}<strong>${pendingConfirmCount}</strong>
@@ -5191,7 +5193,7 @@ function renderTaskGroupLifecycleGuide(groups) {
         pageId: "proj-agents",
         title: "3 确认 Agent",
         metric: "注册",
-        detail: "注册入口在「项目管理」→「项目 Agent」；没有准入节点时，工作项不会真正执行",
+        detail: "注册入口在「项目管理」→「注册 Agent」；没有准入节点时，工作项不会真正执行",
         tone: "blue",
         action: "看智能体"
       })}
@@ -5357,7 +5359,7 @@ function renderTaskGroupDetailBody(taskGroup) {
       `).join("")}</div>`
     : `<div class="notice">事项清单尚未生成。控制面会按固定周期自动跑编排（${orchestratorCadenceText()}），
         生成后会出现在这里 —— 你不需要点任何按钮。若长时间没有变化，多半是这个任务组还缺前置条件
-        （例如项目尚未登记仓库、或角色技能未同步），到「执行监控」页看阻塞项。</div>`;
+        （例如项目尚未登记仓库、或角色 Skill 未同步），到“阻塞与门禁”查看。</div>`;
 
   // 只读进度接口那份：视图里的任务组【不再带整份 roles】（列表只用 roleCount）。
   // 留着 `|| taskGroup.roles` 那截兜底会骗人 —— 它永远是 undefined，看代码的人以为还有第二个来源。
@@ -5532,7 +5534,7 @@ function renderTaskGroupDetailBody(taskGroup) {
     ? `<div class="record"><div class="record-title">${badge("attention")} <span>另有 ${esc(taskGroup.blockersDroppedCount)} 条较早的提示因数量上限已不再保留 —— 不要据此认为问题只有上面这些</span></div></div>`
     : "");
   const barrierSummary = !groupBarrier
-    ? `<div class="record"><div class="record-title">关闭门禁：<strong>尚未计算</strong></div><div class="record-meta">在「执行监控」页点一次"重算关闭门禁"，或等下一次编排周期，才会知道这个任务组能不能关闭。</div></div>`
+    ? `<div class="record"><div class="record-title">关闭门禁：<strong>尚未计算</strong></div><div class="record-meta">进入“阻塞与门禁”重算关闭门禁，或等下一次编排周期，才会知道这个任务组能不能关闭。</div></div>`
     : groupBarrier.satisfied
       ? `<div class="record"><div class="record-title">关闭门禁：${customBadge("可关闭", "green")}</div></div>`
       : `<div class="record">
@@ -6176,20 +6178,20 @@ const STUCK_EXIT_HINT = {
   credential_required: "在承接它的 agent 节点上配置所需的凭据环境变量",
   agent_runtime_executor_required: "该节点上没有模型执行器：到那台机器上装 codex / claude / gemini / ollama 任一个"
     + "（节点会自动探测这四个命令），或用 --executor-command 指定自定义执行器后重新加入；"
-    + "装好后有项目 agent 管理权限的人可到「项目管理」→「项目 Agent」对该节点点「刷新自检」；"
-    + "没有项目控制权时，让组织管理员到「组织管理」→「共享 Agent」点「刷新自检」确认它认出来了",
+    + "装好后有项目 Agent 管理权限的人可到「项目管理」→「运行节点」对该节点点「刷新自检」；"
+    + "没有项目控制权时，让组织管理员到「组织管理」→「共享运行节点」点「刷新自检」确认它认出来了",
   // 下面三条是【节点拒绝了人的控制指令且重试已用尽】。它们不会自己好，而且最要紧的一点是：
   // 控制面这边已经停了，那台机器上的 agent 可能还在跑 —— 出口是绕开节点配合的强制吊销。
-  control_pause_rejected_by_node: "节点拒绝了暂停且重试已用尽：让组织管理员切到「组织管理」，打开共享 Agent，对该节点点「立即切断」，再确认它确实停了",
-  control_cancel_rejected_by_node: "节点拒绝了取消且重试已用尽：让组织管理员切到「组织管理」，打开共享 Agent，对该节点点「立即切断」，再确认它确实停了",
-  assigned_node_stop_control_failed_retries_exhausted: "节点停止控制重试已用尽：让组织管理员切到「组织管理」，打开共享 Agent，对该节点点「立即切断」（不需要节点配合）",
+  control_pause_rejected_by_node: "节点拒绝了暂停且重试已用尽：让组织管理员打开「组织管理」→「共享运行节点」，对该节点点「立即切断」，再确认它确实停了",
+  control_cancel_rejected_by_node: "节点拒绝了取消且重试已用尽：让组织管理员打开「组织管理」→「共享运行节点」，对该节点点「立即切断」，再确认它确实停了",
+  assigned_node_stop_control_failed_retries_exhausted: "节点停止控制重试已用尽：让组织管理员打开「组织管理」→「共享运行节点」，对该节点点「立即切断」（不需要节点配合）",
   // 这两条只在【节点失联超时】后才会被自动重排；节点若还在心跳却始终不 ACK，它会一直等下去。
   // 所以不能登记成"会自己好"，出口是不需要节点配合的立即切断。
-  assigned_node_revocation_pending_stop: "正在等节点确认吊销：节点失联超时后系统会自动重排；若它仍在心跳却迟迟不确认，让组织管理员切到「组织管理」，打开共享 Agent 点「立即切断」",
+  assigned_node_revocation_pending_stop: "正在等节点确认吊销：节点失联超时后系统会自动重排；若它仍在心跳却迟迟不确认，让组织管理员打开「组织管理」→「共享运行节点」点「立即切断」",
   // 关停与吊销是同一条代码路径的两个分支，恢复方式也一样。孪生项里只有吊销那一半写了
   // 中文和出口，停机那一半两样都没有 —— 于是同一件事，走吊销的人看到中文指引，
   // 走关停的人看到一串英文、且没有下一步。
-  assigned_node_shutdown_pending_stop: "正在等节点确认关停：节点失联超时后系统会自动重排；若它仍在心跳却迟迟不确认，让组织管理员切到「组织管理」，打开共享 Agent 点「立即切断」",
+  assigned_node_shutdown_pending_stop: "正在等节点确认关停：节点失联超时后系统会自动重排；若它仍在心跳却迟迟不确认，让组织管理员打开「组织管理」→「共享运行节点」点「立即切断」",
   task_group_pause: "整个任务组被人暂停了：到该任务组页点「恢复执行」"
 };
 // 提示只在【当前真的有派发卡在这些原因上】时出现，且按出现过的原因去重 —— 逐行重复同一句话
@@ -6267,25 +6269,25 @@ function topologyBlockerText(blocker) {
 const CLOSE_GATE_GUIDE = {
   all_required_work_closed: "还有工作项没收口：到任务组页看它们卡在哪，或取消不再需要的那些",
   all_findings_terminal: "到「人工审核」页把未处置的发现项处置掉",
-  all_quality_gates_passed: "到「执行监控」页处理未通过的质量门（可豁免，需填理由）",
+  all_quality_gates_passed: "到“产出验收”处理未通过的质量门（可豁免，需填理由）",
   all_changes_integrated: "还有改动没合入：等执行方推完，或终止对应的执行方案",
   no_pending_permissions: "到「人工审核」页批准或驳回待处理的授权申请",
   no_pending_approvals: "到「人工审核」页处理待处理的审批请求",
   no_pending_human_confirmations: "到「人工审核」页定稿或打回待确认的卡",
   no_pending_human_directives: "到「人工指令」页确认那些指令已被消费",
-  no_open_execution_topologies: "在「执行监控」页下方「阻塞项人工处置」终止卡住的执行方案",
-  all_review_plans_closed: "在「执行监控」页下方「阻塞项人工处置」收尾评审计划",
-  no_pending_review_bundles: "在「执行监控」页下方「阻塞项人工处置」收尾评审包",
-  all_rule_sources_resolved: "在「执行监控」页下方「阻塞项人工处置」判定规则来源",
-  all_shared_definitions_active: "在「执行监控」页下方「阻塞项人工处置」处置共享定义契约",
-  rules_candidates_processed: "在「执行监控」页下方「阻塞项人工处置」判定系统升级候选项",
+  no_open_execution_topologies: "在“阻塞与门禁”的“阻塞项人工处置”终止卡住的执行方案",
+  all_review_plans_closed: "在“阻塞与门禁”的“阻塞项人工处置”收尾评审计划",
+  no_pending_review_bundles: "在“阻塞与门禁”的“阻塞项人工处置”收尾评审包",
+  all_rule_sources_resolved: "在“阻塞与门禁”的“阻塞项人工处置”判定规则来源",
+  all_shared_definitions_active: "在“阻塞与门禁”的“阻塞项人工处置”处置共享定义契约",
+  rules_candidates_processed: "在“阻塞与门禁”的“阻塞项人工处置”判定系统升级候选项",
   artifacts_verified: "还有产物没核验：等执行方补齐证据，或取消对应工作项",
   all_repository_output_targets_terminal: "还有写入目标没终结：等对应会话结束，或取消它的派发",
   all_leases_terminal: "写锁随持有它的会话一起释放：处理掉那个会话即可",
   all_commands_terminal: "无需操作：命令总线会自行推进到终态",
   all_command_effects_terminal: "无需操作：编排周期会自行和解命令效果",
   no_blocking_derived_task_requests: "无需操作：编排周期分类后会自行清除",
-  no_active_dlq: "死信条目只在命令重试超限时产生：到「执行监控」页核对命令总线",
+  no_active_dlq: "死信条目只在命令重试超限时产生：到“阻塞与门禁”核对死信队列",
   // 挡住这道门的是【派发上的 MCP 授权】（mcpGrants），不是项目「成员权限」管的那些访问授权
   // （accessGrants）—— 原先这条指引指向后者，人撤了一圈门照样挡着。
   // 这类授权只随【派发的节点绑定被撤销】而回收：取消那次派发，或等它到期（门按到期时间判活跃）。
@@ -6294,7 +6296,7 @@ const CLOSE_GATE_GUIDE = {
     + "注意不要到项目「成员权限」撤销项目或任务组访问授权 —— 那是另一类，撤销它不会解开这道门",
   completion_readiness_clear: "完成度尚未就绪：看上面列出的其它阻塞项，它们清完这条自然就过",
   no_active_role_drift_blockers: "角色漂移守卫随对应会话终结自动关闭：处理掉那个会话即可",
-  runtime_issue_candidates_exported: "到「执行监控」页把运行时问题候选导出/处置掉",
+  runtime_issue_candidates_exported: "到“阻塞与门禁”把运行时问题候选导出或处置掉",
   all_contracts_compatible: "契约不兼容：需要重新签发契约，通常伴随规则变更 —— 看规则页的变更记录"
 };
 
@@ -6327,9 +6329,9 @@ function agentNodeManagementPath({needMoreCapacity = false, registeredNodeCount 
     : "";
   const hasRegisteredNodes = Number(registeredNodeCount || 0) > 0;
   const canManageProjectAgents = hasPerm("agent:activate");
-  const projectAgentPage = "「项目管理」→「项目 Agent」";
-  const orgAgentPage = "「组织管理」→「共享 Agent」";
-  const registerPath = `${projectAgentPage}→「注册项目节点」`;
+  const projectAgentPage = "「项目管理」→「运行节点」";
+  const orgAgentPage = "「组织管理」→「共享运行节点」";
+  const registerPath = "「项目管理」→「注册 Agent」";
   const registerAction = needMoreCapacity
     ? `${registerPath}接入更多已通过自检的节点`
     : `${registerPath}签发当前项目的加入令牌`;
@@ -6344,7 +6346,7 @@ function agentNodeManagementPath({needMoreCapacity = false, registeredNodeCount 
   if (hasRegisteredNodes) {
     return `${canManageProjectAgents ? directRefresh : askRefresh}；${governance}`;
   }
-  return `${canManageProjectAgents ? directRegister : askRegister}；agent 上线后回到${projectAgentPage}的「项目 agent 节点」确认在线`;
+  return `${canManageProjectAgents ? directRegister : askRegister}；Agent 上线后回到${projectAgentPage}确认在线`;
 }
 
 // 派发排着队、会话挂着 active，但一个能干活的 agent 都没有 —— 这时控制台看上去一片繁忙，
@@ -6642,7 +6644,7 @@ function renderPendingForMePanel() {
   const todo = pendingForMe();
   return panel("待你处理", `
     ${!todo.known
-      ? `<div class="notice">这一页没有加载待办所需的数据，因此这里不做统计（这不表示没有待办）。到「人工审核」或「执行监控」页查看。</div>`
+      ? `<div class="notice">这一页没有加载待办所需的数据，因此这里不做统计（这不表示没有待办）。到“待办汇总”或“阻塞与门禁”查看。</div>`
       : todo.total === 0
       ? `<div class="notice">当前没有需要你处置的项。（只统计你有权处置的；别人负责的部分不会出现在这里。）</div>`
       : `<div class="notice warn-notice">共 ${todo.total}${todo.partial ? "+" : ""} 项等待你处理，按当前项目视图统计。等人拍板的东西分布在两个页面上，这里是当前项目的汇总入口。${todo.partial ? "<br><strong>带 + 的类别数据量超过本页加载上限，实际项数只多不少 —— 处置完这里列出的也未必清空。</strong>" : ""}</div>
@@ -7172,8 +7174,8 @@ function renderDirectives() {
     return panel("人工指令", hasNoVisibleProject()
       ? noVisibleProjectNotice()
       // 空态要给出口：人工指令以任务组为目标，没有任务组时告诉人先去哪一页建，别只陈述一句"暂无"。
-      : `<div class="notice">当前项目暂无任务组：人工指令以任务组为目标，先到「任务组」页创建一个再来。
-          <div class="button-row" style="margin-top:8px;"><button class="secondary-button" data-menu="tg">去创建任务组</button></div></div>`, {wide: true});
+      : `<div class="notice">当前项目暂无任务组：人工指令以任务组为目标，先到“新建任务组”创建一个再来。
+          <div class="button-row" style="margin-top:8px;"><button class="secondary-button" data-menu="tg" data-menu-workspace="create">新建任务组</button></div></div>`, {wide: true});
   }
   const directiveRows = directiveList.map((directive) => row([
     {v: fmtTime(directive.createdAt), c: "nowrap"},
@@ -7288,9 +7290,9 @@ function renderMonitorActionBoard({
   const nodeMetric = nodes.length ? `${abnormalNodes}/${nodes.length}` : "0";
   const nodeDetail = nodes.length
     ? (abnormalNodes
-      ? "存在离线、心跳过旧、自检缺项或运行时过旧节点；先恢复 agent 主机/进程心跳，能力修好后到「项目管理」→「项目 Agent」→「项目运行节点」点「刷新自检」"
+      ? "存在离线、心跳过旧、自检缺项或运行时过旧节点；先恢复 Agent 主机和 Runtime 心跳，能力修好后到「项目管理」→「运行节点」点「刷新自检」"
       : "可见节点当前正常")
-    : "当前项目没有可见 agent 节点；先到「项目管理」→「项目 Agent」→「注册项目节点」签发加入令牌并复制服务端安装脚本";
+    : "当前项目没有可见 Agent 节点；先到「项目管理」→「注册 Agent」签发加入令牌并复制服务端安装脚本";
   const nodeTone = nodes.length ? (abnormalNodes ? "orange" : "green") : "gray";
   const orchestrator = state.runtime?.autonomousOrchestrator || {};
   const orchestratorIssues = Number(orchestrator.consecutiveErrors || 0);
@@ -7708,7 +7710,7 @@ function renderMonitor() {
       + ` —— 需要「${perm}」`);
     return `<div class="notice warn-notice">其中 ${outOfReach.length} 项你处置不了，它们仍然挡着关闭门：`
       + `${esc(lines.join("；"))}。权限按【任务组】授予（在别的组上有同名权限不算），`
-      + "只能在「项目管理」→「成员权限」→「项目成员授权」里按角色授予（例如\"评审人\"），请找项目负责人或组织管理员授予后再来。</div>";
+      + "只能在「项目管理」→「任务组权限」按角色授予（例如“评审人”），请找项目负责人或组织管理员授予后再来。</div>";
   };
 
   // 同段其余六处都按 inScope 过滤，唯独关闭门禁没有 —— 于是在项目 A 的监控页上会列出项目 B 的
@@ -7742,8 +7744,8 @@ function renderMonitor() {
   // 项目空间已经和系统/组织空间拆开，跨空间指路不能再写成"去某某页"：
   // 人在当前左侧菜单里看不到那一项，会以为功能丢了。先点空间，再说面板名。
   const JOIN_TOKEN_ENTRY_BY_PERSPECTIVE = {
-    system: "先打开「项目管理」→「项目 Agent」→「注册项目节点」",
-    org: "先打开「项目管理」→「项目 Agent」→「注册项目节点」；也可以在「组织管理」→「共享 Agent」统一管理节点"
+    system: "先打开「项目管理」→「注册 Agent」",
+    org: "先打开「项目管理」→「注册 Agent」；也可以在「组织管理」→「共享运行节点」统一管理节点"
   };
   const joinTokenWhere = JOIN_TOKEN_ENTRY_BY_PERSPECTIVE[perspectiveOf(currentAccount)];
   const nothingRanYetNotice = nothingRanYet
@@ -7751,7 +7753,7 @@ function renderMonitor() {
       + `不是没取回来。要让它动起来：${joinTokenWhere
         ? `${joinTokenWhere}，点「签发一次性加入令牌」并在 agent 主机运行安装命令注册一台节点，`
         : "先让管理员签发加入令牌，并在 agent 主机运行安装命令注册一台节点（签发加入令牌这件事你这个账号做不了），"}`
-      + `再到「任务组」页把工作项推进到就绪。节点接上之后，这一页会实时显示会话、派发与执行事件。</div>`
+      + `再到“任务”确认工作项已就绪。节点接上之后，“执行会话”和“实时事件”会持续显示运行过程。</div>`
     : "";
   const selectedMonitorGroup = managementGroupId ? groups.find((group) => group.id === managementGroupId) || null : null;
   const selectedStats = selectedMonitorGroup ? taskGroupOperationalStats(selectedMonitorGroup) : {
@@ -8172,7 +8174,7 @@ function renderProjectSettingsSummary(project, repos, baselineData, defaultRoles
       ${summaryMetric("仓库", repos.length, "代码与文档产出的 Git 落点")}
       ${summaryMetric("基线", baselineData.length, "agent 可引用的现状材料")}
       ${summaryMetric("默认角色", defaultRoles.length, "任务组未指定时的角色回退")}
-      ${summaryMetric("待用加入令牌", liveJoinTokenCount(project.id), "在「项目管理」→「项目 Agent」签发和使用")}
+      ${summaryMetric("待用加入令牌", liveJoinTokenCount(project.id), "在「项目管理」→「注册 Agent」签发和使用")}
       ${summaryMetric("角色定制", roleOverlayCount, "项目/任务组级 Skill 覆盖")}
       ${summaryMetric("系统规则", systemRuleCount, "项目层生效的系统规则")}
       ${summaryMetric("业务规则", businessRuleCount, "项目层生效的业务规则")}
@@ -8218,7 +8220,7 @@ function renderProjectSettingsActionBoard(project, repos, baselineData, defaultR
         pageId: "proj-agents",
         title: "智能体入网",
         metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : `${liveTokens}`,
-        detail: liveTokens ? "有待用加入令牌；注册脚本只在签发成功弹窗显示" : "需要新节点时进入「项目 Agent」→「注册项目节点」签发",
+        detail: liveTokens ? "有待用加入令牌；注册脚本只在签发成功弹窗显示" : "需要新节点时进入“注册 Agent”签发",
         tone: agentStats.onlineNodes ? "green" : liveTokens ? "blue" : "orange",
         action: "去接入页"
       })}
@@ -8247,7 +8249,7 @@ function renderProjectSettingsActionBoard(project, repos, baselineData, defaultR
         action: "查看规则"
       })}
     </div>
-    <div class="small muted">处理顺序：本页先确认产出仓库、默认角色与规则；agent 节点和注册脚本到「项目 Agent」页处理。看板只使用本页已加载数据，不额外请求接口。</div>
+    <div class="small muted">处理顺序：先确认仓库凭据、默认角色与规则；Agent 节点到“运行节点”，注册脚本到“注册 Agent”。看板只使用本页已加载数据，不额外请求接口。</div>
   `, {wide: true});
 }
 
@@ -8294,12 +8296,12 @@ function renderProjectSettingsBoundaryGuide(project, repos, baselineData, defaul
         pageId: "proj-agents",
         title: "Agent 接入",
         metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : "项目页",
-        detail: "agent 节点、注册脚本和远程 MCP 确认不在本页处理，进入「项目管理」→「项目 Agent」",
+        detail: "Agent 节点和远程 MCP 状态进入“运行节点”，注册脚本进入“注册 Agent”",
         tone: agentStats.onlineNodes ? "green" : "orange",
         action: "去注册"
       })}
     </div>
-    <div class="small muted">职责分区：项目设置只维护会影响派发和产出落地的配置；agent 节点、一次性加入令牌、安装脚本、远程 MCP 和 Skill 工作集生效确认统一进入「项目管理」→「项目 Agent」。</div>
+    <div class="small muted">职责分区：项目治理只维护影响派发和产出的配置；Agent 节点、一次性加入令牌、安装脚本、远程 MCP 和 Skill 工作集分别进入“运行节点”和“注册 Agent”。</div>
   `, {wide: true});
 }
 
@@ -8349,7 +8351,7 @@ function renderProjectSettingsLifecycleGuide(project, repos, baselineData, defau
         pageId: "proj-agents",
         title: "5 Agent 执行",
         metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : "注册",
-        detail: "Agent 注册、远程 MCP 和 Skill 工作集生效确认在项目 Agent 页",
+        detail: "Agent 注册在“注册 Agent”，远程 MCP 和 Skill 工作集状态在“运行节点”",
         tone: agentStats.onlineNodes ? "green" : "orange",
         action: "看智能体"
       })}
@@ -8488,7 +8490,7 @@ function renderProjectSettings() {
           title: "进入智能体管理",
           metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : `${agentStats.liveTokens}`,
           detail: "查看项目节点、签发加入令牌、复制注册脚本、下发节点控制",
-          action: "打开项目 Agent",
+          action: "打开 Agent 档案",
           tone: agentStats.onlineNodes ? "green" : "orange"
         })}
       </div>
@@ -9219,6 +9221,12 @@ async function navigateMenuTarget(nextPage, nextWorkspace = "") {
   selectedExecutionObject = {type: "", id: ""};
   executionObjectDetail = null;
   executionObjectUnavailable = false;
+  if (["tg", "tasks", "monitor", "review", "directives"].includes(nextPage)) {
+    managementGroupId = "";
+    selectedWork = null;
+    directiveTaskGroupId = "";
+    directiveWorkItemId = "";
+  }
   if (nextPage === "tg") { expandedTaskGroupId = ""; tgDetail = null; }
   page = nextPage;
   sessionStorage.setItem("aimac.page", page);
@@ -10125,7 +10133,7 @@ document.addEventListener("click", async (event) => {
       const agent = (state.agents || []).find((item) => item.id === target.dataset.agent);
       if (agent?.status === "active" && !(await confirmDialog({title: "停用智能体", message: "确认停用该智能体档案？",
         // 这里最容易被误解成"把跑着的 agent 停了"。档案与运行中的节点是两回事，必须说破。
-        sub: "停用的是这份档案：该角色的新工作会改落到其它启用中的档案。它不会让正在运行的 agent 节点停下来 —— 要让节点停，切到「组织管理」后打开共享 Agent，用「关停节点」或「立即切断」（本页管的是档案，不是节点）。随时可以再启用。",
+        sub: "停用的是这份档案：该角色的新工作会改落到其它启用中的档案。它不会让正在运行的 Agent 节点停下来；要停止共享节点，请到「组织管理」→「共享运行节点」使用“关停”或“立即切断”。随时可以再启用。",
         danger: true, confirmText: "停用"}))) return;
       await api(`/api/agents/${encodeURIComponent(target.dataset.agent)}/activate`, {method: "POST", body: JSON.stringify({active: agent?.status !== "active"})});
       await loadPage();

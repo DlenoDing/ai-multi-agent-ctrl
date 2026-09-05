@@ -669,7 +669,7 @@ const MUTATIONS = [
     name: "人工指令页没有任务组时必须指路并给按钮",
     file: APP,
     gate: "console",
-    from: "          <div class=\"button-row\" style=\"margin-top:8px;\"><button class=\"secondary-button\" data-menu=\"tg\">去创建任务组</button></div></div>`, {wide: true});",
+    from: "          <div class=\"button-row\" style=\"margin-top:8px;\"><button class=\"secondary-button\" data-menu=\"tg\" data-menu-workspace=\"create\">新建任务组</button></div></div>`, {wide: true});",
     to: "</div>`, {wide: true});",
     expect: "不给出口"
   },
@@ -6656,7 +6656,7 @@ const MUTATIONS = [
     name: "刚装完的指路要指这个账号点得到的那一页",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '    system: "先打开「项目管理」→「项目 Agent」→「注册项目节点」",',
+    from: '    system: "先打开「项目管理」→「注册 Agent」",',
     to: '    system: "先打开「项目管理」→「项目设置」→「智能体接入」",',
     expect: "而这一屏的导航里没有这几页"
   },
@@ -10045,7 +10045,7 @@ const MUTATIONS = [
     name: "不许用没加书名号的英文页名指路（「到 agent 页」实测 4 处）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyGuidanceNamesRealPages",
-    from: '    + "装好后有项目 agent 管理权限的人可到「项目管理」→「项目 Agent」对该节点点「刷新自检」；"',
+    from: '    + "装好后有项目 Agent 管理权限的人可到「项目管理」→「运行节点」对该节点点「刷新自检」；"',
     to: '    + "装好后有项目 agent 管理权限的人可到 agent 页对该节点点「刷新自检」；"',
     expect: "没加书名号"
   },
@@ -10125,7 +10125,7 @@ const MUTATIONS = [
     name: "产品报文不得指路到界面上没有的页（实测「运行时」页 10 处）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyGuidanceNamesRealPages",
-    from: "装好后有项目 agent 管理权限的人可到「项目管理」→「项目 Agent」对该节点点「刷新自检」；\"\n    + \"没有项目控制权时，让组织管理员到「组织管理」→「共享 Agent」点「刷新自检」确认它认出来了",
+    from: "装好后有项目 Agent 管理权限的人可到「项目管理」→「运行节点」对该节点点「刷新自检」；\"\n    + \"没有项目控制权时，让组织管理员到「组织管理」→「共享运行节点」点「刷新自检」确认它认出来了",
     to: "装好后到「运行时」页对该节点点「刷新自检」；\"\n    + \"没有项目控制权时，让组织管理员到「运行时」页点「刷新自检」确认它认出来了",
     expect: "界面上没有这个"
   },
@@ -11762,6 +11762,30 @@ const MUTATIONS = [
     from: "  const visibleMenu = menuForCurrentSection(perspective, page).filter((item) => item.divider || menuItemAvailable(item));",
     to: "  const visibleMenu = menuForCurrentSection(perspective, page);",
     expect: "只读项目账号看不到新建任务组"
+  },
+  {
+    name: "页面标题必须跟随具体功能菜单",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const [title, subtitle] = menuMeta(perspective, page, activeWorkspace);",
+    to: "  const [title, subtitle] = PAGE_META[page] || [\"管理后台\", \"\"];",
+    expect: "页面标题直接使用具体功能名"
+  },
+  {
+    name: "稳定功能菜单必须同时切换 page 与 workspace",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (!workspaces.select(nextPage, workspace)) return false;",
+    to: "  if (!workspaces.select(nextPage, workspaces.catalog[nextPage]?.[0]?.id)) return false;",
+    expect: "稳定功能菜单点击会同时切换页面与具体功能"
+  },
+  {
+    name: "全局功能菜单不得继承旧任务组范围",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  if (["tg", "tasks", "monitor", "review", "directives"].includes(nextPage)) {\n    managementGroupId = "";\n    selectedWork = null;\n    directiveTaskGroupId = "";\n    directiveWorkItemId = "";\n  }',
+    to: "",
+    expect: "稳定功能菜单点击会同时切换页面与具体功能"
   },
   {
     name: "任务深链接必须保留任务对象",

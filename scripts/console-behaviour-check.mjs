@@ -286,6 +286,7 @@ globalThis.__probe = {
   routeParse: (hash) => window.AIMAC_WORKSPACE_ROUTE.parse(hash),
   routeBuild: (route) => window.AIMAC_WORKSPACE_ROUTE.build(route),
   routeSnapshot: () => workspaceRouteSnapshot(),
+  navigateMenuTarget: (pageId, workspace) => navigateMenuTarget(pageId, workspace),
   restoreRoute: (route) => restoreWorkspaceRoute(route),
   reconcileRouteSelection: () => reconcileRoutedObjectSelection(),
   browserRouteSource: () => String(applyBrowserHistoryRoute),
@@ -1031,8 +1032,8 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     }
     const groupPermHint = probe.requestFailureHint({error: "forbidden", requiredPermission: "task_group:review",
       resourceScope: {resourceType: "task_group", resourceId: "tg1"}});
-    check("任务组权限拒绝提示要直接指到项目成员权限页",
-      /项目管理」→「成员权限」→「项目成员授权/u.test(groupPermHint)
+    check("任务组权限拒绝提示要直接指到任务组权限功能",
+      /项目管理」→「任务组权限/u.test(groupPermHint)
         && /写在账号上的直接权限不生效/u.test(groupPermHint),
       `任务组权限拒绝仍只给面板名，用户不知道入口在哪里：${String(groupPermHint).slice(0, 200)}`);
     // requestFailureHint 产出【纯文本】，最终嵌进 Error.message，两个显示口（toast 的 esc(message)、
@@ -2241,8 +2242,8 @@ function runDirectivesEmptyExitCase() {
   const admin = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
   const html = probe.renderDirectivesWith({projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
     taskGroups: [], humanDirectives: [], truncatedCollections: []}, admin, "p1");
-  check("人工指令页没有任务组时要指路去「任务组」页并给按钮",
-    /先到「任务组」页/u.test(html) && /data-menu="tg"/u.test(html),
+  check("人工指令页没有任务组时要直接指路到新建任务组并给按钮",
+    /先到“新建任务组”/u.test(html) && /data-menu="tg" data-menu-workspace="create"/u.test(html),
     "人工指令页空态只说暂无任务组、不给出口：人不知道指令为什么发不了、该去哪建");
 }
 
@@ -2686,6 +2687,23 @@ async function runErrorGuidanceCase() {
       && projectNav.indexOf("项目治理") < projectNav.indexOf('data-menu="proj-settings"')
       && projectNav.indexOf("项目治理") > projectNav.indexOf('data-menu="directives"'),
     "项目管理侧栏仍是平铺功能清单，没有把项目总览、准备接入、执行推进、人工控制和治理配置分开");
+  const runPageRoot = el("div");
+  loadConsole(runPageRoot, {realI18n: true}).renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "runs");
+  const runPageTopbar = String(runPageRoot.innerHTML || "").split('<header class="topbar">')[1]?.split("</header>")[0] || "";
+  check("页面标题直接使用具体功能名而不是父页面名",
+    /<h1>执行会话<\/h1>/u.test(runPageTopbar) && /工作会话、派发、载体和模型决定/u.test(runPageTopbar)
+      && !/<h1>执行监控<\/h1>/u.test(runPageTopbar),
+    "打开执行会话后页头仍写父页面“执行监控”，用户无法确认当前位置");
+  const menuActionProbe = loadConsole(el("div"), {realI18n: true});
+  menuActionProbe.renderFullPageWith(navState, systemAccount, "p1", "proj-overview");
+  menuActionProbe.setObjectLocation({page: "tasks", projectId: "p1", groupId: "tg_old", workId: "w_old"});
+  menuActionProbe.stubNavigation();
+  await menuActionProbe.navigateMenuTarget("monitor", "runs");
+  check("稳定功能菜单点击会同时切换页面与具体功能",
+    menuActionProbe.sessionState().page === "monitor" && menuActionProbe.workspaceCurrent("monitor") === "runs"
+      && menuActionProbe.routeSnapshot().workspace === "runs" && menuActionProbe.sessionState().managementGroupId === ""
+      && menuActionProbe.sessionState().selectedWork === null,
+    JSON.stringify(menuActionProbe.sessionState()));
   const systemProjectNav = renderedNav(systemAccount, "p1", "proj-overview");
   const projectAside = systemProjectNav.split("</aside>")[0] || "";
   const projectTopbar = String(systemProjectNav.split('<header class="topbar">')[1] || "").split("</header>")[0] || "";
@@ -3695,7 +3713,7 @@ function runNoVisibleProjectCase() {
           + "照着做的人会在自己的菜单里找一个不存在的入口");
       if (who === "系统管理员") {
         check("系统管理员：刚装完的指路要指向项目级智能体注册入口",
-          /项目管理」→「项目 Agent」→「注册项目节点/.test(banner)
+          /项目管理」→「注册 Agent/.test(banner)
             && !/项目设置」→「智能体接入/.test(banner),
           `它让人去旧入口而这一屏的导航里没有这几页 —— 横幅是：${banner}`);
       }
@@ -3849,7 +3867,7 @@ function runNoVisibleProjectCase() {
       "警告没出来：跨资源并集判成「有权」，而按组过滤又把这两条计划整个滤掉 —— 人什么都看不到");
     check("要说清权限是按任务组给的（否则他会以为自己已经有了）",
       /按【任务组】授予/u.test(reachText)
-        && /项目管理」→「成员权限」→「项目成员授权/u.test(reachText),
+        && /项目管理」→「任务组权限/u.test(reachText),
       "只说缺权限，没说这个权限是按组给的 —— 他在别的组上确实有，会以为界面坏了");
     // 正面对照：全都够得着时不要多说一句（常亮的警告等于没有警告）。
     const fullReachState = structuredClone(reachState);
@@ -4880,9 +4898,9 @@ async function runPendingTruncationCase() {
       "一个能干活的节点都没有，界面却只显示'执行中' —— 人会一直等一件永远不会发生的事");
     check("提示要说清已注册几个、以及该去哪儿看",
       /已注册 2 个/.test(offlineView)
-        && /项目 Agent|共享 Agent/.test(offlineView)
+        && /运行节点|共享运行节点/.test(offlineView)
         && /刷新自检/.test(offlineView)
-        && /恢复目标 agent 主机\/进程心跳/.test(offlineView)
+        && /恢复目标 Agent 主机|Runtime 心跳|恢复目标 agent 主机\/进程心跳/.test(offlineView)
         && !/项目设置」→「智能体接入/.test(offlineView)
         && !/接入或恢复节点/.test(offlineView)
         && /「项目管理」|「组织管理」|联系项目管理员|联系组织管理员/u.test(offlineView),
@@ -4892,7 +4910,7 @@ async function runPendingTruncationCase() {
     noRegistered.fleet = {online: 0, total: 0};
     const noRegisteredView = probe.renderMonitorWith(noRegistered, admin, "p1");
     check("一个 agent 都没注册时，监控页出口要直接指向项目注册脚本",
-      /注册项目节点/.test(noRegisteredView)
+      /注册 Agent/.test(noRegisteredView)
         && /加入令牌/.test(noRegisteredView)
         && !/接入或恢复节点/.test(noRegisteredView),
       "没有注册节点时还说恢复节点，项目负责人不知道安装脚本从哪里来");
@@ -5893,7 +5911,7 @@ async function runPendingTruncationCase() {
     const freshBanner = freshView.slice(freshView.indexOf("还没有任何执行记录"), freshView.indexOf("还没有任何执行记录") + 260);
     check("一件执行记录都没有时，监控页要说清这是正常的以及下一步",
       /还没有任何执行记录/.test(freshBanner)
-        && /项目管理」→「项目 Agent」→「注册项目节点/.test(freshBanner)
+        && /项目管理」→「注册 Agent/.test(freshBanner)
         && !/项目设置」→「智能体接入/.test(freshBanner)
         && /签发一次性加入令牌/.test(freshBanner),
       "十一张「暂无数据」并排，人分不清「还没开始跑」和「跑了但没取回来」");
@@ -6964,16 +6982,16 @@ await runCodedApiErrorCase();
     "进度条不会再动，而这一页一个字都不说 —— 人会一直等，并且会以为是 agent 在慢慢做");
   check("要说清它们不会有进展、以及去哪儿看",
     /不会有任何进展/.test(stalled)
-      && /项目 Agent|共享 Agent/.test(stalled)
+      && /运行节点|共享运行节点/.test(stalled)
       && /刷新自检/.test(stalled)
-      && /恢复目标 agent 主机\/进程心跳/.test(stalled)
+      && /恢复目标 Agent 主机|Runtime 心跳|恢复目标 agent 主机\/进程心跳/.test(stalled)
       && !/项目设置」→「智能体接入/.test(stalled)
       && !/接入或恢复节点/.test(stalled)
       && /「项目管理」|联系项目管理员/u.test(stalled),
     "只说没节点，不说这对他意味着什么、下一步做什么");
   const neverRegistered = probe.renderTaskGroupsWith(withCells("assigned", {online: 0, total: 0}), account, "p1", null, {});
   check("一个 agent 都没注册时，任务组页出口要直接指向项目注册脚本",
-    /注册项目节点/.test(neverRegistered)
+    /注册 Agent/.test(neverRegistered)
       && /加入令牌/.test(neverRegistered)
       && !/接入或恢复节点/.test(neverRegistered),
     "单元已交出去但项目没有节点时还说恢复节点，项目负责人不知道先去哪儿拿脚本");
@@ -7036,8 +7054,8 @@ await runCodedApiErrorCase();
     "后端按额度把单元判成 resource_queued，界面却什么都不说 —— 人只看到单元不动，无从判断是背压还是坏了");
   check("要说清这是背压、会自己恢复，以及想更宽怎么做",
     /不需要你动手/.test(wipFull)
-      && /项目 Agent|共享 Agent/.test(wipFull)
-      && /注册项目节点/.test(wipFull)
+      && /运行节点|共享运行节点/.test(wipFull)
+      && /注册 Agent/.test(wipFull)
       && /刷新自检/.test(wipFull)
       && /准入/u.test(wipFull)
       && !/接入或恢复节点/.test(wipFull),

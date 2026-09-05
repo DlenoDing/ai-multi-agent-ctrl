@@ -53,7 +53,7 @@
           <dt>更新时间</dt><dd>${h.fmtTime(agent.updatedAt || agent.createdAt)}</dd>
         </dl></section>
       </div>
-      <section class="governance-object-band"><h3>档案配置</h3>${editable ? formHtml : `<div class="notice">这是组织共享档案，当前项目只能调配和查看；请到组织管理的“共享 Agent”修改。</div>`}</section>
+      <section class="governance-object-band"><h3>档案配置</h3>${editable ? formHtml : `<div class="notice">这是组织共享档案，当前项目只能调配和查看；请到「组织管理」→「共享 Agent 档案」修改。</div>`}</section>
       ${editable ? `<div class="governance-actions">${activationHtml}</div>` : ""}
     </section>`;
   }

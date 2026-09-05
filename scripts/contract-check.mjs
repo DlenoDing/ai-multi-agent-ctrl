@@ -10782,7 +10782,8 @@ function verifyDangerousConfirmsStateTheConsequence(output) {
 function verifyGuidanceNamesRealPages(output) {
   const app = consoleProductSource();
   const nav = consoleNavSource();
-  const pages = new Set([...nav.matchAll(/^\s*"[a-z-]+": \["([^"]+)",/gmu)].map((match) => match[1]));
+  const menuLeaves = [...nav.matchAll(/leaf\("[a-z-]+", "[a-z-]+", "([^"]+)"/gu)].map((match) => match[1]);
+  const pages = new Set([...nav.matchAll(/^\s*"[a-z-]+": \["([^"]+)",/gmu)].map((match) => match[1]).concat(menuLeaves));
   const panels = new Set([...app.matchAll(/panel\("([^"]+)"/gu)].map((match) => match[1]));
   if (pages.size < 12 || panels.size < 15) {
     output.push(`页名/面板名的权威表没提出来（页 ${pages.size}、面板 ${panels.size}）—— 本条在空转`);
@@ -10814,6 +10815,7 @@ function verifyGuidanceNamesRealPages(output) {
   // 按钮文字有两种写法：直接写死，和 `${条件 ? "A" : "B"}`（顶栏那个"修改密码/设置密码"就是）。
   // 只认写死的那种，等于判据看不见一半按钮 —— 会把正确的指路判成错。两种都收。
   const labels = new Set();
+  menuLeaves.forEach((label) => labels.add(label));
   for (const match of app.matchAll(/>([^<>]{2,120}?)<\/(?:button|a|label|option|th)>/gu)) {
     const body = match[1].trim();
     if (!body.includes("${")) labels.add(body);
