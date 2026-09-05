@@ -6482,19 +6482,35 @@ function verifyAgentGatewayContracts(output) {
     const otherModel = {...baseModel, providerId: "provider_agent_other", modelId: "custom:agent-other"};
     const preferredModel = {...baseModel, providerId: "provider_agent_preferred", modelId: "custom:agent-preferred"};
     preferenceState.modelCapabilities = [otherModel, preferredModel];
+    const customSkillBase = preferenceState.roleSkills.find((skill) => skill.roleSkillId === "system-orchestrator")
+      || preferenceState.roleSkills[0];
+    const customSkill = {...customSkillBase, roleSkillId: "project-orchestrator-custom-skill",
+      sourcePath: "runtime://project-orchestrator-custom-skill", name: "项目总控定制 Skill"};
+    preferenceState.roleSkills.push(customSkill);
     const projectAgent = {schemaVersion: "agent/v1", id: "agent_project_orchestrator_preference", name: "项目总控 Agent",
       role: "orchestrator", model: preferredModel.modelId, status: "active", trustScore: 0.9, capacity: "ready",
-      organizationId: "org_default", projectId: "prj_control_plane"};
+      organizationId: "org_default", projectId: "prj_control_plane", roleSkillRef: customSkill.roleSkillId};
+    preferenceState.agents.unshift({...projectAgent, id: "agent_project_orchestrator_low_trust", trustScore: 0.2});
     preferenceState.agents.push(projectAgent);
     const request = {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", roleId: "orchestrator",
       workItem: {id: "work_agent_preference", title: "实现固定范围代码", ownerRole: "orchestrator", requirements: ["bounded implementation"]}};
     const preferred = selectModel(preferenceState, request, {persist: false});
     if (preferred.selectedAgentId !== projectAgent.id || preferred.agentModelPreference !== preferredModel.modelId
+      || preferred.roleSkillRef !== customSkill.roleSkillId
       || preferred.selectedModel?.modelId !== preferredModel.modelId
       || preferred.scoreBreakdown?.agentPreference !== 1) {
       output.push(`Agent 模型偏好没有进入动态选型或决策记录：${JSON.stringify({agent: preferred.selectedAgentId,
-        preference: preferred.agentModelPreference, model: preferred.selectedModel?.modelId,
+        preference: preferred.agentModelPreference, skill: preferred.roleSkillRef, model: preferred.selectedModel?.modelId,
         score: preferred.scoreBreakdown?.agentPreference})}`);
+    }
+    const preferenceGroup = preferenceState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    preferenceGroup.workItems.push({id: "work_agent_contract_preference", title: "项目 Agent 契约绑定",
+      ownerRole: "orchestrator", status: "ready", progress: 0, requirements: ["验证 Agent 与 Skill 同源"]});
+    const preferredContract = buildTaskContract(preferenceState, {taskGroupId: preferenceGroup.id,
+      workItemId: "work_agent_contract_preference", root});
+    const preferredSession = preferenceState.workSessions.find((session) => session.sessionId === preferredContract.sessionId);
+    if (preferredContract.roleSkill.roleSkillRef !== customSkill.roleSkillId || preferredSession?.agentId !== projectAgent.id) {
+      output.push(`任务契约与工作会话没有绑定同一个 Agent 档案及其 Skill（Agent=${preferredSession?.agentId || "无"}，Skill=${preferredContract.roleSkill.roleSkillRef || "无"}）`);
     }
     const pinned = selectModel(preferenceState, {...request, pinnedModelId: otherModel.modelId}, {persist: false});
     if (pinned.selectedModel?.modelId !== otherModel.modelId || pinned.selectedAgentId !== projectAgent.id) {
@@ -6507,6 +6523,7 @@ function verifyAgentGatewayContracts(output) {
       output.push(`Agent 动态模式没有作为缺省生效，或覆盖了任务显式模式（缺省=${modeFromAgent.selectionMode}，显式=${explicitMode.selectionMode}）`);
     }
     projectAgent.status = "inactive";
+    preferenceState.agents.find((agent) => agent.id === "agent_project_orchestrator_low_trust").status = "inactive";
     const organizationFallback = selectModel(preferenceState, request, {persist: false});
     if (organizationFallback.selectedAgentId !== "agent_orchestrator") {
       output.push(`项目级 Agent 停用后没有回退到组织级同角色 Agent（实际 ${organizationFallback.selectedAgentId || "未绑定"}）`);
@@ -13332,20 +13349,6 @@ function verifyInertMechanismsStayRegistered(output) {
   const mcp = readFileSync(resolve(root, "apps/mcp-server/server.mjs"), "utf8");
   const product = `${core}\n${server}\n${mcp}`;
   const INERT_MECHANISMS = [
-    {
-      name: "智能体信任分（trustScore）",
-      why: "写三处、读零处：两处从入参落库、一处创建时写死 0.9，"
-        + "而全仓没有任何地方读它，界面不显示，spec/docs 里也没有它。"
-        + "名字看起来像一个治理信号（按信任分排序/挑选），实际不影响任何决定 —— "
-        + "读代码或读状态的人会以为智能体是按它挑的。",
-      // 判"有没有人读"要区分读与写，而写入侧的默认值（input.trustScore || 0.85）长得就像一次读 ——
-      // 第一版正则正是这么误报的。改用零误报的做法：锁定它在产品代码里的【出现次数】，
-      // 多一处就说明有人碰了它，登记当场过期。
-      // 数的是【出现次数】不是行数：`trustScore: Number(args.trustScore || 0.9)` 一行算两次。
-      // 数的是【出现次数】不是行数。2026-08-23 建接口补了取值校验（不是数/超范围一律拒绝，
-      // 此前 Number("高") 会把 NaN 存进去），写侧因此多出几处 —— 它仍然是"写多处、读零处"。
-      expectedOccurrences: 16
-    },
     {
       name: "条件窗口门控（conditionWindowGate）",
       why: "两个来源都没有生产者：request.conditionSource 没人传、state.conditionSource 没有赋值点，"

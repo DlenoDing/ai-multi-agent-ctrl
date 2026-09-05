@@ -788,11 +788,12 @@ export function selectModel(state, request = {}, options = {}) {
   // 决定了这个角色的工作项能选到哪些模型，而记录上没有任何地方说明这不是它自己的策略。
   const ownPolicy = state.modelSelectionPolicies.find((item) => item.roleId === roleId);
   const policy = ownPolicy || state.modelSelectionPolicies[0];
-  const roleSkill = resolveRoleSkill(state, roleId, request);
-  const taskExecution = classifyTaskExecution(workItem, request);
-  const modelCeiling = modelCeilingForTask(taskExecution, request);
   const selectedAgent = agentForRole(state, roleId, {projectId: request.projectId || workItem.projectId,
     organizationId: request.organizationId});
+  const roleSkill = resolveRoleSkill(state, roleId, {...request,
+    roleSkillRef: request.roleSkillRef || selectedAgent?.roleSkillRef});
+  const taskExecution = classifyTaskExecution(workItem, request);
+  const modelCeiling = modelCeilingForTask(taskExecution, request);
   const agentModelPreference = String(selectedAgent?.model || "").trim();
   const agentSelectionMode = ["auto_best", "auto_fast", "cost_aware"].includes(agentModelPreference)
     ? agentModelPreference : null;
@@ -1351,7 +1352,10 @@ export function buildTaskContract(state, request = {}) {
   const expiresAt = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
   const languagePolicy = normalizeTaskGroupLanguagePolicy(taskGroup?.languagePolicy);
   const languagePolicyDigest = digestOf(languagePolicy);
-  const roleSkill = resolveRoleSkill(state, workItem?.ownerRole || "orchestrator", {projectId: project?.id, taskGroupId: taskGroup?.id});
+  const selectedAgent = (state.agents || []).find((agent) => agent.id === modelDecision.selectedAgentId)
+    || agentForRole(state, workItem?.ownerRole || "orchestrator", {projectId: project?.id});
+  const roleSkill = resolveRoleSkill(state, workItem?.ownerRole || "orchestrator", {projectId: project?.id,
+    taskGroupId: taskGroup?.id, roleSkillRef: request.roleSkillRef || selectedAgent?.roleSkillRef});
   const skillBindingDigest = digestOf({
     roleId: workItem?.ownerRole || "orchestrator",
     roleSkillRef: roleSkill.roleSkillId,
@@ -4342,6 +4346,7 @@ export function resolveRoleSkill(state, roleId, request = {}) {
   // "回退到 system-orchestrator 并留痕" 变成 "绑到 engineering-multi-agent-systems-architect 且无标记"。
   const ownHint = roleCapabilityHints[roleId];
   const hint = ownHint || roleCapabilityHints.orchestrator;
+  const explicitRoleSkillRef = String(request.roleSkillRef || request.skillRef || "").trim();
   // 技能内容会进任务契约，等于 agent 的行为准则，所以"绑定谁"必须不可顶替。
   // 原先是任意 `endsWith(skillRef)`：造一个 `evil-<skillRef>` 的 id 就能顶替真技能。
   // 但也不能拿 `-` 当锚点——roleSkillId 是 relativePath 把 `/` 换成 `-` 生成的（parseRoleSkillFile），
@@ -4365,7 +4370,14 @@ export function resolveRoleSkill(state, roleId, request = {}) {
   // 回退到通用执行技能，但在返回值上留痕，让上游与人都能看到"这个角色没有属于自己的技能"。
   // 按提示项匹配到的技能，只有在【提示项是这个角色自己的】时才算它自己的技能；
   // 借用别人提示项匹配到的，本质就是"套用了别人的技能"，必须走下面的留痕分支。
-  const ownSkill = (ownHint ? skillCandidates[0] : null) || state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`);
+  const explicitRoleSkill = explicitRoleSkillRef
+    ? state.roleSkills.find((skill) => skill.roleSkillId === explicitRoleSkillRef
+      && !["retired", "quarantined"].includes(skill.status)) : null;
+  if (explicitRoleSkillRef && !explicitRoleSkill) {
+    throw Object.assign(new Error("role_skill_not_found"), {status: 404, roleSkillRef: explicitRoleSkillRef, roleId});
+  }
+  const ownSkill = explicitRoleSkill || (ownHint ? skillCandidates[0] : null)
+    || state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`);
   const baseSkill = ownSkill || state.roleSkills.find((skill) => skill.roleSkillId === "system-orchestrator") || state.roleSkills[0];
   if (!baseSkill) {
     throw Object.assign(new Error("role_skill_registry_empty"), {status: 409, roleId});
@@ -4725,11 +4737,15 @@ function agentForRole(state, roleId, scope = {}) {
   const organizationId = String(project?.organizationId || scope.organizationId || DEFAULT_ORGANIZATION_ID);
   const candidates = (state.agents || []).filter((agent) => agent.role === roleId && agent.status === "active"
     && (agent.organizationId || DEFAULT_ORGANIZATION_ID) === organizationId);
+  const best = (items) => items.slice().sort((left, right) =>
+    Number(right.capacity === "ready") - Number(left.capacity === "ready")
+      || Number(right.trustScore || 0) - Number(left.trustScore || 0)
+      || String(left.id).localeCompare(String(right.id)))[0] || null;
   if (projectId) {
-    const projectAgent = candidates.find((agent) => agent.projectId === projectId);
+    const projectAgent = best(candidates.filter((agent) => agent.projectId === projectId));
     if (projectAgent) return projectAgent;
   }
-  return candidates.find((agent) => !agent.projectId) || null;
+  return best(candidates.filter((agent) => !agent.projectId));
 }
 
 function appendEvent(state, type, subjectType, subjectId, actorId, payload, extra = {}) {

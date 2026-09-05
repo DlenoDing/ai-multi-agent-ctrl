@@ -1018,6 +1018,22 @@ const MUTATIONS = [
     expect: "Agent 模型偏好没有进入动态选型"
   },
   {
+    name: "Agent 档案指定的 Skill 必须进入模型与契约选择",
+    check: "verifyAgentGatewayContracts",
+    file: CORE,
+    from: '  const roleSkill = resolveRoleSkill(state, roleId, {...request,\n    roleSkillRef: request.roleSkillRef || selectedAgent?.roleSkillRef});',
+    to: "  const roleSkill = resolveRoleSkill(state, roleId, request);",
+    expect: "Agent 模型偏好没有进入动态选型或决策记录"
+  },
+  {
+    name: "同层 Agent 必须按信任分稳定择优",
+    check: "verifyAgentGatewayContracts",
+    file: CORE,
+    from: '      || Number(right.trustScore || 0) - Number(left.trustScore || 0)\n      || String(left.id).localeCompare(String(right.id)))[0] || null;',
+    to: '      || String(left.id).localeCompare(String(right.id)))[0] || null;',
+    expect: "Agent 模型偏好没有进入动态选型或决策记录"
+  },
+  {
     name: "人工补充要求要有上限（否则每次派发都背着它）",
     check: "verifyHumanGuidanceIsBoundedAndHonest",
     file: CORE,
