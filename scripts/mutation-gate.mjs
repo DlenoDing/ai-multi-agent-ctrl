@@ -1034,6 +1034,38 @@ const MUTATIONS = [
     expect: "does not restore across accounts"
   },
   {
+    name: "项目角色替换必须撤销旧活动授权",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "workspace",
+    from: '      existing.status = "revoked";\n      existing.revokedReason = "project_role_replaced";',
+    to: '      existing.status = "active";\n      existing.revokedReason = "project_role_replaced";',
+    expect: "project role replacement must leave one active grant"
+  },
+  {
+    name: "任务组角色替换必须撤销旧活动授权",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "workspace",
+    from: '        existing.status = "revoked";\n        existing.revokedReason = "role_replaced";',
+    to: '        existing.status = "active";\n        existing.revokedReason = "role_replaced";',
+    expect: "task-group role replacement must leave one active grant"
+  },
+  {
+    name: "移出项目必须级联撤销任务组角色",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "workspace",
+    from: '      else if (grant.resource?.resourceType === "task_group" && taskGroupIds.has(grant.resource.resourceId)) revokedTaskGroupGrants += 1;',
+    to: '      else if (false && grant.resource?.resourceType === "task_group" && taskGroupIds.has(grant.resource.resourceId)) revokedTaskGroupGrants += 1;',
+    expect: "removing a project member must revoke project and child task-group grants"
+  },
+  {
+    name: "更换组织管理员必须撤销旧管理员身份",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "workspace",
+    from: '      oldAdmin.accountType = "user_account";',
+    to: '      oldAdmin.accountType = "org_admin";',
+    expect: "old admin must be demoted to a normal organization member"
+  },
+  {
     name: "返回任务组列表必须清除详情权限快照",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
@@ -4727,8 +4759,8 @@ const MUTATIONS = [
     name: "别的组织的账号不许出现在授权下拉里",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg && account.status !== "retired");',
-    to: '  const grantable = candidates.filter((account) => account.status !== "retired");',
+    from: '  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg\n    && account.status !== "retired" && account.accountId !== chosen.ownerAccountId);',
+    to: '  const grantable = candidates.filter((account) => account.status !== "retired" && account.accountId !== chosen.ownerAccountId);',
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
@@ -8457,8 +8489,8 @@ const MUTATIONS = [
     name: "已注销的账号不许出现在授权下拉里",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg && account.status !== "retired");',
-    to: "  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg);",
+    from: '  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg\n    && account.status !== "retired" && account.accountId !== chosen.ownerAccountId);',
+    to: "  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg && account.accountId !== chosen.ownerAccountId);",
     expect: "已注销的账号不出现在「账号与授权」页的下拉里"
   },
   {

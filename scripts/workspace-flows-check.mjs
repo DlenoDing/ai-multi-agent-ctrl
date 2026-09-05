@@ -171,7 +171,7 @@ try {
   sessionToken = newAdminSession;
   const replacementMembers = await request("/api/org/members");
   const oldAdminAfter = replacementMembers.members.find((account) => account.accountId === replacementOrg.adminAccount.accountId);
-  assert.equal(oldAdminAfter.accountType, "user_account");
+  assert.equal(oldAdminAfter.accountType, "user_account", "old admin must be demoted to a normal organization member");
   assert.equal(oldAdminAfter.status, "suspended");
   assert.ok(!(oldAdminAfter.permissions || []).some((permission) => permission.startsWith("org:")));
   assert.equal(replacementMembers.members.find((account) => account.accountId === replacement.adminAccount.accountId)?.accountType, "org_admin");
