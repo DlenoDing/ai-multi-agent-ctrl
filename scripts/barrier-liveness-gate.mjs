@@ -111,7 +111,7 @@ const VAR_MACHINES = {
   bundle: ["ReviewBundle"], plan: ["ReviewPlan"], finding: ["Finding"],
   // 这几个对象没有状态机（Organization/Account 的 agents 条目/规则片段/质量门检查项另有归属）
   agent: [], clean: [], organization: [], existing: ["QualityGate"],
-  resolution: ["RuleSourceResolution"], error: [], member: []
+  resolution: ["RuleSourceResolution"], error: [], member: [], oldAdmin: []
 };
 
 // 表达式里的【取值位】是不是全为字面量。三元的条件部分不算取值位：
