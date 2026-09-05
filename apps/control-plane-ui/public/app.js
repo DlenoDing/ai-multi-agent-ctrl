@@ -7668,8 +7668,24 @@ function renderMonitor() {
         : "先让管理员签发加入令牌，并在 agent 主机运行安装命令注册一台节点（签发加入令牌这件事你这个账号做不了），"}`
       + `再到「任务组」页把工作项推进到就绪。节点接上之后，这一页会实时显示会话、派发与执行事件。</div>`
     : "";
+  const selectedMonitorGroup = managementGroupId ? groups.find((group) => group.id === managementGroupId) || null : null;
+  const selectedStats = selectedMonitorGroup ? taskGroupOperationalStats(selectedMonitorGroup) : {
+    groups: groups.length,
+    reviews: groups.reduce((sum, group) => sum + taskGroupOperationalStats(group).reviews, 0)
+  };
+  const monitorScopeHeader = window.AIMAC_MONITOR_WORKSPACE.scopeHeader({
+    project: currentProject(),
+    group: selectedMonitorGroup,
+    stats: selectedStats,
+    activeSessions: sessionsAll.filter((session) => !SESSION_SETTLED_STATUSES.includes(session.status)).length,
+    activeDispatches: dispatchesAll.filter((dispatch) => !terminalDispatchStatuses.has(dispatch.status)).length,
+    latestEvent: eventsShown[0] || null,
+    blockingObjects: barriersInScope.reduce((sum, barrier) => sum + (barrier.satisfied ? 0 : Number((barrier.blockingObjects || []).length)), 0),
+    helpers: {badge, fmtTime}
+  });
 
   return [
+    monitorScopeHeader,
     nothingRanYetNotice,
     orchestratorStalledNotice(),
     fleetOfflineNotice(),
@@ -9436,6 +9452,10 @@ document.addEventListener("click", async (event) => {
   const guardBtn = target.tagName === "BUTTON" ? target : null;
   if (guardBtn) { guardBtn.disabled = true; guardBtn.classList.add("is-loading"); }
   try {
+    if (action === "monitor-project-scope") {
+      await focusManagementGroup("", "monitor");
+      return;
+    }
     if (action === "close-execution-object") {
       requestRoutePush();
       selectedExecutionObject = {type: "", id: ""};

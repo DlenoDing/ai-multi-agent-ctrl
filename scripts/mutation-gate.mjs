@@ -11852,6 +11852,14 @@ const MUTATIONS = [
     expect: "任务组详情保留实时摘要和状态操作"
   },
   {
+    name: "项目监控与任务组监控必须明确区分当前范围",
+    file: "apps/control-plane-ui/public/modules/monitor-workspace.js",
+    gate: "workspace",
+    from: 'return `<section class="monitor-scope-header wide" aria-label="${groupScope ? "任务组执行监控" : "项目执行总览"}">',
+    to: 'return `<section class="monitor-scope-header wide" aria-label="项目执行总览">',
+    expect: "monitor header distinguishes project overview from task-group monitoring"
+  },
+  {
     name: "任务组详情不得重复对象侧栏导航",
     file: "apps/control-plane-ui/public/modules/task-group-workspace.js",
     gate: "console",

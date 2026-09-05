@@ -42,7 +42,8 @@ const consoleModuleFiles = [
   "modules/agent-profile-workspace.js",
   "modules/task-group-workspace.js",
   "modules/task-workbench.js",
-  "modules/execution-object-workspace.js"
+  "modules/execution-object-workspace.js",
+  "modules/monitor-workspace.js"
 ];
 
 function readConsoleSource(file) {

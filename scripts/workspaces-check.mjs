@@ -47,7 +47,8 @@ function loadPublicModules() {
     "modules/object-workspace.js",
     "modules/task-group-workspace.js",
     "modules/task-workbench.js",
-    "modules/execution-object-workspace.js"
+    "modules/execution-object-workspace.js",
+    "modules/monitor-workspace.js"
   ]) {
     vm.runInContext(readPublic(file), context, {filename: file});
   }
@@ -105,6 +106,8 @@ check("workspaces module is loaded", !!workspaces && typeof workspaces.run === "
 check("task workbench module is loaded", !!taskWorkbench && typeof taskWorkbench.render === "function");
 const executionWorkspace = context.AIMAC_EXECUTION_OBJECT_WORKSPACE;
 check("execution object workspace module is loaded", typeof executionWorkspace?.render === "function");
+const monitorWorkspace = context.AIMAC_MONITOR_WORKSPACE;
+check("monitor scope workspace module is loaded", typeof monitorWorkspace?.scopeHeader === "function");
 const objectWorkspace = context.AIMAC_OBJECT_WORKSPACE;
 check("object workspace module is loaded", typeof objectWorkspace?.trail === "function");
 const trail = objectWorkspace.trail({organization: {name: "组织甲"}, project: {id: "p1", name: "项目甲"}, group: {id: "tg1", name: "任务组甲"}, work: {title: "任务甲"}, pageLabel: "任务详情"});
@@ -147,6 +150,16 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
   check(`${page} declares panes`, ids.length > 0, `catalog: ${JSON.stringify(workspaces.catalog[page])}`);
   check(`${page} default pane is ${firstPane}`, workspaces.current(page)?.id === firstPane,
     `actual: ${workspaces.current(page)?.id || "(none)"}; panes: ${ids.join(", ")}`);
+}
+
+{
+  const h = {badge: (value) => `<span>${value}</span>`, fmtTime: (value) => value};
+  const projectHtml = monitorWorkspace.scopeHeader({project: {id: "p1", name: "项目甲", status: "active", progress: {percent: 36}}, stats: {groups: 3, reviews: 2}, activeSessions: 4, activeDispatches: 5, blockingObjects: 1, helpers: h});
+  const groupHtml = monitorWorkspace.scopeHeader({project: {id: "p1", name: "项目甲"}, group: {id: "g1", name: "任务组甲", status: "active", progress: 48}, stats: {tasks: 8, reviews: 2, blocked: 1}, activeSessions: 2, activeDispatches: 3, helpers: h});
+  check("monitor header distinguishes project overview from task-group monitoring",
+    /aria-label="项目执行总览"/u.test(projectHtml) && /项目甲/u.test(projectHtml) && /任务组[^<]*<\/span><strong>3/u.test(projectHtml)
+      && /aria-label="任务组执行监控"/u.test(groupHtml) && /任务组甲/u.test(groupHtml) && /data-action="monitor-project-scope"/u.test(groupHtml),
+    `${strip(projectHtml)} | ${strip(groupHtml)}`);
 }
 
 {

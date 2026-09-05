@@ -1,0 +1,18 @@
+.monitor-scope-header { display: grid; gap: 12px; padding: 4px 0 18px; border-bottom: 1px solid var(--card-border); }
+.monitor-scope-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.monitor-scope-heading h2 { margin: 4px 0 6px; font-size: 22px; overflow-wrap: anywhere; }
+.monitor-scope-progress { height: 7px; overflow: hidden; background: #e6e9ee; border-radius: 4px; }
+.monitor-scope-progress span { display: block; height: 100%; background: #2458b8; }
+.monitor-scope-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--card-border); border-radius: 6px; }
+.monitor-scope-metrics > div { min-width: 0; padding: 10px 12px; border-left: 1px solid var(--card-border); }
+.monitor-scope-metrics > div:first-child { border-left: 0; }
+.monitor-scope-metrics span { display: block; color: var(--text-sub); font-size: 11px; }
+.monitor-scope-metrics strong { display: block; margin-top: 2px; font-size: 18px; }
+
+@media (max-width: 760px) {
+  .monitor-scope-heading { align-items: flex-start; flex-direction: column; }
+  .monitor-scope-heading h2 { font-size: 18px; }
+  .monitor-scope-metrics { grid-template-columns: repeat(5, minmax(58px, 1fr)); overflow-x: auto; }
+  .monitor-scope-metrics > div { padding: 8px 6px; text-align: center; }
+  .monitor-scope-metrics strong { font-size: 16px; }
+}
