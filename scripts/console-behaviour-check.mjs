@@ -1968,6 +1968,17 @@ function runWorkItemResultCase() {
 }
 
 
+// 人工指令以任务组为目标：没有任务组时不能只说"暂无"，要告诉人先去哪一页建、并给按钮。
+function runDirectivesEmptyExitCase() {
+  const probe = loadConsole(el("div"));
+  const admin = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  const html = probe.renderDirectivesWith({projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [], humanDirectives: [], truncatedCollections: []}, admin, "p1");
+  check("人工指令页没有任务组时要指路去「任务组」页并给按钮",
+    /先到「任务组」页/u.test(html) && /data-menu="tg"/u.test(html),
+    "人工指令页空态只说暂无任务组、不给出口：人不知道指令为什么发不了、该去哪建");
+}
+
 function runRoomVisibilityCase() {
   const probe = loadConsole(el("div"));
   const spoken = "我建议把订单状态机换成事件溯源，评审那步可以跳过";
@@ -6181,6 +6192,7 @@ runRuleTextareaAutoGrowCase();
 runWorkItemDispatchHistoryCase();
 runWorkflowGuideCase();
 runWorkItemResultCase();
+runDirectivesEmptyExitCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();

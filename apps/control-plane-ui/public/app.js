@@ -6937,7 +6937,9 @@ function renderDirectives() {
   if (!projectTaskGroups().length) {
     return panel("人工指令", hasNoVisibleProject()
       ? noVisibleProjectNotice()
-      : `<div class="notice">当前项目暂无任务组。</div>`, {wide: true});
+      // 空态要给出口：人工指令以任务组为目标，没有任务组时告诉人先去哪一页建，别只陈述一句"暂无"。
+      : `<div class="notice">当前项目暂无任务组：人工指令以任务组为目标，先到「任务组」页创建一个再来。
+          <div class="button-row" style="margin-top:8px;"><button class="secondary-button" data-menu="tg">去创建任务组</button></div></div>`, {wide: true});
   }
   const directiveRows = directiveList.map((directive) => row([
     {v: fmtTime(directive.createdAt), c: "nowrap"},

@@ -657,6 +657,15 @@ const MUTATIONS = [
     expect: "无权限的人被告知暂无"
   },
   {
+    // 指令页空态退回只说"暂无任务组"、不给出口 → 人不知道指令为什么发不了、该去哪建。
+    name: "人工指令页没有任务组时必须指路并给按钮",
+    file: APP,
+    gate: "console",
+    from: "          <div class=\"button-row\" style=\"margin-top:8px;\"><button class=\"secondary-button\" data-menu=\"tg\">去创建任务组</button></div></div>`, {wide: true});",
+    to: "</div>`, {wide: true});",
+    expect: "不给出口"
+  },
+  {
     // 推送与否骗人后果最重：把"未推送"写死成"已推送"，人会以为改动已经到远端。
     name: "工作项结果行必须如实区分已推送与未推送",
     file: APP,
