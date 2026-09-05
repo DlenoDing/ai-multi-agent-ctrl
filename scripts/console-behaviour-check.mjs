@@ -1565,6 +1565,9 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     // 会触发 check 的参数顺序自守卫抛错、连带把整门打崩、掩盖同一轮里别的断言（cfgSource=config 变异下实测）。
     Boolean(repoUrlInput) && /\breadonly\b/u.test(repoUrlInput[0]),
     `只读成员的仓库地址输入不是 readonly：${repoUrlInput ? repoUrlInput[0].slice(0, 100) : "（没找到 repoUrl 输入）"}`);
+  check("只读成员看到的业务规则空态不许叫他去点那颗灰掉的「新增业务规则」",
+    /还没有业务规则/u.test(roHtml) && !/点下面的「新增业务规则」/u.test(roHtml) && /没有改这一层配置的权限/u.test(roHtml),
+    "只读成员的业务规则空态仍在指路一颗点不动的按钮");
   check("只读成员的仓库行不许有「测试连接」按钮（服务端按改配置权限拒，按了只会看到 403）",
     !/data-action="repo-test-connection"/u.test(roHtml),
     "只读成员的仓库行上渲染了「测试连接」按钮");

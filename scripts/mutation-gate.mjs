@@ -750,6 +750,14 @@ const MUTATIONS = [
     expect: "抹密钥没抹干净"
   },
   {
+    name: "只读身份的业务规则空态不许指路灰按钮",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "              + (readOnly ? `你当前没有改这一层配置的权限，要加约束请找有权限的人。</div>` : `要加本项目自己的约束，点下面的「新增业务规则」。</div>`))}",
+    to: "              + `要加本项目自己的约束，点下面的「新增业务规则」。</div>`)}",
+    expect: "只读成员的业务规则空态仍在指路一颗点不动的按钮"
+  },
+  {
     name: "任务组卡的阅读路径必须折叠",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

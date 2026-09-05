@@ -5583,7 +5583,8 @@ function ruleEditorForm(opts) {
             ? `<div class="small warn-text">一条系统规则都没有 —— 内置默认规则本应始终在场：`
               + `要么它们被本项目逐条停用了，要么这次没取到。在恢复之前，执行方是在【没有系统级约束】的情况下干活的。</div>`
             : `<div class="small muted">还没有业务规则：本项目只受系统规则约束。`
-              + `要加本项目自己的约束，点下面的「新增业务规则」。</div>`)}
+              // 只读身份下那颗按钮是灰的：叫人去点一个点不动的按钮，等于把人留在原地。
+              + (readOnly ? `你当前没有改这一层配置的权限，要加约束请找有权限的人。</div>` : `要加本项目自己的约束，点下面的「新增业务规则」。</div>`))}
       </div>
       <div class="button-row">
         <button type="button" class="secondary-button" data-action="rule-add" data-target="${esc(listId)}" data-category="${esc(category)}" ${disabled}>新增${catLabel}规则</button>
