@@ -360,7 +360,7 @@ globalThis.__probe = {
   captureToast: (sink) => { toast.info = (message) => sink(message); },
   captureToastKind: (kind, sink) => { toast[kind] = (message) => sink(message); },
   bodyChildren: () => document.body.children || [],
-  sessionState: () => ({page, currentProjectId, modalHtml, selectedWork, selectedAgentProfileId, selectedRuntimeNodeId, selectedExecutionObject, managementGroupId, workListGroupId, workListState, expandedTaskGroupId, taskPageCursor, taskCursorStack: [...taskCursorStack], taskReturnContext, taskGroupDetailId: tgDetail?.taskGroupId || null,
+  sessionState: () => ({page, currentProjectId, modalHtml, selectedWork, selectedAgentProfileId, selectedRuntimeNodeId, selectedExecutionObject, managementGroupId, workListGroupId, workListState, expandedTaskGroupId, taskPageCursor, taskCursorStack: [...taskCursorStack], taskReturnContext, routeWriteMode, taskGroupDetailId: tgDetail?.taskGroupId || null,
     projConfigVersion, directiveList,
     storedProjectId: sessionStorage.getItem("aimac.projectId"), storedPage: sessionStorage.getItem("aimac.page")}),
   selectWorkspace: (pageId, paneId) => workspaces.select(pageId, paneId),
@@ -2652,11 +2652,14 @@ async function runErrorGuidanceCase() {
   const systemNav = renderedNav(systemAccount, null, "sys-overview");
   assertMenuLeaves("系统管理", systemNav, [["sys-overview", "overview", "系统概览"], ["sys-overview", "audit", "审计日志"],
     ["sys-orgs", "list", "组织列表"], ["sys-orgs", "create", "开通组织"], ["sys-settings", "models", "模型能力"]]);
+  assertMenuLeaves("系统管理说明", systemNav, [["sys-orgs", "help", "组织治理说明"], ["sys-settings", "help", "平台能力说明"]]);
   const orgNav = renderedNav({accountId: "org", email: "org@local", displayName: "组织管理员",
     accountType: "org_admin", roles: ["org_admin"], permissions: ["org:*", "project:create", "member:invite", "agent:activate"], organizationId: "org_default"}, "p1", "org-overview");
   assertMenuLeaves("组织管理", orgNav, [["org-members", "list", "成员账户"], ["org-members", "create", "创建成员"],
     ["org-members", "grants", "权限矩阵"], ["org-projects", "list", "项目列表"], ["org-agents", "profiles", "共享 Agent 档案"],
     ["org-agents", "nodes", "共享运行节点"], ["org-agents", "register", "注册共享节点"]]);
+  assertMenuLeaves("组织管理说明", orgNav, [["org-overview", "help", "组织操作说明"], ["org-members", "help", "成员授权说明"],
+    ["org-projects", "help", "项目治理说明"], ["org-agents", "help", "共享 Agent 说明"]]);
   const projectNav = renderedNav({accountId: "user", email: "user@local", displayName: "项目成员",
     accountType: "user_account", roles: ["workspace_owner"], permissions: ["project:view", "project:update", "task_group:control", "task_group:review"], organizationId: "org_default"}, "p1", "proj-overview");
   const projectMenuOrder = [["proj-overview", "overview", "项目概览"], ["proj-members", "list", "项目成员"],
@@ -2664,6 +2667,9 @@ async function runErrorGuidanceCase() {
     ["monitor", "overview", "项目监控"], ["monitor", "runs", "执行会话"], ["review", "pending", "待我审核"],
     ["directives", "compose", "下达指令"], ["proj-settings", "repositories", "仓库凭据"]];
   assertMenuLeaves("项目管理", projectNav, projectMenuOrder);
+  assertMenuLeaves("项目管理说明", projectNav, [["proj-overview", "help", "项目操作说明"], ["proj-members", "help", "项目授权说明"],
+    ["proj-agents", "help", "Agent 运行说明"], ["tg", "help", "任务组说明"], ["monitor", "help", "监控链路说明"],
+    ["review", "help", "审核流程说明"], ["directives", "help", "指令通道说明"], ["proj-settings", "help", "项目配置说明"]]);
   check("项目管理侧栏顺序要贴合执行路径",
     projectMenuOrder.every(([pageId, workspace], index) => index === 0
       || projectNav.indexOf(`data-menu="${pageId}" data-menu-workspace="${workspace}"`)
@@ -2743,6 +2749,13 @@ async function runErrorGuidanceCase() {
     !/class="workspace-nav"/u.test(projectAside) && /data-menu="monitor" data-menu-workspace="runs"/u.test(projectAside)
       && /data-menu="proj-agents" data-menu-workspace="register"/u.test(projectAside),
     "侧栏仍把执行会话或注册 Agent 藏在父页面下面的临时栏目里");
+  const jumpProbe = loadConsole(el("div"), {realI18n: true});
+  jumpProbe.renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "overview");
+  jumpProbe.stubNavigation();
+  await jumpProbe.click({target: el("button", {dataset: {jumpPanel: "工作会话"}}), preventDefault: () => {}});
+  check("功能看板跨叶子跳转必须写入浏览器历史",
+    jumpProbe.workspaceCurrent("monitor") === "runs" && jumpProbe.sessionState().routeWriteMode === "push",
+    `看板跳到了 ${jumpProbe.workspaceCurrent("monitor")}，历史写入模式却是 ${jumpProbe.sessionState().routeWriteMode}`);
 
   const objectProbe = loadConsole(el("div"), {realI18n: true});
   const group = {id: "tg_context", projectId: "p1", name: "支付链路任务组", status: "active", goalExecutionStatus: "active",

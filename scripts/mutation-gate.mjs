@@ -11828,6 +11828,22 @@ const MUTATIONS = [
     expect: "每类待办的处置按钮必须携带准确 workspace"
   },
   {
+    name: "说明 workspace 必须有生产菜单入口",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    leaf("sys-orgs", "help", "组织治理说明", "系统侧组织、配额和初始管理员职责"),',
+    to: "",
+    expect: "系统管理说明侧栏要有可直接进入的「组织治理说明」功能"
+  },
+  {
+    name: "看板跨叶子跳转必须进入浏览器历史",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "      if (!(await navigateWorkspace(page, targetWorkspace))) return;",
+    to: "      workspaces.select(page, targetWorkspace);\n      render();",
+    expect: "功能看板跨叶子跳转必须写入浏览器历史"
+  },
+  {
     name: "任务组详情必须保留对象局部功能栏",
     file: "apps/control-plane-ui/public/modules/workspaces.js",
     gate: "workspace",

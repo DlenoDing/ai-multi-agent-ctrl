@@ -50,7 +50,16 @@
     leaf("proj-settings", "baseline", "基线资料", "任务可引用的稳定输入"),
     leaf("proj-settings", "roles", "角色与 Skill", "默认角色和 Skill 定制"),
     leaf("proj-settings", "system-rules", "系统规则", "项目执行纪律和安全边界"),
-    leaf("proj-settings", "business-rules", "业务规则", "项目业务约束")
+    leaf("proj-settings", "business-rules", "业务规则", "项目业务约束"),
+    {divider: "使用说明"},
+    leaf("proj-overview", "help", "项目操作说明", "项目准备、执行与处置路径"),
+    leaf("proj-members", "help", "项目授权说明", "项目角色与任务组权限边界"),
+    leaf("proj-agents", "help", "Agent 运行说明", "档案、节点、注册与故障恢复"),
+    leaf("tg", "help", "任务组说明", "生命周期、事项和处置方法"),
+    leaf("monitor", "help", "监控链路说明", "实时回送、观测和异常处理"),
+    leaf("review", "help", "审核流程说明", "确认、授权、发现与历史追溯"),
+    leaf("directives", "help", "指令通道说明", "独立指令的下达与消费状态"),
+    leaf("proj-settings", "help", "项目配置说明", "仓库、基线、角色和规则配置")
   ];
 
   const SYSTEM_MENU = [
@@ -65,7 +74,10 @@
     leaf("sys-settings", "runtime", "运行参数", "服务器运行参数和状态"),
     leaf("sys-settings", "models", "模型能力", "可调度模型能力目录"),
     leaf("sys-settings", "skills", "技能源", "服务端 Skill 源与同步状态"),
-    leaf("sys-settings", "protocol", "调度协议", "指令压缩和共享定义归属")
+    leaf("sys-settings", "protocol", "调度协议", "指令压缩和共享定义归属"),
+    {divider: "使用说明"},
+    leaf("sys-orgs", "help", "组织治理说明", "系统侧组织、配额和初始管理员职责"),
+    leaf("sys-settings", "help", "平台能力说明", "运行参数、模型、Skill 和协议边界")
   ];
 
   const ORG_MENU = [
@@ -83,7 +95,12 @@
     leaf("org-agents", "profiles", "共享 Agent 档案", "组织级逻辑角色"),
     leaf("org-agents", "nodes", "共享运行节点", "组织级和项目级节点总览"),
     leaf("org-agents", "register", "注册共享节点", "组织范围的一次性接入"),
-    leaf("org-agents", "tokens", "加入令牌", "待用、已用和已撤销令牌")
+    leaf("org-agents", "tokens", "加入令牌", "待用、已用和已撤销令牌"),
+    {divider: "使用说明"},
+    leaf("org-overview", "help", "组织操作说明", "组织管理员的管理路径"),
+    leaf("org-members", "help", "成员授权说明", "子账户、项目和任务组授权边界"),
+    leaf("org-projects", "help", "项目治理说明", "项目创建、负责人和成员管理"),
+    leaf("org-agents", "help", "共享 Agent 说明", "组织级档案、节点与接入范围")
   ];
 
   const MENUS = {

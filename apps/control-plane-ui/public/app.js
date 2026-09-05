@@ -9564,11 +9564,7 @@ document.addEventListener("click", async (event) => {
     const title = jumpButton.dataset.jumpPanel || "";
     const targetWorkspace = workspaces.owner(page, title);
     if (targetWorkspace && targetWorkspace !== workspaces.current(page)?.id) {
-      if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前栏目有未保存的修改，确认切换？", danger: true, confirmText: "放弃并切换"}))) return;
-      workspaces.select(page, targetWorkspace);
-      formTouched = false;
-      dirtyFormKinds.clear();
-      render();
+      if (!(await navigateWorkspace(page, targetWorkspace))) return;
     }
     const targetHeader = [...document.querySelectorAll(".panel-header h2")]
       .find((header) => header.textContent.trim() === title);
