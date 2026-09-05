@@ -4398,6 +4398,18 @@ function runPendingTruncationCase() {
     check("数据变了必须重建（跳过不能把真实变化一起挡住）",
       writes === afterFirst + 1 && /改过名的任务组/.test(value),
       `写入次数 ${writes}，界面上${/改过名的任务组/.test(value) ? "有" : "没有"}新名字`);
+    // 【建工作项表单旁要说「没有在线 agent 时建了也派不出去」】。顶部那条「已交给执行方的单元没人领」
+    // 只在已经有单元等着时出现，第一次建工作项的人看不到；有在线节点时不许喊。
+    probe.renderFullPageWith({...makeState("任务组"), fleet: {online: 0, total: 2}}, account, "p1", "tg");
+    const noAgentForm = /data-form="work-item-create"[\s\S]*?<\/form>/u.exec(value)?.[0] || "";
+    check("没有在线 agent 时，建工作项表单里要说建好后不会被领走、已注册几个",
+      /不会被领走/u.test(noAgentForm) && /已注册 2 个/u.test(noAgentForm),
+      `建工作项表单里没说（${noAgentForm.length ? noAgentForm.slice(-300) : "没找到 work-item-create 表单"}）`);
+    probe.renderFullPageWith({...makeState("任务组"), fleet: {online: 1, total: 2}}, account, "p1", "tg");
+    const withAgentForm = /data-form="work-item-create"[\s\S]*?<\/form>/u.exec(value)?.[0] || "";
+    check("有在线 agent 时建工作项表单不许喊「不会被领走」",
+      withAgentForm.length > 0 && !/不会被领走/u.test(withAgentForm),
+      "有节点在线仍在表单里喊没人领 —— 人会去白查节点");
     // 登录页绕过 render 自己写 DOM。缓存不作废的话，退出再登录会算出和上次一模一样的整页 HTML
     // 而被跳过，人就卡在登录页上 —— 这是本次改动最容易造出来的新故障。
     probe.renderLoginWith(null);

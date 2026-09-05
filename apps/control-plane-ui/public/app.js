@@ -5066,6 +5066,7 @@ function renderTaskGroups() {
         </div>
         <div class="form-row"><label>机器可执行要求（每行一条）</label><textarea name="requirements" placeholder="每行一条约束或验收条件"></textarea></div>
         ${groups.length ? "" : `<div class="notice">先创建任务组后再追加工作项。</div>`}
+        ${groups.length ? noOnlineAgentCreateNotice() : ""}
         <button class="primary-button" type="submit" ${groups.length ? "" : "disabled"}>创建工作项</button>
       </form>
     `)
@@ -6151,6 +6152,18 @@ function fleetOfflineNotice() {
 // 任务组页是项目负责人盯单元的地方：单元停在 assigned/dispatched 不动时，他在这一页等。
 // 而"没有任何在线 agent"此前只在监控页说 —— 他要先想到去监控页看，才知道自己在等一件
 // 不会发生的事。提示要出现在他所在的位置。
+// 建工作项的表单旁要说清「建了也派不出去」：没有在线 agent 时，建好的工作项只会停在待派发，等人接节点。
+// 顶部那条「已交给执行方的单元没人领」只在【已经有单元等着】时才出现 —— 第一次建工作项的人看不到它，
+// 建完只看到进度条不动，会以为系统坏了。fleet 没下发时不瞎说。
+function noOnlineAgentCreateNotice() {
+  const fleet = (state || {}).fleet;
+  if (!fleet || Number(fleet.online || 0) > 0) return "";
+  const total = Number(fleet.total || 0);
+  // 措辞刻意与顶部「没有任何在线的 agent 节点」那条区分：那条只在单元已交出去时挂，门按短语分别核。
+  return `<div class="small warn-text">此刻没有 agent 节点在线${total ? `（已注册 ${esc(total)} 个，都不在线或已降级）` : "（一个都还没注册）"}：`
+    + `可以先建，但建好后不会被领走，直到有节点接入并通过自检。${esc(agentNodeManagementPath({registeredNodeCount: total}))}。</div>`;
+}
+
 function cellsWaitingWithNoAgentNotice(groups) {
   const fleet = (state || {}).fleet;
   if (!fleet || Number(fleet.online || 0) > 0) return "";

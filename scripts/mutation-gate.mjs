@@ -750,6 +750,22 @@ const MUTATIONS = [
     expect: "抹密钥没抹干净"
   },
   {
+    name: "建工作项表单旁的「没有在线 agent」提示不许在有节点在线时也喊",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (!fleet || Number(fleet.online || 0) > 0) return \"\";\n  const total = Number(fleet.total || 0);",
+    to: "  if (!fleet) return \"\";\n  const total = Number(fleet.total || 0);",
+    expect: "有在线 agent 时建工作项表单不许喊"
+  },
+  {
+    name: "建工作项表单旁没有在线 agent 时必须说清",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "        ${groups.length ? noOnlineAgentCreateNotice() : \"\"}\n",
+    to: "",
+    expect: "建工作项表单里要说建好后不会被领走"
+  },
+  {
     name: "测试连接：界面只认 ok === true，认不出的原因不许当成功",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
