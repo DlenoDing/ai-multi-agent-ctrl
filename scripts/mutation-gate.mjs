@@ -11925,6 +11925,14 @@ const MUTATIONS = [
     expect: "只读账号的项目主操作不得指向隐藏创建栏目"
   },
   {
+    name: "项目运行统计索引必须按状态快照复用",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (operationalStatsCache?.source === state) return operationalStatsCache;",
+    to: "  if (false && operationalStatsCache?.source === state) return operationalStatsCache;",
+    expect: "项目与任务组运行统计必须一次建索引后复用"
+  },
+  {
     name: "MCP 工具崩溃不得伪装成正当拒绝（要回 server_error、打日志、说清别重试）",
     file: "apps/mcp-server/server.mjs",
     gate: "contract",

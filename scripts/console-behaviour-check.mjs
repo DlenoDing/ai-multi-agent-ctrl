@@ -288,6 +288,7 @@ globalThis.__probe = {
     statsFor: (group) => group.stats || {tasks: group.workItemCount || 0, runs: 0, reviews: 0, blocked: 0}}),
   projectCommandHtml: (project, decision) => window.AIMAC_PROJECT_COMMAND_CENTER.render(project, decision),
   projectRepositoryConfigs: (project) => projectRepositoryConfigs(project),
+  operationalStatsSources: () => ({index: String(operationalStatsIndex), group: String(taskGroupOperationalStats)}),
   grantRoleLabel: (role) => grantRoleLabel(role),
   joinTokenTargetProjects: (nextState) => { state = nextState; return joinTokenTargetProjects(); },
   canResumeTaskGroupAs: (taskGroup, accountType) => {
@@ -2766,6 +2767,13 @@ async function runErrorGuidanceCase() {
       && !/data-workspace="create"/u.test(readOnlyActions)
       && /data-target-workspace="list"|data-focus-page="tg"/u.test(readOnlyActions),
     "按钮写着查看，实际却进入无权限账号看不到的创建栏目");
+  const statsSources = objectProbe.operationalStatsSources();
+  check("项目与任务组运行统计必须一次建索引后复用",
+    /operationalStatsCache\?\.source === state/u.test(statsSources.index)
+      && /for \(const dispatch of state\.agentDispatches/u.test(statsSources.index)
+      && /indexed\.runs\.get\(group\.id\)/u.test(statsSources.group)
+      && !/state\.agentDispatches[\s\S]*\.filter/u.test(statsSources.group),
+    "每个任务组都重新扫描整份派发/审核记录，项目规模增大后会退化为 O(任务组×运行记录)");
   const membersRoot = el("div");
   const membersProbe = loadConsole(membersRoot, {realI18n: true});
   const projectMemberState = {

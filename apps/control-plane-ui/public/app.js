@@ -1755,23 +1755,35 @@ function renderLogin() {
 
 /* ---------------- 框架渲染 ---------------- */
 
+let operationalStatsCache = null;
+function operationalStatsIndex() {
+  if (operationalStatsCache?.source === state) return operationalStatsCache;
+  const runs = new Map();
+  const blockedRuns = new Map();
+  const reviews = new Map();
+  const bump = (map, id) => { if (id) map.set(id, Number(map.get(id) || 0) + 1); };
+  for (const dispatch of state.agentDispatches || []) {
+    if (!terminalDispatchStatuses.has(dispatch.status)) bump(runs, dispatch.taskGroupId);
+    if (dispatch.status === "blocked") bump(blockedRuns, dispatch.taskGroupId);
+  }
+  for (const item of [...(state.humanConfirmationRequests || []), ...(state.permissionRequests || []), ...(state.approvalRequests || [])]) {
+    if (["pending", "requested", "pending_approval"].includes(item.status)) bump(reviews, item.taskGroupId);
+  }
+  operationalStatsCache = {source: state, runs, blockedRuns, reviews};
+  return operationalStatsCache;
+}
+
 function taskGroupOperationalStats(group) {
   if (!group) return {tasks: 0, runs: 0, reviews: 0, blocked: 0};
   const taskItems = tgDetail?.taskGroupId === group.id && tgDetail?.progress?.workItems
     ? tgDetail.progress.workItems : group.workItems || [];
-  const dispatches = (state.agentDispatches || []).filter((item) => item.taskGroupId === group.id);
-  const reviews = [
-    ...(state.humanConfirmationRequests || []),
-    ...(state.permissionRequests || []),
-    ...(state.approvalRequests || [])
-  ].filter((item) => item.taskGroupId === group.id && ["pending", "requested", "pending_approval"].includes(item.status)).length;
+  const indexed = operationalStatsIndex();
   const blockedWork = taskItems.filter((item) => item.blockedReason || String(item.status || "").startsWith("blocked")).length;
-  const blockedRuns = dispatches.filter((item) => item.status === "blocked").length;
   return {
     tasks: group.workItemCount ?? taskItems.length,
-    runs: dispatches.filter((item) => !terminalDispatchStatuses.has(item.status)).length,
-    reviews,
-    blocked: Number(group.blockerCount ?? group.blockers?.length ?? 0) + blockedWork + blockedRuns
+    runs: Number(indexed.runs.get(group.id) || 0),
+    reviews: Number(indexed.reviews.get(group.id) || 0),
+    blocked: Number(group.blockerCount ?? group.blockers?.length ?? 0) + blockedWork + Number(indexed.blockedRuns.get(group.id) || 0)
   };
 }
 
