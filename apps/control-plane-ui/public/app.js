@@ -3450,11 +3450,20 @@ function agentScopeText(agent) {
     : `组织级：${(state.organizations || []).find((org) => org.orgId === agent.organizationId)?.name || agent.organizationId || "当前组织"}`;
 }
 
+// 三个「自动选型」预设在创建表单里显示中文（自动最优 / 自动快速 / 成本优先），列表里此前却显示原始码 auto_best ——
+// 同一个东西两种叫法，人对不上号。预设给中文并附原始码；真实模型 ID 照旧。
+const AGENT_MODEL_PRESET_LABEL = {auto_best: "自动最优", auto_fast: "自动快速", cost_aware: "成本优先"};
+function agentModelCell(model) {
+  const id = String(model || "auto_best");
+  const label = AGENT_MODEL_PRESET_LABEL[id];
+  return label ? `${esc(label)}<div class="small muted mono">${esc(id)}</div>` : `<span class="mono">${esc(id)}</span>`;
+}
+
 function agentProfileRows(agents, {showScope = true} = {}) {
   return agents.map((agent) => row([
     `<strong>${esc(agent.name || agent.id)}</strong><div class="small muted mono">${esc(agent.id)}</div>`,
     esc(t(agent.role)),
-    `<span class="mono">${esc(agent.model || "auto_best")}</span>`,
+    agentModelCell(agent.model),
     showScope ? esc(agentScopeText(agent)) : esc(agent.projectId ? "项目级" : "组织级"),
     statusBadge("agent", agent.status),
     {v: Number.isFinite(Number(agent.trustScore)) ? `${Math.round(Number(agent.trustScore) * 100)}%` : "-", c: "num"},
@@ -3908,6 +3917,12 @@ function renderOrgAgents() {
 
 /* ---------------- 成员：项目智能体 ---------------- */
 
+// 指引面板成组折叠：默认收起，摘要列出里面有哪几组；点开即展开，不丢任何内容。
+function guideBundle(title, panelsHtml, names) {
+  return `<details class="guide-bundle"><summary class="guide-bundle-summary">${esc(title)}：${esc(names.join(" · "))} —— 默认收起，点这里展开</summary>`
+    + `<div class="guide-bundle-body">${panelsHtml.join("")}</div></details>`;
+}
+
 function renderProjectAgentsSummary(project, nodes) {
   const stats = projectAgentStats(project.id, nodes);
   return panel("项目智能体总览", `
@@ -4042,13 +4057,15 @@ function renderProjectAgents() {
   const bodyHtml = agentViewMode === "cards"
     ? projectAgentCards(nodes, canControlNodes, {showDanger: !preferOrgGovernance})
     : table(["名称", "运行状态", "准入", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"], nodeRows, {emptyText: "当前项目暂无智能体节点"});
+  // 真实产出读下来：这一页在节点列表前曾堆了总览 + 看板 + 四组流程指引（共 20 步），节点列表与注册表单被推到最底下。
+  // 阅读型的三组指引默认收起（内容一字不少，摘要写明里面有什么）；可操作的「注册与脚本操作台」保持可见；面板顺序不变。
   return [
     renderProjectAgentsSummary(project, nodes),
     renderProjectAgentsActionBoard(project, nodes),
-    renderProjectAgentRegistrationFlow(project, nodes),
+    guideBundle("接入前先读", [renderProjectAgentRegistrationFlow(project, nodes)], ["Agent 注册流程（5 步）"]),
     renderProjectAgentScriptHub(project, nodes),
-    renderProjectAgentExecutionLoop(project, nodes),
-    renderProjectAgentNodeGovernanceGuide(project, nodes),
+    guideBundle("运行与处置指引", [renderProjectAgentExecutionLoop(project, nodes), renderProjectAgentNodeGovernanceGuide(project, nodes)],
+      ["Agent 接入与运行闭环（5 步）", "Agent 节点处置流程（6 步）"]),
     panel("可调配 Agent 档案", `
       <div class="stack">
         <div class="notice">任务组执行时，总控可在当前项目级 Agent 和本组织级 Agent 中选择合适角色；项目级档案只服务当前项目，组织级档案可跨本组织项目复用。</div>

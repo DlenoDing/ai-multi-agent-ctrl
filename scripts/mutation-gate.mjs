@@ -750,6 +750,30 @@ const MUTATIONS = [
     expect: "抹密钥没抹干净"
   },
   {
+    name: "智能体页阅读型指引必须默认收起（折叠块默认打开等于没折）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  return `<details class=\"guide-bundle\"><summary class=\"guide-bundle-summary\">",
+    to: "  return `<details class=\"guide-bundle\" open><summary class=\"guide-bundle-summary\">",
+    expect: "三组阅读型指引要收进默认关闭的折叠块"
+  },
+  {
+    name: "智能体页的注册与脚本操作台不许被折叠",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    guideBundle(\"接入前先读\", [renderProjectAgentRegistrationFlow(project, nodes)], [\"Agent 注册流程（5 步）\"]),\n    renderProjectAgentScriptHub(project, nodes),",
+    to: "    guideBundle(\"接入前先读\", [renderProjectAgentRegistrationFlow(project, nodes), renderProjectAgentScriptHub(project, nodes)], [\"Agent 注册流程（5 步）\"]),",
+    expect: "操作台或节点列表被收进折叠块"
+  },
+  {
+    name: "档案表默认模型预设要显示中文",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  return label ? `${esc(label)}<div class=\"small muted mono\">${esc(id)}</div>` : `<span class=\"mono\">${esc(id)}</span>`;",
+    to: "  return `<span class=\"mono\">${esc(id)}</span>`;",
+    expect: "档案表里默认模型仍是原始码"
+  },
+  {
     name: "建工作项表单旁的「没有在线 agent」提示不许在有节点在线时也喊",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

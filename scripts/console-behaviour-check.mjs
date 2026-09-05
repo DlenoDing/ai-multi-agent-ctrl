@@ -4910,6 +4910,27 @@ function runPendingTruncationCase() {
         && /data-menu="monitor"/u.test(projectAgentScriptHubHtml)
         && panelAt(projectAgentHtml, "注册与脚本操作台") < panelAt(projectAgentHtml, "项目智能体节点"),
       "项目 AI 智能体页仍没有把生成注册脚本、节点自检和实时监控入口做成节点长表前的操作台");
+    // 【阅读型指引默认收起】：真实产出读下来这一页在节点列表前堆了四组流程指引（20 步）。三组阅读型的收进
+    // 默认关闭的折叠块（内容仍在、摘要说明里面有什么），可操作的「注册与脚本操作台」与节点列表必须留在折叠块外。
+    {
+      const bundles = [...projectAgentHtml.matchAll(/<details class="guide-bundle"( open)?>([\s\S]*?)<\/details>/gu)];
+      const inBundle = (title) => bundles.some((m) => m[2].includes(`<h2>${title}</h2>`));
+      check("项目 AI 智能体页的三组阅读型指引要收进默认关闭的折叠块",
+        bundles.length === 2 && bundles.every((m) => !m[1])
+          && inBundle("Agent 注册流程") && inBundle("Agent 接入与运行闭环") && inBundle("Agent 节点处置流程"),
+        `折叠块 ${bundles.length} 个（默认打开 ${bundles.filter((m) => m[1]).length} 个）；注册流程/运行闭环/处置流程在折叠块里：`
+          + `${["Agent 注册流程", "Agent 接入与运行闭环", "Agent 节点处置流程"].map(inBundle).join("/")} —— 节点列表又被推到几屏之下`);
+      check("可操作的「注册与脚本操作台」与「项目智能体节点」不许被折叠起来",
+        !inBundle("注册与脚本操作台") && !inBundle("项目智能体节点") && !inBundle("注册 agent"),
+        "第一次接入用的操作台或节点列表被收进折叠块 —— 人得先猜再点");
+      check("折叠块摘要要说明里面有哪几组、默认收起",
+        bundles.length === 2 && /Agent 注册流程（5 步）[\s\S]*默认收起/u.test(projectAgentHtml)
+          && /Agent 接入与运行闭环（5 步） · Agent 节点处置流程（6 步）[\s\S]*默认收起/u.test(projectAgentHtml),
+        "折叠块摘要没说清里面是什么");
+      check("Agent 档案表的默认模型预设要显示与创建表单一致的中文（不是原始码 auto_best）",
+        /自动最优<div class="small muted mono">auto_best<\/div>/u.test(projectAgentHtml),
+        "档案表里默认模型仍是原始码 auto_best，而创建表单里叫「自动最优」—— 同一个东西两种叫法");
+    }
     check("项目 AI 智能体页要提供注册脚本来源和节点控制入口",
       /签发一次性加入令牌/u.test(projectAgentHtml)
         && /注册脚本/u.test(projectAgentHtml)

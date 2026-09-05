@@ -260,6 +260,12 @@ html, body {
 }
 
 .content > .wide { grid-column: 1 / -1; }
+.guide-bundle { grid-column: 1 / -1; border: 1px dashed var(--border, #d0d4dc); border-radius: 10px; background: transparent; }
+.guide-bundle-summary { cursor: pointer; padding: 10px 14px; font-size: 13px; color: var(--muted, #5b6270); list-style: none; }
+.guide-bundle-summary::-webkit-details-marker { display: none; }
+.guide-bundle-summary::before { content: "▸ "; }
+.guide-bundle[open] > .guide-bundle-summary::before { content: "▾ "; }
+.guide-bundle-body { display: grid; gap: 16px; padding: 0 12px 12px; }
 
 @media (max-width: 1100px) {
   .content { grid-template-columns: 1fr; }
