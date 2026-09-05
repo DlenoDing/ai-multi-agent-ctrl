@@ -3707,6 +3707,25 @@ try {
       if (restored.response.status !== 200) throw new Error(`撤掉测试连接用的仓库行失败（${restored.response.status}/${restored.payload?.error}）`);
       console.log("  ok  项目仓库「测试连接」：本地裸仓库连上（回执无密钥）、不存在的路径归成找不到仓库、未知仓库 ID 404、无改配置权限 403");
     }
+    // 【状态快照不得带出仓库凭证】：控制面项目已配了 API Key 凭证。系统账号与非系统账号（评审人能读控制面项目）
+    // 两条投影路、默认视图与 view=full 两种视图，四份快照里都不许出现 sealedSecret / 明文密钥 / apiKey 字段。
+    for (const [who, auth] of [["系统账号", systemAuth], ["评审人", reviewerAuth]]) {
+      for (const view of ["", "?view=full"]) {
+        const snapshot = await jsonFetch(port, `/api/state${view}`, {headers: {authorization: auth}});
+        if (snapshot.response.status !== 200) throw new Error(`${who}读快照${view}失败（HTTP ${snapshot.response.status}）—— 凭证脱敏断言没触达`);
+        const projects = snapshot.payload?.projects || [];
+        if (!projects.some((project) => project.id === "prj_control_plane")) throw new Error(`${who}的快照${view}里没有控制面项目 —— 凭证脱敏断言没触达`);
+        const raw = JSON.stringify(snapshot.payload);
+        if (raw.includes("sealedSecret") || raw.includes(controlPlaneRepoSecret) || /"apiKey":"[^"]+"|"password":"[^"]+"/u.test(raw)) {
+          throw new Error(`${who}的状态快照${view || "（默认视图）"}带出了仓库凭证（密文或明文）—— 它会随轮询进每个成员的浏览器`);
+        }
+        const cpRepo = (projects.find((project) => project.id === "prj_control_plane")?.config?.repositories || [])[0];
+        if (cpRepo && cpRepo.credential?.apiKeySet !== true) {
+          throw new Error(`${who}的快照${view}里控制面仓库没有 apiKeySet 标记（${JSON.stringify(cpRepo.credential).slice(0, 120)}）—— 脱敏把"已配置"这件事也抹掉了`);
+        }
+      }
+    }
+    console.log("  ok  状态快照（系统/评审人 × 默认/full）都不带仓库凭证密文与明文，只带 apiKeySet 标记");
     // 不自检就领不到活（admission 停在 read_only）—— 六项必检全绿才算入网。
     await jsonFetch(port, "/api/agent/v1/self-check", {
       method: "POST", headers: {authorization: haltNodeAuth},

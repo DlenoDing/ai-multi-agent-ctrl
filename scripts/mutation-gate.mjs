@@ -750,6 +750,14 @@ const MUTATIONS = [
     expect: "抹密钥没抹干净"
   },
   {
+    name: "非系统账号的状态快照必须走 publicProjectRecord 脱敏（仓库凭证不进浏览器）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "  cloned.projects = (state.projects || []).filter((project) => visibleProjectIds.has(project.id)).map(publicProjectRecord);",
+    to: "  cloned.projects = (state.projects || []).filter((project) => visibleProjectIds.has(project.id));",
+    expect: "带出了仓库凭证"
+  },
+  {
     name: "流程导航必须含「项目设置」一步（撤掉项目操作路径后不许把入口一起删掉）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

@@ -1733,7 +1733,9 @@ function scopedStateForAccount(state, account, session) {
   const projectById = new Map((state.projects || []).map((project) => [project.id, project]));
   const visibleProjectIds = new Set((state.projects || []).filter((project) => canReadProject(state, account, project.id, project)).map((project) => project.id));
   const visibleTaskGroupIds = new Set((state.taskGroups || []).filter((taskGroup) => canReadTaskGroup(state, account, taskGroup.id, taskGroup, projectById.get(taskGroup.projectId))).map((taskGroup) => taskGroup.id));
-  cloned.projects = (state.projects || []).filter((project) => visibleProjectIds.has(project.id));
+  // 系统账号那条路（上面）走 publicProjectRecord 脱敏；这条非系统账号的路此前直接发原始记录 ——
+  // 项目仓库凭证（sealedSecret 密文、旧数据里的明文 apiKey/password）随快照进了每个项目成员的浏览器。
+  cloned.projects = (state.projects || []).filter((project) => visibleProjectIds.has(project.id)).map(publicProjectRecord);
   cloned.taskGroups = (state.taskGroups || []).filter((taskGroup) => visibleTaskGroupIds.has(taskGroup.id));
   cloned.repositoryOutputs = (state.repositoryOutputs || []).filter((target) =>
     target.taskGroupId ? visibleTaskGroupIds.has(target.taskGroupId) : visibleProjectIds.has(target.projectId)
