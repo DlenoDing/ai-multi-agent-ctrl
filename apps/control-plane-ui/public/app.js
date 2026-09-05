@@ -4626,6 +4626,8 @@ function workflowGuidePanel(project, groups) {
     {title: "创建任务组", done: groups.length > 0, page: "tg", state: groups.length ? `${groups.length} 个任务组` : "还没有任务组"},
     {title: "创建工作项（任务）", done: workItemCount > 0, page: "tg", state: workItemCount ? `${workItemCount} 个工作项` : "还没有工作项：到任务组里「创建工作项」"},
     {title: "启动执行", done: dispatches > 0, page: "monitor",
+      // 人在这里就能推一拍：同一个动作、同一套回执（被挡/推进 N 项/无事可做）；只对能编排的账号摆，看得到却按不动＝杠杆不可达。
+      action: hasPerm("task_group:orchestrate") && workItemCount > 0 ? `<button class="secondary-button" data-action="orchestrator-run">推进一拍</button>` : "",
       state: dispatches ? `已派发 ${dispatches} 次` : (workItemCount && online ? "还没派发：后台每拍自动推进；等不及可到「执行监控」点「运行自治循环」" : "有工作项且有在线 agent 后自动开始")},
     {title: "人工审核 / 定稿", done: todo.total === 0, attention: todo.total > 0, page: "review",
       state: todo.total ? `${todo.total}${todo.partial ? "+" : ""} 项等你处理` : "暂无等你处理的审核项"},
@@ -4637,7 +4639,7 @@ function workflowGuidePanel(project, groups) {
   return panel("流程导航", `<div class="stack">${steps.map((step, index) => `
     <div class="record-meta"><span>${index + 1}. <strong>${esc(step.title)}</strong></span>
       <span class="${step.attention ? "warn-text" : (step.done ? "" : "muted")}">${step.attention ? "● " : (step.done ? "✓ " : "○ ")}${esc(step.state)}</span>
-      ${go(step.page)}</div>`).join("")}
+      ${step.action || ""}${go(step.page)}</div>`).join("")}
     <div class="small muted">按当前项目实时计算：○ 未开始 · ✓ 已就绪 · ● 等你处理</div></div>`, {wide: true});
 }
 

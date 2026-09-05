@@ -607,9 +607,18 @@ const MUTATIONS = [
     name: "流程导航每一步必须有「前往」直达",
     file: APP,
     gate: "console",
-    from: "      ${go(step.page)}</div>`).join(\"\")}",
-    to: "      </div>`).join(\"\")}",
+    from: "      ${step.action || \"\"}${go(step.page)}</div>`).join(\"\")}",
+    to: "      ${step.action || \"\"}</div>`).join(\"\")}",
     expect: "流程导航没有「前往」"
+  },
+  {
+    // 「推进一拍」只对能编排的账号摆。去掉权限判定即让没权限的人看到一个按下去必然 403 的按钮。
+    name: "流程导航的「推进一拍」必须按编排权限显示",
+    file: APP,
+    gate: "console",
+    from: "      action: hasPerm(\"task_group:orchestrate\") && workItemCount > 0 ? ",
+    to: "      action: workItemCount > 0 ? ",
+    expect: "没有编排权限却摆了「推进一拍」"
   },
   {
     // 项目设置的配置行（仓库/基线/角色）对只读成员必须收起「删除」：cfg-del 是本地暂存，保存已禁用，

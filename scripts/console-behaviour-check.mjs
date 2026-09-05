@@ -1901,6 +1901,17 @@ function runWorkflowGuideCase() {
     /2 台在线/u.test(running) && /1 个任务组/u.test(running) && /3 个工作项/u.test(running) && /已派发 2 次/u.test(running)
       && /1 条指令待编排消费/u.test(running) && /1 个任务组还有关闭门阻塞/u.test(running),
     "流程导航的某一步没按真实数据算（在线数/任务组数/工作项数/派发数/待消费指令/关闭门阻塞）");
+  // 「推进一拍」：能编排的账号在第 4 步就能启动，不必跑去监控页；没权限的不摆（看得到却按不动＝杠杆不可达）。
+  const PERMS = ["task_group:review", "task_group:control", "task_group:orchestrate", "task_group:checkpoint_submit", "project:grant", "project:update", "agent:activate"];
+  const operator = (perms) => ({accountId: "u2", accountType: "user_account", displayName: "操作员", organizationId: "org_default", effectivePermissions: perms});
+  const canRun = guideOf(probe.renderProjectOverviewWith(busy, operator(PERMS), "p1"));
+  const cannotRun = guideOf(probe.renderProjectOverviewWith(busy, operator(PERMS.filter((item) => item !== "task_group:orchestrate")), "p1"));
+  check("有编排权限时，流程导航第 4 步就能「推进一拍」",
+    /流程导航/u.test(canRun) && /data-action="orchestrator-run"/u.test(canRun),
+    "有权限的人在流程导航里还是得跑去执行监控页才能启动");
+  check("没有编排权限时，流程导航不摆「推进一拍」",
+    /流程导航/u.test(cannotRun) && !/data-action="orchestrator-run"/u.test(cannotRun),
+    "没有编排权限却摆了「推进一拍」：按下去必然 403，看得到却按不动");
 }
 
 
