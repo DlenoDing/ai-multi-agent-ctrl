@@ -446,6 +446,21 @@ try {
   await request("/api/work-sessions/sess_dsp_detail/detail", foreignToken, {status: 403});
   await request("/api/agent-dispatches/not_here/detail", viewerToken, {status: 403});
   await request("/api/work-sessions/not_here/detail", systemToken, {status: 404});
+  const nodeObject = await request("/api/agent-nodes/node_detail/detail?projectId=prj_workbench_api", viewerToken);
+  assert.equal(nodeObject.schemaVersion, "runtime-node-detail/v1");
+  assert.equal(nodeObject.node.nodeId, "node_detail");
+  assert.deepEqual(nodeObject.node.projectIds, ["prj_workbench_api"]);
+  assert.equal(nodeObject.projectId, "prj_workbench_api");
+  assert.deepEqual(nodeObject.activeDispatches.map((item) => item.dispatchId), ["dsp_detail"]);
+  assert.equal(nodeObject.activeDispatches[0].taskGroupName, "Release Train Visible");
+  assert.equal(nodeObject.activeDispatches[0].workItemTitle, "Ancient retained detail target");
+  assert.deepEqual(nodeObject.agentProfiles.map((item) => item.id), ["agent_detail"]);
+  const orgNodeObject = await request("/api/agent-nodes/node_detail/detail", viewerToken);
+  assert.equal(orgNodeObject.node.nodeId, "node_detail");
+  await request("/api/agent-nodes/node_detail/detail?projectId=prj_workbench_foreign", viewerToken, {status: 403});
+  await request("/api/agent-nodes/node_detail/detail", foreignToken, {status: 403});
+  await request("/api/agent-nodes/not_here/detail", viewerToken, {status: 403});
+  await request("/api/agent-nodes/not_here/detail", systemToken, {status: 404});
 
   const concurrentA = request("/api/task-groups/tg_workbench_visible/work-items/w_concurrent_a?afterSequence=4&eventLimit=5&waitMs=250", viewerToken);
   const concurrentB = request("/api/task-groups/tg_workbench_visible/work-items/w_concurrent_b?afterSequence=4&eventLimit=5&waitMs=250", viewerToken);

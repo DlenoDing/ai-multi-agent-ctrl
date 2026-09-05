@@ -14,6 +14,7 @@ import { json, jsonString, parseBody } from "./lib/http-utils.mjs";
 import { mcpServiceAllowedTools, mcpServiceAllowlistNotice } from "./lib/mcp-service-allowlist.mjs";
 import { createStaticAssetHandler } from "./lib/static-assets.mjs";
 import { buildExecutionObjectDetail, findExecutionObject } from "./lib/execution-object-detail.mjs";
+import { buildRuntimeNodeDetail } from "./lib/runtime-node-detail.mjs";
 import { assertStateStoreConfig, consumeStateRebuildSignal, ensureStoredState, isStateStoreConflict, markRuntimeStorage, projectShardStorageFault, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
 import { appendProjectExecutionEvent, projectEventLogFault, projectExecutionEventStorageInfo, readProjectExecutionEventByKey, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
 import {
@@ -3936,6 +3937,36 @@ async function handleApi(req, res) {
     json(res, 200, {agentRuntimeNodes: visible.map((nodeItem) =>
       publicAgentNode(nodeItem, runtimeNodeProjectionOptionsForAccount(state, reader.account, nodeItem)))});
     return;
+  }
+
+  const agentNodeDetailMatch = url.pathname.match(/^\/api\/agent-nodes\/([^/]+)\/detail$/);
+  if (req.method === "GET" && agentNodeDetailMatch) {
+    const node = (state.agentRuntimeNodes || []).find((item) => item.nodeId === agentNodeDetailMatch[1]);
+    const authenticated = accountFromRequest(req, state);
+    if (!node || !authenticated) {
+      const denial = authenticated ? missingRecordDenial(req, state, "agent_node_not_found", "permission_denied")
+        : {status: 401, payload: {error: "auth_required"}};
+      return json(res, denial.status, denial.payload);
+    }
+    const requestedProjectId = String(url.searchParams.get("projectId") || "");
+    let projectionOptions;
+    if (requestedProjectId) {
+      const resolved = readableProjectOr403(req, state, requestedProjectId);
+      if (resolved.denial) return json(res, resolved.denial.status, resolved.denial.payload);
+      if (!runtimeNodeVisibleForProjectSet(state, node, new Set([requestedProjectId]))) {
+        const denial = missingRecordDenial(req, state, "agent_node_not_found", "permission_denied");
+        return json(res, denial.status, denial.payload);
+      }
+      projectionOptions = {state, projectIdSet: new Set([requestedProjectId]), profileMode: "project"};
+    } else {
+      if (!runtimeNodeVisibleToAccount(state, authenticated.account, node)) {
+        const denial = missingRecordDenial(req, state, "agent_node_not_found", "permission_denied");
+        return json(res, denial.status, denial.payload);
+      }
+      projectionOptions = runtimeNodeProjectionOptionsForAccount(state, authenticated.account, node);
+    }
+    const publicNode = publicAgentNode(node, projectionOptions);
+    return json(res, 200, buildRuntimeNodeDetail(state, node, {publicNode, projectId: requestedProjectId}));
   }
 
   if (req.method === "GET" && url.pathname === "/api/agent-join-tokens") {
