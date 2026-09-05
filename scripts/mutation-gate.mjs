@@ -795,7 +795,7 @@ const MUTATIONS = [
     gate: "console",
     from: "  if (readOnly) {\n    return `<div class=\"small muted\">当前账号没有",
     to: "  if (false) {\n    return `<div class=\"small muted\">当前账号没有",
-    expect: "只读身份仍渲染了六个禁用输入的定制表单"
+    expect: "只读任务组仍摆出不能提交的 Skill 定制表单"
   },
   {
     name: "工作项卡的定稿要求表单必须默认收起",
