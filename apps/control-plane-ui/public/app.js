@@ -18,7 +18,6 @@ const {
   managementSectionOf,
   menuForCurrentSection,
   sectionLabel,
-  sectionSwitchHtml,
   menuItemHtml
 } = window.AIMAC_CONSOLE_NAV;
 const {
@@ -76,6 +75,8 @@ let taskReturnContext = null;
 let taskRunDisclosure = {};
 let restoredWorkspaceLocation = false;
 let recoveringWorkspaceLocation = false;
+let routeWriteMode = "replace";
+let applyingBrowserRoute = false;
 let workListGroupId = "";
 let workListState = null;
 let taskSearch = "";
@@ -1751,6 +1752,110 @@ function renderLogin() {
 
 /* ---------------- 框架渲染 ---------------- */
 
+function sidebarContextHtml(perspective) {
+  const currentSection = managementSectionOf(page, perspective);
+  const accountOrganizationId = currentAccount?.organizationId || state.organizationContext?.id;
+  const organization = (state.organizations || []).find((item) => item.orgId === accountOrganizationId)
+    || (state.organizationContext?.id === accountOrganizationId ? state.organizationContext : null);
+  const spaces = window.AIMAC_CONTEXT_NAVIGATION.managementSpaces({
+    perspective,
+    currentSection,
+    organizationName: organization?.name || "",
+    projectCount: selectableProjects().length
+  });
+  if (currentSection !== "project") return {spaces, project: ""};
+  const project = currentProject();
+  if (!project) return {spaces, project: ""};
+  const groupId = managementGroupId || (page === "tg" ? expandedTaskGroupId : "");
+  const group = projectTaskGroups().find((item) => item.id === groupId)
+    || (taskWorkDetail?.taskGroup?.projectId === project.id && taskWorkDetail.taskGroup.id === groupId ? taskWorkDetail.taskGroup : null);
+  const taskItems = group
+    ? (tgDetail?.taskGroupId === group.id && tgDetail?.progress?.workItems ? tgDetail.progress.workItems : group.workItems || [])
+    : [];
+  const work = group && selectedWork?.taskGroupId === group.id
+    ? (taskWorkDetail?.workItem?.id === selectedWork.workItemId ? taskWorkDetail.workItem
+      : taskItems.find((item) => item.id === selectedWork.workItemId))
+    : null;
+  const activeRuns = group ? (state.agentDispatches || []).filter((item) => item.taskGroupId === group.id
+    && !terminalDispatchStatuses.has(item.status)).length : 0;
+  const pendingReviews = group ? [
+    ...(state.humanConfirmationRequests || []),
+    ...(state.permissionRequests || []),
+    ...(state.approvalRequests || [])
+  ].filter((item) => item.taskGroupId === group.id && item.status === "pending").length : 0;
+  const blocked = group ? Number(group.blockerCount ?? group.blockers?.length
+    ?? taskItems.filter((item) => item.blockedReason || String(item.status || "").startsWith("blocked")).length) : 0;
+  return {spaces, project: window.AIMAC_CONTEXT_NAVIGATION.projectContext({
+    project,
+    projects: selectableProjects(),
+    group,
+    work,
+    stats: {tasks: group?.workItemCount ?? taskItems.length, runs: activeRuns, reviews: pendingReviews, blocked},
+    labels: {projectStatus: t(project.status), groupStatus: t(group?.goalExecutionStatus || group?.status), workStatus: t(work?.status)}
+  })};
+}
+
+function workspaceRouteSnapshot() {
+  const groupId = managementGroupId || (page === "tg" ? expandedTaskGroupId : "");
+  const workspace = page === "tg" && expandedTaskGroupId
+    ? workspaces.current("group-detail")?.id || "tasks"
+    : workspaces.current(page)?.id || "";
+  return {
+    page,
+    workspace,
+    projectId: PROJECT_PAGES.has(page) ? currentProjectId : "",
+    groupId,
+    workId: page === "tasks" ? selectedWork?.workItemId || ""
+      : page === "directives" ? directiveWorkItemId || "" : "",
+    organizationId: page === "sys-orgs" ? selectedOrganizationId : "",
+    accountId: page === "org-members" ? selectedOrgMemberId
+      : page === "proj-members" ? selectedProjectMemberId : ""
+  };
+}
+
+function requestRoutePush() {
+  if (!applyingBrowserRoute) routeWriteMode = "push";
+}
+
+function syncWorkspaceRoute() {
+  if (!authToken || !currentAccount || applyingBrowserRoute) return;
+  const replace = routeWriteMode !== "push";
+  routeWriteMode = "replace";
+  window.AIMAC_WORKSPACE_ROUTE?.write(workspaceRouteSnapshot(), {replace});
+}
+
+function restoreWorkspaceRoute(route = window.AIMAC_WORKSPACE_ROUTE?.parse()) {
+  if (!route || !allowedMenuItemsFor(perspectiveOf(currentAccount)).some((item) => item.id === route.page)) return false;
+  page = route.page;
+  currentProjectId = PROJECT_PAGES.has(page) ? route.projectId || "" : currentProjectId;
+  selectedOrganizationId = page === "sys-orgs" ? route.organizationId || "" : "";
+  selectedOrgMemberId = page === "org-members" ? route.accountId || "" : "";
+  selectedProjectMemberId = page === "proj-members" ? route.accountId || "" : "";
+  memberGrantAccountId = selectedOrgMemberId || selectedProjectMemberId;
+  managementGroupId = ["tg", "tasks", "monitor", "review", "directives"].includes(page) ? route.groupId || "" : "";
+  expandedTaskGroupId = page === "tg" && managementGroupId ? managementGroupId : "";
+  selectedWork = page === "tasks" && managementGroupId && route.workId
+    ? {taskGroupId: managementGroupId, workItemId: route.workId} : null;
+  directiveTaskGroupId = page === "directives" ? managementGroupId : "";
+  directiveWorkItemId = page === "directives" ? route.workId || "" : "";
+  const workspacePage = expandedTaskGroupId ? "group-detail" : page;
+  const targetWorkspace = route.workspace || workspaces.catalog[workspacePage]?.[0]?.id;
+  if (!workspaces.select(workspacePage, targetWorkspace)) {
+    const first = workspaces.catalog[workspacePage]?.[0]?.id;
+    if (first) workspaces.select(workspacePage, first);
+  }
+  execScope = managementGroupId ? {type: "taskGroup", id: managementGroupId}
+    : currentProjectId ? {type: "project", id: currentProjectId} : {type: "", id: ""};
+  execEvents = [];
+  execCursor = 0;
+  taskWorkDetail = null;
+  tgDetail = null;
+  restoredWorkspaceLocation = true;
+  sessionStorage.setItem("aimac.page", page);
+  if (currentProjectId) sessionStorage.setItem("aimac.projectId", currentProjectId);
+  return true;
+}
+
 function render() {
   if (window.AIMAC_RULE_EDITOR?.isOpen?.()) return;
   if (!authToken || !currentAccount) {
@@ -1774,7 +1879,10 @@ function render() {
   if (workspaceOptions().canCreate === false && ["create", "register"].includes(workspaces.current(page)?.id)) {
     workspaces.select(page, workspaces.catalog[page]?.[0]?.id);
   }
-  if (!loading && !lastError) rememberWorkspaceLocation();
+  if (!loading && !lastError) {
+    rememberWorkspaceLocation();
+    syncWorkspaceRoute();
+  }
   const [title, subtitle] = PAGE_META[page] || ["管理后台", ""];
   // 菜单上直接带计数：否则"等你签字的东西"藏在一个叫"执行监控"的页面里，人根本不会去点。
   const menuTodoCounts = todoCountsByPage();
@@ -1786,22 +1894,7 @@ function render() {
         return menuItemHtml(item, item.id === page, todo) + (item.id === page ? workspaces.navigation(page === "tg" && expandedTaskGroupId ? "group-detail" : page, false, workspaceOptions()) : "");
       })()
   ).join("");
-  const switchHtml = sectionSwitchHtml(perspective, page);
-
-  const showSwitcher = PROJECT_PAGES.has(page) && selectableProjects().length > 0;
-  const switcherHtml = showSwitcher
-    ? `
-      <div class="project-switch">
-        <span>当前项目</span>
-        <select id="project-switcher" aria-label="当前项目">
-          ${/* 已归档的项目仍然列在这里（人要能回去看它当时的记录），但必须标出来：
-                归档是终态且不可撤销，切过去之后配置只能看、成员授权也发不进去。
-                不标的话，人得先切过去、再点一下保存、拿到一句 409 才知道。 */ ""}
-          ${selectableProjects().map((project) => `<option value="${esc(project.id)}" ${project.id === currentProjectId ? "selected" : ""}>${esc(project.name || project.id)}${project.status === "archived" ? "（已归档 · 只读）" : ""}</option>`).join("")}
-        </select>
-      </div>
-    `
-    : "";
+  const sidebarContext = sidebarContextHtml(perspective);
 
   const html = `
     <div class="app-shell">
@@ -1813,6 +1906,8 @@ function render() {
             <span class="brand-section">${esc(sectionLabel(perspective, page))}</span>
           </div>
         </div>
+        ${sidebarContext.spaces}
+        ${sidebarContext.project}
         <nav class="nav" aria-label="管理菜单">${menuHtml}</nav>
       </aside>
       <main class="workspace">
@@ -1821,8 +1916,6 @@ function render() {
             <h1>${esc(title)}</h1>
             <p class="subtitle">${esc(subtitle)}</p>
           </div>
-          ${switchHtml}
-          ${switcherHtml}
           ${currentAccount.accountType === "user_account" && (state.accountCapabilities?.canCreateProject ?? (currentAccount.permissions || []).includes("project:create"))
             ? `<button class="secondary-button" data-action="open-create-project">创建项目</button>` : ""}
           <div class="topbar-actions">
@@ -8513,7 +8606,7 @@ document.addEventListener("submit", async (event) => {
       lastError = "";
       // 会话过期前留下过草稿时，saveSession 已经把页面/项目恢复成当时那一处；
       // 这里不能再把它覆盖成默认页，否则人登录后落在别处，草稿也就补不回那张表单了。
-      if (!resumedFromDraft) page = defaultPageFor(perspectiveOf(currentAccount));
+      if (!resumedFromDraft && !restoreWorkspaceRoute()) page = defaultPageFor(perspectiveOf(currentAccount));
       sessionStorage.setItem("aimac.page", page);
       await loadPage();
       return;
@@ -9013,6 +9106,7 @@ async function focusManagementGroup(groupId, nextPage = page, options = {}) {
   if (groupId && !projectTaskGroups().some((group) => group.id === groupId) && !listedGroup && !detailedGroup) throw new Error("该任务组不在当前项目可见范围内");
   if (!allowedMenuItemsFor(perspectiveOf(currentAccount)).some((item) => item.id === nextPage)) return false;
   if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "切换任务组范围会丢失未保存的修改，确认继续？", danger: true, confirmText: "放弃并切换"}))) return false;
+  requestRoutePush();
   managementGroupId = groupId || "";
   selectedWork = options.workItemId ? {taskGroupId: groupId, workItemId: options.workItemId} : null;
   workEventHistoryMode = false;
@@ -9041,9 +9135,59 @@ async function focusManagementGroup(groupId, nextPage = page, options = {}) {
   return true;
 }
 
+async function navigateWorkspace(nextPage, nextSection, options = {}) {
+  const closesObjectDetail = (nextPage === "sys-orgs" && selectedOrganizationId)
+    || (nextPage === "org-members" && selectedOrgMemberId)
+    || (nextPage === "proj-members" && selectedProjectMemberId);
+  if (closesObjectDetail) {
+    selectedOrganizationId = "";
+    selectedOrgMemberId = "";
+    selectedProjectMemberId = "";
+    memberGrantAccountId = "";
+    if (nextPage === page && workspaces.current(page)?.id === nextSection) { render(); return true; }
+  }
+  if (nextPage === "group-detail" && page === "tg" && expandedTaskGroupId) {
+    if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "任务组详情有未保存的修改，确认切换栏目？", danger: true, confirmText: "放弃并切换"}))) return false;
+    if (!workspaces.select(nextPage, nextSection)) return false;
+    requestRoutePush();
+    formTouched = false;
+    dirtyFormKinds.clear();
+    render();
+    return true;
+  }
+  if (!allowedMenuItemsFor(perspectiveOf(currentAccount)).some((item) => item.id === nextPage)) return false;
+  if (nextPage === page && workspaces.current(page)?.id === nextSection) return true;
+  if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前栏目有未保存的修改，确认切换？", danger: true, confirmText: "放弃并切换"}))) return false;
+  if (!workspaces.select(nextPage, nextSection)) return false;
+  requestRoutePush();
+  if (options.createForGroup && projectTaskGroups().some((group) => group.id === options.createForGroup)) managementGroupId = options.createForGroup;
+  const changedPage = nextPage !== page;
+  page = nextPage;
+  sessionStorage.setItem("aimac.page", page);
+  formTouched = false;
+  dirtyFormKinds.clear();
+  if (changedPage || !lastLoadedAt || Date.now() - lastLoadedAt > 2000) {
+    stopExecPolling();
+    await loadPage();
+  } else render();
+  if (page === "monitor" && workspaces.current(page)?.id === "events") {
+    await loadExecEvents({reset: execCursor === 0});
+    startExecPolling();
+    render();
+  }
+  window.scrollTo?.({top: 0});
+  return true;
+}
+
 document.addEventListener("change", async (event) => {
   const target = event.target;
   try {
+    if (target.dataset.workspaceSelect !== undefined) {
+      const nextPage = target.dataset.workspacePage || page;
+      const previous = workspaces.current(nextPage)?.id || "";
+      if (!(await navigateWorkspace(nextPage, target.value))) target.value = previous;
+      return;
+    }
     if (target.dataset.memberGrantProject !== undefined) {
       memberGrantProjectId = target.value;
       render();
@@ -9081,6 +9225,7 @@ document.addEventListener("change", async (event) => {
         target.value = currentProjectId;
         return;
       }
+      requestRoutePush();
       formTouched = false;
       currentProjectId = target.value;
       resetTaskWorkbench();
@@ -9275,39 +9420,8 @@ document.addEventListener("click", async (event) => {
   }
   const workspaceButton = event.target.closest("[data-workspace]");
   if (workspaceButton) {
-    const nextPage = workspaceButton.dataset.workspacePage || page;
-    const nextSection = workspaceButton.dataset.workspace;
-    const closesObjectDetail = (nextPage === "sys-orgs" && selectedOrganizationId)
-      || (nextPage === "org-members" && selectedOrgMemberId)
-      || (nextPage === "proj-members" && selectedProjectMemberId);
-    if (closesObjectDetail) {
-      selectedOrganizationId = "";
-      selectedOrgMemberId = "";
-      selectedProjectMemberId = "";
-      memberGrantAccountId = "";
-      if (nextPage === page && workspaces.current(page)?.id === nextSection) { render(); return; }
-    }
-    if (nextPage === "group-detail" && page === "tg" && expandedTaskGroupId) {
-      if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "任务组详情有未保存的修改，确认切换栏目？", danger: true, confirmText: "放弃并切换"}))) return;
-      if (!workspaces.select(nextPage, nextSection)) return;
-      formTouched = false;
-      dirtyFormKinds.clear();
-      render();
-      return;
-    }
-    if (!allowedMenuItemsFor(perspectiveOf(currentAccount)).some((item) => item.id === nextPage)) return;
-    if (nextPage === page && workspaces.current(page)?.id === nextSection) return;
-    if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前栏目有未保存的修改，确认切换？", danger: true, confirmText: "放弃并切换"}))) return;
-    if (!workspaces.select(nextPage, nextSection)) return;
-    if (workspaceButton.dataset.createForGroup && projectTaskGroups().some((group) => group.id === workspaceButton.dataset.createForGroup)) managementGroupId = workspaceButton.dataset.createForGroup;
-    const changedPage = nextPage !== page;
-    page = nextPage;
-    sessionStorage.setItem("aimac.page", page);
-    formTouched = false;
-    dirtyFormKinds.clear();
-    if (changedPage || !lastLoadedAt || Date.now() - lastLoadedAt > 2000) { stopExecPolling(); await loadPage(); } else render();
-    if (page === "monitor" && workspaces.current(page)?.id === "events") { await loadExecEvents({reset: execCursor === 0}); startExecPolling(); render(); }
-    window.scrollTo?.({top: 0});
+    await navigateWorkspace(workspaceButton.dataset.workspacePage || page, workspaceButton.dataset.workspace,
+      {createForGroup: workspaceButton.dataset.createForGroup || ""});
     return;
   }
   const mask = event.target.closest("[data-modal-mask]");
@@ -9319,6 +9433,7 @@ document.addEventListener("click", async (event) => {
   if (sectionButton) {
     const nextPage = sectionButton.dataset.sectionTarget;
     if (nextPage !== page && formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前页面有未保存的修改，确认离开？", danger: true, confirmText: "放弃并离开"}))) return;
+    requestRoutePush();
     page = nextPage;
     sessionStorage.setItem("aimac.page", page);
     lastError = "";
@@ -9331,6 +9446,7 @@ document.addEventListener("click", async (event) => {
   const menuButton = event.target.closest("[data-menu]");
   if (menuButton) {
     if (menuButton.dataset.menu !== page && formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前页面有未保存的修改，确认离开？", danger: true, confirmText: "放弃并离开"}))) return;
+    requestRoutePush();
     page = menuButton.dataset.menu;
     if (page === "sys-orgs") selectedOrganizationId = "";
     if (page === "org-members") { selectedOrgMemberId = ""; memberGrantAccountId = ""; }
@@ -9410,6 +9526,7 @@ document.addEventListener("click", async (event) => {
     if (action === "open-org-detail") {
       const orgId = target.dataset.org || "";
       if (!(organizations || []).some((org) => org.orgId === orgId)) return;
+      requestRoutePush();
       selectedOrganizationId = orgId;
       render();
       window.scrollTo?.({top: 0});
@@ -9441,6 +9558,7 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "close-org-detail") {
       const orgId = selectedOrganizationId;
+      requestRoutePush();
       selectedOrganizationId = "";
       render();
       window.scrollTo?.({top: 0});
@@ -9450,6 +9568,7 @@ document.addEventListener("click", async (event) => {
     if (action === "open-member-detail") {
       const accountId = target.dataset.account || "";
       if (!(orgMembers || []).some((account) => account.accountId === accountId)) return;
+      requestRoutePush();
       selectedOrgMemberId = accountId;
       memberGrantAccountId = accountId;
       workspaces.select("org-members", "list");
@@ -9460,6 +9579,7 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "close-member-detail") {
       const accountId = selectedOrgMemberId;
+      requestRoutePush();
       selectedOrgMemberId = "";
       memberGrantAccountId = "";
       render();
@@ -9470,6 +9590,7 @@ document.addEventListener("click", async (event) => {
     if (action === "open-project-member-detail") {
       const accountId = target.dataset.account || "";
       if (!(currentProject()?.members || []).some((member) => member.accountId === accountId)) return;
+      requestRoutePush();
       selectedProjectMemberId = accountId;
       workspaces.select("proj-members", "list");
       render();
@@ -9479,6 +9600,7 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "close-project-member-detail") {
       const accountId = selectedProjectMemberId;
+      requestRoutePush();
       selectedProjectMemberId = "";
       render();
       window.scrollTo?.({top: 0});
@@ -9526,6 +9648,7 @@ document.addEventListener("click", async (event) => {
       execHistoryMode = false;
       execHistoryStack = [];
       managementGroupId = type === "taskGroup" ? execScope.id : "";
+      requestRoutePush();
       workspaces.select("monitor", "events");
       execEvents = [];
       execCursor = 0;
@@ -9569,6 +9692,7 @@ document.addEventListener("click", async (event) => {
       const targetWorkspace = target.dataset.targetWorkspace;
       if ((targetProjectId && targetProjectId !== currentProjectId || targetPage !== page || targetWorkspace && targetWorkspace !== workspaces.current(page)?.id) && formTouched
         && !(await confirmDialog({title: "放弃未保存的修改", message: "未保存的修改将丢失，确认继续切换？", danger: true, confirmText: "放弃并切换"}))) return;
+      requestRoutePush();
       if (targetProjectId) {
         if (targetProjectId !== currentProjectId) resetTaskWorkbench();
         currentProjectId = targetProjectId;
@@ -10219,8 +10343,42 @@ function restoreWorkspaceLocation() {
   sessionStorage.setItem("aimac.projectId", currentProjectId);
 }
 
+async function applyBrowserHistoryRoute(route) {
+  if (!authToken || !currentAccount || !route) return;
+  if (!allowedMenuItemsFor(perspectiveOf(currentAccount)).some((item) => item.id === route.page)) {
+    toast.info("这个地址不属于当前账号的管理空间，已保留在当前页面");
+    window.AIMAC_WORKSPACE_ROUTE?.write(workspaceRouteSnapshot(), {replace: true});
+    return;
+  }
+  if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "浏览器导航将离开当前对象，未保存的修改会丢失。确认继续？", danger: true, confirmText: "放弃并离开"}))) {
+    window.AIMAC_WORKSPACE_ROUTE?.write(workspaceRouteSnapshot(), {replace: true});
+    return;
+  }
+  applyingBrowserRoute = true;
+  try {
+    formTouched = false;
+    dirtyFormKinds.clear();
+    stopExecPolling();
+    if (!restoreWorkspaceRoute(route)) return;
+    await loadPage();
+    if (page === "monitor") {
+      await loadExecEvents({reset: true});
+      startExecPolling();
+      render();
+    }
+  } catch (error) {
+    showError(error);
+  } finally {
+    applyingBrowserRoute = false;
+  }
+}
+
+window.AIMAC_WORKSPACE_ROUTE?.listen((route) => {
+  applyBrowserHistoryRoute(route).catch(reportBackgroundRefreshFailure);
+});
+
 if (authToken && currentAccount) {
-  restoreWorkspaceLocation();
+  if (!restoreWorkspaceRoute()) restoreWorkspaceLocation();
   page = page || defaultPageFor(perspectiveOf(currentAccount));
   connectRealtime();
   loadPage().then(() => {

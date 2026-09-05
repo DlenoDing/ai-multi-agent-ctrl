@@ -27,12 +27,14 @@ const consoleModuleFiles = [
   "modules/dom-utils.js",
   "modules/i18n-utils.js",
   "modules/navigation.js",
+  "modules/context-navigation.js",
   "modules/labels.js",
   "modules/time-format.js",
   "modules/ui-config.js",
   "modules/ui-primitives.js",
   "modules/workspaces.js",
   "modules/workspace-location.js",
+  "modules/workspace-route.js",
   "modules/object-workspace.js",
   "modules/governance-workspace.js",
   "modules/task-group-workspace.js",
@@ -274,6 +276,12 @@ globalThis.__probe = {
   workspaceSetAccount: (accountId) => workspaces.setAccount(accountId),
   workspaceSelect: (pageId, paneId) => workspaces.select(pageId, paneId),
   workspaceCurrent: (pageId) => workspaces.current(pageId)?.id || "",
+  workspaceMobileNavigation: (pageId) => workspaces.navigation(pageId, true, {canCreate: true}),
+  routeParse: (hash) => window.AIMAC_WORKSPACE_ROUTE.parse(hash),
+  routeBuild: (route) => window.AIMAC_WORKSPACE_ROUTE.build(route),
+  routeSnapshot: () => workspaceRouteSnapshot(),
+  restoreRoute: (route) => restoreWorkspaceRoute(route),
+  currentRouteHash: () => window.location?.hash || "",
   grantRoleLabel: (role) => grantRoleLabel(role),
   joinTokenTargetProjects: (nextState) => { state = nextState; return joinTokenTargetProjects(); },
   canResumeTaskGroupAs: (taskGroup, accountType) => {
@@ -463,6 +471,14 @@ globalThis.__probe = {
   },
   restoreDraft: () => { const ok = restoreDraftAfterRelogin(); return {ok, page, projectId: currentProjectId, pending: pendingFormRestore}; },
   renderFullPageWith: (nextState, account, projectId, pageId) => { state = nextState; currentAccount = account; currentProjectId = projectId; page = pageId; authToken = authToken || "probe-token"; render(); },
+  renderObjectShellWith: (nextState, account, route, detail) => {
+    state = nextState; currentAccount = account; authToken = authToken || "probe-token";
+    workspaces.setAccount(account?.accountId || "");
+    restoreWorkspaceRoute(route);
+    if (detail) taskWorkDetail = detail;
+    render();
+    return document.body.innerHTML;
+  },
   renderFullPagePaneWith: (nextState, account, projectId, pageId, paneId) => { state = nextState; currentAccount = account; currentProjectId = projectId; page = pageId; authToken = authToken || "probe-token"; if (paneId) workspaces.select(pageId, paneId); render(); },
   workspaceOwner: (pageId, title) => workspaces.owner(pageId, title),
   // 「待人工确认」那个数不在 state 里：它由 loadPage 从计数接口取回来放进模块级变量。
@@ -2614,8 +2630,9 @@ async function runErrorGuidanceCase() {
         `菜单只有短标题或说明没有取自 PAGE_META：${pageId} / ${meta[pageId]?.desc}`);
     }
   };
-  const systemNav = renderedNav({accountId: "sys", email: "sys@local", displayName: "系统管理员",
-    accountType: "system_admin", roles: ["system_owner"], permissions: ["system:*"], organizationId: null}, null, "sys-overview");
+  const systemAccount = {accountId: "sys", email: "sys@local", displayName: "系统管理员",
+    accountType: "system_admin", roles: ["system_owner"], permissions: ["system:*"], organizationId: null};
+  const systemNav = renderedNav(systemAccount, null, "sys-overview");
   assertMenuDescriptions("系统管理", systemNav, ["sys-overview", "sys-orgs", "sys-settings"]);
   const orgNav = renderedNav({accountId: "org", email: "org@local", displayName: "组织管理员",
     accountType: "org_admin", roles: ["org_admin"], permissions: ["org:*", "project:create", "member:invite", "agent:activate"], organizationId: "org_default"}, "p1", "org-overview");
@@ -2647,6 +2664,64 @@ async function runErrorGuidanceCase() {
       && projectNav.indexOf("治理配置") < projectNav.indexOf('data-menu="proj-settings"')
       && projectNav.indexOf("治理配置") > projectNav.indexOf('data-menu="directives"'),
     "项目管理侧栏仍是平铺功能清单，没有把项目总览、准备接入、执行推进、人工控制和治理配置分开");
+  const systemProjectNav = renderedNav(systemAccount, "p1", "proj-overview");
+  const projectAside = systemProjectNav.split("</aside>")[0] || "";
+  const projectTopbar = String(systemProjectNav.split('<header class="topbar">')[1] || "").split("</header>")[0] || "";
+  check("管理空间切换必须成为侧栏第一层而不是顶栏 Tab",
+    /class="management-space-switch"/u.test(projectAside)
+      && projectAside.indexOf("management-space-switch") < projectAside.indexOf('aria-label="管理菜单"')
+      && /系统管理/u.test(projectAside) && /项目管理/u.test(projectAside)
+      && !/section-switch|section-tab/u.test(projectTopbar),
+    "系统/组织与项目仍像顶栏页面 Tab，或没有位于模块菜单之前形成独立管理空间");
+  check("当前项目选择和进度必须与项目模块同处侧栏",
+    /class="sidebar-object-context"/u.test(projectAside)
+      && /id="project-switcher"/u.test(projectAside)
+      && /sidebar-progress/u.test(projectAside)
+      && !/class="project-switch"/u.test(projectTopbar),
+    "项目选择器、项目状态和项目模块仍散落在顶栏与内容区");
+
+  const objectProbe = loadConsole(el("div"), {realI18n: true});
+  const group = {id: "tg_context", projectId: "p1", name: "支付链路任务组", status: "active", goalExecutionStatus: "active",
+    progress: 46, workItemCount: 1, blockers: [], workItems: [{id: "work_context", title: "核对支付回调", ownerRole: "reviewer", status: "running", progress: 55}]};
+  const objectState = {...navState, taskGroups: [group], agentDispatches: [{dispatchId: "adp_context", taskGroupId: group.id, workItemId: "work_context", status: "running"}],
+    humanConfirmationRequests: [{requestId: "hcr_context", taskGroupId: group.id, status: "pending"}]};
+  const objectHtml = objectProbe.renderObjectShellWith(objectState,
+    {accountId: "sys", email: "sys@local", displayName: "系统管理员", accountType: "system_admin", permissions: ["system:*"], organizationId: null},
+    {page: "tasks", projectId: "p1", groupId: group.id, workId: "work_context", workspace: "list"},
+    {taskGroup: group, workItem: group.workItems[0], events: [], eventCount: 0, returnedEventCount: 0});
+  const objectAside = String(objectHtml).split("</aside>")[0] || "";
+  check("任务组和任务对象上下文必须跨页面持续显示",
+    /当前任务组/u.test(objectAside) && /支付链路任务组/u.test(objectAside)
+      && /任务 1/u.test(objectAside) && /运行 1/u.test(objectAside) && /待审 1/u.test(objectAside)
+      && /当前任务/u.test(objectAside) && /核对支付回调/u.test(objectAside)
+      && /data-focus-page="tasks"/u.test(objectAside) && /data-focus-page="monitor"/u.test(objectAside)
+      && /data-focus-page="review"/u.test(objectAside) && /data-focus-page="directives"/u.test(objectAside),
+    "进入任务后侧栏没有持续显示上级任务组、当前任务、运行/待审状态和上下文动作");
+  check("对象工作区渲染后地址必须与当前任务一致",
+    objectProbe.currentRouteHash() === "#/project/p1/tasks/tg_context/work_context?pane=list",
+    `当前地址是 ${objectProbe.currentRouteHash() || "空"}`);
+  const mobileWorkspace = objectProbe.workspaceMobileNavigation("monitor");
+  check("窄屏二级栏目必须是单一选择器而不是第二条横向 Tab",
+    /workspace-mobile-picker/u.test(mobileWorkspace) && /data-workspace-select/u.test(mobileWorkspace)
+      && !/workspace-mobile-nav|workspace-nav-item/u.test(mobileWorkspace),
+    "移动端仍要在主菜单下面再左右滑动一条栏目 Tab");
+
+  const taskRoute = objectProbe.routeBuild({page: "tasks", projectId: "prj_a", groupId: "tg_a", workId: "work_a", workspace: "list", token: "secret"});
+  const parsedTaskRoute = objectProbe.routeParse(taskRoute);
+  check("项目任务地址必须完整往返页面、项目、任务组、任务和栏目",
+    taskRoute === "#/project/prj_a/tasks/tg_a/work_a?pane=list"
+      && parsedTaskRoute?.page === "tasks" && parsedTaskRoute.projectId === "prj_a"
+      && parsedTaskRoute.groupId === "tg_a" && parsedTaskRoute.workId === "work_a" && parsedTaskRoute.workspace === "list"
+      && !taskRoute.includes("secret"),
+    `任务地址无法稳定往返或夹带了非定位字段：${taskRoute}`);
+  check("系统组织与组织成员详情必须有独立地址",
+    objectProbe.routeParse("#/system/organizations/org_a")?.organizationId === "org_a"
+      && objectProbe.routeParse("#/organization/members/acct_a")?.accountId === "acct_a",
+    "组织或成员详情仍只能靠当前浏览器内存状态打开");
+  check("对象地址拒绝路径逃逸和非 ID 内容",
+    objectProbe.routeParse("#/project/..%2Fsecret/tasks/tg_a/work_a") === null
+      && objectProbe.routeParse("#/project/%E0%A4%A/tasks") === null,
+    "地址里的对象 ID 可以注入路径分隔符或坏编码");
   const membersRoot = el("div");
   const membersProbe = loadConsole(membersRoot, {realI18n: true});
   const projectMemberState = {

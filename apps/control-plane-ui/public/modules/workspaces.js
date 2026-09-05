@@ -80,6 +80,10 @@
   function navigation(page, mobile = false, options = {}) {
     const entries = (catalog[page] || []).filter((entry) => options.canCreate !== false || !["create", "register"].includes(entry.id));
     if (!entries.length) return "";
+    if (mobile === true) {
+      return `<label class="workspace-mobile-picker"><span>当前栏目</span><select data-workspace-select data-workspace-page="${esc(page)}">${entries.map((entry) =>
+        `<option value="${esc(entry.id)}"${current(page)?.id === entry.id ? " selected" : ""}>${esc(entry.label)}</option>`).join("")}</select></label>`;
+    }
     return `<div class="${mobile === "inline" ? "workspace-detail-nav" : mobile ? "workspace-mobile-nav" : "workspace-nav"}" aria-label="功能栏目">${entries.map((entry) =>
       `<button class="workspace-nav-item${current(page)?.id === entry.id ? " active" : ""}" data-workspace-page="${esc(page)}" data-workspace="${esc(entry.id)}" aria-current="${current(page)?.id === entry.id ? "page" : "false"}">${esc(entry.label)}</button>`).join("")}</div>`;
   }

@@ -11726,11 +11726,67 @@ const MUTATIONS = [
   },
   {
     name: "项目切换器要标出哪些是已归档（切过去只能看，而归档不可撤销）",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/context-navigation.js",
     gate: "console",
-    from: '${project.status === "archived" ? "（已归档 · 只读）" : ""}',
+    from: '${item.status === "archived" ? "（已归档 · 只读）" : ""}',
     to: "",
     expect: "要标出哪些是已归档"
+  },
+  {
+    name: "管理空间切换必须位于侧栏第一层",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "        ${sidebarContext.spaces}\n        ${sidebarContext.project}",
+    to: "        ${sidebarContext.project}",
+    expect: "管理空间切换必须成为侧栏第一层"
+  },
+  {
+    name: "当前项目选择和进度必须与模块导航同处侧栏",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "        ${sidebarContext.project}\n        <nav class=\"nav\"",
+    to: "        <nav class=\"nav\"",
+    expect: "当前项目选择和进度必须与项目模块同处侧栏"
+  },
+  {
+    name: "任务组对象上下文不得在跨页时丢失",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  const project = currentProject();\n  if (!project) return {spaces, project: ""};\n  const groupId = managementGroupId || (page === "tg" ? expandedTaskGroupId : "");',
+    to: '  const project = currentProject();\n  if (!project) return {spaces, project: ""};\n  const groupId = "";',
+    expect: "任务组和任务对象上下文必须跨页面持续显示"
+  },
+  {
+    name: "窄屏二级栏目必须收敛成单一选择器",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "console",
+    from: "    if (mobile === true) {",
+    to: "    if (false && mobile === true) {",
+    expect: "窄屏二级栏目必须是单一选择器"
+  },
+  {
+    name: "任务深链接必须保留任务对象",
+    file: "apps/control-plane-ui/public/modules/workspace-route.js",
+    gate: "console",
+    from: '    const work = route.workId && ["tasks", "directives"].includes(route.page) ? `/${encoded(route.workId)}` : "";',
+    to: '    const work = "";',
+    expect: "项目任务地址必须完整往返"
+  },
+  {
+    name: "对象路由 ID 必须拒绝路径逃逸",
+    file: "apps/control-plane-ui/public/modules/workspace-route.js",
+    gate: "console",
+    from: '      return decoded.length <= 256 && /^[A-Za-z0-9._:-]+$/u.test(decoded) ? decoded : "";',
+    to: '      return decoded.length <= 256 ? decoded : "";',
+    expect: "对象地址拒绝路径逃逸和非 ID 内容"
+  },
+  {
+    name: "任务对象地址必须恢复当前任务",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  selectedWork = page === "tasks" && managementGroupId && route.workId\n    ? {taskGroupId: managementGroupId, workItemId: route.workId} : null;',
+    to: "  selectedWork = null;",
+    expect: "任务组和任务对象上下文必须跨页面持续显示"
   },
   {
     name: "MCP 工具崩溃不得伪装成正当拒绝（要回 server_error、打日志、说清别重试）",
