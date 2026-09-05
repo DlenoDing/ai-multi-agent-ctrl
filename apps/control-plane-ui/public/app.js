@@ -33,7 +33,8 @@ const {
   executionProfileLabel,
   admissionReasonLabel,
   laneFunctionLabel,
-  modelDecisionSummaryZh
+  modelDecisionSummaryZh,
+  REASONING_LEVEL_LABELS
 } = window.AIMAC_CONSOLE_LABELS;
 const {
   noteServerClock,
@@ -7419,7 +7420,8 @@ function renderExecutionObjectDetail() {
     hasMoreEvents: execHasMore,
     historyTruncated: execEventsDropped,
     controls: executionObjectControlsHtml(executionObjectDetail),
-    helpers: {badge, t, fmtTime, explainCoded, evidenceRefsHint, ruleSummaryHtml}
+    helpers: {badge, t, fmtTime, explainCoded, evidenceRefsHint, ruleSummaryHtml,
+      reasoningLabel: (value) => REASONING_LEVEL_LABELS[value] || value || "-"}
   });
 }
 
@@ -8540,6 +8542,11 @@ document.addEventListener("submit", async (event) => {
       if (!resumedFromDraft && !restoreWorkspaceRoute()) page = defaultPageFor(perspectiveOf(currentAccount));
       sessionStorage.setItem("aimac.page", page);
       await loadPage();
+      if (page === "monitor") {
+        await loadExecEvents({reset: true});
+        startExecPolling();
+        render();
+      }
       return;
     }
     if (kind === "change-password") {
@@ -10506,10 +10513,11 @@ if (authToken && currentAccount) {
   if (!restoreWorkspaceRoute()) restoreWorkspaceLocation();
   page = page || defaultPageFor(perspectiveOf(currentAccount));
   connectRealtime();
-  loadPage().then(() => {
+  loadPage().then(async () => {
     if (page === "monitor") {
-      loadExecEvents({reset: true}).catch(reportBackgroundRefreshFailure);
+      await loadExecEvents({reset: true});
       startExecPolling();
+      render();
     }
   }).catch((error) => {
     lastError = error?.message || String(error);

@@ -19,6 +19,8 @@
 .runtime-node-capability-groups h4 { margin: 0 0 8px; font-size: 12px; }
 .runtime-node-workspace .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .runtime-node-workspace .chip { display: inline-flex; max-width: 100%; border: 1px solid #d6dce5; border-radius: 5px; background: #f5f7fa; padding: 3px 6px; color: #384152; font-size: 11px; overflow-wrap: anywhere; }
+.runtime-node-disclosure > summary { cursor: pointer; color: #2458b8; font-size: 12px; }
+.runtime-node-disclosure[open] > summary { margin-bottom: 8px; }
 .runtime-node-records { display: grid; min-width: 0; }
 .runtime-node-record { display: grid; grid-template-columns: minmax(180px, 2fr) minmax(100px, 1fr) minmax(160px, 1.3fr) auto; align-items: center; gap: 12px; width: 100%; min-width: 0; padding: 11px 0; border: 0; border-top: 1px solid #edf0f3; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
 .runtime-node-record:hover { background: #f5f8ff; }

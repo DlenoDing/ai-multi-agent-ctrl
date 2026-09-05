@@ -260,7 +260,7 @@ function buildState() {
   ];
   state.agentTaskContracts = [
     ...(state.agentTaskContracts || []),
-    {sessionId: "sess_dsp_detail", runId: "run_dsp_detail", projectId: "prj_workbench_api", taskGroupId: "tg_workbench_visible", workId: "w_outside_summary", roleId: "archivist", roleSkill: {roleSkillId: "skill_archivist", title: "Archive evidence", contentDigest: "sha256:skill"}, model: {modelId: "model_api", reasoningLevel: "medium", modelDecision: "fixed work item implementation"}, rulesetDigest: "sha256:rules", effectiveRulesDigest: "sha256:effective", actionBasis: {activeRuleRefs: ["rule:archive"], forbiddenActions: ["scope_expand"], validationRequirements: ["checkpoint_registered"]}, createdAt: at(2)}
+    {sessionId: "sess_dsp_detail", runId: "run_dsp_detail", projectId: "prj_workbench_api", taskGroupId: "tg_workbench_visible", workId: "w_outside_summary", roleId: "archivist", roleSkill: {roleSkillRef: "skill_archivist", title: "Archive evidence", roleSkillDigest: "sha256:skill"}, model: {modelId: "model_api", reasoningLevel: "medium", modelDecision: "fixed work item implementation"}, rulesetDigest: "sha256:rules", effectiveRulesDigest: "sha256:effective", actionBasis: {activeRuleRefs: ["rule:archive"], forbiddenActions: ["scope_expand"], validationRequirements: ["checkpoint_registered"]}, createdAt: at(2)}
   ];
   return state;
 }
@@ -434,6 +434,7 @@ try {
   assert.equal(dispatchObject.modelDecision.selectedModel.modelId, "model_api");
   assert.equal(dispatchObject.placementDecision.placement, "new_session");
   assert.equal(dispatchObject.contractSummary.roleSkill.roleSkillId, "skill_archivist");
+  assert.equal(dispatchObject.contractSummary.roleSkill.contentDigest, "sha256:skill");
   assert.deepEqual(dispatchObject.checkpoints.map((item) => item.checkpointId), ["chk_detail"]);
   assert.equal(dispatchObject.repositoryOutput.targetId, "rot_detail");
   assert.equal(dispatchObject.settled, false);

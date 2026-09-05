@@ -164,7 +164,7 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
 {
   const html = runtimeNodeWorkspace.render({
     detail: {
-      node: {nodeId: "node_1", nodeName: "构建节点", organizationId: "org_1", registrationScope: "organization", status: "online", admission: "full", runtimeVersion: "1.4.0", lastHeartbeatAt: "now", lastSelfCheckAt: "now", allowedRoles: ["reviewer"], allowedMcpTools: ["state.get"], effectiveProjectIds: ["p1"], profile: {cpuCount: 8, tools: [{name: "git", version: "2", available: true}], models: [{providerClass: "openai", available: true}], capabilityFlags: ["repo_write"]}},
+      node: {nodeId: "node_1", nodeName: "构建节点", organizationId: "org_1", registrationScope: "organization", status: "online", admission: "full", runtimeVersion: "1.4.0", lastHeartbeatAt: "now", lastSelfCheckAt: "now", allowedRoles: ["reviewer"], allowedMcpTools: Array.from({length: 9}, (_, index) => `tool.${index}`), effectiveProjectIds: ["p1"], profile: {cpuCount: 8, tools: [{name: "git", version: "2", available: true}], models: [{providerClass: "openai", available: true}], capabilityFlags: ["repo_write"]}},
       scope: {type: "organization", id: "org_1"}, assignedDispatchCount: 1,
       activeDispatches: [{dispatchId: "d1", projectId: "p1", taskGroupId: "g1", taskGroupName: "任务组", workItemId: "w1", workItemTitle: "执行任务", roleId: "reviewer", model: "model-a", status: "running", progressPercent: 33}],
       agentProfiles: [{id: "a1", name: "评审 Agent", role: "reviewer", status: "active"}],
@@ -176,7 +176,8 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
   });
   check("runtime node detail exposes scope, health, capabilities, profiles, work and control ACK",
     ["org_1", "node_1", "1.4.0", "openai", "git 2", "a1", "d1", "c1", "shutdown"].every((value) => html.includes(value))
-      && /data-action="open-execution-object"/u.test(html) && /data-action="open-agent-profile"/u.test(html), strip(html).slice(0, 800));
+      && /data-action="open-execution-object"/u.test(html) && /data-action="open-agent-profile"/u.test(html)
+      && /<details class="runtime-node-disclosure"><summary>9 个工具，展开查看/u.test(html), strip(html).slice(0, 800));
 }
 
 {
@@ -409,13 +410,14 @@ const helpers = {
       fmtTime: (value) => value,
       explainCoded: (value) => value,
       evidenceRefsHint: () => "",
-      ruleSummaryHtml: () => '<div data-rules>skill-review</div>'
+      ruleSummaryHtml: () => '<div data-rules>skill-review</div>',
+      reasoningLabel: (value) => ({medium: "中"}[value] || value)
     }
   });
   check("execution object workspace keeps the full task-session-dispatch-node relationship",
     ["g_exec", "w_exec", "s_exec", "d_exec", "n_exec"].every((value) => html.includes(value)), strip(html).slice(0, 500));
   check("execution object workspace exposes agent, model, reasoning, rules, commands and Git evidence",
-    ["a_exec", "model-x", "medium", "skill-review", "cmd_exec", "1234567890ab", "pause_dispatch"].every((value) => html.includes(value)), strip(html).slice(0, 700));
+    ["a_exec", "model-x", "中", "skill-review", "cmd_exec", "1234567890ab", "pause_dispatch"].every((value) => html.includes(value)), strip(html).slice(0, 700));
   check("execution event summaries are escaped", !html.includes("<script>") && html.includes("&lt;script&gt;"), html.slice(-500));
 }
 

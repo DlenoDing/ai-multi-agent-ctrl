@@ -11,6 +11,12 @@
       : `<span class="muted">${esc(empty)}</span>`;
   }
 
+  function collapsibleChips(items, label, empty) {
+    if (!items?.length) return `<span class="muted">${esc(empty)}</span>`;
+    if (items.length <= 8) return chips(items, empty);
+    return `<details class="runtime-node-disclosure"><summary>${esc(items.length)} 个${esc(label)}，展开查看</summary>${chips(items, empty)}</details>`;
+  }
+
   function dispatches(detail, h) {
     const items = detail.activeDispatches || [];
     if (!items.length) return `<div class="notice">当前节点没有活动派发，可继续接收符合角色与项目范围的新任务。</div>`;
@@ -73,7 +79,7 @@
           <dt>最近心跳</dt><dd>${h.fmtTime(node.lastHeartbeatAt)}</dd><dt>最近自检</dt><dd>${h.fmtTime(node.lastSelfCheckAt)}</dd><dt>Runtime 版本</dt><dd class="mono">${esc(node.runtimeVersion || "-")}${node.runtimeOutdated ? " · 需要升级" : ""}</dd>
           <dt>缺少检查</dt><dd>${missing.length ? chips(missing.map((item) => h.t(item) || item)) : "无"}</dd><dt>失败检查</dt><dd>${failures.length ? chips(failures.map((item) => h.explainCoded(item.reason || item))) : "无"}</dd>
         </dl></section>
-        <section><span class="governance-eyebrow">调配边界</span><h3>项目与角色</h3><dl class="execution-kv"><dt>注册范围</dt><dd>${esc(scopeText)}</dd><dt>可见项目</dt><dd>${chips(node.effectiveProjectIds || node.projectIds || [], "暂无")}</dd><dt>可承担角色</dt><dd>${chips(node.allowedRoles || [], "未声明")}</dd><dt>远程 MCP 工具</dt><dd>${chips(node.allowedMcpTools || [], "按任务授权")}</dd></dl></section>
+        <section><span class="governance-eyebrow">调配边界</span><h3>项目与角色</h3><dl class="execution-kv"><dt>注册范围</dt><dd>${esc(scopeText)}</dd><dt>可见项目</dt><dd>${chips(node.effectiveProjectIds || node.projectIds || [], "暂无")}</dd><dt>可承担角色</dt><dd>${chips(node.allowedRoles || [], "未声明")}</dd><dt>远程 MCP 工具</dt><dd>${collapsibleChips(node.allowedMcpTools || [], "工具", "按任务授权")}</dd></dl></section>
       </div>
       <section class="runtime-node-band"><span class="governance-eyebrow">主机能力</span><h3>模型、资源与工具</h3>${capability(detail, h)}</section>
       <section class="runtime-node-band"><div class="runtime-node-band-heading"><div><span class="governance-eyebrow">当前负载</span><h3>活动派发</h3></div><strong>${esc((detail.activeDispatches || []).length)} 个</strong></div>${dispatches(detail, h)}</section>

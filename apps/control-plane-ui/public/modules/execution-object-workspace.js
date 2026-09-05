@@ -118,9 +118,9 @@
         ])}</section>
         <section class="execution-object-band"><span class="governance-eyebrow">调度决定</span><h3>模型与放置</h3>${definitionList([
           ["实际模型", `<span class="mono">${esc(selectedModel.modelId || dispatch.model || "-")}</span>`],
-          ["推理级别", esc(h.t(selectedModel.reasoningLevel || selectedModel.reasoning || dispatch.reasoning) || selectedModel.reasoningLevel || dispatch.reasoning || "-")],
+          ["推理级别", esc(h.reasoningLabel(selectedModel.reasoningLevel || selectedModel.reasoning || dispatch.reasoning))],
           ["会话放置", esc(h.t(placement.placement || session.placement) || placement.placement || session.placement || "-")],
-          ["执行载体", esc(placement.workerCarrierDecision?.carrier || placement.workerCarrierDecision?.mode || session.laneId || "-")],
+          ["执行载体", esc(h.t(placement.workerCarrierDecision?.carrier || placement.workerCarrierDecision?.mode || session.laneId || "-") || placement.workerCarrierDecision?.carrier || session.laneId || "-")],
           ["模型选择依据", esc(decision.modelDecision || dispatch.modelDecision || "未记录")]
         ])}</section>
       </div>

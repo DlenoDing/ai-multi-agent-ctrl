@@ -11820,6 +11820,30 @@ const MUTATIONS = [
     expect: "窗口外合法派发深链接必须通过执行对象接口恢复独立详情"
   },
   {
+    name: "登录恢复执行对象时首批事件必须立即呈现",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      if (page === "monitor") {\n        await loadExecEvents({reset: true});\n        startExecPolling();\n        render();\n      }\n      return;',
+    to: '      if (page === "monitor") {\n        startExecPolling();\n      }\n      return;',
+    expect: "登录后直接进入监控对象必须先加载事件再呈现"
+  },
+  {
+    name: "执行对象推理档位必须使用专用中文词表",
+    file: "apps/control-plane-ui/public/modules/execution-object-workspace.js",
+    gate: "workspace",
+    from: '["推理级别", esc(h.reasoningLabel(selectedModel.reasoningLevel || selectedModel.reasoning || dispatch.reasoning))],',
+    to: '["推理级别", esc(selectedModel.reasoningLevel || selectedModel.reasoning || dispatch.reasoning || "-")],',
+    expect: "execution object workspace exposes agent, model, reasoning, rules, commands and Git evidence"
+  },
+  {
+    name: "真实任务契约的 roleSkillRef 必须显示在派发详情",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "task-api",
+    from: "roleSkillId: skill.roleSkillId || skill.roleSkillRef || null",
+    to: "roleSkillId: skill.roleSkillId || null",
+    expect: "skill_archivist"
+  },
+  {
     name: "任务执行次数必须进入统一派发对象详情",
     file: "apps/control-plane-ui/public/modules/task-workbench.js",
     gate: "workspace",

@@ -2742,6 +2742,10 @@ async function runErrorGuidanceCase() {
       && parsedExecutionRoute?.executionType === "dispatch" && parsedExecutionRoute.executionId === "adp_a"
       && parsedExecutionRoute.groupId === "tg_a",
     `执行对象地址无法完整往返：${executionRoute}`);
+  const loginSubmitSource = objectProbe.handlerSource("submit");
+  check("登录后直接进入监控对象必须先加载事件再呈现",
+    /if \(page === "monitor"\) \{\s*await loadExecEvents\(\{reset: true\}\);\s*startExecPolling\(\);\s*render\(\);/u.test(loginSubmitSource),
+    "登录恢复了派发或会话详情，但首批事件异步取回后没有重渲染，页面会暂时错误显示“没有过程事件”");
   check("对象地址拒绝路径逃逸和非 ID 内容",
     objectProbe.routeParse("#/project/..%2Fsecret/tasks/tg_a/work_a") === null
       && objectProbe.routeParse("#/project/%E0%A4%A/tasks") === null,
