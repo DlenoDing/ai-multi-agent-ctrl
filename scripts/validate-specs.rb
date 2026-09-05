@@ -1357,7 +1357,7 @@ errors << %(实时 WebSocket 必须限制入站消息大小 maxPayload（否则�
 # 人打开控制台看不出"现在轮到我做什么"：菜单写死无计数，唯一的待办数字不可点击且只算当前项目，
 # 而等人拍板的东西被拆在两个页面上，其中一个还叫"执行监控" —— 名字完全不暗示这里有等你签字的东西。
 errors << %(控制台必须有跨项目的"待你处理"汇总，否则人工闸门存在但不可操作) unless app_js_source.include?("function pendingForMe()") && app_js_source.include?(%q{panel("待你处理"})
-errors << %(菜单必须带待办计数，否则等人签字的东西藏在别的页面里没人会去点) unless nav_module_source.include?(%q{class="nav-badge">}) && app_js_source.include?("menuTodoCounts[item.id]")
+errors << %(菜单必须带待办计数，否则等人签字的东西藏在别的页面里没人会去点) unless nav_module_source.include?(%q{class="nav-badge">}) && app_js_source.include?("menuTodoFor(item, menuTodoCounts)")
 # 计数只能统计"这个人有权处置"的项：把别人负责的也算进来，红点就成了一个永远清不掉的东西。
 # 只查"有没有 allowed 这个入参"，不锁死整个签名：签名多一个参数就假红，而真正的过滤逻辑坏掉时
 # 它照样绿（字符串还在）。真正的不变式"无权的类别不进统计"由控制台行为门断言。
