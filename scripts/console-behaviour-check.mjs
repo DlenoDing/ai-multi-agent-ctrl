@@ -270,6 +270,9 @@ const __workspaceInventory = (pageId, renderer, paneIds) => {
   return ids.map((id) => __withWorkspacePane(pageId, id, () => \`<!-- workspace:\${pageId}/\${id} -->\${renderer()}\`)).join("\\n");
 };
 globalThis.__probe = {
+  workspaceSetAccount: (accountId) => workspaces.setAccount(accountId),
+  workspaceSelect: (pageId, paneId) => workspaces.select(pageId, paneId),
+  workspaceCurrent: (pageId) => workspaces.current(pageId)?.id || "",
   grantRoleLabel: (role) => grantRoleLabel(role),
   joinTokenTargetProjects: (nextState) => { state = nextState; return joinTokenTargetProjects(); },
   canResumeTaskGroupAs: (taskGroup, accountType) => {
@@ -827,6 +830,26 @@ function check(name, condition, detail) {
       + "（本门的顺序是【名称在前、条件在后】）");
   }
   if (!condition) failures.push(`${name}: ${detail}`);
+}
+
+// 功能栏目属于账号自己的工作上下文。共用浏览器切换账号时，不能把上一位操作者停留的
+// 「授权说明 / 危险操作」栏目带给下一位；新账号必须从页面主栏目开始。
+{
+  const probe = loadConsole(el("div"), {realI18n: true});
+  probe.workspaceSetAccount("acct_workspace_a");
+  probe.workspaceSelect("proj-members", "help");
+  check("账号 A 的功能栏目选择会被保留", probe.workspaceCurrent("proj-members") === "help",
+    `实际栏目=${probe.workspaceCurrent("proj-members")}`);
+  probe.workspaceSetAccount("acct_workspace_b");
+  check("账号 B 不继承账号 A 的功能栏目", probe.workspaceCurrent("proj-members") === "list",
+    `新账号实际栏目=${probe.workspaceCurrent("proj-members")}`);
+  probe.workspaceSelect("proj-members", "groups");
+  probe.workspaceSetAccount("acct_workspace_a");
+  check("切回账号 A 会恢复账号 A 自己的栏目", probe.workspaceCurrent("proj-members") === "help",
+    `切回后实际栏目=${probe.workspaceCurrent("proj-members")}`);
+  probe.workspaceSetAccount("acct_workspace_b");
+  check("账号 B 保留账号 B 自己的栏目", probe.workspaceCurrent("proj-members") === "groups",
+    `切回后实际栏目=${probe.workspaceCurrent("proj-members")}`);
 }
 
 // 【暂停与恢复按当前状态二选一】。两个按钮一直摆着的话，总有一个按了什么都不会发生：

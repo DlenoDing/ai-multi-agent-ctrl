@@ -67,6 +67,7 @@ const app = document.querySelector("#app");
 
 let authToken = sessionStorage.getItem("aimac.sessionToken") || "";
 let currentAccount = JSON.parse(sessionStorage.getItem("aimac.account") || "null");
+workspaces.setAccount(currentAccount?.accountId || "");
 let page = sessionStorage.getItem("aimac.page") || "";
 let currentProjectId = sessionStorage.getItem("aimac.projectId") || "";
 let managementGroupId = "";
@@ -916,6 +917,7 @@ function saveSession(sessionToken, account) {
   resetTaskWorkbench();
   authToken = sessionToken;
   currentAccount = account;
+  workspaces.setAccount(account?.accountId || "");
   sessionStorage.setItem("aimac.sessionToken", sessionToken);
   sessionStorage.setItem("aimac.account", JSON.stringify(account));
   // 会话过期前留下的草稿：回到原页面原项目，并把内容交给既有的一次性回填。
@@ -960,6 +962,7 @@ function clearSession() {
   resetTaskWorkbench();
   authToken = "";
   currentAccount = null;
+  workspaces.setAccount("");
   modalProtected = false;
   document.body.classList.remove("modal-open");
   state = emptyState();

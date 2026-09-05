@@ -22,9 +22,28 @@
     directives: [pane("compose", "下达指令", ["下达人工指令", "人工指令"]), pane("history", "指令流水", ["指令流水"]), pane("help", "指令说明")]
   };
   const fallback = {"sys-orgs": "help", "sys-settings": "help", "org-members": "help", "org-projects": "help", "org-agents": "help", "proj-agents": "help", "proj-members": "help", "proj-settings": "help", tasks: "discard", monitor: "barriers", review: "help", directives: "help"};
+  const storagePrefix = "aimac.workspaces";
+  let accountId = "";
   let selections = {};
-  try { selections = JSON.parse(sessionStorage.getItem("aimac.workspaces") || "{}"); } catch {}
   let context = null;
+
+  function storageKey() {
+    return accountId ? `${storagePrefix}:${accountId}` : "";
+  }
+
+  function readSelections() {
+    const key = storageKey();
+    if (!key) return {};
+    try {
+      const value = JSON.parse(sessionStorage.getItem(key) || "{}");
+      return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    } catch { return {}; }
+  }
+
+  function setAccount(nextAccountId) {
+    accountId = String(nextAccountId || "").slice(0, 256);
+    selections = readSelections();
+  }
 
   function current(page) {
     const entries = catalog[page] || [];
@@ -34,7 +53,8 @@
   function select(page, id) {
     if (!(catalog[page] || []).some((entry) => entry.id === id)) return false;
     selections = {...selections, [page]: id};
-    sessionStorage.setItem("aimac.workspaces", JSON.stringify(selections));
+    const key = storageKey();
+    if (key) sessionStorage.setItem(key, JSON.stringify(selections));
     return true;
   }
 
@@ -70,5 +90,5 @@
     return entry.titles.includes(entry.label) ? "" : `<div class="workspace-heading"><h2>${esc(entry.label)}</h2></div>`;
   }
 
-  window.AIMAC_WORKSPACES = {catalog, current, select, owner, allows, run, showGuide, showHub, navigation, heading};
+  window.AIMAC_WORKSPACES = {catalog, current, select, setAccount, owner, allows, run, showGuide, showHub, navigation, heading};
 })();
