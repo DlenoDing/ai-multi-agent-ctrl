@@ -287,12 +287,12 @@ const OPERATOR_FACING_ENV_VARS = [
 const AGENT_RUNTIME_CLI_THROWS = new Set([
   "unknown command: ${command}",
   "bootstrap 缺 --server <控制面地址>",
-  "bootstrap 缺入网令牌：给 --join-token-file",
-  "入网令牌文件不存在：",
-  "入网令牌文件是空的：",
+  "bootstrap 缺加入令牌：给 --join-token-file",
+  "加入令牌文件不存在：",
+  "加入令牌文件是空的：",
   "agent self-check failed: ${check.missingChecks.join(\",\")}",
   // 只给在这台机器上敲命令的人看：没注册就没有控制面可报，说清"还没注册"和下一步跑什么。
-  "这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <入网令牌文件>，令牌由项目管理员在目标项目「项目管理」→「AI 智能体」→「注册 agent」签发",
+  "这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <加入令牌文件>，令牌由项目管理员在目标项目「项目管理」→「AI 智能体」→「注册 agent」签发",
   "agent config is not valid JSON: ${configPath}（开头：${jsonHead(text)}）—— 重新跑一次安装命令即可重建",
   "public Agent Gateway requires HTTPS; set AIMAC_AGENT_ALLOW_INSECURE_HTTP=true only for isolated"
 ]);
@@ -481,13 +481,13 @@ const PREDICATE_COVERAGE = {
   pathMatches: {probedOnly: "2026-08-27 探过：改成恒真，契约门当场红并点名 —— 白名单内外都变成同一个答案（这道决定执行方能改仓库里的哪些文件）"},
   roleAllowed: {probedOnly: "2026-08-27 探过：改成恒真，三道门原本【全绿】—— 补了远程 agent e2e 里那条"
     + "（只被允许 reviewer 的节点在有排队派发的那一刻去认领，必须领不到）之后才红。"
-    + "它守的是入网令牌上的角色范围在【领活】这一步还算不算数：注册时的越界早有判据，领活时没有"},
+    + "它守的是加入令牌上的角色范围在【领活】这一步还算不算数：注册时的越界早有判据，领活时没有"},
   isHumanConfirmationActor: {probedOnly: "改成永远为真（谁都算真人），契约门红"},
   canUseGitPath: {probedOnly: "改成永远为真（路径逃逸放行），契约门红"},
   isSafeGitRef: {probedOnly: "改成永远为真（危险引用名放行），契约门红"},
   isDelegatableGrantPermission: {probedOnly: "改成永远为真（system:* 也可委派），契约门红"},
   isSystemAccount: {probedOnly: "2026-08-27 探过：改成「有账号就算系统账号」，doctor 当场红 —— 「非系统账号建项目时不得替别人挂负责人授权」那条接住了（任何能建项目的人都能替别人挂一份真生效的负责人授权）"},
-  isLocalHostHeader: {probedOnly: "2026-08-27 探过：改成恒真，doctor 当场红 —— 伪造的 Host 会被写进交给 agent 的装机地址，照它跑起来的 agent 会带着一次性入网令牌去攻击者主机注册"},
+  isLocalHostHeader: {probedOnly: "2026-08-27 探过：改成恒真，doctor 当场红 —— 伪造的 Host 会被写进交给 agent 的装机地址，照它跑起来的 agent 会带着一次性加入令牌去攻击者主机注册"},
   isLocalHostname: {probedOnly: "2026-08-27 探过：改成恒真，doctor 当场红 —— 启动时把「公开地址是明文远程」那条警告整个吞掉（人不会知道令牌是明文发出去的）"},
   isLoopbackAddress: {notProbed: "要从非回环地址发起连接才验得到，本机 e2e 造不出这个条件"},
   canReadResource: {probedOnly: "2026-08-27 探过：改成「有账号就能读」，doctor 当场红 —— 跨租户存在性那条接住了（写路由会变成一台「别处有没有这个 id」的探针）"},
@@ -505,7 +505,7 @@ const PREDICATE_NOT_PROBED_CEILING = 1;
 
 // 【项目归档之后，哪些写动作还能做】。归档是项目的终结态（没有"恢复归档"这条路），
 // 含义是"移出可建新工作的范围、把配额还回去、历史留着"。此前只有【建任务组】一处判了它 ——
-// 于是给一个已归档项目签 agent 入网令牌照样成功，而控制台的下拉里就摆着这些项目：
+// 于是给一个已归档项目签 agent 加入令牌照样成功，而控制台的下拉里就摆着这些项目：
 // 人按界面选一个，接进去的 agent 绑在一个不能再建任何工作的项目上，两边都不报错。
 // 逐条表态，新加以项目为作用域的写动作时必须当场回答"归档之后还让不让做"。
 // blocked：会往终结态项目里【接入新的干活能力或新工作】的，一律挡；
@@ -7188,7 +7188,7 @@ function verifyCommandBusLifecycle(output) {
   // 而那两条路原先只按 projectIds[0] 判权：在第一个项目上有权的人能停掉一台同时给别人干活的
   // 节点。这里按【源码形状】核：两处 projectIds?.[0] 之前必须先过跨项目补判。
   // （行为侧够不着：e2e 里造不出"一台节点同时服务两个项目、而调用方只在其中一个上有权"
-  //   的组合 —— 入网令牌是按单个项目签的，要造它得先手改状态；如实说明，不编一条够不到的用例。）
+  //   的组合 —— 加入令牌是按单个项目签的，要造它得先手改状态；如实说明，不编一条够不到的用例。）
   {
     const serverSrc = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
     if (!/function refuseIfNodeServesUnauthorizedProjects\(/u.test(serverSrc)) {
@@ -8549,7 +8549,7 @@ function verifyLockConflictAdmitsTheWreckage(output) {
 // 想按停一个失控 agent 的人点完会以为已经停住了。
 // 判据用中文字数当代理：只问一句"确认 X？"的弹窗约 12~16 字，带后果句的实测最少 28 字。
 // 这是个粗判据，它守的是"有没有多写一句话"，写得对不对得靠人看 —— 但连一句都没有时它必红。
-// 已签发未使用的入网令牌占着配额的位（签发第 N+1 张会被拒），而用量里原先只数节点 ——
+// 已签发未使用的加入令牌占着配额的位（签发第 N+1 张会被拒），而用量里原先只数节点 ——
 // 页面显示"2/3 还剩一格"，签发却被拒、报文说"3/3 已满"。屏幕上并排的两个数必须一处算出来。
 // 不能把令牌并进 agents：节点注册查的也是 agents，并进去就会被自己那张正在兑换的令牌顶掉一格。
 // moreText 的第三个参数（field）决定报出来的"共 N 条"要不要带 +：视图按上限截过之后，
@@ -8613,7 +8613,7 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
     return;
   }
   if (usage.agentsReserved !== 2) {
-    output.push(`入网令牌占位算错（agentsReserved=${usage.agentsReserved}，应为 2 —— `
+    output.push(`加入令牌占位算错（agentsReserved=${usage.agentsReserved}，应为 2 —— `
       + "两张 issued 且未过期；已用/已撤销/【已过期】的都不算）；过期令牌若还占位，页面显示「还剩一格」而签发口径其实早已放开那格，两个数各说各的");
   }
   const nodesOnly = usage.agents;
@@ -8647,7 +8647,7 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
         createAgentJoinToken(enforce, {projectId: "prj_control_plane", allowedRoles: ["*"]}, {publicUrl: "https://control.example.test"});
       } catch (error) { threw = error; }
       if (!threw || !/org_quota_exceeded/u.test(String(threw?.message))) {
-        output.push("签发第 3 张入网令牌没被拒：0 节点 + 2 张待用令牌已占满 maxAgents=2 —— "
+        output.push("签发第 3 张加入令牌没被拒：0 节点 + 2 张待用令牌已占满 maxAgents=2 —— "
           + "强制侧没把 reserved 算进配额（quota.reserved），页面显示已满、签发却放行，两个数各说各的");
       }
     }
@@ -17044,7 +17044,7 @@ function verifyAgentRunAnnouncesItself(output) {
   }
 }
 
-// 【控制台里自由填角色的输入框：示例必须是已登记的执行角色，且都挂着词表】。服务端五扇门（建任务组/入网令牌/
+// 【控制台里自由填角色的输入框：示例必须是已登记的执行角色，且都挂着词表】。服务端五扇门（建任务组/加入令牌/
 // 建智能体/项目配置/任务组配置）现在都按 REGISTERED_OWNER_ROLES 拒；项目设置的角色行原先示例写着
 // backend-developer —— 人照着示例填，得到的就是一句拒绝。示例与词表都盯着那一行自己的形状。
 function verifyConsoleRoleExamplesAreRegistered(output) {
@@ -17200,7 +17200,7 @@ function verifyAgentctlUnknownCommandListsCommands(output) {
   // 令牌文件不存在／是空的：原先一句是 Node 的 ENOENT 原话、一句报成「缺 --join-token-file」（明明给了）。
   const tokDir = mkdtempSync(join(tmpdir(), "aimac-agentctl-token-"));
   writeFileSync(join(tokDir, "empty"), "\n");
-  for (const [file, want, label] of [["missing", /入网令牌文件不存在：.*missing/u, "不存在"], ["empty", /入网令牌文件是空的：.*empty/u, "是空的"]]) {
+  for (const [file, want, label] of [["missing", /加入令牌文件不存在：.*missing/u, "不存在"], ["empty", /加入令牌文件是空的：.*empty/u, "是空的"]]) {
     const run = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "bootstrap", "--server", "http://127.0.0.1:9", "--join-token-file", join(tokDir, file)],
       {cwd: root, encoding: "utf8", timeout: 60000, env: {...process.env, AIMAC_AGENT_WORK_DIR: tokDir, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true"}});
     const said = `${run.stdout || ""}${run.stderr || ""}`;

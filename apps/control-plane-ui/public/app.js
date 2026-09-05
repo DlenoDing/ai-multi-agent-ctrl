@@ -422,7 +422,7 @@ function accountName(accountId) {
   return accountId;
 }
 
-// 已归档的项目不该出现在「签发入网令牌」的目标里：后端已经拒（project_archived），
+// 已归档的项目不该出现在「签发加入令牌」的目标里：后端已经拒（project_archived），
 // 界面还摆着它就是把人往死路上引 —— 按着选一个，回来的是一句拒绝。
 // 归档意味着"移出可建新工作的范围"，而接一个 agent 进来正是要开新工作。
 // 人停下来的任务组只有真人能恢复（后端同规）。判据是停因，而不是"谁在看这一屏"——
@@ -434,7 +434,7 @@ function canResumeTaskGroup(taskGroup) {
 
 // 已归档的项目不该出现在任何「把人或机器放进去开工」的选择器里：后端两条路都已拒
 // （project_archived / member_default_project_archived）。两处用同一份口径 ——
-// 上一轮只滤了入网令牌那个下拉，成员的「默认项目」照旧列着归档项目（同一件事两处只改一处）。
+// 上一轮只滤了加入令牌那个下拉，成员的「默认项目」照旧列着归档项目（同一件事两处只改一处）。
 function assignableProjects() {
   return (state.projects || []).filter((project) => project.status !== "archived");
 }
@@ -653,15 +653,15 @@ function requestFailureHint(payload) {
   if (payload.quota !== undefined && payload.usage !== undefined) {
     const kindLabel = {members: "成员", projects: "项目", taskGroups: "任务组", agents: "智能体"}[payload.kind] || "该资源";
     // 智能体这一类的"腾出来"和别的不一样：用量数的是【没被吊销的节点】，
-    // 关停（draining）、停用档案都不减，未使用的入网令牌还要先占一格。
+    // 关停（draining）、停用档案都不减，未使用的加入令牌还要先占一格。
     // 写成笼统的"关掉不再需要的"，人会去关停节点然后发现数字纹丝不动。
     const freeUp = payload.kind === "agents"
-      ? "或吊销一台不再用的节点（关停、停用档案都不减用量；未签发出去用掉的入网令牌也占着额度）"
+      ? "或吊销一台不再用的节点（关停、停用档案都不减用量；未签发出去用掉的加入令牌也占着额度）"
       : "或先关掉/归档不再需要的";
-    // 智能体这一格的"已用"是节点 + 未使用的入网令牌。不拆开的话，只有 2 台节点的人
+    // 智能体这一格的"已用"是节点 + 未使用的加入令牌。不拆开的话，只有 2 台节点的人
     // 看到"3/3 已满"会以为系统数错了 —— 页面上那格现在也按同一口径显示。
     const breakdown = payload.outstandingJoinTokens
-      ? `（其中 ${payload.nodes} 台节点 + ${payload.outstandingJoinTokens} 张未使用的入网令牌）` : "";
+      ? `（其中 ${payload.nodes} 台节点 + ${payload.outstandingJoinTokens} 张未使用的加入令牌）` : "";
     hint += `（${kindLabel} ${payload.usage}/${payload.quota} 已满${breakdown}：到「组织管理」页调高这一项配额，`
       + `${freeUp}，再重试）`;
   }
@@ -2232,7 +2232,7 @@ function renderSysSettingsLifecycleGuide(runtime, metrics) {
         pageId: "proj-agents",
         title: "6 Agent 注册",
         metric: "项目",
-        detail: "系统设置不签发 join token；注册脚本只在项目 AI 智能体页生成",
+        detail: "系统设置不签发加入令牌；注册脚本只在项目 AI 智能体页生成",
         tone: "blue",
         action: "去注册"
       })}
@@ -2443,11 +2443,11 @@ function renderSysAccountsSummary() {
       ${summaryMetric("服务账号", serviceAccounts, "供 agent/runtime 服务身份使用")}
       ${summaryMetric("有效授权", activeGrants, "项目、任务组与系统资源授权")}
       ${summaryMetric("项目数", (state.projects || []).length, "可分配成员和 agent 的项目")}
-      ${summaryMetric("待审加入令牌", liveJoinTokenCount(), "尚未消费且未过期的 agent 入网票据")}
+      ${summaryMetric("待审加入令牌", liveJoinTokenCount(), "尚未消费且未过期的 agent 加入令牌")}
       ${summaryMetric("agent 档案", agents.length, "可被总控激活的编排角色档案")}
       ${summaryMetric("启用档案", activeAgents, "当前可参与调度的档案")}
     </div>
-    <div class="small muted">先看总览确认系统账号、服务账号、跨项目授权和入网票据规模；常规项目 Agent 注册请进入目标项目的“AI 智能体”页。</div>
+    <div class="small muted">先看总览确认系统账号、服务账号、跨项目授权和加入令牌规模；常规项目 Agent 注册请进入目标项目的“AI 智能体”页。</div>
   `, {wide: true});
 }
 
@@ -2490,9 +2490,9 @@ function renderSysAccountsActionBoard() {
         tone: activeGrants ? "blue" : "gray"
       })}
       ${jumpModuleCard({
-        title: "入网令牌审计",
+        title: "加入令牌审计",
         metric: liveJoinTokenCount(),
-        detail: "查看跨项目待用票据；常规注册到项目页签发",
+        detail: "查看跨项目待用令牌；常规注册到项目页签发",
         panelTitle: "智能体入网审计",
         tone: liveJoinTokenCount() ? "orange" : "green"
       })}
@@ -2528,7 +2528,7 @@ function renderSysAccountsActionBoard() {
         action: "建项目"
       })}
     </div>
-    <div class="small muted">处理顺序：先核对账号与授权现状，再查看入网令牌审计和 agent 档案；项目成员角色、Agent 注册和任务组执行都从目标项目页发起。</div>
+    <div class="small muted">处理顺序：先核对账号与授权现状，再查看加入令牌审计和 agent 档案；项目成员角色、Agent 注册和任务组执行都从目标项目页发起。</div>
   `, {wide: true});
 }
 
@@ -2582,7 +2582,7 @@ function renderSysAccountsBoundaryGuide() {
         action: "看档案"
       })}
     </div>
-    <div class="small muted">职责边界：系统页负责账号、服务账号、全局授权审计、入网令牌审计和 Agent 档案；项目页负责项目级节点、一次性 join token、注册脚本和远程 MCP 生效确认。</div>
+    <div class="small muted">职责边界：系统页负责账号、服务账号、全局授权审计、加入令牌审计和 Agent 档案；项目页负责项目级节点、一次性加入令牌、注册脚本和远程 MCP 生效确认。</div>
   `, {wide: true});
 }
 
@@ -2625,9 +2625,9 @@ function renderSysAccountsLifecycleGuide() {
         action: "看服务账号"
       })}
       ${jumpModuleCard({
-        title: "4 入网令牌审计",
+        title: "4 加入令牌审计",
         metric: liveJoinTokenCount(),
-        detail: "这里只看跨项目待用票据和撤销，项目 join token 到项目 AI 智能体页签发",
+        detail: "这里只看跨项目待用令牌和撤销，项目加入令牌到项目 AI 智能体页签发",
         panelTitle: "智能体入网审计",
         tone: liveJoinTokenCount() ? "orange" : "green",
         action: "看审计"
@@ -2962,7 +2962,7 @@ function renderJoinTokenSection(options = {}) {
   }).join("");
   if (!(state.projects || []).length) {
     return auditOnly
-      ? `<div class="notice warn-notice">${auditNotice} 当前还没有任何项目，所以也没有可审计的 agent 入网令牌。</div>`
+      ? `<div class="notice warn-notice">${auditNotice} 当前还没有任何项目，所以也没有可审计的 agent 加入令牌。</div>`
       : noProjectYetNotice("智能体加入令牌");
   }
   if (!scopedProjects.length) {
@@ -2989,8 +2989,8 @@ function renderJoinTokenSection(options = {}) {
   const liveIssued = scopedTokens.filter((token) =>
     token.status === "issued" && (!token.expiresAt || new Date(token.expiresAt).getTime() > serverNow())).length;
   const installNotice = liveIssued
-    ? `<div class="notice warn-notice">当前有 ${esc(liveIssued)} 张待用加入令牌。安装命令和明文 join token 只在签发成功弹窗里显示一次；列表不能还原明文 join token。如果弹窗已关闭且命令没有被目标 agent 使用，请撤销旧令牌后重新签发。</div>`
-    : `<div class="notice">签发成功后会弹出一次性安装命令；关闭弹窗后列表只保留脱敏令牌记录、状态和撤销入口，不能还原明文 join token。</div>`;
+    ? `<div class="notice warn-notice">当前有 ${esc(liveIssued)} 张待用加入令牌。安装命令和明文加入令牌只在签发成功弹窗里显示一次；列表不能还原明文加入令牌。如果弹窗已关闭且命令没有被目标 agent 使用，请撤销旧令牌后重新签发。</div>`
+    : `<div class="notice">签发成功后会弹出一次性安装命令；关闭弹窗后列表只保留脱敏令牌记录、状态和撤销入口，不能还原明文加入令牌。</div>`;
   return `
     <div class="stack">
       ${options.context === "project"
@@ -3583,7 +3583,7 @@ function renderProjectAgentRegistrationFlow(project, nodes) {
       ${jumpModuleCard({
         title: "2 签发令牌",
         metric: stats.liveTokens || "签发",
-        detail: "一次性 join token 绑定当前项目、角色和 MCP scope",
+        detail: "一次性加入令牌绑定当前项目、角色和 MCP 作用范围",
         panelTitle: "注册 agent",
         tone: stats.liveTokens ? "green" : "orange",
         action: "签发"
@@ -3591,7 +3591,7 @@ function renderProjectAgentRegistrationFlow(project, nodes) {
       ${jumpModuleCard({
         title: "3 复制脚本",
         metric: "sh",
-        detail: "弹窗返回 direct 和 SHA256 校验版安装命令",
+        detail: "弹窗返回 直接安装版和 SHA256 校验版安装命令",
         panelTitle: "注册 agent",
         tone: "blue",
         action: "复制"
@@ -3613,7 +3613,7 @@ function renderProjectAgentRegistrationFlow(project, nodes) {
         action: "看节点"
       })}
     </div>
-    <div class="small muted">注册脚本不是固定写死命令，必须先由服务端在当前项目签发一次性加入令牌；agent 注册后通过 node token 与服务端 Gateway、远程 MCP 和技能工作集交互。</div>
+    <div class="small muted">注册脚本不是固定写死命令，必须先由服务端在当前项目签发一次性加入令牌；agent 注册后通过节点令牌与服务端 Gateway、远程 MCP 和技能工作集交互。</div>
   `, {wide: true});
 }
 
@@ -3717,7 +3717,7 @@ function renderProjectAgentNodeGovernanceGuide(project, nodes) {
       ${jumpModuleCard({
         title: "6 吊销切断",
         metric: "凭据",
-        detail: "吊销或立即切断会废止 node token 和 MCP grant，属于高影响动作",
+        detail: "吊销或立即切断会废止节点令牌和 MCP grant，属于高影响动作",
         panelTitle: "项目智能体节点",
         tone: "red",
         action: "看风险"
@@ -3735,7 +3735,7 @@ function renderOrgAgentsSummary(nodes) {
       ${summaryMetric("在线节点", `${stats.onlineNodes}/${stats.aliveNodes.length}`, "可接收控制面派发")}
       ${summaryMetric("忙碌节点", stats.busyNodes, "当前正在承载任务")}
       ${summaryMetric("当前任务", stats.runningDispatches, "节点正在执行的派发数量")}
-      ${summaryMetric("待用加入令牌", stats.liveTokens, "可注册到本组织项目的票据")}
+      ${summaryMetric("待用加入令牌", stats.liveTokens, "可注册到本组织项目的令牌")}
       ${summaryMetric("异常节点", stats.abnormalNodes, "离线、非健康或需排查的节点")}
     </div>
     <div class="small muted">查看顺序：先看节点在线率和异常节点，再在“智能体节点”里暂停、恢复、关停或吊销；新增机器从目标项目的「项目管理」→「AI 智能体」→「注册 agent」签发一次性令牌，本页只做组织范围令牌审计。</div>
@@ -3781,7 +3781,7 @@ function renderOrgAgentsActionBoard(nodes) {
       ${jumpModuleCard({
         title: "待用加入令牌",
         metric: `${stats.liveTokens}`,
-        detail: "可注册到本组织项目的票据",
+        detail: "可注册到本组织项目的令牌",
         panelTitle: "加入令牌审计",
         tone: stats.liveTokens ? "blue" : "orange",
         action: "查看令牌"
@@ -3822,7 +3822,7 @@ function renderOrgAgentsLifecycleGuide(nodes) {
       ${projectModuleCard({
         pageId: "proj-agents",
         title: "3 项目注册",
-        metric: "join token",
+        metric: "加入令牌",
         detail: "新增节点必须回目标项目 AI 智能体页签发一次性令牌和 sh 安装命令",
         tone: "blue",
         action: "去注册"
@@ -3904,7 +3904,7 @@ function renderOrgAgents() {
     renderOrgAgentsLifecycleGuide(nodes),
     panel("组织级 Agent 档案", `
       <div class="stack">
-        <div class="notice">组织级 Agent 是可被本组织内项目调配的角色能力档案，不等于已经在线的运行时节点。节点注册仍需要进入具体项目签发一次性 join token。</div>
+        <div class="notice">组织级 Agent 是可被本组织内项目调配的角色能力档案，不等于已经在线的运行时节点。节点注册仍需要进入具体项目签发一次性加入令牌。</div>
         ${table(["档案", "角色", "默认模型", "作用域", "状态", {label: "信任分", c: "num"}, "Skill", "操作"],
           agentProfileRows(scopedAgents), {emptyText: "当前组织还没有组织级 Agent 档案。可先创建通用角色档案，项目特殊角色再到项目页创建。"})}
         ${renderAgentProfileForm({title: "创建组织级 Agent 档案", readOnly: !hasPerm("agent:activate")})}
@@ -3931,7 +3931,7 @@ function renderProjectAgentsSummary(project, nodes) {
       ${summaryMetric("在线节点", `${stats.onlineNodes}/${stats.aliveNodes.length}`, "可接收当前项目派发")}
       ${summaryMetric("忙碌节点", stats.busyNodes, "正在承载任务的节点")}
       ${summaryMetric("当前任务", stats.runningDispatches, "当前项目排队、运行或被挡的派发")}
-      ${summaryMetric("待用加入令牌", stats.liveTokens, "可注册到当前项目的一次性票据")}
+      ${summaryMetric("待用加入令牌", stats.liveTokens, "可注册到当前项目的一次性令牌")}
       ${summaryMetric("异常节点", stats.abnormalNodes, "离线、非健康或需排查的节点")}
     </div>
     <div class="small muted">查看顺序：先看在线率、异常节点和待用令牌；新机器只通过本页“注册 agent”签发一次性加入令牌，脚本由服务端生成。</div>
@@ -3984,7 +3984,7 @@ function renderProjectAgentScriptHub(project, nodes) {
   return panel("注册与脚本操作台", `
     <div class="module-grid action-grid">
       ${jumpModuleCard({
-        title: "1 签发 join token",
+        title: "1 签发加入令牌",
         metric: stats.liveTokens ? `${stats.liveTokens}` : "签发",
         detail: "在当前项目生成一次性加入令牌",
         panelTitle: "注册 agent",
@@ -3994,7 +3994,7 @@ function renderProjectAgentScriptHub(project, nodes) {
       ${jumpModuleCard({
         title: "2 获取安装脚本",
         metric: "签发后",
-        detail: "签发成功弹窗给出 direct 和 SHA256 校验版 sh 命令，只显示一次",
+        detail: "签发成功弹窗给出 直接安装版和 SHA256 校验版 sh 命令，只显示一次",
         panelTitle: "注册 agent",
         tone: "blue",
         action: "看入口"
@@ -4016,7 +4016,7 @@ function renderProjectAgentScriptHub(project, nodes) {
         action: "看监控"
       })}
     </div>
-    <div class="notice">这是第一次接入 agent 的快捷操作台：注册脚本不是固定写死命令；必须先由服务端按当前项目签发一次性 join token。安装命令和明文 join token 只在签发成功弹窗显示一次，列表只能审计和撤销，不能还原明文。</div>
+    <div class="notice">这是第一次接入 agent 的快捷操作台：注册脚本不是固定写死命令；必须先由服务端按当前项目签发一次性加入令牌。安装命令和明文加入令牌只在签发成功弹窗显示一次，列表只能审计和撤销，不能还原明文。</div>
     <div class="small muted">Agent 端执行脚本后只运行 Runtime；后续通过服务端 Gateway、远程 MCP 和最小 Skill 工作集执行任务，并持续回送事件、进度、模型输出摘要和控制 ACK。</div>
   `, {wide: true});
 }
@@ -4171,7 +4171,7 @@ function renderOrgProjectsLifecycleGuide({projects, activeProjects, archivedProj
         pageId: "proj-agents",
         title: "4 Agent 接入",
         metric: "注册",
-        detail: "一次性 join token 和 sh 安装命令只在目标项目 AI 智能体页生成",
+        detail: "一次性加入令牌和 sh 安装命令只在目标项目 AI 智能体页生成",
         tone: activeProjects.length ? "green" : "gray",
         action: "去注册"
       })}
@@ -4601,8 +4601,8 @@ function workflowGuidePanel(project, groups) {
         : (registered
           ? `已注册 ${registered} 台，但没有在线的——活派不出去：先恢复 agent 主机/进程心跳`
           : (pendingTokens
-            ? `已签发 ${pendingTokens} 张入网令牌待使用，还没有节点注册：到 agent 主机上执行安装命令`
-            : "尚未接入：先签发入网令牌，再在 agent 主机上执行安装命令"))},
+            ? `已签发 ${pendingTokens} 张加入令牌待使用，还没有节点注册：到 agent 主机上执行安装命令`
+            : "尚未接入：先签发加入令牌，再在 agent 主机上执行安装命令"))},
     {title: "创建任务组", done: groups.length > 0, page: "tg", state: groups.length ? `${groups.length} 个任务组` : "还没有任务组"},
     {title: "创建工作项（任务）", done: workItemCount > 0, page: "tg", state: workItemCount ? `${workItemCount} 个工作项` : "还没有工作项：到任务组里「创建工作项」"},
     {title: "启动执行", done: dispatches > 0, page: "monitor",
@@ -7952,7 +7952,7 @@ function renderProjectSettingsBoundaryGuide(project, repos, baselineData, defaul
         action: "去注册"
       })}
     </div>
-    <div class="small muted">职责分区：项目设置只维护会影响派发和产出落地的配置；运行节点、一次性 join token、安装脚本、远程 MCP 和 Skill 工作集生效确认统一进入「项目管理」→「AI 智能体」。</div>
+    <div class="small muted">职责分区：项目设置只维护会影响派发和产出落地的配置；运行节点、一次性加入令牌、安装脚本、远程 MCP 和 Skill 工作集生效确认统一进入「项目管理」→「AI 智能体」。</div>
   `, {wide: true});
 }
 

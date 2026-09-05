@@ -810,7 +810,7 @@ function publicAccountRecord(account) {
 // 上限取自 core 那份唯一真相源（见 import）——两侧各抄一份字面量会悄悄分叉。
 
 // 项目/任务组两层配置的 defaultRoles 原先自由写入：建任务组时把它继承进 roles，而那一步只查调用方自己填的角色 ——
-// 写成 reviwer 的默认角色会随每个新任务组一起落地，谁也派不了工、谁也不报错。与建任务组/入网令牌/智能体共用一份词表，在写入的门上拒。
+// 写成 reviwer 的默认角色会随每个新任务组一起落地，谁也派不了工、谁也不报错。与建任务组/加入令牌/智能体共用一份词表，在写入的门上拒。
 function unregisteredDefaultRoles(list) {
   const roleIds = (Array.isArray(list) ? list : [])
     .map((item) => (typeof item === "string" ? item : item?.roleId))
@@ -2084,7 +2084,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
       // artifacts 此前在防泄漏白名单里却【没有任何视图下发它】。关闭门的 artifacts_verified
       // 只说一句"还有产物没核验"、指不出是哪一条，而人被要求"等执行方补齐证据或取消对应工作项"。
       "artifacts",
-      // 入网令牌：项目概览的流程导航要算"已签发待使用"，让人知道接入链卡在安装这一环。
+      // 加入令牌：项目概览的流程导航要算"已签发待使用"，让人知道接入链卡在安装这一环。
       // 记录只存摘要不存明文，带 projectId，按项目裁剪与别的视图一致。
       "agentJoinTokens"],
     runtime: ["modelCapabilities", "modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions", "workerLanes", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkillOverlays"],
@@ -4552,10 +4552,10 @@ async function handleApi(req, res) {
       return;
     }
     // 归档是项目的终结态（没有"恢复归档"这条路），而建一个逻辑智能体是【往里接入新的干活能力】——
-    // 与签发入网令牌同族。落进去之后它绑在一个不能再建任何工作的项目上，谁也不会报错。
+    // 与签发加入令牌同族。落进去之后它绑在一个不能再建任何工作的项目上，谁也不会报错。
     // 哪些动作在归档后仍然允许，逐条登记在 contract-check 的 ARCHIVED_PROJECT_WRITE_POLICY 里。
     // 【角色要在已登记的执行角色里】。原先任意字符串照收：写成 reviwer 的智能体，派工时 agentForRole 找不到同名角色
-    // 就退回「随便哪个在跑的」—— 人建的那个永远不会被选中，而谁也没报错。与任务组/入网令牌两处同一份词表。
+    // 就退回「随便哪个在跑的」—— 人建的那个永远不会被选中，而谁也没报错。与任务组/加入令牌两处同一份词表。
     const unknownAgentRoles = unknownOwnerRoles([String(body.role || "")]);
     if (unknownAgentRoles.length) {
       return json(res, 400, {error: "agent_role_not_registered", unknownRoles: unknownAgentRoles, supported: REGISTERED_OWNER_ROLES,
@@ -6043,7 +6043,7 @@ async function handleApi(req, res) {
     const permissions = sanitizeMemberPermissions(body.permissions, ["project:view"]);
     // 【默认项目要指得到、且还能开工】。这个字段原先原样收下：可以指向一个已归档的项目
     //（新成员一进来就落在一个开不了新工作的项目上），也可以指向一个根本不存在的 id，
-    // 而两种都不会有任何提示。与入网令牌那条同一口径 —— 归档意味着"移出可建新工作的范围"。
+    // 而两种都不会有任何提示。与加入令牌那条同一口径 —— 归档意味着"移出可建新工作的范围"。
     const defaultProjectRefusal = validateDefaultProject(state, body.defaultProjectId, orgId);
     if (defaultProjectRefusal) return json(res, 400, defaultProjectRefusal);
     const orgMemberRoles = normalizeStringList(body.roles, ["member"]).filter((role) => role !== "system_admin" && role !== "org_admin");

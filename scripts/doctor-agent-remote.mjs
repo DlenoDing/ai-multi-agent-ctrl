@@ -1093,7 +1093,7 @@ try {
       const taken = JSON.stringify(scopedClaim.dispatch);
       const takenRole = (taken.match(/"roleId":"([^"]+)"/) || [])[1] || `报文：${taken.slice(0, 160)}`;
       throw new Error(`只被允许 reviewer 的节点领走了一件派发（角色 ${takenRole}）—— `
-        + "入网令牌上的角色范围在【领活】这一步没有守住");
+        + "加入令牌上的角色范围在【领活】这一步没有守住");
     }
     // 拒了不等于拒对了：得说得出是【角色】不匹配。控制台上"节点在线、派发排队、就是不动"
     // 这件事，原先三种原因（没准入 / 角色不符 / 跑不了这个模型）长得一模一样。

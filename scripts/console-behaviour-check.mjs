@@ -768,7 +768,7 @@ function check(name, condition, detail) {
     !String(running.goalExecutionStatus).startsWith("active_paused"), "状态判断本身错了");
 }
 
-// 【已归档的项目不许出现在「签发入网令牌」的目标里】。后端已经拒（project_archived）——
+// 【已归档的项目不许出现在「签发加入令牌」的目标里】。后端已经拒（project_archived）——
 // 界面还摆着它，人按指引选一个，回来的是一句拒绝：那不是"多一个选项"，是把人往死路上引。
 // 只藏选项不锁门也不行（改个请求就绕过去），所以两边都做；这条验的是界面那半。
 {
@@ -779,7 +779,7 @@ function check(name, condition, detail) {
   ];
   const targets = probe.joinTokenTargetProjects
     ? probe.joinTokenTargetProjects({projects}).map((project) => project.id) : null;
-  check("签发入网令牌的目标里不许有已归档的项目",
+  check("签发加入令牌的目标里不许有已归档的项目",
     Array.isArray(targets) && !targets.includes("prj_gone"),
     `实得 ${JSON.stringify(targets)} —— 选了它只会拿回一句 project_archived`);
   check("在用的项目仍要留在目标里（别把正常路径一起收掉）",
@@ -1286,7 +1286,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     const splitHint = probe.requestFailureHint(
       {error: "org_quota_exceeded", kind: "agents", quota: 3, usage: 3, nodes: 2, outstandingJoinTokens: 1});
     check("配额报文要拆开说清是节点还是没用掉的令牌占的位",
-      splitHint.includes("2 台节点") && splitHint.includes("1 张未使用的入网令牌"), splitHint.slice(0, 130));
+      splitHint.includes("2 台节点") && splitHint.includes("1 张未使用的加入令牌"), splitHint.slice(0, 130));
     const faultHint = probe.requestFailureHint({error: "state_store_unavailable", kind: "state_read_failed"});
     check("存储故障那一族仍要打出故障类型（上一条不能把它一起挡掉）", faultHint.includes("故障类型"), faultHint.slice(0, 90));
   }
@@ -1361,7 +1361,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         && /执行规则/u.test(settingsHtml)
         && /Agent 接入/u.test(settingsHtml)
         && /Agent 节点、注册脚本和远程 MCP 确认不在本页处理/u.test(settingsHtml)
-        && /一次性 join token.+安装脚本.+远程 MCP/u.test(settingsHtml)
+        && /一次性加入令牌.+安装脚本.+远程 MCP/u.test(settingsHtml)
         && /项目管理.+AI 智能体/u.test(settingsHtml),
       "项目设置页仍把配置、规则和 Agent 接入混成一个长页面，没有先给普通用户职责分区");
     check("项目设置页要说明配置从仓库、Skill、规则进入任务组、Agent 和监控",
@@ -2008,7 +2008,7 @@ function runWorkflowGuideCase() {
   // 接入这条链的中间态：签了令牌还没人用 / 注册了但都离线 / 在线但另有离线——各说清卡在哪一环。
   const tokenIssued = {...base, agentJoinTokens: [{joinTokenId: "jt1", projectId: "p1", status: "issued", expiresAt: "2099-01-01T00:00:00.000Z"}]};
   check("流程导航：签发了令牌但还没有节点注册时要说清卡在安装这一环",
-    /已签发 1 张入网令牌待使用/u.test(guideOf(probe.renderProjectOverviewWith(tokenIssued, admin, "p1"))),
+    /已签发 1 张加入令牌待使用/u.test(guideOf(probe.renderProjectOverviewWith(tokenIssued, admin, "p1"))),
     "签发了令牌却还说尚未接入：人不知道令牌已经发了、下一步是去 agent 主机上装");
   const registeredOffline = {...base, fleet: {online: 0, total: 2}};
   check("流程导航：注册了但都离线时要说活派不出去",
@@ -3067,7 +3067,7 @@ function runReviewAxisCase() {
       "在用项目也被标成了归档");
   }
 
-  // 【同一个词在不同对象上意思不同，只能按对象覆盖】。入网令牌的 consumed 是"这张一次性票
+  // 【同一个词在不同对象上意思不同，只能按对象覆盖】。加入令牌的 consumed 是"这张一次性票
   // 被用掉了"，而全局词表里 consumed 已经被评审包的「已采纳」占着 —— 真实运行态里两张用过的
   // 加入令牌就写着「已采纳」，读起来像有人批准了什么。（active / retired 都撞过同一个形状。）
   {
@@ -3085,7 +3085,7 @@ function runReviewAxisCase() {
           useCount: 0, maxUses: 1, expiresAt: new Date(Date.now() + 3600000).toISOString()}
       ]
     }, {accountId: "u1", accountType: "system_admin", displayName: "管理员"});
-    check("用掉的入网令牌不能写成「已采纳」（那是评审包的词）",
+    check("用掉的加入令牌不能写成「已采纳」（那是评审包的词）",
       /已使用/u.test(tokenHtml) && !/已采纳/u.test(tokenHtml),
       String(tokenHtml).replace(/<[^>]+>/gu, " ").match(/ajt_used[^|]{0,80}/u)?.[0] || "（令牌表没渲染出来）");
     check("还能用的令牌照常显示「已签发」（正面对照走同一条分支）",
@@ -4625,7 +4625,7 @@ function runPendingTruncationCase() {
       /账号授权处置流程/u.test(accountHtml)
         && /项目、任务组和系统资源授权先审计/u.test(accountHtml)
         && /服务账号只用于系统和 agent runtime 服务身份/u.test(accountHtml)
-        && /项目 join token 到项目 AI 智能体页签发/u.test(accountHtml)
+        && /项目加入令牌到项目 AI 智能体页签发/u.test(accountHtml)
         && /不等于某台执行节点已注册/u.test(accountHtml)
         && /真正让用户或 agent 参与某个项目/u.test(accountHtml)
         && /data-jump-panel="智能体入网审计"/u.test(accountHtml)
@@ -4849,7 +4849,7 @@ function runPendingTruncationCase() {
         && /Agent 端按派发下载最小 Skill 工作集/u.test(sysSettingsHtml)
         && /任务选型会避开或阻塞/u.test(sysSettingsHtml)
         && /系统页只追踪项目\/任务组叠加/u.test(sysSettingsHtml)
-        && /系统设置不签发 join token/u.test(sysSettingsHtml)
+        && /系统设置不签发加入令牌/u.test(sysSettingsHtml)
         && /项目执行仍回到项目设置、AI 智能体、任务组和执行监控/u.test(sysSettingsHtml)
         && /data-menu="proj-settings"/u.test(sysSettingsHtml)
         && /data-menu="proj-agents"/u.test(sysSettingsHtml),
@@ -4957,14 +4957,14 @@ function runPendingTruncationCase() {
       "项目级智能体入口仍可能藏在项目设置里，项目负责人不能直接按项目查看节点、注册流程、运行闭环和注册脚本");
     check("项目 AI 智能体页要在节点长表前提供注册与脚本操作台",
       /注册与脚本操作台/u.test(projectAgentScriptHubHtml)
-        && /签发 join token/u.test(projectAgentScriptHubHtml)
+        && /签发加入令牌/u.test(projectAgentScriptHubHtml)
         && /获取安装脚本/u.test(projectAgentScriptHubHtml)
         && /签发后/u.test(projectAgentScriptHubHtml)
         && /确认节点自检/u.test(projectAgentScriptHubHtml)
         && /查看实时回送/u.test(projectAgentScriptHubHtml)
-        && /签发成功弹窗给出 direct 和 SHA256 校验版 sh 命令，只显示一次/u.test(projectAgentScriptHubHtml)
+        && /签发成功弹窗给出 直接安装版和 SHA256 校验版 sh 命令，只显示一次/u.test(projectAgentScriptHubHtml)
         && /第一次接入 agent 的快捷操作台/u.test(projectAgentScriptHubHtml)
-        && /必须先由服务端按当前项目签发一次性 join token/u.test(projectAgentScriptHubHtml)
+        && /必须先由服务端按当前项目签发一次性加入令牌/u.test(projectAgentScriptHubHtml)
         && /列表只能审计和撤销，不能还原明文/u.test(projectAgentScriptHubHtml)
         && /Agent 端执行脚本后只运行 Runtime/u.test(projectAgentScriptHubHtml)
         && /服务端 Gateway、远程 MCP 和最小 Skill 工作集/u.test(projectAgentScriptHubHtml)
@@ -5022,14 +5022,14 @@ function runPendingTruncationCase() {
         && /点节点行“刷新自检”重新上报/u.test(projectAgentHtml)
         && /运行中异常先回执行监控看实时事件、派发状态和控制 ACK/u.test(projectAgentHtml)
         && /暂停、恢复和关停在节点行执行/u.test(projectAgentHtml)
-        && /吊销或立即切断会废止 node token 和 MCP grant/u.test(projectAgentHtml)
+        && /吊销或立即切断会废止节点令牌和 MCP grant/u.test(projectAgentHtml)
         && /重新注册只用于新 agent 接入/u.test(projectAgentHtml)
         && /data-jump-panel="项目智能体节点"/u.test(projectAgentHtml)
         && /data-menu="monitor"/u.test(projectAgentHtml),
       "项目 AI 智能体页没有把注册完成后的节点治理做成普通用户能顺着处理的流程");
     check("项目 AI 智能体页要说明加入令牌命令只显示一次且不能从列表还原",
-      /安装命令和明文 join token 只在签发成功弹窗里显示一次/u.test(projectAgentHtml)
-        && /不能还原明文 join token/u.test(projectAgentHtml)
+      /安装命令和明文加入令牌只在签发成功弹窗里显示一次/u.test(projectAgentHtml)
+        && /不能还原明文加入令牌/u.test(projectAgentHtml)
         && /撤销旧令牌后重新签发/u.test(projectAgentHtml),
       "项目智能体注册入口没有说明弹窗关闭后的令牌处置方式，用户会误以为列表还能拿回安装命令");
     check("项目 AI 智能体页要提供列表和卡片两种节点管理视图",
@@ -5119,7 +5119,7 @@ function runPendingTruncationCase() {
         && /创建人自动成为项目负责人/u.test(orgProjectsHtml)
         && /否则只能看到组织账号，不能管理项目/u.test(orgProjectsHtml)
         && /角色 Skill 定制在项目设置维护/u.test(orgProjectsHtml)
-        && /一次性 join token 和 sh 安装命令只在目标项目 AI 智能体页生成/u.test(orgProjectsHtml)
+        && /一次性加入令牌和 sh 安装命令只在目标项目 AI 智能体页生成/u.test(orgProjectsHtml)
         && /统一语言、角色、工作项和自动派发主线/u.test(orgProjectsHtml)
         && /归档是终态不能继续新建工作/u.test(orgProjectsHtml)
         && /不要在组织项目页寻找 Agent 注册脚本/u.test(orgProjectsHtml)
@@ -5981,7 +5981,7 @@ function runClaimMissCase() {
     "没有排队派发时仍然报警 —— 一直在响的警告没人看");
 }
 
-// 【过期的入网令牌不得在列表里显示成「已签发」还带撤销按钮】。令牌过期只在兑换时才被标 expired，
+// 【过期的加入令牌不得在列表里显示成「已签发」还带撤销按钮】。令牌过期只在兑换时才被标 expired，
 // 没人兑换就永停在 issued —— 列表若按原始 status 显示，人以为它还在等 agent 来接，实际兑换必被拒。
 // 按 serverNow 派生显示状态（与占位统计同口径）。realI18n：statusBadge 走真词表。
 function runJoinTokenExpiryDisplayCase() {
@@ -7456,7 +7456,7 @@ await runCodedApiErrorCase();
   }
 
   {
-    // 未使用的入网令牌【占着配额的位】，页面上却只数节点 —— 于是"还剩一格"和"3/3 已满"
+    // 未使用的加入令牌【占着配额的位】，页面上却只数节点 —— 于是"还剩一格"和"3/3 已满"
     // 同时成立。两个面必须同一口径：占位数要显出来，且合计要算给人看。
     const reservedRoot = el("div");
     const reservedProbe = loadConsole(reservedRoot);
@@ -7468,8 +7468,8 @@ await runCodedApiErrorCase();
       text: async () => JSON.stringify(reservedState)});
     await reservedProbe.loadWithFetch(reservedState, orgAdmin, "", "org-overview", reservedFetch);
     const reservedHtml = String(reservedRoot.innerHTML || "");
-    check("未使用的入网令牌占着配额，页面要显出来并给出合计",
-      reservedHtml.includes("未使用的入网令牌占着位") && reservedHtml.includes("合计 3/3"),
+    check("未使用的加入令牌占着配额，页面要显出来并给出合计",
+      reservedHtml.includes("未使用的加入令牌占着位") && reservedHtml.includes("合计 3/3"),
       "页面只数节点时，人看着还剩一格却签不出令牌，报文还说 3/3 已满 —— 两个数出自不同口径");
     const noReserveRoot = el("div");
     const noReserveProbe = loadConsole(noReserveRoot);
@@ -7480,7 +7480,7 @@ await runCodedApiErrorCase();
       text: async () => JSON.stringify(noReserveState)});
     await noReserveProbe.loadWithFetch(noReserveState, orgAdmin, "", "org-overview", noReserveFetch);
     check("没有未使用的令牌时不要多说一句",
-      !String(noReserveRoot.innerHTML || "").includes("未使用的入网令牌占着位"),
+      !String(noReserveRoot.innerHTML || "").includes("未使用的加入令牌占着位"),
       "一张待用令牌都没有，界面却挂着一句解释");
   }
   {

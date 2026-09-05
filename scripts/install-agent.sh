@@ -107,7 +107,7 @@ case "$SERVER_URL" in
   http://*)
     if [ "${AIMAC_AGENT_ALLOW_INSECURE_HTTP:-false}" != "true" ]; then
       printf '%s\n' "Public Agent Gateway requires HTTPS. Set AIMAC_AGENT_ALLOW_INSECURE_HTTP=true only for isolated verification." >&2
-      printf '%s\n' "  · 明文 http 会把入网令牌暴露在链路上；换 https 地址后重跑；本机什么都没有被安装" >&2
+      printf '%s\n' "  · 明文 http 会把加入令牌暴露在链路上；换 https 地址后重跑；本机什么都没有被安装" >&2
       exit 1
     fi
     ;;

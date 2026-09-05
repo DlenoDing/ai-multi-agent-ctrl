@@ -13,12 +13,12 @@ const RUNTIME_VERSION = "0.3.0";
 const runtimeFilePath = fileURLToPath(import.meta.url);
 const args = parseArgs(process.argv.slice(2));
 const command = args._[0] || "run";
-const JOIN_TOKEN_ORIGIN = "入网令牌由项目管理员在目标项目「项目管理」→「AI 智能体」→「注册 agent」签发，保存成文件后用 --join-token-file 指过来";
+const JOIN_TOKEN_ORIGIN = "加入令牌由项目管理员在目标项目「项目管理」→「AI 智能体」→「注册 agent」签发，保存成文件后用 --join-token-file 指过来";
 // 认不出的命令要把可用的命令列出来：装机的人打错一个词（agentctl start）时，原先只看到
 // "unknown command: start"，既不知道有哪几个命令、也不知道旋钮在哪儿查。
 const USAGE = [
   "用法：agentctl <命令> [参数]",
-  "  bootstrap   用一次性入网令牌注册这台节点（--server --join-token-file [--node-name] [--roles]）",
+  "  bootstrap   用一次性加入令牌注册这台节点（--server --join-token-file [--node-name] [--roles]）",
   "  self-check  检查本机执行器、凭据与网络，不领活",
   "  status      打印这台节点的注册状态与最近一次心跳",
   "  run         常驻领活并执行（缺省命令；--once 只领一件）",
@@ -145,7 +145,7 @@ async function bootstrap() {
   const serverUrl = trimSlash(args.server || process.env.AIMAC_SERVER_URL || "");
   const joinToken = readJoinToken();
   if (!serverUrl) throw new Error("bootstrap 缺 --server <控制面地址>");
-  if (!joinToken) throw new Error(`bootstrap 缺入网令牌：给 --join-token-file <文件> 或 --join-token <令牌> —— ${JOIN_TOKEN_ORIGIN}`);
+  if (!joinToken) throw new Error(`bootstrap 缺加入令牌：给 --join-token-file <文件> 或 --join-token <令牌> —— ${JOIN_TOKEN_ORIGIN}`);
   requireSecureServerUrl(serverUrl);
   const configuredExecutor = args["executor-command"] || process.env.AIMAC_AGENT_EXECUTOR_COMMAND || "";
   const profile = probeProfile(configuredExecutor);
@@ -270,7 +270,7 @@ function markShutdownRequested(config, command) {
 }
 function announceShutdown(config) {
   const revoked = config.shutdownKind === "revoke";
-  process.stdout.write(`控制面要求本节点退出（${revoked ? "已被吊销" : "关停排空"}${config.shutdownReason ? `：${config.shutdownReason}` : ""}）—— ${revoked ? "本节点的令牌已失效，要再接入得重新签一张入网令牌" : "重启进程即可回来"}\n`);
+  process.stdout.write(`控制面要求本节点退出（${revoked ? "已被吊销" : "关停排空"}${config.shutdownReason ? `：${config.shutdownReason}` : ""}）—— ${revoked ? "本节点的令牌已失效，要再接入得重新签一张加入令牌" : "重启进程即可回来"}\n`);
 }
 
 function describeClaimMiss(claimed) {
@@ -318,7 +318,7 @@ async function run(config) {
     delete config.shutdownRequested;
     writeSecretJson(configPath, config);
     process.stdout.write(config.shutdownKind === "revoke"
-      ? "上次是被控制面吊销的：本节点的令牌已失效，下面的重连多半会被拒 —— 要再接入得重新签一张入网令牌重跑 bootstrap\n"
+      ? "上次是被控制面吊销的：本节点的令牌已失效，下面的重连多半会被拒 —— 要再接入得重新签一张加入令牌重跑 bootstrap\n"
       : "上次是控制面要求关停排空的，现在重新接入（控制面允许 offline→online 复活）\n");
     delete config.shutdownKind; delete config.shutdownReason;
   }
@@ -2257,7 +2257,7 @@ function loadConfig() {
   // 还没注册就跑 status / self-check / run，是新节点最先撞到的一句话：要说清"没注册"和下一步该跑什么，
   // 而不是一句英文加一个路径（路径留着，那是这台机器上自己的文件）。
   if (!existsSync(configPath)) {
-    throw new Error(`这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <入网令牌文件>，令牌由项目管理员在目标项目「项目管理」→「AI 智能体」→「注册 agent」签发`);
+    throw new Error(`这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <加入令牌文件>，令牌由项目管理员在目标项目「项目管理」→「AI 智能体」→「注册 agent」签发`);
   }
   const text = readFileSync(configPath, "utf8");
   try {
@@ -2469,9 +2469,9 @@ function readJoinToken() {
     // 原先这里直接 readFileSync：文件不存在时屏幕上是 Node 的 "ENOENT: no such file or directory, open '…'"，
     // 文件是空的时报成「缺 --join-token-file」（明明给了）。两种都是新节点最先撞到的话。
     const tokenPath = resolve(String(args["join-token-file"]));
-    if (!existsSync(tokenPath)) throw new Error(`入网令牌文件不存在：${tokenPath} —— ${JOIN_TOKEN_ORIGIN}`);
+    if (!existsSync(tokenPath)) throw new Error(`加入令牌文件不存在：${tokenPath} —— ${JOIN_TOKEN_ORIGIN}`);
     const token = readFileSync(tokenPath, "utf8").trim();
-    if (!token) throw new Error(`入网令牌文件是空的：${tokenPath} —— ${JOIN_TOKEN_ORIGIN}`);
+    if (!token) throw new Error(`加入令牌文件是空的：${tokenPath} —— ${JOIN_TOKEN_ORIGIN}`);
     return token;
   }
   return String(args["join-token"] || process.env.AIMAC_AGENT_JOIN_TOKEN || "").trim();

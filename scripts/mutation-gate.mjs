@@ -4644,7 +4644,7 @@ const MUTATIONS = [
     expect: "已过期且持有者已了结的租约没有被回收"
   },
   {
-    name: "过期的入网令牌在列表里不得显示成「已签发」",
+    name: "过期的加入令牌在列表里不得显示成「已签发」",
     file: APP,
     gate: "console",
     from: '    const displayStatus = (token.status === "issued" && token.expiresAt\n      && new Date(token.expiresAt).getTime() <= serverNow()) ? "expired" : token.status;',
@@ -4652,7 +4652,7 @@ const MUTATIONS = [
     expect: "过期令牌仍显示为已签发"
   },
   {
-    name: "过期的入网令牌不得继续占配额位（与签发侧同口径）",
+    name: "过期的加入令牌不得继续占配额位（与签发侧同口径）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyOutstandingJoinTokensHoldTheirQuotaSlot",
     from: '    if (token.status !== "issued" || !(new Date(token.expiresAt).getTime() > Date.now())) continue;',
@@ -4660,7 +4660,7 @@ const MUTATIONS = [
     expect: "占位算错"
   },
   {
-    name: "未使用的入网令牌必须算成配额占位",
+    name: "未使用的加入令牌必须算成配额占位",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyOutstandingJoinTokensHoldTheirQuotaSlot",
     from: '    if (token.status !== "issued" || !(new Date(token.expiresAt).getTime() > Date.now())) continue;',
@@ -4679,9 +4679,9 @@ const MUTATIONS = [
     name: "页面要显出占位并给出合计（否则还剩一格却签不出来）",
     file: "apps/control-plane-ui/public/modules/ui-primitives.js",
     gate: "console",
-    from: '${Number(reserved) > 0 ? `（另有 ${esc(reserved)} 张未使用的入网令牌占着位，合计 ${held}/${max ?? 0}）` : ""}',
+    from: '${Number(reserved) > 0 ? `（另有 ${esc(reserved)} 张未使用的加入令牌占着位，合计 ${held}/${max ?? 0}）` : ""}',
     to: "",
-    expect: "未使用的入网令牌占着配额，页面要显出来并给出合计"
+    expect: "未使用的加入令牌占着配额，页面要显出来并给出合计"
   },
   {
     name: "别的组织的账号不许出现在授权下拉里",
@@ -4861,7 +4861,7 @@ const MUTATIONS = [
     gate: "doctor",
     from: '  if (tokenProject.status === "archived") {',
     to: "  if (true) {",
-    expect: "在用项目里签不出入网令牌了"
+    expect: "在用项目里签不出加入令牌了"
   },
   {
     name: "新的项目级写动作必须回答「归档之后还让不让做」",
@@ -4879,10 +4879,10 @@ const MUTATIONS = [
     gate: "doctor",
     from: '  if (tokenProject.status === "archived") {',
     to: "  if (false) {",
-    expect: "已归档的项目还能签发 agent 入网令牌"
+    expect: "已归档的项目还能签发 agent 加入令牌"
   },
   {
-    name: "已归档的项目不许出现在签发入网令牌的目标里（界面这半）",
+    name: "已归档的项目不许出现在签发加入令牌的目标里（界面这半）",
     file: APP,
     gate: "console",
     from: '  return (state.projects || []).filter((project) => project.status !== "archived");',
@@ -5873,7 +5873,7 @@ const MUTATIONS = [
     name: "智能体配额要说清只有吊销才腾得出额度",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '? "或吊销一台不再用的节点（关停、停用档案都不减用量；未签发出去用掉的入网令牌也占着额度）"',
+    from: '? "或吊销一台不再用的节点（关停、停用档案都不减用量；未签发出去用掉的加入令牌也占着额度）"',
     to: '? "或先关掉/归档不再需要的"',
     expect: "只有吊销才腾得出来"
   },
@@ -11117,7 +11117,7 @@ const MUTATIONS = [
     expect: "人暂停之后这个派发不是 blocked"
   },
   {
-    name: "入网令牌上的角色范围在【领活】这一步也要算数",
+    name: "加入令牌上的角色范围在【领活】这一步也要算数",
     file: "apps/control-plane-ui/lib/agent-gateway.mjs",
     gate: "agent",
     from: '  return allowedRoles.includes("*") || allowedRoles.includes(role);',
@@ -11298,7 +11298,7 @@ const MUTATIONS = [
     expect: "一个字都没提"
   },
   {
-    name: "用掉的入网令牌不能写成「已采纳」（全局词表里那个词是评审包的）",
+    name: "用掉的加入令牌不能写成「已采纳」（全局词表里那个词是评审包的）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
     from: '      statusBadge("joinToken", displayStatus),',
@@ -11869,7 +11869,7 @@ const MUTATIONS = [
     expect: "这道守卫看不见改动"
   },
   {
-    name: "入网令牌的角色范围要在签票时拒绝未登记角色（原先节点注册时才炸）",
+    name: "加入令牌的角色范围要在签票时拒绝未登记角色（原先节点注册时才炸）",
     file: "apps/control-plane-ui/lib/agent-gateway.mjs",
     gate: "doctor",
     from: '    const unknownRoles = unknownOwnerRoles(allowedRoles.filter((role) => role !== "*"));',
@@ -12021,7 +12021,7 @@ const MUTATIONS = [
     file: "apps/agent-runtime/runtime.mjs",
     gate: "contract",
     check: "verifyAgentctlUnknownCommandListsCommands",
-    from: "    throw new Error(`这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <入网令牌文件>，令牌由项目管理员在目标项目「项目管理」→「AI 智能体」→「注册 agent」签发`);",
+    from: "    throw new Error(`这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <加入令牌文件>，令牌由项目管理员在目标项目「项目管理」→「AI 智能体」→「注册 agent」签发`);",
     to: "    throw new Error(`agent is not initialized: ${configPath}`);",
     expect: "没注册的节点跑 status，报文没说「还没注册」"
   },
@@ -12039,7 +12039,7 @@ const MUTATIONS = [
     file: "apps/agent-runtime/runtime.mjs",
     gate: "contract",
     check: "verifyAgentctlUnknownCommandListsCommands",
-    from: "    if (!existsSync(tokenPath)) throw new Error(`入网令牌文件不存在：${tokenPath} —— ${JOIN_TOKEN_ORIGIN}`);",
+    from: "    if (!existsSync(tokenPath)) throw new Error(`加入令牌文件不存在：${tokenPath} —— ${JOIN_TOKEN_ORIGIN}`);",
     to: "",
     expect: "令牌文件不存在时没说清"
   },
@@ -12048,7 +12048,7 @@ const MUTATIONS = [
     file: "apps/agent-runtime/runtime.mjs",
     gate: "contract",
     check: "verifyAgentctlUnknownCommandListsCommands",
-    from: "    if (!token) throw new Error(`入网令牌文件是空的：${tokenPath} —— ${JOIN_TOKEN_ORIGIN}`);",
+    from: "    if (!token) throw new Error(`加入令牌文件是空的：${tokenPath} —— ${JOIN_TOKEN_ORIGIN}`);",
     to: "",
     expect: "令牌文件是空的时没说清"
   },

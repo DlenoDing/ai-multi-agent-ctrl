@@ -194,7 +194,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 | `AIMAC_MCP_SUMMARY_WORK_ITEM_CAP` | `20` | MCP 摘要里每个任务组内嵌的工作项数（下限 5，更小的值按它生效） | 同上 |
 | `AIMAC_MCP_AUDIT_MAX_BYTES` | `67108864` | MCP 调用台账单文件大小（64 MiB），到量轮转（下限 1048576，更小的值按它生效） | 更早的调用记录进了轮转文件 |
 | `AIMAC_MCP_AUDIT_ROTATIONS` | `20` | 保留多少份轮转出去的 MCP 调用台账；超过的按最旧删除（默认约 1.28 GiB 之后开始丢最早的 agent 调用记录，不告警） | 更早的记录不在任何地方了 |
-| `AIMAC_ALLOW_INSECURE_PUBLIC_URL` | `false` | 允许 `AIMAC_PUBLIC_URL` 用 http 指向非本机主机（否则启动被拒，且对外地址回落成本机） | 会话令牌、入网令牌明文走网络 |
+| `AIMAC_ALLOW_INSECURE_PUBLIC_URL` | `false` | 允许 `AIMAC_PUBLIC_URL` 用 http 指向非本机主机（否则启动被拒，且对外地址回落成本机） | 会话令牌、加入令牌明文走网络 |
 | `AIMAC_ALLOWED_PUBLIC_HOSTS` | 空 | 逗号分隔的 Host 头白名单；不在名单里的 Host 一律按本机地址算，防止把对外地址算成攻击者给的域名 | 反代域名没登记时装机地址会错 |
 | `AIMAC_ALLOW_LOCAL_GIT_REMOTE` | `true` | 允许项目仓库指向本机路径/`file://`（本地部署与 e2e 用它）；托管多租户部署应设 `false`，否则租户填的仓库地址能让共享主机去 fetch 任意本地仓库 | 关掉后本地仓库目标一律被拒 |
 | `AIMAC_ALLOW_LOCAL_DETERMINISTIC_WORKER` | `false` | 允许控制面用本机确定性执行器（只给 e2e/排障）；生产不要开 | 开了就有一条不经 agent 节点的执行路径 |
@@ -204,7 +204,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 | `AIMAC_ORG_DEFAULT_MAX_MEMBERS` | `50` | 新组织的成员配额缺省（下限 1，更小的值按它生效） | 组织管理员可在「组织管理」页改 |
 | `AIMAC_ORG_DEFAULT_MAX_PROJECTS` | `20` | 新组织的项目配额缺省（下限 1，更小的值按它生效） | 同上 |
 | `AIMAC_ORG_DEFAULT_MAX_TASK_GROUPS` | `200` | 新组织的任务组配额缺省（下限 1，更小的值按它生效） | 同上 |
-| `AIMAC_ORG_DEFAULT_MAX_AGENTS` | `100` | 新组织的智能体节点配额缺省（节点＋未用掉的入网令牌一起算） | 同上 |
+| `AIMAC_ORG_DEFAULT_MAX_AGENTS` | `100` | 新组织的智能体节点配额缺省（节点＋未用掉的加入令牌一起算） | 同上 |
 | `AIMAC_PG_POOL_MAX` | `10` | PostgreSQL 连接池上限 | 并发写多时排队 |
 | `AIMAC_PG_POOL_IDLE_MS` | `30000` | 空闲连接回收时间 | — |
 | `AIMAC_PG_POOL_CONNECT_TIMEOUT_MS` | `10000` | 建连超时 | 数据库不可达时多久报错 |
@@ -333,7 +333,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 | [spec/management-console-surface.schema.json](spec/management-console-surface.schema.json) | 系统管理和用户管理界面 schema |
 | [spec/progress-snapshot.schema.json](spec/progress-snapshot.schema.json) | 项目/任务组进度、阻塞、角色活动和仓库输出快照 schema |
 | [spec/agent-dispatch.schema.json](spec/agent-dispatch.schema.json) | Orchestrator 投递给 Agent Runtime 的 durable dispatch/outbox schema |
-| [spec/agent-join-token.schema.json](spec/agent-join-token.schema.json) | 一次性 Agent 入网令牌、项目/角色/MCP scope 和有效期 schema |
+| [spec/agent-join-token.schema.json](spec/agent-join-token.schema.json) | 一次性 Agent 加入令牌、项目/角色/MCP scope 和有效期 schema |
 | [spec/agent-runtime-node.schema.json](spec/agent-runtime-node.schema.json) | 远程 Agent 节点身份、能力、自检、准入和心跳 schema |
 | [spec/agent-skill-workset.schema.json](spec/agent-skill-workset.schema.json) | 总控按任务下发的最小 Skill 工作集、摘要、overlay 和强制使用指令 schema |
 | [spec/instruction-envelope.schema.json](spec/instruction-envelope.schema.json) | 指令稳定前缀、delta、cache key、token budget 和输出契约 schema |

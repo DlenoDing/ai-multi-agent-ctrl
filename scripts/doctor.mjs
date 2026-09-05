@@ -1991,7 +1991,7 @@ try {
   // 【成员的默认项目要指得到、且还能开工】。这个字段原先原样收下：可以指向已归档的项目
   // （新成员一进来就落在一个开不了新工作的地方），也可以指向一个根本不存在的 id ——
   // 两种都没有任何提示。控制台的「默认项目」下拉此前也照旧列着归档项目
-  //（入网令牌那个下拉上一轮已经滤掉了 —— 同一件事两处只改了一处）。
+  //（加入令牌那个下拉上一轮已经滤掉了 —— 同一件事两处只改了一处）。
   {
     // 这个组织的项目配额是按用例算好的，直接建会撞 org_quota_exceeded ——
     // 先用系统身份抬一格（配额本身另有断言守着，这里只是给探针腾地方）。
@@ -2457,13 +2457,13 @@ try {
         + " —— 归档前那次逐个关闭白做了，新组也不在任何人的视野里");
     }
     // 【归档不只挡建任务组】。归档的含义是"移出可建新工作的范围"，而此前只有建任务组那一处判了 ——
-    // 给一个已归档的项目签发 agent 入网令牌照样成功，而控制台的「加入令牌」下拉里就列着它：
+    // 给一个已归档的项目签发 agent 加入令牌照样成功，而控制台的「加入令牌」下拉里就列着它：
     // 人按着界面签一张出来，agent 接进去绑到一个不能再建任何工作的项目上，两边都不会报错。
     const archivedJoinToken = await jsonFetch(port, "/api/agent-join-tokens", {method: "POST",
       headers: {"Idempotency-Key": "doctor-archive-join-token", authorization: systemAuth},
       body: JSON.stringify({projectId: archProjectId, allowedRoles: ["monitor"], ttlSeconds: 600})});
     if (archivedJoinToken.response.ok || archivedJoinToken.payload?.error !== "project_archived") {
-      throw new Error(`已归档的项目还能签发 agent 入网令牌（${archivedJoinToken.response.status} `
+      throw new Error(`已归档的项目还能签发 agent 加入令牌（${archivedJoinToken.response.status} `
         + `${JSON.stringify(archivedJoinToken.payload).slice(0, 120)}）—— 接进去的 agent 绑在一个`
         + "不能再建任何工作的项目上，而界面就摆着这个选项");
     }
@@ -2472,7 +2472,7 @@ try {
       body: JSON.stringify({projectId: archProjectId, role: "monitor"})});
     if (archivedAgent.response.ok || archivedAgent.payload?.error !== "project_archived") {
       throw new Error(`已归档的项目还能建智能体（${archivedAgent.response.status} `
-        + `${JSON.stringify(archivedAgent.payload).slice(0, 120)}）—— 与签发入网令牌同族的洞`);
+        + `${JSON.stringify(archivedAgent.payload).slice(0, 120)}）—— 与签发加入令牌同族的洞`);
     }
     // 收尾动作不许被一起挡死：归档之后还得撤得掉已经发出去的票，否则收不了尾。
     // 少了这条，把"挡住"写成"全挡"也能让上面两条绿 —— 那时归档项目会变成一个清不干净的死角。
@@ -2481,7 +2481,7 @@ try {
       // 原先这里写的是 roleScope —— 网关只读 allowedRoles，这个键从来没被读过（票一直按缺省 agent-runtime 签）。
       body: JSON.stringify({projectId: liveProjectForCleanup, allowedRoles: ["monitor"], ttlSeconds: 600})});
     if (cleanupToken.response.status !== 201) {
-      throw new Error(`在用项目里签不出入网令牌了（${cleanupToken.response.status}）—— 归档那道判据把正常路径一起堵死了`);
+      throw new Error(`在用项目里签不出加入令牌了（${cleanupToken.response.status}）—— 归档那道判据把正常路径一起堵死了`);
     }
     // 【拼错的角色范围要在签票时就拒】（放在「在用项目签得出票」之后：归档判据被改成全挡时，先红的得是那一句）。原先照收：票显示为已签发，节点拿它注册时才被拒 —— 失败推迟到另一台机器上。
     {
@@ -2504,7 +2504,7 @@ try {
     if (!liveGroup.response.ok) {
       throw new Error(`未归档的项目里也建不出任务组（${liveGroup.response.status} ${JSON.stringify(liveGroup.payload).slice(0, 120)}）—— 这道判据把正常路径堵死了`);
     }
-    // 这道判据原先只长在【建任务组 / 建智能体 / 签入网令牌】三处，而改配置、发成员授权
+    // 这道判据原先只长在【建任务组 / 建智能体 / 签加入令牌】三处，而改配置、发成员授权
     // 两条路照样接受已归档的项目：改动真的落下来，而那个项目已经不在任何人的视野里
     //（概览按在用项目列、编排跳过它）—— 人以为自己配好了、把人加进去了。
     // 配置更新还有一道【版本前置】：不带 expectedConfigVersion 会先被它拒掉，
@@ -4172,10 +4172,10 @@ try {
     }
   }
 
-  // 【伪造 Host 头不得改写交给 agent 的地址】。装机脚本与入网令牌的回执里，serverUrl /
+  // 【伪造 Host 头不得改写交给 agent 的地址】。装机脚本与加入令牌的回执里，serverUrl /
   // installScriptUrl / runtimeUrl / mcpUrl 都是用请求的 Host 头拼出来的。挡住它的是
   // requestHostAllowed —— 把那道守卫改成永远为真，契约门 + 三套 e2e 全绿，一条断言都没有。
-  // 后果不是信息泄露：装机命令会指向攻击者的主机，而 agent 会【带着一次性入网令牌】去那里注册。
+  // 后果不是信息泄露：装机命令会指向攻击者的主机，而 agent 会【带着一次性加入令牌】去那里注册。
   // 三种 Host 各验一次，缺任何一种这条都不作数：
   //   · 白名单里的 → 必须照用（否则"全都回落到本地"也能让下面两条绿）；
   //   · 伪造的     → 必须回落到本地端点，且回执里一个字都不许出现那个域名；
@@ -4211,7 +4211,7 @@ try {
     const spoofedText = JSON.stringify(spoofed);
     if (spoofedText.includes(forged)) {
       throw new Error(`伪造的 Host「${forged}」被写进了交给 agent 的地址：${spoofedText.slice(0, 240)}`
-        + " —— 照这份装机命令跑起来的 agent，会带着一次性入网令牌去攻击者的主机注册");
+        + " —— 照这份装机命令跑起来的 agent，会带着一次性加入令牌去攻击者的主机注册");
     }
     const installerText = (await rawGet("/install-agent.sh", forged)).body;
     if (installerText.includes(forged)) {

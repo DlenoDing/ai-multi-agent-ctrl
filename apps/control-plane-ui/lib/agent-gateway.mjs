@@ -85,7 +85,7 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
   // （下面配额那条早就用了 gatewayError，同一个函数里两种写法 —— 这一条是漏掉的那个。）
   if (!tokenProject) throw gatewayError("join_token_project_not_found", 404, {projectId: projectId || null});
   // 归档的含义是「移出可建新工作的范围」，而此前只有建任务组那一处判了它 ——
-  // 给已归档项目签出来的入网令牌，接进去的 agent 会绑在一个不能再建任何工作的项目上，
+  // 给已归档项目签出来的加入令牌，接进去的 agent 会绑在一个不能再建任何工作的项目上，
   // 两边都不报错；而控制台的「加入令牌」下拉里就摆着这些项目。锁落在决策点上，
   // 界面那份清单也一并收窄（只藏选项不锁门＝改个请求就绕过去了）。
   if (tokenProject.status === "archived") {
@@ -191,7 +191,7 @@ export function registerAgentNode(state, input = {}, options = {}) {
       return {...replay.result, node: publicAgentNode(existingNode), replayed: true};
     }
   }
-  // 状态要照实说。原先这四种状态一律回 join_token_not_active（"入网令牌不处于可用状态"）——
+  // 状态要照实说。原先这四种状态一律回 join_token_not_active（"加入令牌不处于可用状态"）——
   // 系统明明知道是"已被使用"还是"已过期"还是"已吊销"，却给人最模糊的那一句；而下面那两道按
   // useCount/expiresAt 判的检查在正常流程里永远够不着（兑换成功当场就把 status 置成 consumed）。
   // 不用三元：拒绝码写在三元里会从拒绝码扫描面逃逸（本仓撞过的形状）。

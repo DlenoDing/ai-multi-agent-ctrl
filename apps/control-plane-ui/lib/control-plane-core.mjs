@@ -443,7 +443,7 @@ export function recomputeOrganizationUsage(state) {
     if (node.status === "revoked") continue;
     bump(node.organizationId || DEFAULT_ORGANIZATION_ID, "agents");
   }
-  // 已签发但还没用掉的入网令牌【占着位】：签发第 N+1 张时会被拒（createAgentJoinToken 把它算进用量）。
+  // 已签发但还没用掉的加入令牌【占着位】：签发第 N+1 张时会被拒（createAgentJoinToken 把它算进用量）。
   // 但页面上的"智能体 2/3"数的只是节点 —— 于是人看着还有一格，签发却被拒，报文还说"3/3 已满"。
   // 屏幕上并排的两个数必须出自同一处统计。不能直接并进 agents：节点注册时查的也是 agents，
   // 并进去的话，节点会被自己那张正在兑换的令牌顶掉一格，永远注册不上。所以单列一项。
@@ -478,7 +478,7 @@ export function organizationQuotaCheck(state, orgId, kind) {
     return {allowed: false, error: "org_quota_unreadable", quota, usage, kind};
   }
   if (usage >= quota) return {allowed: false, error: "org_quota_exceeded", quota, usage, kind};
-  // agents 配额分两半：节点(usage) + 已签发未用的入网令牌占位(reserved)。把 reserved 从【这一处】一并给出，
+  // agents 配额分两半：节点(usage) + 已签发未用的加入令牌占位(reserved)。把 reserved 从【这一处】一并给出，
   // 签发令牌的强制点就不必再各写一份 filter —— 页面显示那格与配额强制从此是同一个数（都来自 recompute 的
   // usage.agentsReserved），不会再出现「页面 2/3、签发却说 3/3」。其余 kind 没有预留概念，恒 0。
   const reserved = kind === "agents" ? Number(org.usage?.agentsReserved || 0) : 0;
