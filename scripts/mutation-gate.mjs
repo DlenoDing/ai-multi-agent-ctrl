@@ -666,6 +666,34 @@ const MUTATIONS = [
     expect: "不给出口"
   },
   {
+    // 换了密钥之后旧密文必须如实报 credential_key_mismatch；去掉 keyId 核对，解封只会以一个 GCM 认证错误炸掉，
+    // 下游分不清"没配凭证"与"密钥换了"。
+    name: "仓库凭证换钥后必须如实报 credential_key_mismatch",
+    check: "verifyAgentGatewayContracts",
+    file: "apps/control-plane-ui/lib/credential-seal.mjs",
+    from: "  if (sealed.keyId !== keyId) throw new Error(",
+    to: "  if (false) throw new Error(",
+    expect: "换钥后旧密文没有如实报"
+  },
+  {
+    // 密封后的落盘形态里不得含明文。
+    name: "仓库凭证密封后的落盘形态不得含明文",
+    check: "verifyAgentGatewayContracts",
+    file: "apps/control-plane-ui/lib/credential-seal.mjs",
+    from: "data: data.toString(\"base64\")};",
+    to: "data: String(plain)};",
+    expect: "仍含明文"
+  },
+  {
+    // isSealed 把残缺对象（只有 v:1）当成密文 → 解封时以 GCM 错误炸掉，而不是当"没配"处理；判定必须看齐全的字段。
+    name: "仓库凭证密文判定不得把残缺对象当密文",
+    check: "verifyAgentGatewayContracts",
+    file: "apps/control-plane-ui/lib/credential-seal.mjs",
+    from: "  return Boolean(value && typeof value === \"object\" && value.v === 1 && typeof value.data === \"string\" && value.iv && value.tag && value.keyId);",
+    to: "  return Boolean(value && typeof value === \"object\" && value.v === 1);",
+    expect: "isSealed 判定不严"
+  },
+  {
     // 推送与否骗人后果最重：把"未推送"写死成"已推送"，人会以为改动已经到远端。
     name: "工作项结果行必须如实区分已推送与未推送",
     file: APP,

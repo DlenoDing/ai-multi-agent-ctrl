@@ -2588,6 +2588,28 @@ try {
     if (!(badProjectRole.payload.unknownOwnerRoles || []).includes("reviwer") || (badProjectRole.payload.unknownOwnerRoles || []).includes("reviewer") || !(badProjectRole.payload.supported || []).includes("reviewer")) {
       throw new Error(`项目配置默认角色的拒绝要只点名 reviwer 并列出可用角色，实际 ${JSON.stringify(badProjectRole.payload).slice(0, 160)}`);
     }
+    // 【仓库凭证只以密文落盘、读接口不回密钥】。配一条 API Key 模式的仓库凭证，把明文登记进明文核对的清单
+    // （后面那道扫描会证明它在任何落盘文件里都搜不到，且中央状态里存在 sealedSecret），读回来只能看到 apiKeySet。
+    // 放在"写错默认角色"那条之后：它用的是上一次写入回执里的版本号，中间再写一次会让它撞上 config_version_stale。
+    {
+      const repoSecret = `doctor-repo-secret-${Date.now().toString(36)}`;
+      const readBefore = await jsonFetch(port, `/api/projects/${orgProject.payload.id}/config`, {headers: {authorization: orgAdminAuth}});
+      const withCredential = await jsonFetch(port, `/api/projects/${orgProject.payload.id}/config`, {
+        method: "POST", headers: {"Idempotency-Key": "doctor-org-proj-repo-credential", authorization: orgAdminAuth},
+        body: JSON.stringify({repositories: [{id: "repo_doctor", url: "https://example.invalid/doctor/repo.git", defaultBranch: "main",
+          credentialMode: "api_key", credential: {apiKey: repoSecret, username: "x-access-token"}}],
+          expectedConfigVersion: readBefore.payload.configVersion})
+      });
+      if (withCredential.response.status !== 200) {
+        throw new Error(`配仓库 API Key 凭证失败（${withCredential.response.status}/${withCredential.payload?.error}）—— 项目设置页的仓库行就是按这条存的`);
+      }
+      issuedPlaintextSecrets.push(["仓库 API Key", repoSecret]);
+      const readAfter = await jsonFetch(port, `/api/projects/${orgProject.payload.id}/config`, {headers: {authorization: orgAdminAuth}});
+      const repoRow = (readAfter.payload?.config?.repositories || []).find((repo) => repo.id === "repo_doctor");
+      if (!repoRow || repoRow.credential?.apiKeySet !== true || JSON.stringify(readAfter.payload).includes(repoSecret)) {
+        throw new Error(`仓库凭证读接口没脱敏或没标 apiKeySet：${JSON.stringify(repoRow).slice(0, 200)}`);
+      }
+    }
     // 任务组那扇门要 task_group:control：用主流程里以 auth 建的那个任务组（组织管理员在自己组织的任务组上并没有这项权限）。
     const probeTaskGroupId = createdTaskGroup.payload.taskGroup.id;
     const tgConfigRead = await jsonFetch(port, `/api/task-groups/${encodeURIComponent(probeTaskGroupId)}/config`, {headers: {authorization: auth}});
@@ -5327,6 +5349,10 @@ console.log(`控制面 e2e 产出规范核对 ok: ${doctorSweep.validated} 条�
         throw new Error(`${name} 里存着明文的${label} —— 一次性凭据只该出现在签发那一次的响应里，`
           + "落盘之后它就永久可读了（状态会随 view=full 出去、归档是给人查的）");
       }
+    }
+    // 仓库凭证要以密文形态落盘：上面配过一条 API Key 凭证，中央状态里必须能看到 sealedSecret（不是明文、也不是没存）。
+    if (name === "control-plane-state.json" && !raw.includes("\"sealedSecret\"")) {
+      throw new Error("仓库凭证没有以密文形态（sealedSecret）落盘 —— 要么没存进项目配置，要么存成了别的样子");
     }
   }
   const shardDir = join(root, doctorRuntimeDir, "project-db");

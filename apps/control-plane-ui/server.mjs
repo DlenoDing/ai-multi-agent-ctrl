@@ -142,6 +142,7 @@ import {
   projectRepositories,
   isSafeGitRef,
   noteWorkItemExecutionFailure, normalizePinnedModelId, newestWindow, dispatchContractSummary} from "./lib/control-plane-core.mjs";
+import { sealSecret, isSealed } from "./lib/credential-seal.mjs";
 import { isTerminalDispatchStatus } from "./lib/lifecycle-states.mjs";
 
 // 真正绑上的端口（listen 回调写入）；localEndpoint 用它。放在模块顶部：读状态的路径在 listen 之前就会调它。
@@ -918,22 +919,35 @@ function repositoryKey(repo = {}) {
   return String(repo.id || repo.repositoryId || repo.url || "").trim();
 }
 
+// 凭证的机密部分只以密文（sealedSecret）落盘：新填的当场密封；留空则沿用上一份密文；
+// 遇到旧版留下的明文 password/apiKey，保存时顺手密封掉（迁移在触碰时发生，不等专门的迁移脚本）。
+function sealedCredentialSecret(inputValue, previousCredential = {}, legacyKeys = []) {
+  const provided = inputValue !== undefined && inputValue !== "" ? String(inputValue).slice(0, 8192) : "";
+  if (provided) return sealSecret(provided, runtimeDir);
+  if (isSealed(previousCredential.sealedSecret)) return previousCredential.sealedSecret;
+  for (const key of legacyKeys) {
+    if (previousCredential[key]) return sealSecret(String(previousCredential[key]), runtimeDir);
+  }
+  return null;
+}
+
 function sanitizeRepositoryCredential(inputCredential = {}, mode, previousCredential = {}) {
   if (mode === "account_password") {
-    const password = inputCredential.password !== undefined && inputCredential.password !== ""
-      ? String(inputCredential.password).slice(0, 8192)
-      : String(previousCredential.password || "");
+    const sealed = sealedCredentialSecret(inputCredential.password, previousCredential, ["password"]);
     return {
       mode,
       username: String(inputCredential.username || previousCredential.username || "").slice(0, 512),
-      ...(password ? {password} : {})
+      ...(sealed ? {sealedSecret: sealed} : {})
     };
   }
   if (mode === "api_key") {
-    const apiKey = inputCredential.apiKey !== undefined && inputCredential.apiKey !== ""
-      ? String(inputCredential.apiKey).slice(0, 8192)
-      : String(previousCredential.apiKey || previousCredential.password || "");
-    return {mode, ...(apiKey ? {apiKey} : {})};
+    const sealed = sealedCredentialSecret(inputCredential.apiKey, previousCredential, ["apiKey", "password"]);
+    return {
+      mode,
+      // API Key 模式也允许指定用户名（GitHub 用 x-access-token、GitLab 用 oauth2……），投递时不填则按平台缺省。
+      username: String(inputCredential.username || previousCredential.username || "").slice(0, 512),
+      ...(sealed ? {sealedSecret: sealed} : {})
+    };
   }
   return {mode: "none"};
 }
@@ -963,14 +977,14 @@ function redactRepositoryConfigs(value = []) {
     if (!repo || typeof repo !== "object") return repo;
     const credential = repo.credential || {};
     const redacted = {...repo, credential: {...credential}};
-    if (redacted.credential.password) {
-      redacted.credential.password = "";
-      redacted.credential.passwordSet = true;
-    }
-    if (redacted.credential.apiKey) {
-      redacted.credential.apiKey = "";
-      redacted.credential.apiKeySet = true;
-    }
+    // 机密部分（密文 sealedSecret，或旧版遗留的明文）一律不出读接口，只回"已配置"标记；标记按模式落到
+    // passwordSet / apiKeySet（界面按这两个键提示"已配置，留空保留原值"）。
+    const hasSecret = isSealed(credential.sealedSecret) || Boolean(credential.password) || Boolean(credential.apiKey);
+    delete redacted.credential.sealedSecret;
+    delete redacted.credential.password;
+    delete redacted.credential.apiKey;
+    if (hasSecret && credential.mode === "account_password") redacted.credential.passwordSet = true;
+    if (hasSecret && credential.mode === "api_key") redacted.credential.apiKeySet = true;
     delete redacted.credentialSecretRef;
     return redacted;
   });

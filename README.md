@@ -199,6 +199,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 | `AIMAC_ALLOW_LOCAL_GIT_REMOTE` | `true` | 允许项目仓库指向本机路径/`file://`（本地部署与 e2e 用它）；托管多租户部署应设 `false`，否则租户填的仓库地址能让共享主机去 fetch 任意本地仓库 | 关掉后本地仓库目标一律被拒 |
 | `AIMAC_ALLOW_LOCAL_DETERMINISTIC_WORKER` | `false` | 允许控制面用本机确定性执行器（只给 e2e/排障）；生产不要开 | 开了就有一条不经 agent 节点的执行路径 |
 | `AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND` | 无 | 控制面【本机】执行工作项时用的模型执行器命令（只给本地部署/排障；生产把活派给远程节点，不设它） | 不设且本机确定性执行器也没开时，本机路径上的派发阻塞为 agent_runtime_executor_required，等远程节点来领 |
+| `AIMAC_CREDENTIAL_KEY` | 无（运行时目录自动生成 `credential.key`，0600） | 项目仓库凭证（账号密码 / API Key）静态加密的 AES-256-GCM 密钥（32 字节，64 位 hex 或 base64）；凭证只以密文落盘、读接口只回"已配置"、投递给认领派发的 agent 时才解开 | 换了密钥或换了运行时目录后，旧密文解不开：投递时报 credential_key_mismatch，到项目设置里重新填一次凭证即可；多实例/容器部署要显式设同一把密钥，别各自生成 |
 | `AIMAC_AGENT_ALLOW_INSECURE_HTTP` | `false` | （agent 节点侧）允许用 http 连非本机的控制面 | 节点凭据明文走网络 |
 | `AIMAC_ORG_DEFAULT_MAX_MEMBERS` | `50` | 新组织的成员配额缺省（下限 1，更小的值按它生效） | 组织管理员可在「组织管理」页改 |
 | `AIMAC_ORG_DEFAULT_MAX_PROJECTS` | `20` | 新组织的项目配额缺省（下限 1，更小的值按它生效） | 同上 |

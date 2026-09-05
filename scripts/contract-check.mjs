@@ -3,6 +3,7 @@ import {
 execFileSync, spawn, spawnSync } from "node:child_process";
 import { dockerFailureAdvice } from "./lib/docker-failure-advice.mjs";
 import { mcpToolInputKeys } from "../apps/control-plane-ui/lib/mcp-tool-catalog.mjs";
+import { sealSecret, openSecret, isSealed, resetCredentialKeyCache } from "../apps/control-plane-ui/lib/credential-seal.mjs";
 import { SCHEMA_FILE_ALIASES, UNCOVERED_CEILINGS, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 import { HUMAN_ONLY_MCP_TOOL_REFUSALS } from "./lib/known-second-doors.mjs";
 import { OPERATOR_CLIS, OPERATOR_SHELL_ENTRIES, OPERATOR_ENTRY_FILES, ENV_READING_SUPPORT_FILES } from "./lib/operator-entries.mjs";
@@ -465,6 +466,7 @@ const PREDICATE_COVERAGE = {
   isNonEmptyEvidence: {proven: "空证据不许写进迁移台账"},
   requestHostAllowed: {proven: "伪造 Host 不得改写交给 agent 的地址"},
   canExposeBootstrapHint: {proven: "引导提示只给回环 + 本机 Host（它是凭据的一半）"},
+  isSealed: {proven: "仓库凭证密文判定不得把残缺对象当密文"},
   isTerminalDispatchStatus: {proven: "共用的派发终态判定必须真的在承重"},
   isSafeGitRemoteUrl: {proven: "agent 那份 git 远端守卫落后于控制面就要被逮到"},
   // —— 探过、某道门会红，但没有专属变异 ——
@@ -6375,6 +6377,33 @@ function verifyAgentGatewayContracts(output) {
     }
     const miss = dispatchContractSummary(st, {dispatchId: "adp_x", sessionId: "sess_none", runId: "run_9", workItemId: "w_x"});
     if (miss.found !== false) output.push("没有契约的派发不能报成 found：摘要必须如实说查不到，否则界面会把空的当成\"没规则\"");
+  }
+  // 仓库凭证静态加密：密封后落盘的形态里不得含明文；同钥可解开；换钥必须如实抛 credential_key_mismatch
+  // 而不是回空（否则 agent 那头会以"没配凭证"失败，人查不到是密钥换了）。
+  {
+    const savedEnvKey = process.env.AIMAC_CREDENTIAL_KEY;
+    delete process.env.AIMAC_CREDENTIAL_KEY;
+    const dir = mkdtempSync(join(tmpdir(), "aimac-seal-"));
+    const other = mkdtempSync(join(tmpdir(), "aimac-seal-other-"));
+    try {
+      resetCredentialKeyCache();
+      const plain = "doctor-repo-secret-ZzYyXx";
+      const sealed = sealSecret(plain, dir);
+      if (JSON.stringify(sealed).includes(plain)) output.push("仓库凭证密封后仍含明文：落盘形态里能直接搜到密钥");
+      if (openSecret(sealed, dir) !== plain) output.push("仓库凭证同钥解不开：密封/解封往返失败");
+      if (!isSealed(sealed) || isSealed({v: 1}) || isSealed("x") || isSealed(null)) output.push("isSealed 判定不严：认不出密文或把残缺对象当密文");
+      resetCredentialKeyCache();
+      let mismatch = null;
+      try { openSecret(sealed, other); } catch (error) { mismatch = error; }
+      if (!mismatch || !String(mismatch.message).includes("credential_key_mismatch")) {
+        output.push("换钥后旧密文没有如实报 credential_key_mismatch：会让 agent 以为没配凭证");
+      }
+    } finally {
+      resetCredentialKeyCache();
+      if (savedEnvKey !== undefined) process.env.AIMAC_CREDENTIAL_KEY = savedEnvKey;
+      rmSync(dir, {recursive: true, force: true});
+      rmSync(other, {recursive: true, force: true});
+    }
   }
   // 截断窗口必须保留最新的那几条（与界面"最新在前"自洽）：5 条取 3 → 最后 3 条；不超上限原样返回同一数组；
   // 上限 0 → 空（slice(-0) 会返回整份，这是个真坑）。把 slice(-limit) 改回 slice(0, limit) 即红。
