@@ -19,6 +19,10 @@ const seedPath = join(root, "data", "seed-state.json");
 const {digestOf} = await import("../apps/control-plane-ui/lib/digest-utils.mjs");
 const {writeStoredState} = await import("../apps/control-plane-ui/lib/state-store.mjs");
 const {appendProjectExecutionEvent} = await import("../apps/control-plane-ui/lib/project-event-store.mjs");
+const {createSchemaValidator} = await import("./lib/schema-validate.mjs");
+const {validateSchema} = createSchemaValidator(join(root, "spec"));
+const executionObjectSchema = JSON.parse(readFileSync(join(root, "spec", "execution-object-detail.schema.json"), "utf8"));
+const runtimeNodeDetailSchema = JSON.parse(readFileSync(join(root, "spec", "runtime-node-detail.schema.json"), "utf8"));
 
 const systemToken = randomBytes(24).toString("base64url");
 const viewerToken = randomBytes(24).toString("base64url");
@@ -423,6 +427,9 @@ try {
   assert.equal(sessionLatest.historyTruncated, true);
 
   const dispatchObject = await request("/api/agent-dispatches/dsp_detail/detail", viewerToken);
+  const dispatchSchemaErrors = [];
+  validateSchema(dispatchObject, executionObjectSchema, "ExecutionObjectDetail", dispatchSchemaErrors, executionObjectSchema);
+  assert.deepEqual(dispatchSchemaErrors, []);
   assert.equal(dispatchObject.schemaVersion, "execution-object-detail/v1");
   assert.equal(dispatchObject.objectType, "dispatch");
   assert.equal(dispatchObject.taskGroup.id, "tg_workbench_visible");
@@ -448,6 +455,9 @@ try {
   await request("/api/agent-dispatches/not_here/detail", viewerToken, {status: 403});
   await request("/api/work-sessions/not_here/detail", systemToken, {status: 404});
   const nodeObject = await request("/api/agent-nodes/node_detail/detail?projectId=prj_workbench_api", viewerToken);
+  const nodeSchemaErrors = [];
+  validateSchema(nodeObject, runtimeNodeDetailSchema, "RuntimeNodeDetail", nodeSchemaErrors, runtimeNodeDetailSchema);
+  assert.deepEqual(nodeSchemaErrors, []);
   assert.equal(nodeObject.schemaVersion, "runtime-node-detail/v1");
   assert.equal(nodeObject.node.nodeId, "node_detail");
   assert.equal(nodeObject.node.heartbeatOverdue, true, "stale node detail must not present the stored online status as live health");

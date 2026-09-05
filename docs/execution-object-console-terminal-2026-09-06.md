@@ -53,8 +53,8 @@
 新增按对象读取的只读接口：
 
 ```text
-GET /api/work-sessions/<sessionId>/detail
-GET /api/agent-dispatches/<dispatchId>/detail
+GET /api/work-sessions/:sessionId/detail
+GET /api/agent-dispatches/:dispatchId/detail
 ```
 
 接口必须重新鉴权所属任务组，并返回当前对象、关联会话／派发、任务组摘要、任务、Agent 档案公开字段、运行节点公开字段、模型选择、会话放置、控制命令和规则契约摘要。事件仍走现有可长轮询的专用事件接口，避免详情响应随事件量无界增长。

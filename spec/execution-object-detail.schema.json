@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/execution-object-detail.schema.json",
+  "title": "ExecutionObjectDetail",
+  "description": "Bounded, permission-scoped management projection for one work session or Agent dispatch. Execution events are fetched through the dedicated cursor API.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "objectType", "objectId", "projectId", "taskGroup", "workItem", "session", "dispatch",
+    "relatedDispatches", "relatedDispatchCount", "agent", "node", "modelDecision", "placementDecision",
+    "contractSummary", "repositoryOutput", "controlCommands", "checkpoints", "qualityGates", "testResults", "settled"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "execution-object-detail/v1"},
+    "objectType": {"type": "string", "enum": ["session", "dispatch"]},
+    "objectId": {"type": "string", "minLength": 1, "maxLength": 256},
+    "projectId": {"type": ["string", "null"]},
+    "taskGroup": {"type": ["object", "null"]},
+    "workItem": {"type": ["object", "null"]},
+    "session": {"type": ["object", "null"]},
+    "dispatch": {"type": ["object", "null"]},
+    "relatedDispatches": {"type": "array", "maxItems": 50, "items": {"type": "object"}},
+    "relatedDispatchCount": {"type": "integer", "minimum": 0},
+    "agent": {"type": ["object", "null"]},
+    "node": {"type": ["object", "null"]},
+    "modelDecision": {"type": ["object", "null"]},
+    "placementDecision": {"type": ["object", "null"]},
+    "contractSummary": {"type": ["object", "null"]},
+    "repositoryOutput": {"type": ["object", "null"]},
+    "controlCommands": {"type": "array", "maxItems": 50, "items": {"type": "object"}},
+    "checkpoints": {"type": "array", "maxItems": 20, "items": {"type": "object"}},
+    "qualityGates": {"type": "array", "maxItems": 20, "items": {"type": "object"}},
+    "testResults": {"type": "array", "maxItems": 20, "items": {"type": "object"}},
+    "settled": {"type": "boolean"}
+  }
+}

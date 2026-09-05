@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/runtime-node-detail.schema.json",
+  "title": "RuntimeNodeDetail",
+  "description": "Bounded organization- or project-scoped management projection for one Agent Runtime node.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "node", "projectId", "scope", "activeDispatches", "recentDispatches",
+    "assignedDispatchCount", "controlCommands", "recentEvents", "agentProfiles"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "runtime-node-detail/v1"},
+    "node": {"type": "object"},
+    "projectId": {"type": ["string", "null"]},
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {"type": "string", "enum": ["organization", "project"]},
+        "id": {"type": ["string", "null"]},
+        "ids": {"type": "array", "maxItems": 100, "items": {"type": "string"}}
+      }
+    },
+    "activeDispatches": {"type": "array", "maxItems": 50, "items": {"type": "object"}},
+    "recentDispatches": {"type": "array", "maxItems": 50, "items": {"type": "object"}},
+    "assignedDispatchCount": {"type": "integer", "minimum": 0},
+    "controlCommands": {"type": "array", "maxItems": 50, "items": {"type": "object"}},
+    "recentEvents": {"type": "array", "maxItems": 100, "items": {"type": "object"}},
+    "agentProfiles": {"type": "array", "maxItems": 100, "items": {"type": "object"}}
+  }
+}

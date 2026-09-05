@@ -14412,7 +14412,9 @@ function verifyLabelTablesMatchTheirEnums(output) {
     const kindBlock = /const STATUS_LABEL_BY_KIND = \{([\s\S]*?)\n\s*\};/u.exec(labelText);
     const kinds = new Set(kindBlock ? [...kindBlock[1].matchAll(/(?:^|[{,\s])([a-zA-Z][a-zA-Z0-9_]*)\s*:\s*\{/gu)]
       .map((match) => match[1]) : []);
-    const used = new Set([...appText.matchAll(/statusBadge\("([a-zA-Z]+)"/gu)].map((match) => match[1]));
+    const moduleStatusText = [appText, ...readdirSync(join(root, "apps/control-plane-ui/public/modules"))
+      .filter((name) => name.endsWith(".js")).map((name) => readFileSync(join(root, "apps/control-plane-ui/public/modules", name), "utf8"))].join("\n");
+    const used = new Set([...moduleStatusText.matchAll(/statusBadge\("([a-zA-Z]+)"/gu)].map((match) => match[1]));
     if (kinds.size < 3 || used.size < 3) {
       output.push(`状态徽标按对象覆盖：提取到 ${kinds.size} 个覆盖表、${used.size} 处调用 —— 提取失配，本条在空转`);
     } else {
@@ -21806,11 +21808,11 @@ function verifyRecordSpecsHaveProducers(output) {
       + "控制面不为每条 git 命令建记录"
   };
   const specDir = resolve(root, "spec");
-  const product = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
-    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
-    "apps/control-plane-ui/lib/audit-ledger.mjs", "apps/control-plane-ui/lib/project-event-store.mjs",
-    "apps/mcp-server/server.mjs", "apps/agent-runtime/runtime.mjs", "data/seed-state.json"]
-    .map((file) => readFileSync(resolve(root, file), "utf8")).join("\n");
+  const controlPlaneLibDir = resolve(root, "apps/control-plane-ui/lib");
+  const product = ["apps/control-plane-ui/server.mjs", "apps/mcp-server/server.mjs", "apps/agent-runtime/runtime.mjs", "data/seed-state.json"]
+    .map((file) => readFileSync(resolve(root, file), "utf8"))
+    .concat(readdirSync(controlPlaneLibDir).filter((name) => name.endsWith(".mjs"))
+      .map((name) => readFileSync(join(controlPlaneLibDir, name), "utf8"))).join("\n");
   let scanned = 0;
   const orphaned = [];
   const seen = new Set();

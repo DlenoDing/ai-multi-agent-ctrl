@@ -11796,6 +11796,14 @@ const MUTATIONS = [
     expect: "GET /api/agent-nodes/node_detail/detail?projectId=prj_workbench_foreign"
   },
   {
+    name: "运行节点详情响应必须符合正式 Schema",
+    file: "apps/control-plane-ui/lib/runtime-node-detail.mjs",
+    gate: "task-api",
+    from: "    assignedDispatchCount: assigned.length,",
+    to: "    assignedDispatchCountX: assigned.length,",
+    expect: "assignedDispatchCount is required"
+  },
+  {
     name: "节点详情不得绕过账号可见范围",
     file: "apps/control-plane-ui/server.mjs",
     gate: "task-api",
@@ -11866,6 +11874,14 @@ const MUTATIONS = [
     from: '    const reader = requireRead(req, state, taskGroupScope(state, dispatch.taskGroupId));\n    if (reader.status) return json(res, reader.status, reader.payload);\n    return json(res, 200, buildExecutionObjectDetail(state, {\n      type: "dispatch", id: dispatch.dispatchId, taskGroupSummary,',
     to: '    const reader = accountFromRequest(req, state);\n    return json(res, 200, buildExecutionObjectDetail(state, {\n      type: "dispatch", id: dispatch.dispatchId, taskGroupSummary,',
     expect: "GET /api/agent-dispatches/dsp_detail/detail"
+  },
+  {
+    name: "执行对象详情响应必须符合正式 Schema",
+    file: "apps/control-plane-ui/lib/execution-object-detail.mjs",
+    gate: "task-api",
+    from: "    relatedDispatchCount: relatedDispatches.length,",
+    to: "    relatedDispatchCountX: relatedDispatches.length,",
+    expect: "relatedDispatchCount is required"
   },
   {
     name: "会话对象详情必须按所属任务组重新鉴权",
