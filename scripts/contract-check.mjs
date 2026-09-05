@@ -4031,6 +4031,7 @@ function verifyHumanAndOrganizationContracts(output) {
     const nowMs = Date.parse("2026-08-02T00:00:00Z");
     deadNodeState.agentRuntimeNodes = [
       {nodeId: "node_dead", status: "online", admission: "admitted", lastHeartbeatAt: staleAt, activeDispatchIds: []},
+      {nodeId: "node_registered_only", status: "online", admission: "admitted", registeredAt: staleAt, activeDispatchIds: []},
       {nodeId: "node_live", status: "online", admission: "admitted", lastHeartbeatAt: "2026-08-01T23:59:00Z", activeDispatchIds: []}
     ];
     deadNodeState.agentControlCommands = [
@@ -4042,11 +4043,20 @@ function verifyHumanAndOrganizationContracts(output) {
     {
       const before = structuredClone(deadNodeState);
       const summary = agentNodeHealthSummary(before, nowMs);
+      const consoleHealthSource = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+      if (!consoleHealthSource.includes("online: fleetHealth.onlineNodes")
+        || !consoleHealthSource.includes("const fleetNodeIds = new Set(fleetNodes.map((node) => node.nodeId))")
+        || !consoleHealthSource.includes("agentNodeHealthSummary({agentRuntimeNodes: (state.agentRuntimeNodes || []).filter((node) => fleetNodeIds.has(node.nodeId))})")
+        || !consoleHealthSource.includes("onlineNodes: agentNodeHealthSummary(state).onlineNodes")
+        || !consoleHealthSource.includes('health: agentNodeHeartbeatOverdue(node) ? "offline"')) {
+        output.push("控制台节点健康投影必须复用心跳判据：项目在线数、系统在线数和组织节点健康不能只看旧 status");
+      }
       const deadIds = (before.agentRuntimeNodes || []).filter((node) => node.status === "online").map((node) => node.nodeId);
       if (!summary.overdueNodes.length || !summary.overdueNodes.every((node) => deadIds.includes(node.nodeId))) {
         output.push(`健康检查的节点汇总没把心跳过期、status 仍为 online 的节点列成 overdueNodes（${JSON.stringify(summary).slice(0, 160)}）—— 监控眼里死节点一直"在线"`);
       }
-      // 夹具里一台死、一台活：在线数必须是「status 为 online」减去「其中心跳过期的」。
+      if (!summary.overdueNodes.some((node) => node.nodeId === "node_registered_only")) output.push("节点健康判据必须保留 registeredAt 兜底，不能因公开投影丢字段而误算在线");
+      // 夹具里两台超期、一台活：在线数必须排除超期记录（包括仅有注册时间的旧记录）。
       const expectedOnline = deadIds.length - summary.overdueNodes.length;
       if (summary.onlineNodes !== expectedOnline) {
         output.push(`健康检查把心跳过期的节点算进了 onlineNodes（${summary.onlineNodes}，应为 ${expectedOnline}）—— status 只在扫描之后才翻成 offline，按它数就是按过时的字数`);

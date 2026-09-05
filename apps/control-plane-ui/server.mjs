@@ -39,7 +39,7 @@ import {
   requestAgentNodeRevocation,
   revokeDispatchMcpGrants,
   selfCheckAgentNode,
-  validateDispatchClaim, nodeHeartbeatTimeoutMs, agentNodeHealthSummary} from "./lib/agent-gateway.mjs";
+  validateDispatchClaim, nodeHeartbeatTimeoutMs, agentNodeHealthSummary, agentNodeHeartbeatOverdue} from "./lib/agent-gateway.mjs";
 import { approvalResolve, assignWorkItem, handleMcpJsonRpc, isWriteTool, permissionResolve, createMcpToolDefinitions, mcpAuditFault } from "../mcp-server/server.mjs";
 import {
   recordOrchestratorTickOutcome,
@@ -2013,6 +2013,10 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
   const LEDGER_COLLECTIONS = new Set(["modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions",
     "agentExecutionEvents", "agentControlCommands", "workerLanes", "transitionEvidence"]);
   const limitFor = (field) => (LEDGER_COLLECTIONS.has(field) ? ledgerLimit : capped);
+  // 公开投影确定可见节点，健康判定读取原始记录，保留未公开的 registeredAt 兜底字段。
+  const fleetNodes = scopeAgentRuntimeNodes(scoped.agentRuntimeNodes) || [];
+  const fleetNodeIds = new Set(fleetNodes.map((node) => node.nodeId));
+  const fleetHealth = agentNodeHealthSummary({agentRuntimeNodes: (state.agentRuntimeNodes || []).filter((node) => fleetNodeIds.has(node.nodeId))});
   const base = {
     schemaVersion: scoped.schemaVersion,
     stateVersion: scoped.stateVersion,
@@ -2035,8 +2039,8 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     // 与"一个都还没注册，按安装指引接一台" —— 三台全被吊销时会说前一句，让人去修一台不存在的机器。
     // 已吊销的节点不再参与任何事，不该出现在这个分母里。
     fleet: {
-      online: (scopeAgentRuntimeNodes(scoped.agentRuntimeNodes) || []).filter((node) => node.status === "online").length,
-      total: (scopeAgentRuntimeNodes(scoped.agentRuntimeNodes) || []).filter((node) => node.status !== "revoked").length
+      online: fleetHealth.onlineNodes,
+      total: fleetNodes.filter((node) => node.status !== "revoked").length
     },
     // 在制品额度（两个数字）。编排周期一旦按这个额度把单元判成 resource_queued，界面必须能说出
     // "为什么我的单元不动" —— 后端有闸而界面没有出口，等于这个闸对使用者不存在。
@@ -6232,7 +6236,7 @@ async function handleApi(req, res) {
       storage: {centralStateBytes: stateBytes, projectDbBytes, stateStore: stateStoreKind(),
         ...(storagePartial ? {partial: true} : {})},
       runtime: {
-        onlineNodes: (state.agentRuntimeNodes || []).filter((node) => node.status === "online").length,
+        onlineNodes: agentNodeHealthSummary(state).onlineNodes,
         // 同上：已吊销的不算在"在线 X/Y"的 Y 里，否则半年前吊销的节点会一直让这个比值难看。
         totalNodes: (state.agentRuntimeNodes || []).filter((node) => node.status !== "revoked").length,
         organizations: state.organizations.length,
@@ -6570,7 +6574,7 @@ async function handleApi(req, res) {
           display: {
             region: publicNode.profile?.region || null,
             dataRoot: publicNode.profile?.dataRoot || null,
-            health: publicNode.status === "online" ? (publicNode.admission === "full" ? "healthy" : "limited") : publicNode.status,
+            health: agentNodeHeartbeatOverdue(node) ? "offline" : publicNode.status === "online" ? (publicNode.admission === "full" ? "healthy" : "limited") : publicNode.status,
             currentDispatchIds: publicNode.activeDispatchIds || [],
             networkSpeedMbps: publicNode.profile?.networkSpeedMbps || null,
             models: (publicNode.profile?.models || []).filter((model) => model.available !== false).map((model) => model.providerClass)
