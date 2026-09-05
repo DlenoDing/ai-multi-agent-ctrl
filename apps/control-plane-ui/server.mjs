@@ -4908,6 +4908,12 @@ async function handleApi(req, res) {
       return json(res, 400, {error: "agent_role_not_registered", unknownRoles: unknownAgentRoles, supported: REGISTERED_OWNER_ROLES,
         message: `智能体角色「${unknownAgentRoles.join("、")}」不在已登记的执行角色里 —— 可用：${REGISTERED_OWNER_ROLES.join("、")}`});
     }
+    const requestedRoleSkillRef = String(body.roleSkillRef || "").trim();
+    if (requestedRoleSkillRef && !(state.roleSkills || []).some((skill) => skill.roleSkillId === requestedRoleSkillRef
+      && !["retired", "quarantined"].includes(skill.status))) {
+      return json(res, 400, {error: "role_skill_not_found", roleSkillRef: requestedRoleSkillRef,
+        message: "指定的角色 Skill 不在当前活动技能注册表中；请从控制台下拉列表重新选择，或先在服务端同步技能源"});
+    }
     const agentProject = requestedProject || (requestedProjectId ? null : undefined);
     if (agentProject?.status === "archived") {
       return json(res, 409, {error: "project_archived",
@@ -4945,7 +4951,7 @@ async function handleApi(req, res) {
       organizationId: (requestedProjectId ? requestedProject?.organizationId : null)
         || authenticated.account.organizationId
         || DEFAULT_ORGANIZATION_ID,
-      roleSkillRef: body.roleSkillRef,
+      roleSkillRef: requestedRoleSkillRef || undefined,
       createdAt: now(),
       updatedAt: now()
     };

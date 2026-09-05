@@ -2325,13 +2325,21 @@ function runAutonomousCycleBody(state, request = {}) {
       try {
         contract = buildTaskContract(state, {projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workItemId: workItem.id, workItem, root: request.root});
       } catch (error) {
-        if (error.code !== "AIMAC_MODEL_SELECTION_REJECTED") throw error;
+        const roleSkillFailure = String(error.message || "").startsWith("role_skill_");
+        if (error.code !== "AIMAC_MODEL_SELECTION_REJECTED" && !roleSkillFailure) throw error;
         workItem.status = "blocked_resource";
-        workItem.blockedReason = "model_selection_rejected";
+        workItem.blockedReason = roleSkillFailure ? String(error.message) : "model_selection_rejected";
         workItem.updatedAt = new Date().toISOString();
-        addBlocker(taskGroup, "S1", `没有可运行的模型满足工作项 ${workItem.id} 的硬性约束。`);
-        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "model_selection_rejected", whyThisCellNow: "no_model_satisfies_hard_constraints", cycleRef, modelDecisionRef: error.decision?.decisionId || null});
-        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "blocked_resource", reason: "model_selection_rejected", modelSelectionDecisionRef: error.decision?.decisionId});
+        addBlocker(taskGroup, "S1", roleSkillFailure
+          ? `Agent 档案指定的角色 Skill 无法解析（${String(error.message)}），工作项 ${workItem.id} 已停止派发。`
+          : `没有可运行的模型满足工作项 ${workItem.id} 的硬性约束。`);
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked",
+          reasonCode: roleSkillFailure ? String(error.message) : "model_selection_rejected",
+          whyThisCellNow: roleSkillFailure ? "selected_agent_role_skill_cannot_be_resolved" : "no_model_satisfies_hard_constraints",
+          cycleRef, modelDecisionRef: error.decision?.decisionId || null});
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "blocked_resource",
+          reason: roleSkillFailure ? String(error.message) : "model_selection_rejected",
+          modelSelectionDecisionRef: error.decision?.decisionId});
         continue;
       }
       const repositoryTarget = state.repositoryOutputs.find((target) => target.targetId === contract.repositoryOutputTargetRef);

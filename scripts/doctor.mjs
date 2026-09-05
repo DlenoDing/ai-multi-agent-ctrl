@@ -859,7 +859,8 @@ try {
     ["不是数的信任分", {name: "Stray trust agent", role: "reviewer", trustScore: "高"}, "agent_trust_score_invalid"],
     ["超出范围的信任分", {name: "Out of range agent", role: "reviewer", trustScore: 7}, "agent_trust_score_invalid"],
     // 写错的角色原先照收：派工时找不到同名角色就退回随便哪个在跑的，人建的那个永远不会被选中而谁也不报错。
-    ["没登记的角色", {name: "Typo role agent", role: "reviwer"}, "agent_role_not_registered"]
+    ["没登记的角色", {name: "Typo role agent", role: "reviwer"}, "agent_role_not_registered"],
+    ["不存在的角色 Skill", {name: "Missing skill agent", role: "reviewer", roleSkillRef: "skill_does_not_exist"}, "role_skill_not_found"]
   ].entries()) {
     const rejected = await jsonFetch(port, "/api/agents", {
       method: "POST",

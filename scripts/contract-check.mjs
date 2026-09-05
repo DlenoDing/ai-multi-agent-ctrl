@@ -6528,6 +6528,24 @@ function verifyAgentGatewayContracts(output) {
     if (organizationFallback.selectedAgentId !== "agent_orchestrator") {
       output.push(`项目级 Agent 停用后没有回退到组织级同角色 Agent（实际 ${organizationFallback.selectedAgentId || "未绑定"}）`);
     }
+    const staleSkillState = JSON.parse(JSON.stringify(seedState));
+    ensureRuntimeCollections(staleSkillState, {root});
+    staleSkillState.agents.push({schemaVersion: "agent/v1", id: "agent_stale_skill", name: "失效技能 Agent",
+      role: "orchestrator", model: "auto_best", roleSkillRef: "skill_retired_or_missing", status: "active",
+      trustScore: 1, capacity: "ready", organizationId: "org_default", projectId: "prj_control_plane"});
+    const staleSkillGroup = staleSkillState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    staleSkillGroup.workItems = [{id: "work_stale_agent_skill", title: "失效 Skill 派发保护", ownerRole: "orchestrator",
+      status: "ready", progress: 0, requirements: ["不得让总控周期崩溃"]}];
+    let staleSkillCycle = null;
+    try {
+      staleSkillCycle = runAutonomousCycle(staleSkillState, {root, mode: "single", taskGroupId: staleSkillGroup.id, autoSyncSkills: false});
+    } catch (error) {
+      output.push(`Agent 档案 Skill 失效导致整个总控周期崩溃（${error.message}），而不是只阻塞对应工作项`);
+    }
+    const staleSkillWork = staleSkillGroup.workItems[0];
+    if (staleSkillCycle && (staleSkillWork.status !== "blocked_resource" || staleSkillWork.blockedReason !== "role_skill_not_found")) {
+      output.push(`Agent 档案 Skill 失效没有形成可见的单任务阻塞（${staleSkillWork.status}/${staleSkillWork.blockedReason || "无原因"}）`);
+    }
   }
   // 残缺/被写坏的能力档案（评分信号非数值）不得毒化整个排序：totalScore 必须始终有限。
   // rankModel 的 clamp 是 Math.max(0, Math.min(1, X))，而 Math.max(0, Math.min(1, NaN)) 是 NaN ——

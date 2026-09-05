@@ -791,6 +791,7 @@ function requestFailureHint(payload) {
       ? `应为 ${payload.expected}，实际 ${payload.actual}` : "",
     payload.commit ? `涉及的提交：${payload.commit}` : "",
     payload.directiveType ? `你发的指令类型：${payload.directiveType}` : "",
+    payload.roleSkillRef ? `指定的角色 Skill：${payload.roleSkillRef}` : "",
     // 定稿冲突时，这张卡管的是哪件事 —— 同一个人手上常同时挂着好几张，不说清就得逐张点开找。
     payload.subjectRef ? `这张卡管的是：${payload.subjectRef}` : "",
     // 状态损坏时的 file/kind：中文文案里明写着"报文里的 file 指出是哪一份"，

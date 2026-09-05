@@ -1034,6 +1034,14 @@ const MUTATIONS = [
     expect: "Agent 模型偏好没有进入动态选型或决策记录"
   },
   {
+    name: "单个 Agent 的失效 Skill 不得拖垮总控周期",
+    check: "verifyAgentGatewayContracts",
+    file: CORE,
+    from: '        if (error.code !== "AIMAC_MODEL_SELECTION_REJECTED" && !roleSkillFailure) throw error;',
+    to: '        if (error.code !== "AIMAC_MODEL_SELECTION_REJECTED") throw error;',
+    expect: "Agent 档案 Skill 失效导致整个总控周期崩溃"
+  },
+  {
     name: "人工补充要求要有上限（否则每次派发都背着它）",
     check: "verifyHumanGuidanceIsBoundedAndHonest",
     file: CORE,
