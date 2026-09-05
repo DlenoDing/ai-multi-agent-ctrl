@@ -1893,6 +1893,15 @@ try {
     method: "POST", body: JSON.stringify({email: "doctor.reset.initial.admin@local", token: resetAdminCredential.payload.accountToken})
   });
   if (resetAdminNewLogin.response.status !== 200) throw new Error(`重置后的初始管理员一次性令牌无法登录：${resetAdminNewLogin.response.status}`);
+  const orgAdminSelfReset = await jsonFetch(port,
+    `/api/org/members/${encodeURIComponent(resetAdminOrg.payload.adminAccount.accountId)}/reissue-invite`, {
+      method: "POST", headers: {"Idempotency-Key": "doctor-org-admin-cannot-reset-initial-login",
+        authorization: `Bearer ${resetAdminNewLogin.payload.sessionToken}`},
+      body: JSON.stringify({resetActiveInitialAdmin: true})
+    });
+  if (orgAdminSelfReset.response.status !== 403 || orgAdminSelfReset.payload.error !== "org_initial_admin_reset_forbidden") {
+    throw new Error(`组织管理员越权重置初始管理员登录没有被具名拒绝（${orgAdminSelfReset.response.status}:${orgAdminSelfReset.payload.error}）`);
+  }
   // 改密码必须撤销该账号已签发的全部会话 —— 它是"我怀疑被盗号"时唯一的自救手段，
   // 而原先它不动任何会话，已泄露的令牌最长还能再用 8 小时。
   const staleAfterPasswordChange = await jsonFetch(port, "/api/org/members", {

@@ -4293,6 +4293,10 @@ async function runSelfRowHasNoActionsCase() {
       json: async () => payload, text: async () => JSON.stringify(payload)};
   };
   const html = await probeSelf.loadPageWith(null, me, "", "org-members", stub);
+  probeSelf.setMemberDetail("acct_me");
+  const selfDetail = probeSelf.renderOrgMembersInventoryWith({schemaVersion: "runtime-state/v1", stateVersion: 1,
+    runtime: {}, projects: [], organizations: [], accounts: [], taskGroups: [], truncatedCollections: []},
+  me, [me, mate], "", ["list"]);
   // 定位锚点踩过两次坑，都记在这里：
   // ① 不能按 accountId —— 自己那一行正因为没有任何按钮，accountId 压根不出现在 HTML 里；
   // ② 不能按显示名 —— 它先出现在【顶栏的账号标签】里，窗口会落在页头上而不是表格行。
@@ -4307,6 +4311,8 @@ async function runSelfRowHasNoActionsCase() {
     check("成员列表不给自己那一行发停用或权限按钮，但仍可打开只读账号详情",
       !/data-action="member-status" data-account="acct_me"/u.test(html)
         && !/data-action="member-perms" data-account="acct_me"/u.test(html)
+        && !/data-action="member-status" data-account="acct_me"/u.test(selfDetail)
+        && !/data-action="member-perms" data-account="acct_me"/u.test(selfDetail)
         && /data-action="open-member-detail" data-account="acct_me"/u.test(html)
         && /data-action="open-member-detail" data-account="acct_mate"/u.test(html),
       "自己不该有危险操作；自己与同事都应能进入各自的对象详情");

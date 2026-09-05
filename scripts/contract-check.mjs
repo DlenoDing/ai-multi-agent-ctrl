@@ -4900,6 +4900,25 @@ function verifyHumanAndOrganizationContracts(output) {
     if (foreignWorkError !== "human_directive_work_item_not_found") {
       output.push(`人工指令接受了不属于目标任务组的任务编号（${foreignWorkError || "没有拒绝"}）`);
     }
+    let missingGroupError = "";
+    try { createHumanDirective(reqState, {projectId: reqGroup.projectId, workItemId: "wi_req", directiveType: "add_requirement", instruction: "没有任务组"}, {actor: "acct_ct"}); }
+    catch (error) { missingGroupError = error.message; }
+    if (missingGroupError !== "human_directive_task_group_required_for_work_item") {
+      output.push(`指定任务但不指定任务组没有被具名拒绝（${missingGroupError || "没有拒绝"}）`);
+    }
+    let unsupportedTargetError = "";
+    try { createHumanDirective(reqState, {taskGroupId: reqGroup.id, workItemId: "wi_req", directiveType: "pause"}, {actor: "acct_ct"}); }
+    catch (error) { unsupportedTargetError = error.message; }
+    if (unsupportedTargetError !== "human_directive_work_item_not_supported") {
+      output.push(`任务组级暂停接受了任务级目标（${unsupportedTargetError || "没有拒绝"}）`);
+    }
+    reqGroup.workItems[0].status = "verified";
+    let terminalTargetError = "";
+    try { createHumanDirective(reqState, {taskGroupId: reqGroup.id, workItemId: "wi_req", directiveType: "add_requirement", instruction: "给终态任务追加"}, {actor: "acct_ct"}); }
+    catch (error) { terminalTargetError = error.message; }
+    if (terminalTargetError !== "human_directive_work_item_already_terminal") {
+      output.push(`终态任务仍接受追加要求（${terminalTargetError || "没有拒绝"}）`);
+    }
     // 缺省不得等于无效果：既没选档位、指令里也没有关键词 —— 必须拒，不能静默无效。
     let prioRefused = false;
     try { createHumanDirective(prioSt2, {taskGroupId: "tg_runtime_management", directiveType: "adjust_priority", instruction: "请提高优先级"}, {actor: "acct_ct"}); }

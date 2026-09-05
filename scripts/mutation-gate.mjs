@@ -3045,15 +3045,15 @@ const MUTATIONS = [
     expect: "仍要说的是"
   },
   {
-    // 真正挡住"把自己停用"的是渲染这一层：自己那一行不发任何操作按钮。
-    // 注意条件有两个（不是 user_account、不是自己），对组织管理员而言先命中的是前者 ——
-    // 所以变异要把整个守卫放开，只删 !isSelf 的话组织管理员那一行照样没按钮，判据看不出差别。
-    name: "成员表不给自己那一行发操作按钮",
+    // 生命周期动作已经收进成员对象详情；真正挡住"把自己停用"的是动作构造器不为自己返回按钮。
+    // 注意条件有两个（不是 user_account、不是自己），对组织管理员而言先命中的是前者，
+    // 所以变异要把整个守卫放开，只删 !isSelf 的话组织管理员详情照样没按钮，判据看不出差别。
+    name: "成员详情不给自己发危险生命周期操作",
     file: APP,
     gate: "console",
-    from: '    const manageable = account.accountType === "user_account" && !isSelf;',
-    to: "    const manageable = true;",
-    expect: "点下去就是把自己登出"
+    from: '  const manageable = account.accountType === "user_account" && !isSelf;',
+    to: "  const manageable = true;",
+    expect: "自己不该有危险操作"
   },
   {
     // 自己那一行和别人那一行走同一段话 —— 人不知道自己正在把自己登出。
