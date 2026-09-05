@@ -36,11 +36,15 @@
       action: {kind: "page", page: "proj-agents", workspace: "register", label: "生成注册命令"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
     if (!Number(fleet.online || 0)) return {title: "恢复 Agent 节点", detail: `已登记 ${Number(fleet.total || 0)} 台节点，但当前没有在线容量。`,
       action: {kind: "page", page: "proj-agents", workspace: "nodes", label: "检查运行节点"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
-    if (!groups.length) return {title: "创建任务组", detail: "用任务组定义目标、统一语言、角色和执行边界。",
-      action: {kind: "workspace", page: "tg", workspace: "create", label: canControl ? "创建任务组" : "查看任务组权限"}, metrics: {groups: 0, tasks: 0, runs, reviews: reviews + rechecks}};
+    if (!groups.length) return {title: canControl ? "创建任务组" : "等待任务组权限", detail: canControl
+      ? "用任务组定义目标、统一语言、角色和执行边界。" : "当前账号没有创建任务组的权限，可先查看项目现状或联系项目负责人。",
+      action: canControl ? {kind: "workspace", page: "tg", workspace: "create", label: "创建任务组"}
+        : {kind: "page", page: "tg", workspace: "list", label: "查看任务组"}, metrics: {groups: 0, tasks: 0, runs, reviews: reviews + rechecks}};
     const empty = groupStats.find((item) => !item.stats.tasks);
-    if (empty) return {title: "创建任务", detail: `“${empty.group.name || empty.group.id}”还没有可派发的任务。`,
-      action: {kind: "workspace", page: "tasks", workspace: "create", groupId: empty.group.id, label: canControl ? "创建任务" : "查看任务组"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
+    if (empty) return {title: canControl ? "创建任务" : "等待任务权限", detail: canControl
+      ? `“${empty.group.name || empty.group.id}”还没有可派发的任务。` : `“${empty.group.name || empty.group.id}”还没有任务，当前账号只能查看。`,
+      action: canControl ? {kind: "workspace", page: "tasks", workspace: "create", groupId: empty.group.id, label: "创建任务"}
+        : {kind: "group", page: "tg", groupId: empty.group.id, label: "查看任务组"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
     const paused = groupStats.find((item) => String(item.group.goalExecutionStatus || "").startsWith("active_paused"));
     if (paused) return {title: "启动任务组", detail: `“${paused.group.name || paused.group.id}”已有任务，当前仍处于暂停状态。`,
       action: canControl ? {kind: "control", groupId: paused.group.id, control: "resume", label: "启动执行"}

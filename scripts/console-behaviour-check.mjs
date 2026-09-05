@@ -2756,6 +2756,16 @@ async function runErrorGuidanceCase() {
       && (commandHtml.match(/<button/gu) || []).length === 1
       && /当前下一步/u.test(commandHtml) && /配置项目仓库/u.test(commandHtml),
     "项目当前动作仍被铺成多张入口卡片，或没有给出唯一主按钮");
+  const readOnlyNoGroup = objectProbe.projectCommandDecision({project: commandProject, groups: [], fleet: {total: 2, online: 1}, repositories: repo, todos: {}, canControl: false});
+  const readOnlyEmptyGroup = objectProbe.projectCommandDecision({project: commandProject,
+    groups: [{id: "tg", name: "只读任务组", status: "active", stats: {tasks: 0, runs: 0, reviews: 0, blocked: 0}}],
+    fleet: {total: 2, online: 1}, repositories: repo, todos: {}, canControl: false});
+  const readOnlyActions = [objectProbe.projectCommandHtml(commandProject, readOnlyNoGroup), objectProbe.projectCommandHtml(commandProject, readOnlyEmptyGroup)].join("");
+  check("只读账号的项目主操作不得指向隐藏创建栏目",
+    /等待任务组权限/u.test(readOnlyNoGroup.title) && /等待任务权限/u.test(readOnlyEmptyGroup.title)
+      && !/data-workspace="create"/u.test(readOnlyActions)
+      && /data-target-workspace="list"|data-focus-page="tg"/u.test(readOnlyActions),
+    "按钮写着查看，实际却进入无权限账号看不到的创建栏目");
   const membersRoot = el("div");
   const membersProbe = loadConsole(membersRoot, {realI18n: true});
   const projectMemberState = {

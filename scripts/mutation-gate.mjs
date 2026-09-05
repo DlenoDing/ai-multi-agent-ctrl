@@ -11917,6 +11917,14 @@ const MUTATIONS = [
     expect: "移动端不得隐藏当前任务对象"
   },
   {
+    name: "只读账号的项目主操作不得进入创建栏目",
+    file: "apps/control-plane-ui/public/modules/project-command-center.js",
+    gate: "console",
+    from: ': {kind: "page", page: "tg", workspace: "list", label: "查看任务组"}, metrics: {groups: 0, tasks: 0, runs, reviews: reviews + rechecks}};',
+    to: ': {kind: "workspace", page: "tg", workspace: "create", label: "查看任务组"}, metrics: {groups: 0, tasks: 0, runs, reviews: reviews + rechecks}};',
+    expect: "只读账号的项目主操作不得指向隐藏创建栏目"
+  },
+  {
     name: "MCP 工具崩溃不得伪装成正当拒绝（要回 server_error、打日志、说清别重试）",
     file: "apps/mcp-server/server.mjs",
     gate: "contract",
