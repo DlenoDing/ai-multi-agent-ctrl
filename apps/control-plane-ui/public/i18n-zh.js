@@ -336,6 +336,7 @@
     repository_output_target_unsafe_remote: "远端地址不安全，已拒绝",
     role_skill_digest_mismatch: "角色技能摘要与登记的不一致",
     role_skill_not_found: "找不到该角色技能",
+    selected_agent_role_skill_cannot_be_resolved: "选中的 Agent 角色 Skill 无法解析",
     role_skill_overlay_base_not_found: "找不到角色技能定制所基于的原始技能",
     role_skill_reference_ambiguous: "角色技能引用有歧义（匹配到多个）",
     role_skill_registry_empty: "角色技能库为空",

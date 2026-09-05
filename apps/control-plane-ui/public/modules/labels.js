@@ -100,6 +100,7 @@
     cell_already_executing: "已在执行中",
     cell_split_into_analysis_and_implementation: "已拆分为分析与实现",
     no_model_satisfies_hard_constraints: "无模型满足硬约束",
+    selected_agent_role_skill_cannot_be_resolved: "选中的 Agent 角色 Skill 无法解析",
     role_drift_guard_intercepted_dispatch: "角色偏移守卫拦截派发",
     cell_deferred_condition_window: "等待条件窗口（按环境独立延后）",
     cell_waiting_for_wip_capacity: "等在制品额度",
