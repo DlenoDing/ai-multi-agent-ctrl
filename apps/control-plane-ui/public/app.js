@@ -9196,6 +9196,30 @@ async function navigateWorkspace(nextPage, nextSection, options = {}) {
   return true;
 }
 
+function clearGlobalMenuObjectContext() {
+  managementGroupId = "";
+  expandedTaskGroupId = "";
+  tgDetail = null;
+  selectedWork = null;
+  taskWorkDetail = null;
+  taskReturnContext = null;
+  workListGroupId = "";
+  workListState = null;
+  taskPageData = null;
+  taskPageCursor = "";
+  taskCursorStack = [];
+  taskPageLoading = false;
+  taskRequestGeneration += 1;
+  workEventHistoryMode = false;
+  workEventCursor = 0;
+  workEventCursorStack = [];
+  directiveTaskGroupId = "";
+  directiveWorkItemId = "";
+  execScope = currentProjectId ? {type: "project", id: currentProjectId} : {type: "", id: ""};
+  execEvents = [];
+  execCursor = 0;
+}
+
 async function navigateMenuTarget(nextPage, nextWorkspace = "") {
   const perspective = perspectiveOf(currentAccount);
   const targetItem = allowedMenuItemsFor(perspective).find((item) => !item.divider && item.id === nextPage
@@ -9205,7 +9229,8 @@ async function navigateMenuTarget(nextPage, nextWorkspace = "") {
   const sameTarget = page === nextPage && workspaces.current(nextPage)?.id === workspace
     && !selectedOrganizationId && !selectedOrgMemberId && !selectedProjectMemberId
     && !selectedAgentProfileId && !selectedRuntimeNodeId && !selectedExecutionObject.id
-    && !(page === "tg" && expandedTaskGroupId);
+    && !managementGroupId && !expandedTaskGroupId && !selectedWork
+    && !taskPageCursor && !taskCursorStack.length;
   if (sameTarget) return true;
   if (formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前页面有未保存的修改，确认离开？", danger: true, confirmText: "放弃并离开"}))) return false;
   if (!workspaces.select(nextPage, workspace)) return false;
@@ -9221,13 +9246,7 @@ async function navigateMenuTarget(nextPage, nextWorkspace = "") {
   selectedExecutionObject = {type: "", id: ""};
   executionObjectDetail = null;
   executionObjectUnavailable = false;
-  if (["tg", "tasks", "monitor", "review", "directives"].includes(nextPage)) {
-    managementGroupId = "";
-    selectedWork = null;
-    directiveTaskGroupId = "";
-    directiveWorkItemId = "";
-  }
-  if (nextPage === "tg") { expandedTaskGroupId = ""; tgDetail = null; }
+  clearGlobalMenuObjectContext();
   page = nextPage;
   sessionStorage.setItem("aimac.page", page);
   lastError = "";
@@ -9235,10 +9254,7 @@ async function navigateMenuTarget(nextPage, nextWorkspace = "") {
   dirtyFormKinds.clear();
   stopExecPolling();
   if (page === "monitor") {
-    execScope = managementGroupId ? {type: "taskGroup", id: managementGroupId}
-      : currentProjectId ? {type: "project", id: currentProjectId} : {type: "", id: ""};
-    execEvents = [];
-    execCursor = 0;
+    execScope = currentProjectId ? {type: "project", id: currentProjectId} : {type: "", id: ""};
   }
   await loadPage();
   if (page === "monitor" && workspace === "events") {

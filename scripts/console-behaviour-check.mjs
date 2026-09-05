@@ -360,7 +360,7 @@ globalThis.__probe = {
   captureToast: (sink) => { toast.info = (message) => sink(message); },
   captureToastKind: (kind, sink) => { toast[kind] = (message) => sink(message); },
   bodyChildren: () => document.body.children || [],
-  sessionState: () => ({page, currentProjectId, modalHtml, selectedWork, selectedAgentProfileId, selectedRuntimeNodeId, selectedExecutionObject, managementGroupId, workListGroupId, workListState, expandedTaskGroupId, taskGroupDetailId: tgDetail?.taskGroupId || null,
+  sessionState: () => ({page, currentProjectId, modalHtml, selectedWork, selectedAgentProfileId, selectedRuntimeNodeId, selectedExecutionObject, managementGroupId, workListGroupId, workListState, expandedTaskGroupId, taskPageCursor, taskCursorStack: [...taskCursorStack], taskReturnContext, taskGroupDetailId: tgDetail?.taskGroupId || null,
     projConfigVersion, directiveList,
     storedProjectId: sessionStorage.getItem("aimac.projectId"), storedPage: sessionStorage.getItem("aimac.page")}),
   selectWorkspace: (pageId, paneId) => workspaces.select(pageId, paneId),
@@ -372,6 +372,7 @@ globalThis.__probe = {
   setTaskOrigin: (origin) => { taskReturnContext = origin; managementGroupId = origin?.taskGroupId || ""; },
   resetTaskNavigation: () => resetTaskWorkbench(),
   setObjectLocation: (value) => { page = value.page; if (value.projectId !== undefined) currentProjectId = value.projectId; managementGroupId = value.groupId; expandedTaskGroupId = value.expanded ? value.groupId : ""; selectedWork = value.workId ? {taskGroupId: value.groupId, workItemId: value.workId} : null; },
+  setTaskListPaging: (cursor, stack = []) => { taskPageCursor = cursor; taskCursorStack = [...stack]; },
   rememberObjectLocation: () => rememberWorkspaceLocation(),
   restoreObjectLocation: () => restoreWorkspaceLocation(),
   loadObjectLocation: () => loadPage(),
@@ -2704,6 +2705,25 @@ async function runErrorGuidanceCase() {
       && menuActionProbe.routeSnapshot().workspace === "runs" && menuActionProbe.sessionState().managementGroupId === ""
       && menuActionProbe.sessionState().selectedWork === null,
     JSON.stringify(menuActionProbe.sessionState()));
+  menuActionProbe.setObjectLocation({page: "monitor", projectId: "p1", groupId: "tg_old"});
+  menuActionProbe.workspaceSelect("monitor", "runs");
+  await menuActionProbe.navigateMenuTarget("monitor", "runs");
+  check("点击当前叶子菜单也必须退出旧任务组范围",
+    menuActionProbe.sessionState().managementGroupId === "" && menuActionProbe.routeSnapshot().groupId === "",
+    `当前执行会话仍被旧任务组限制：${JSON.stringify(menuActionProbe.sessionState())}`);
+  menuActionProbe.setObjectLocation({page: "tasks", projectId: "p1", groupId: "tg_old"});
+  menuActionProbe.setTaskListPaging("cursor-from-tg-old", ["cursor-page-one"]);
+  menuActionProbe.workspaceSelect("tasks", "list");
+  await menuActionProbe.navigateMenuTarget("tasks", "list");
+  check("从任务组回到全局任务菜单必须清除旧分页游标",
+    menuActionProbe.sessionState().managementGroupId === "" && menuActionProbe.sessionState().taskPageCursor === ""
+      && menuActionProbe.sessionState().taskCursorStack.length === 0,
+    `项目任务列表仍会携带旧任务组游标：${JSON.stringify(menuActionProbe.sessionState())}`);
+  menuActionProbe.setObjectLocation({page: "monitor", projectId: "p1", groupId: "tg_old"});
+  await menuActionProbe.navigateMenuTarget("proj-settings", "repositories");
+  check("进入非任务组功能也必须清除旧任务组对象上下文",
+    menuActionProbe.sessionState().managementGroupId === "" && menuActionProbe.routeSnapshot().groupId === "",
+    `仓库凭据地址仍夹带旧任务组：${JSON.stringify(menuActionProbe.routeSnapshot())}`);
   const systemProjectNav = renderedNav(systemAccount, "p1", "proj-overview");
   const projectAside = systemProjectNav.split("</aside>")[0] || "";
   const projectTopbar = String(systemProjectNav.split('<header class="topbar">')[1] || "").split("</header>")[0] || "";

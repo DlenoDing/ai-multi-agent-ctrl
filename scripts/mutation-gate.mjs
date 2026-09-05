@@ -11783,9 +11783,25 @@ const MUTATIONS = [
     name: "全局功能菜单不得继承旧任务组范围",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '  if (["tg", "tasks", "monitor", "review", "directives"].includes(nextPage)) {\n    managementGroupId = "";\n    selectedWork = null;\n    directiveTaskGroupId = "";\n    directiveWorkItemId = "";\n  }',
+    from: "  clearGlobalMenuObjectContext();",
     to: "",
-    expect: "稳定功能菜单点击会同时切换页面与具体功能"
+    expect: "点击当前叶子菜单也必须退出旧任务组范围"
+  },
+  {
+    name: "当前叶子菜单不得因同目标早退而保留任务组范围",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    && !managementGroupId && !expandedTaskGroupId && !selectedWork\n    && !taskPageCursor && !taskCursorStack.length;",
+    to: "    && !expandedTaskGroupId && !selectedWork\n    && !taskPageCursor && !taskCursorStack.length;",
+    expect: "点击当前叶子菜单也必须退出旧任务组范围"
+  },
+  {
+    name: "全局任务菜单必须清除任务组分页游标",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  taskPageData = null;\n  taskPageCursor = \"\";\n  taskCursorStack = [];",
+    to: "  taskPageData = null;",
+    expect: "从任务组回到全局任务菜单必须清除旧分页游标"
   },
   {
     name: "任务组详情必须保留对象局部功能栏",
