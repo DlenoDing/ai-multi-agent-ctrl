@@ -594,6 +594,24 @@ const MUTATIONS = [
     expect: "执行历史没有「规则」入口"
   },
   {
+    // 流程导航第一步要如实说"尚未接入"。把在线数硬加 1 即没接入也显示在线。
+    name: "流程导航必须如实反映有没有在线 agent",
+    file: APP,
+    gate: "console",
+    from: "  const online = Number(fleet.online || 0);\n  const registered = Number(fleet.total || 0);",
+    to: "  const online = Number(fleet.online || 0) + 1;\n  const registered = Number(fleet.total || 0);",
+    expect: "流程导航没有如实说尚未接入"
+  },
+  {
+    // 每一步要能直达对应页；去掉「前往」即回到"只是几个 tab"。
+    name: "流程导航每一步必须有「前往」直达",
+    file: APP,
+    gate: "console",
+    from: "      ${go(step.page)}</div>`).join(\"\")}",
+    to: "      </div>`).join(\"\")}",
+    expect: "流程导航没有「前往」"
+  },
+  {
     // 项目设置的配置行（仓库/基线/角色）对只读成员必须收起「删除」：cfg-del 是本地暂存，保存已禁用，
     // 只读成员点了删本地行却存不下＝按了看不到效果的死动作。去掉 cfgRepoRow 的 readOnly 门即让删除对只读成员出现。
     name: "只读成员的配置行不许摆删除按钮",

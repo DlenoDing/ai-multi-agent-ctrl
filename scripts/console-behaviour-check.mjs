@@ -381,6 +381,7 @@ globalThis.__probe = {
   // 不给探针一个入口的话，凡是依赖它的那一格都只能在 0 上被验，而真实产品里它常常不是 0。
   setPendingConfirmCount: (count) => { pendingConfirmCount = Number(count) || 0; },
   renderTaskGroupsWith: (nextState, account, projectId, detailId, detail) => { state = nextState; currentAccount = account; currentProjectId = projectId; expandedTaskGroupId = detailId; if (detail !== undefined) tgDetail = detail; return renderTaskGroups(); },
+  renderProjectOverviewWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; page = "proj-overview"; return renderProjectOverview(); },
   renderDirectivesWith: (nextState, account, projectId, directives) => { state = nextState; currentAccount = account; currentProjectId = projectId; directiveList = directives || []; return renderDirectives(); },
   selectProjectWith: (nextState, account, projectId) => {
     state = nextState; currentAccount = account; currentProjectId = projectId;
@@ -1868,6 +1869,40 @@ function runWorkItemDispatchHistoryCase() {
     (html.match(/data-action="show-dispatch-rules"/gu) || []).length === 2,
     "执行历史没有「规则」入口：人看得到派给了谁、看不到按什么规则干的");
 }
+
+// 「流程导航」：登入后我在第几步、下一步去哪——每一步要如实反映真实状态，并能直达对应页。
+function runWorkflowGuideCase() {
+  const probe = loadConsole(el("div"));
+  const admin = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  const project = {id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []};
+  const base = {projects: [project], taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [], findings: [],
+    humanConfirmationRequests: [], humanDirectives: [], permissionRequests: [], approvalRequests: [], truncatedCollections: [], repositoryOutputs: [],
+    agentExecutionEvents: [], checkpoints: [], reviewPlans: [], reviewBundles: [], fleet: {online: 0, total: 0}};
+  const fresh = probe.renderProjectOverviewWith(base, admin, "p1");
+  check("流程导航：全新项目要如实说尚未接入 agent、还没有任务组",
+    /流程导航/u.test(fresh) && /尚未接入/u.test(fresh) && /还没有任务组/u.test(fresh),
+    "流程导航没有如实说尚未接入：全新项目第一步就该告诉人先去接 agent，而不是显示成已在线");
+  // 只看「流程导航」面板自身的切片（到它的收尾句为止）：面板后面紧跟的通知与别处的入口卡片也有 data-menu，
+  // 切到下一个面板标题都会把它们夹进来——第一版就是这样在变异下绿着过去的。
+  const guideOf = (html) => { const text = String(html); const start = text.indexOf("流程导航"); const end = text.indexOf("按当前项目实时计算", start); return start >= 0 ? text.slice(start, end > start ? end : undefined) : ""; };
+  const freshGuide = guideOf(fresh);
+  check("流程导航每一步要有「前往」直达对应页",
+    /data-menu="proj-agents"/u.test(freshGuide) && /data-menu="tg"/u.test(freshGuide) && /data-menu="review"/u.test(freshGuide)
+      && /data-menu="directives"/u.test(freshGuide) && /data-menu="monitor"/u.test(freshGuide),
+    "流程导航没有「前往」：知道在第几步却点不过去，等于还是几个 tab");
+  const group = {id: "tg1", projectId: "p1", name: "组一", status: "development", progress: 40, workItemCount: 3, workItems: [], blockers: []};
+  const busy = {...base, taskGroups: [group], fleet: {online: 2, total: 3},
+    agentDispatches: [{dispatchId: "d1", projectId: "p1", taskGroupId: "tg1", workItemId: "w1", status: "running"},
+      {dispatchId: "d2", projectId: "p1", taskGroupId: "tg1", workItemId: "w2", status: "completed"}],
+    humanDirectives: [{directiveId: "hd1", taskGroupId: "tg1", status: "queued"}],
+    closeBarriers: [{taskGroupId: "tg1", blockers: [{gate: "x"}]}]};
+  const running = probe.renderProjectOverviewWith(busy, admin, "p1");
+  check("流程导航：接入/建组/工作项/派发/指令/收口各步按真实数据计数",
+    /2 台在线/u.test(running) && /1 个任务组/u.test(running) && /3 个工作项/u.test(running) && /已派发 2 次/u.test(running)
+      && /1 条指令待编排消费/u.test(running) && /1 个任务组还有关闭门阻塞/u.test(running),
+    "流程导航的某一步没按真实数据算（在线数/任务组数/工作项数/派发数/待消费指令/关闭门阻塞）");
+}
+
 
 function runRoomVisibilityCase() {
   const probe = loadConsole(el("div"));
@@ -6080,6 +6115,7 @@ runPlanFinalizationNoticeCase();
 runWorkItemOrderCase();
 runRuleTextareaAutoGrowCase();
 runWorkItemDispatchHistoryCase();
+runWorkflowGuideCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();

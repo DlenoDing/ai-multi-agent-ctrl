@@ -4604,6 +4604,44 @@ function renderRepositoryOutputOverview(repoTargets) {
   `, {wide: true});
 }
 
+// 「流程导航」：把人的路径串成一条线——登入后我在第几步、下一步去哪。此前各页的引导是分散的（关闭门出口、
+// 节点离线指引、令牌签发说明、空态句），没有一条贯穿的线。每一步的状态都从本页手上的真实数据算
+// （tasks 视图 + 基底 fleet，不发新请求）；「人工审核」步复用 pendingForMe()，与「待你处理」同一口径；
+// 只对当前账号菜单里有的页摆「前往」（没权限的页不摆一个点了会拒的按钮）。
+function workflowGuidePanel(project, groups) {
+  const fleet = state.fleet || {};
+  const online = Number(fleet.online || 0);
+  const registered = Number(fleet.total || 0);
+  const groupIds = new Set(groups.map((taskGroup) => taskGroup.id));
+  const workItemCount = groups.reduce((sum, taskGroup) => sum + Number(taskGroup.workItemCount ?? (taskGroup.workItems || []).length), 0);
+  const dispatches = (state.agentDispatches || []).filter((item) => item.projectId === project.id || groupIds.has(item.taskGroupId)).length;
+  const todo = pendingForMe();
+  const queuedDirectives = (state.humanDirectives || []).filter((item) => item.status === "queued" && groupIds.has(item.taskGroupId)).length;
+  const openBarriers = (state.closeBarriers || []).filter((item) => groupIds.has(item.taskGroupId) && (item.blockers || []).length).length;
+  const visible = new Set(menuForCurrentSection(perspectiveOf(currentAccount), page).filter((item) => item.id).map((item) => item.id));
+  const go = (id) => visible.has(id) ? `<button class="secondary-button" data-menu="${esc(id)}">前往</button>` : "";
+  const steps = [
+    {title: "接入 AI 智能体", done: online > 0, page: "proj-agents",
+      state: online ? `${online} 台在线` : (registered ? `已注册 ${registered} 台，但没有在线的——活派不出去` : "尚未接入：先签发入网令牌，再在 agent 主机上执行安装命令")},
+    {title: "创建任务组", done: groups.length > 0, page: "tg", state: groups.length ? `${groups.length} 个任务组` : "还没有任务组"},
+    {title: "创建工作项（任务）", done: workItemCount > 0, page: "tg", state: workItemCount ? `${workItemCount} 个工作项` : "还没有工作项：到任务组里「创建工作项」"},
+    {title: "启动执行", done: dispatches > 0, page: "monitor",
+      state: dispatches ? `已派发 ${dispatches} 次` : (workItemCount && online ? "还没派发：后台每拍自动推进；等不及可到「执行监控」点「运行自治循环」" : "有工作项且有在线 agent 后自动开始")},
+    {title: "人工审核 / 定稿", done: todo.total === 0, attention: todo.total > 0, page: "review",
+      state: todo.total ? `${todo.total}${todo.partial ? "+" : ""} 项等你处理` : "暂无等你处理的审核项"},
+    {title: "人工指令", done: queuedDirectives === 0, attention: queuedDirectives > 0, page: "directives",
+      state: queuedDirectives ? `${queuedDirectives} 条指令待编排消费` : "需要干预（暂停/纠偏/调优先级）时在这里下达"},
+    {title: "收口关闭", done: groups.length > 0 && openBarriers === 0, attention: openBarriers > 0, page: "monitor",
+      state: openBarriers ? `${openBarriers} 个任务组还有关闭门阻塞` : (groups.length ? "关闭门无阻塞" : "—")}
+  ];
+  return panel("流程导航", `<div class="stack">${steps.map((step, index) => `
+    <div class="record-meta"><span>${index + 1}. <strong>${esc(step.title)}</strong></span>
+      <span class="${step.attention ? "warn-text" : (step.done ? "" : "muted")}">${step.attention ? "● " : (step.done ? "✓ " : "○ ")}${esc(step.state)}</span>
+      ${go(step.page)}</div>`).join("")}
+    <div class="small muted">按当前项目实时计算：○ 未开始 · ✓ 已就绪 · ● 等你处理</div></div>`, {wide: true});
+}
+
+
 function renderProjectOverview() {
   const project = currentProject();
   if (!project) {
@@ -4659,6 +4697,7 @@ function renderProjectOverview() {
   ])).join("");
 
   return [
+    workflowGuidePanel(project, groups),
     // 项目概览是项目负责人一直盯着的那一页，也是最容易被"看起来一切正常"骗到的一页：
     // 实测真实数据下它显示"健康度 ok、完成度 75%"，而当时一个在线 agent 都没有、
     // 3 个单元交出去之后永远不会动 —— 任务组页和监控页都说了这件事，唯独这一页不说。
