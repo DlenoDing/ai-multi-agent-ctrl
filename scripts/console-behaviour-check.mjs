@@ -2743,6 +2743,24 @@ async function runErrorGuidanceCase() {
     missingRouteObject === "Agent 档案" && objectProbe.sessionState().selectedAgentProfileId === ""
       && routeNotices.some((message) => /不存在或当前账号无权查看/u.test(message)),
     `结果=${missingRouteObject || "空"}，提示=${routeNotices.join("；") || "无"}`);
+  const windowedRoot = el("div");
+  const windowedProbe = loadConsole(windowedRoot, {realI18n: true});
+  const windowedState = {...navState, taskGroups: [], agentDispatches: [], workSessions: [], repositoryOutputs: [], closeBarriers: [], completionReadiness: []};
+  const outsideGroup = {id: "tg_outside_window", projectId: "p1", name: "摘要窗口外任务组", status: "active", goalExecutionStatus: "active", progress: 35, workItemCount: 1, workItems: []};
+  windowedProbe.renderFullPageWith(windowedState, systemAccount, "p1", "proj-overview");
+  windowedProbe.restoreRoute({page: "monitor", projectId: "p1", groupId: outsideGroup.id, workspace: "overview"});
+  windowedProbe.setFetch(async (url) => {
+    const target = new URL(String(url), "http://localhost");
+    const payload = target.pathname === `/api/task-groups/${outsideGroup.id}`
+      ? {taskGroup: outsideGroup, workSessions: [], agentDispatches: [], repositoryOutputs: [], latestReadiness: null, latestCloseBarrier: null}
+      : windowedState;
+    return {ok: true, status: 200, statusText: "OK", headers: {get: () => null}, json: async () => payload};
+  });
+  await windowedProbe.loadObjectLocation();
+  check("窗口外合法任务组深链接必须通过单对象接口补回",
+    windowedProbe.sessionState().managementGroupId === outsideGroup.id
+      && /摘要窗口外任务组/u.test(String(windowedRoot.innerHTML || "")),
+    `${JSON.stringify(windowedProbe.sessionState())} ${String(windowedRoot.innerHTML || "").slice(0, 180)}`);
   const browserRouteSource = objectProbe.browserRouteSource();
   check("浏览器历史恢复必须单飞并只排队最新路由",
     /if \(browserRouteBusy\)/u.test(browserRouteSource)

@@ -11949,6 +11949,14 @@ const MUTATIONS = [
     expect: "浏览器历史恢复必须单飞并只排队最新路由"
   },
   {
+    name: "窗口外合法任务组深链接必须补回上下文",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '    taskGroups: mergeScopedRecords(state.taskGroups, [detail.taskGroup], "id"),',
+    to: "    taskGroups: state.taskGroups,",
+    expect: "窗口外合法任务组深链接必须通过单对象接口补回"
+  },
+  {
     name: "MCP 工具崩溃不得伪装成正当拒绝（要回 server_error、打日志、说清别重试）",
     file: "apps/mcp-server/server.mjs",
     gate: "contract",

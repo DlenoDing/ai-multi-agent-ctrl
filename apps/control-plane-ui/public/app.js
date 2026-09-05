@@ -1232,6 +1232,37 @@ function pageReadCheckpoint() {
   return () => generation === pageReadGeneration && token === authToken;
 }
 
+function mergeScopedRecords(existing, incoming, idKey) {
+  const incomingIds = new Set((incoming || []).map((item) => item?.[idKey]).filter(Boolean));
+  return [...(incoming || []), ...(existing || []).filter((item) => !incomingIds.has(item?.[idKey]))];
+}
+
+async function ensureManagementGroupContext(currentRead) {
+  if (!managementGroupId || projectTaskGroups().some((group) => group.id === managementGroupId)) return true;
+  const requestedGroupId = managementGroupId;
+  let detail;
+  try {
+    detail = await api(`/api/task-groups/${encodeURIComponent(requestedGroupId)}?workItemLimit=200`);
+  } catch (error) {
+    if ([403, 404].includes(error.status)) return false;
+    throw error;
+  }
+  if (!currentRead() || requestedGroupId !== managementGroupId) return false;
+  if (!detail.taskGroup || detail.taskGroup.projectId !== currentProjectId) return false;
+  state = {
+    ...state,
+    taskGroups: mergeScopedRecords(state.taskGroups, [detail.taskGroup], "id"),
+    workSessions: mergeScopedRecords(state.workSessions, detail.workSessions, "sessionId"),
+    agentDispatches: mergeScopedRecords(state.agentDispatches, detail.agentDispatches, "dispatchId"),
+    repositoryOutputs: mergeScopedRecords(state.repositoryOutputs, detail.repositoryOutputs, "targetId"),
+    closeBarriers: detail.latestCloseBarrier
+      ? mergeScopedRecords(state.closeBarriers, [detail.latestCloseBarrier], "taskGroupId") : state.closeBarriers,
+    completionReadiness: detail.latestReadiness
+      ? mergeScopedRecords(state.completionReadiness, [detail.latestReadiness], "taskGroupId") : state.completionReadiness
+  };
+  return true;
+}
+
 async function loadPage() {
   pageReadGeneration += 1;
   const currentRead = pageReadCheckpoint();
@@ -1343,12 +1374,14 @@ async function loadPage() {
       if (!currentRead()) return;
       state = nextState;
       ensureProjectSelection();
+      await ensureManagementGroupContext(currentRead);
       await loadReviewData();
     } else if (page === "directives") {
       const nextState = await fetchState("tasks", {projectId: currentProjectId});
       if (!currentRead()) return;
       state = nextState;
       ensureProjectSelection();
+      await ensureManagementGroupContext(currentRead);
       await loadDirectiveData();
     } else if (page === "monitor") {
       const [tasksState, runtimeState] = await Promise.all([
@@ -1370,6 +1403,7 @@ async function loadPage() {
         agentJoinTokens: runtimeState.agentJoinTokens || []
       };
       ensureProjectSelection();
+      await ensureManagementGroupContext(currentRead);
       ensureExecScope();
     } else if (page === "proj-agents") {
       const [tasksState, runtimeState, skillRegistry] = await Promise.all([
@@ -1918,6 +1952,9 @@ function reconcileRoutedObjectSelection() {
     selectedWork = null;
     directiveTaskGroupId = "";
     directiveWorkItemId = "";
+    execScope = currentProjectId ? {type: "project", id: currentProjectId} : {type: "", id: ""};
+    execEvents = [];
+    execCursor = 0;
     missing = "任务组";
   }
   if (missing) {
