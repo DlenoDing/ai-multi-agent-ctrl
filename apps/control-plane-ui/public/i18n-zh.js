@@ -262,6 +262,7 @@
     confirmation_task_group_mismatch: "该确认单不属于这个任务组",
     content_bundle_context_missing: "执行内容包缺少上下文",
     content_bundle_dispatch_not_active: "该派发不在进行中，无法取用内容包",
+    repository_credential_unreadable: "这个项目仓库的凭证密文解不开（多半是控制面换过凭证密钥 AIMAC_CREDENTIAL_KEY 或 credential.key 文件）：派发已拒绝认领，不会让 agent 拿主机上的凭证瞎试。到项目仓库设置里重新填一次账号密码或 API Key 即可",
     control_dispatch_not_active: "该派发不在进行中，无法下达控制命令",
     dispatch_package_incomplete: "派发包不完整",
     execution_topology_block_requires_derived_task_request_ref: "标记阻塞必须给出派生任务请求引用",

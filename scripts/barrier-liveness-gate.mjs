@@ -416,7 +416,6 @@ const DEAD_EXPORT_ACCEPTED = {
   toDlq: "只有契约门在调：要先 failed 才进死信，而 failed 到不了",
   relatedSharedDefinitionsForTest: "名字里就写明是测试辅助，专为门导出",
   resetCredentialKeyCache: "仓库凭证密钥缓存的测试辅助（换运行时目录/密钥时清缓存），只有契约门在调",
-  openSecret: "仓库凭证解封：读端是投递给认领派发的 agent（agent-gateway 的派发包），下一提交接上；今天 agent 仍靠主机 git 凭证、产品里没有任何路径需要解开 —— 接上时把这条摘掉",
   // 只有门在调，但它不是测试辅助：它是这台服务器【收受面】的入参词表（产品内部直接用
   // commonInputProperties()）。三道门此前各自去源码里猜这份词表 —— 两处按 "accountId: string,"
   // 这一行 indexOf 切、第三处取 tools/list 第一个工具的 properties（那只在"每个工具都公布全量

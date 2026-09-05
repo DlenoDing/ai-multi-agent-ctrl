@@ -24,8 +24,8 @@ import { assertStateStoreConfig, ensureStoredState, isStateStoreConflict, readSt
 import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, digestProjectShardPayload, canonicalJson } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps/control-plane-ui/lib/pg-sync-store.mjs";
 import { clampEnvNumber } from "../apps/control-plane-ui/lib/env-number.mjs";
-import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
-import { buildExecutionContentBundle as buildBundleForCheck, isSafeGitRemoteUrl } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
+import { removeGlobalRemoteMcpClients, gitAuthEnvFor } from "../apps/agent-runtime/runtime.mjs";
+import { buildExecutionContentBundle as buildBundleForCheck, isSafeGitRemoteUrl, dispatchRepositoryCredential } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { publicAgentNode, agentRuntimeOutdated, REQUIRED_AGENT_RUNTIME_VERSION } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { recordAgentExecutionEvent } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { PROJECT_SHARD_COLLECTION_LIMITS } from "../apps/control-plane-ui/lib/state-store.mjs";
@@ -6378,6 +6378,27 @@ function verifyAgentGatewayContracts(output) {
     const miss = dispatchContractSummary(st, {dispatchId: "adp_x", sessionId: "sess_none", runId: "run_9", workItemId: "w_x"});
     if (miss.found !== false) output.push("没有契约的派发不能报成 found：摘要必须如实说查不到，否则界面会把空的当成\"没规则\"");
   }
+  // 服务端投递的仓库凭证在 agent 侧只用于本次派发的 git 网络操作：askpass 脚本不含密钥（密钥只走子进程环境变量、
+  // 脚本 0700），api_key 模式缺省用户名 x-access-token，none/未投递 → 空 env（git 照旧走主机凭证）。
+  {
+    const dir = mkdtempSync(join(tmpdir(), "aimac-git-auth-"));
+    try {
+      if (Object.keys(gitAuthEnvFor(null, dir)).length || Object.keys(gitAuthEnvFor({mode: "none", secret: "x"}, dir)).length) {
+        output.push("没投递凭证时 git 认证 env 应为空：否则会把空用户名/密钥塞给 git");
+      }
+      const env = gitAuthEnvFor({mode: "api_key", secret: "tok-XYZ"}, dir);
+      if (env.AIMAC_GIT_USERNAME !== "x-access-token" || env.AIMAC_GIT_SECRET !== "tok-XYZ" || env.GIT_TERMINAL_PROMPT !== "0" || !env.GIT_ASKPASS) {
+        output.push(`api_key 模式的 git 认证 env 不对：${JSON.stringify({...env, AIMAC_GIT_SECRET: "…"})}`);
+      } else {
+        if (readFileSync(env.GIT_ASKPASS, "utf8").includes("tok-XYZ")) output.push("askpass 脚本里写进了密钥：脚本文件比环境变量活得久");
+        if ((statSync(env.GIT_ASKPASS).mode & 0o077) !== 0) output.push("askpass 脚本对其他用户可读/可执行");
+      }
+      const pw = gitAuthEnvFor({mode: "account_password", username: "bob", secret: "pw-1"}, dir);
+      if (pw.AIMAC_GIT_USERNAME !== "bob" || pw.AIMAC_GIT_SECRET !== "pw-1") output.push("account_password 模式的 git 认证 env 不对");
+    } finally {
+      rmSync(dir, {recursive: true, force: true});
+    }
+  }
   // 仓库凭证静态加密：密封后落盘的形态里不得含明文；同钥可解开；换钥必须如实抛 credential_key_mismatch
   // 而不是回空（否则 agent 那头会以"没配凭证"失败，人查不到是密钥换了）。
   {
@@ -6397,6 +6418,26 @@ function verifyAgentGatewayContracts(output) {
       try { openSecret(sealed, other); } catch (error) { mismatch = error; }
       if (!mismatch || !String(mismatch.message).includes("credential_key_mismatch")) {
         output.push("换钥后旧密文没有如实报 credential_key_mismatch：会让 agent 以为没配凭证");
+      }
+      // 投递侧：按产出目标的 repositoryId 找到项目仓库配置、解开密文只进认领响应；mode none → 不投递；
+      // 密文解不开时必须以 repository_credential_unreadable 拒掉认领，不能静默当"没配"。
+      const gwState = {projects: [{id: "p_seal", config: {repositories: [
+        {id: "repo_sealed", url: "https://example.invalid/x.git", credentialMode: "api_key", credential: {mode: "api_key", sealedSecret: sealed}},
+        {id: "repo_open", url: "https://example.invalid/y.git", credentialMode: "none", credential: {mode: "none"}}]}}]};
+      const gwDispatch = {dispatchId: "adp_seal", projectId: "p_seal"};
+      resetCredentialKeyCache();
+      const delivered = dispatchRepositoryCredential(gwState, gwDispatch, {repositoryId: "repo_sealed"}, {runtimeDir: dir});
+      if (delivered?.mode !== "api_key" || delivered?.secret !== plain || delivered?.username !== "x-access-token") {
+        output.push(`投递侧没把仓库凭证解开交给派发包：${JSON.stringify(delivered ? {...delivered, secret: "…"} : delivered)}`);
+      }
+      if (dispatchRepositoryCredential(gwState, gwDispatch, {repositoryId: "repo_open"}, {runtimeDir: dir}) !== null) {
+        output.push("mode none 的仓库不该投递凭证");
+      }
+      resetCredentialKeyCache();
+      let unreadable = null;
+      try { dispatchRepositoryCredential(gwState, gwDispatch, {repositoryId: "repo_sealed"}, {runtimeDir: other}); } catch (error) { unreadable = error; }
+      if (unreadable?.message !== "repository_credential_unreadable" || unreadable?.status !== 409) {
+        output.push("密文解不开时认领没有以 repository_credential_unreadable 拒掉：会静默当成没配凭证、agent 拿主机凭证瞎试");
       }
     } finally {
       resetCredentialKeyCache();
@@ -18508,7 +18549,8 @@ function verifyRuntimeFileWritesAreRegistered(output) {
     executeDispatch: "派发包与提示词：执行器的一次性输入，半截 JSON 会让这次执行【失败】而不是做错事",
     syncSkillWorkset: "技能集文件：同内容包，摘要对不上时 Gateway 会拒发",
     writeArtifactManifest: "产出清单：写在 git 工作树里，半截文件会被检查点的清单校验当场拒掉",
-    writableDirectory: "只是探一下目录能不能写（写个 ok 再删），不是持久数据"
+    writableDirectory: "只是探一下目录能不能写（写个 ok 再删），不是持久数据",
+    gitAuthEnvFor: "askpass 脚本：每次派发重建的临时脚本（不含密钥，密钥只走本次 git 子进程的环境变量），派发结束即删；半截文件只会让 git 认证失败，不会做错事"
   };
   const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
   const lines = runtime.split("\n");

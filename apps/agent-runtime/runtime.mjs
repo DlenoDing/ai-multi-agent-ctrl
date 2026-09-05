@@ -36,6 +36,8 @@ const configPath = join(workDir, "agent-config.json");
 // of orphaning a detached model CLI that keeps holding the checkout and calling MCP/pushing.
 // Declared BEFORE the top-level `await main()` so installChildReaper() doesn't hit a temporal dead zone.
 const activeChildProcesses = new Set();
+// 本次派发的 git 认证（服务端随认领投递的仓库凭证）；放在顶层 await 之前——之后声明的模块级名字整个运行期都在 TDZ 里。
+let activeGitAuth = null;
 // 控制面断线的起点（run 循环与重试共用）：放在顶层 await 之前，否则整个运行期都在 TDZ 里。
 let outageSince = 0;
 // 这个文件的模块体在下面就 `await main()` —— 顶层 await 会把模块求值挂起，
@@ -390,8 +392,10 @@ async function run(config) {
         const control = startControlWatcher(config, claimed.dispatch);
         let checkpoint;
         try {
+          installGitAuth(config, claimed.dispatch);
           checkpoint = await executeDispatch(config, claimed.dispatch, control);
         } finally {
+          clearGitAuth();
           await control.stop();
         }
         // executeDispatch returns a checkpoint ONLY after a verified `git push` (the push is the last
@@ -925,7 +929,7 @@ function syncContentBundleGitTransfer(config, bundle, bundleDir) {
   const paths = (Array.isArray(transfer.paths) ? transfer.paths : []).filter((path) => typeof path === "string" && path && !path.startsWith("/") && !path.startsWith("-") && !path.includes("..") && !/[\0]/u.test(path));
   try {
     // Restrict git to safe network transports so a hostile repository URL cannot invoke a local command.
-    const gitOpts = {stdio: "pipe", timeout: gitNetworkTimeoutMs(), env: {...process.env, GIT_ALLOW_PROTOCOL: "https:ssh:git"}};
+    const gitOpts = {stdio: "pipe", timeout: gitNetworkTimeoutMs(), env: {...process.env, ...gitAuthEnv(), GIT_ALLOW_PROTOCOL: "https:ssh:git"}};
     if (!existsSync(join(transferDir, ".git"))) {
       mkdirSync(dirname(transferDir), {recursive: true});
       execFileSync("git", ["init", "-q", transferDir], gitOpts);
@@ -1740,7 +1744,7 @@ function prepareRepository(config, target) {
     // 克隆失败（认证被拒 / 仓库不在 / 连不上）此前抛的是 "Command failed: git clone <url> <本机路径>"：
     // 它会作为失败摘要上报，直接显示在控制台上 —— 没说原因，还带着 agent 本机的目录。
     try {
-      execFileSync("git", ["clone", target.repositoryUrl, repositoryRoot], {stdio: "pipe", timeout: gitNetworkTimeoutMs(), env: {...process.env, GIT_ALLOW_PROTOCOL: "file:https:ssh:git"}});
+      execFileSync("git", ["clone", target.repositoryUrl, repositoryRoot], {stdio: "pipe", timeout: gitNetworkTimeoutMs(), env: {...process.env, ...gitAuthEnv(), GIT_ALLOW_PROTOCOL: "file:https:ssh:git"}});
     } catch (error) {
       throw Object.assign(new Error(`git_command_failed:git clone（${gitFailureDetail(error)}）`), {cause: error});
     }
@@ -2340,9 +2344,37 @@ function configureGitIdentity(root) {
 // 同 control-plane-core 的 gitStrict：execFileSync 的 message 只有 "Command failed: git -C <路径> …"，
 // 真正的原因在 stderr 里。这条 message 会作为失败摘要上报给控制面（见派发的 catch 分支），
 // 运维在控制台看到的就是它 —— 必须带上 git 说的原因，且不带本机绝对路径。
+// 服务端随认领投递的仓库凭证，在 agent 侧只用于【本次派发】的 git 网络操作（clone / push / 内容包传输）：
+// askpass 脚本本身不含密钥（密钥只走本次 git 子进程的环境变量），不写全局 git 配置、不落日志、不进检查点；
+// 派发结束即删脚本目录。没投递或 mode none → 空 env，git 照旧走这台主机自己的凭证。
+function gitAuthEnvFor(credential, dir) {
+  if (!credential || !credential.secret || credential.mode === "none") return {};
+  mkdirSync(dir, {recursive: true, mode: 0o700});
+  const script = join(dir, "askpass.sh");
+  writeFileSync(script, "#!/bin/sh\ncase \"$1\" in *sername*) printf '%s\\n' \"$AIMAC_GIT_USERNAME\";; *) printf '%s\\n' \"$AIMAC_GIT_SECRET\";; esac\n", {mode: 0o700});
+  const username = credential.username || (credential.mode === "api_key" ? "x-access-token" : "");
+  return {GIT_ASKPASS: script, GIT_TERMINAL_PROMPT: "0", AIMAC_GIT_USERNAME: username, AIMAC_GIT_SECRET: String(credential.secret)};
+}
+export { gitAuthEnvFor };
+
+function installGitAuth(config, dispatchPackage) {
+  const dir = join(config.workDir, "git-auth", safeName(dispatchPackage?.dispatch?.dispatchId || "dispatch"));
+  activeGitAuth = {dir, env: gitAuthEnvFor(dispatchPackage?.repositoryCredential, dir)};
+}
+
+function clearGitAuth() {
+  const current = activeGitAuth;
+  activeGitAuth = null;
+  if (current?.dir) rmSync(current.dir, {recursive: true, force: true});
+}
+
+function gitAuthEnv() {
+  return activeGitAuth?.env || {};
+}
+
 function git(root, gitArgs) {
   try {
-    return execFileSync("git", ["-C", root, ...gitArgs], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 32 * 1024 * 1024}).trim();
+    return execFileSync("git", ["-C", root, ...gitArgs], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 32 * 1024 * 1024, env: {...process.env, ...gitAuthEnv()}}).trim();
   } catch (error) {
     throw Object.assign(new Error(`git_command_failed:git ${gitArgs.join(" ")}（${gitFailureDetail(error)}）`),
       {cause: error, stderr: error?.stderr, status: error?.status});

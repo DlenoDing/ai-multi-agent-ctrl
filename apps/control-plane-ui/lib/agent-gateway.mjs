@@ -7,6 +7,8 @@ import { cancelPendingConfirmationsForDispatch, createId, digestOf, effectiveTas
   computeEffectiveRulesDigest, applyEffectiveRulesDigest, settleCellOwnedResources,
   assertHumanTextWithinLimit,
   normalizedExpiry, REGISTERED_OWNER_ROLES, unknownOwnerRoles} from "./control-plane-core.mjs";
+import { openSecret, isSealed } from "./credential-seal.mjs";
+import { projectRepositories } from "./path-policy.mjs";
 import { isTerminalDispatchStatus } from "./lifecycle-states.mjs";
 
 const DEFAULT_AGENT_MCP_TOOLS = [
@@ -1634,6 +1636,34 @@ export function publicAgentNode(node) {
   return safe;
 }
 
+// 「这次派发用哪份仓库凭证」：按产出目标的 repositoryId 在项目仓库配置里找，密文只在这一刻解开、只进
+// 认领响应（节点令牌鉴权、不落盘）。解不开（密钥或运行时目录换过）要如实报 repository_credential_unreadable，
+// 不能静默当"没配"——那会让 agent 拿主机凭证瞎试、人查不到原因。mode none / 没配 → null，agent 照旧走主机凭证。
+export function dispatchRepositoryCredential(state, dispatch, repositoryOutputTarget, options = {}) {
+  const project = (state.projects || []).find((item) => item.id === dispatch.projectId);
+  // 项目仓库有两个落点（顶层与 config），一律走 projectRepositories() 这唯一的读者，别与界面写的那个分叉。
+  const repositories = project ? projectRepositories(project) : [];
+  const wanted = repositoryOutputTarget?.repositoryId;
+  const repository = repositories.find((item) => item && (item.id === wanted || item.repositoryId === wanted));
+  const credential = repository?.credential || null;
+  const mode = credential?.mode || repository?.credentialMode || "none";
+  if (!credential || mode === "none") return null;
+  let secret = "";
+  if (isSealed(credential.sealedSecret)) {
+    try {
+      secret = openSecret(credential.sealedSecret, resolve(options.runtimeDir || ".runtime"));
+    } catch (error) {
+      throw gatewayError("repository_credential_unreadable", 409, {repositoryId: wanted,
+        hint: "这份仓库凭证是用另一把密钥密封的（密钥或运行时目录换过）：到项目设置里重新填一次凭证"});
+    }
+  } else {
+    // 旧版留下的明文：照样投递（今天它已经在盘上了，不投递只会让功能不通）；下一次保存会被密封掉。
+    secret = String(credential.password || credential.apiKey || "");
+  }
+  if (!secret) return null;
+  return {mode, repositoryId: wanted, username: String(credential.username || (mode === "api_key" ? "x-access-token" : "")), secret};
+}
+
 function buildDispatchPackage(state, dispatch, node, options) {
   const contract = state.agentTaskContracts.find((item) => item.sessionId === dispatch.sessionId && item.runId === dispatch.runId);
   const repositoryOutputTarget = state.repositoryOutputs.find((item) => item.targetId === dispatch.repositoryOutputTargetRef);
@@ -1653,6 +1683,8 @@ function buildDispatchPackage(state, dispatch, node, options) {
     taskContract: contract,
     effectiveInstructionPacket: instructionPacket,
     repositoryOutputTarget,
+    // 只在认领响应里出现；agent 只用于本次派发的 git 网络操作，不落盘、不进检查点。
+    repositoryCredential: dispatchRepositoryCredential(state, dispatch, repositoryOutputTarget, options),
     skillWorkset: {
       worksetId: skillWorkset.worksetId,
       worksetDigest: skillWorkset.worksetDigest,

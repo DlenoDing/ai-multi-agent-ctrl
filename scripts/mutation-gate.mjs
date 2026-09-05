@@ -694,6 +694,15 @@ const MUTATIONS = [
     expect: "isSealed 判定不严"
   },
   {
+    // api_key 模式不给用户名时要按平台惯例缺省 x-access-token；缺省成空，GitHub/GitLab 这类 token 认证会直接被拒。
+    name: "agent 侧 api_key 模式的 git 认证要缺省 x-access-token",
+    check: "verifyAgentGatewayContracts",
+    file: "apps/agent-runtime/runtime.mjs",
+    from: "  const username = credential.username || (credential.mode === \"api_key\" ? \"x-access-token\" : \"\");",
+    to: "  const username = credential.username || \"\";",
+    expect: "api_key 模式的 git 认证 env 不对"
+  },
+  {
     // 推送与否骗人后果最重：把"未推送"写死成"已推送"，人会以为改动已经到远端。
     name: "工作项结果行必须如实区分已推送与未推送",
     file: APP,
@@ -2234,8 +2243,8 @@ const MUTATIONS = [
     name: "内容传输的 git 必须带墙钟超时（挂死远端不得阻塞整台节点）",
     file: "apps/agent-runtime/runtime.mjs",
     gate: "specs",
-    from: 'const gitOpts = {stdio: "pipe", timeout: gitNetworkTimeoutMs(), env: {...process.env, GIT_ALLOW_PROTOCOL: "https:ssh:git"}};',
-    to: 'const gitOpts = {stdio: "pipe", env: {...process.env, GIT_ALLOW_PROTOCOL: "https:ssh:git"}};',
+    from: 'const gitOpts = {stdio: "pipe", timeout: gitNetworkTimeoutMs(), env: {...process.env, ...gitAuthEnv(), GIT_ALLOW_PROTOCOL: "https:ssh:git"}};',
+    to: 'const gitOpts = {stdio: "pipe", env: {...process.env, ...gitAuthEnv(), GIT_ALLOW_PROTOCOL: "https:ssh:git"}};',
     expect: "content-bundle git transfer must set a wall-clock timeout"
   },
   {
@@ -2253,8 +2262,8 @@ const MUTATIONS = [
     name: "派发仓库 git clone 必须带墙钟超时",
     file: "apps/agent-runtime/runtime.mjs",
     gate: "specs",
-    from: 'execFileSync("git", ["clone", target.repositoryUrl, repositoryRoot], {stdio: "pipe", timeout: gitNetworkTimeoutMs(), env: {...process.env, GIT_ALLOW_PROTOCOL: "file:https:ssh:git"}});',
-    to: 'execFileSync("git", ["clone", target.repositoryUrl, repositoryRoot], {stdio: "pipe", env: {...process.env, GIT_ALLOW_PROTOCOL: "file:https:ssh:git"}});',
+    from: 'execFileSync("git", ["clone", target.repositoryUrl, repositoryRoot], {stdio: "pipe", timeout: gitNetworkTimeoutMs(), env: {...process.env, ...gitAuthEnv(), GIT_ALLOW_PROTOCOL: "file:https:ssh:git"}});',
+    to: 'execFileSync("git", ["clone", target.repositoryUrl, repositoryRoot], {stdio: "pipe", env: {...process.env, ...gitAuthEnv(), GIT_ALLOW_PROTOCOL: "file:https:ssh:git"}});',
     expect: "dispatch git clone must set a wall-clock timeout"
   },
   {

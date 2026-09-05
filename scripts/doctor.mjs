@@ -3654,6 +3654,21 @@ try {
         + `${JSON.stringify(haltNode.payload).slice(0, 120)}）`);
     }
     const haltNodeAuth = `Bearer ${haltNode.payload.nodeToken}`;
+    // 【仓库凭证要随认领投递到 agent】：给控制面项目的仓库配一条 API Key 凭证（保留原有仓库行），下面这个节点认领到
+    // 派发时，响应里必须带上解开的凭证；它只在响应里出现——登记进明文核对清单，落盘文件里搜不到。
+    const cpConfigRead = await jsonFetch(port, "/api/projects/prj_control_plane/config", {headers: {authorization: systemAuth}});
+    const cpRepos = cpConfigRead.payload?.config?.repositories || [];
+    if (!cpRepos.length) throw new Error(`控制面项目配置里没有仓库行（${JSON.stringify(cpConfigRead.payload).slice(0, 160)}）—— 凭证投递断言没触达`);
+    const controlPlaneRepoId = cpRepos[0].id;
+    const controlPlaneRepoSecret = `doctor-cp-repo-secret-${Date.now().toString(36)}`;
+    const cpConfigWrite = await jsonFetch(port, "/api/projects/prj_control_plane/config", {
+      method: "POST", headers: {"Idempotency-Key": "doctor-cp-repo-credential", authorization: systemAuth},
+      body: JSON.stringify({repositories: cpRepos.map((repo, index) => index === 0
+        ? {...repo, credentialMode: "api_key", credential: {apiKey: controlPlaneRepoSecret, username: "x-access-token"}} : repo),
+        expectedConfigVersion: cpConfigRead.payload.configVersion})
+    });
+    if (cpConfigWrite.response.status !== 200) throw new Error(`给控制面项目仓库配凭证失败（${cpConfigWrite.response.status}/${cpConfigWrite.payload?.error}）`);
+    issuedPlaintextSecrets.push(["控制面项目仓库 API Key", controlPlaneRepoSecret]);
     // 不自检就领不到活（admission 停在 read_only）—— 六项必检全绿才算入网。
     await jsonFetch(port, "/api/agent/v1/self-check", {
       method: "POST", headers: {authorization: haltNodeAuth},
@@ -3672,6 +3687,17 @@ try {
     // 认领回执是个信封：派发在 .dispatch 里，而 .dispatch 本身可能又套一层（实测两种都见过）。
     const envelope = claimed.payload?.dispatch;
     const claimedDispatch = envelope?.dispatchId ? envelope : envelope?.dispatch;
+    if (claimedDispatch) {
+      // 凭证投递：认领响应的整包里必须带上给控制面项目仓库配的那份凭证（解开的），且落在同一个仓库上。
+      const targetRepo = envelope?.repositoryOutputTarget?.repositoryId;
+      if (targetRepo !== controlPlaneRepoId) {
+        throw new Error(`认领到的派发落在仓库 ${targetRepo}，与配了凭证的 ${controlPlaneRepoId} 不是同一个 —— 凭证投递断言没触达`);
+      }
+      const delivered = envelope?.repositoryCredential;
+      if (delivered?.mode !== "api_key" || delivered?.secret !== controlPlaneRepoSecret || delivered?.username !== "x-access-token") {
+        throw new Error(`认领响应没带仓库凭证或带错了：${JSON.stringify(delivered ? {...delivered, secret: "…"} : delivered)} —— agent 拉推仓库靠的就是这个`);
+      }
+    }
     if (!claimedDispatch) {
       console.log(`  --  这个节点这一轮领不到派发（${JSON.stringify(claimed.payload).slice(0, 90)}），`
         + "「人叫停后 agent 不得覆盖」未被检验");
