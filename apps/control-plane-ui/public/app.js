@@ -337,43 +337,43 @@ function pendingForMe() {
   // 范围内存在、但当前账号无权处置的条数——按去向页累计。给"暂无"一个诚实的替代：范围内明明有待办、
   // 只是你没权限，屏幕不能说"没有"（缺省不得等于有利结果）。桶本身仍只列"我的"，现有消费者不受影响。
   const othersByPage = {};
-  const add = (id, label, page, items, allowed, sourceField) => {
+  const add = (id, label, page, workspace, items, allowed, sourceField) => {
     const mine = typeof allowed === "function" ? items.filter(allowed) : (allowed ? items : []);
     othersByPage[page] = (othersByPage[page] || 0) + Math.max(0, items.length - mine.length);
     if (!mine.length) return;
-    buckets.push({id, label, page, count: mine.length, capped: scopeTruncated || truncated.has(sourceField),
+    buckets.push({id, label, page, workspace, count: mine.length, capped: scopeTruncated || truncated.has(sourceField),
       items: mine.slice(0, 5), projectIds: projectIdsForItems(mine)});
   };
-  add("confirmations", "待你定稿的核心决策", "review",
+  add("confirmations", "待你定稿的核心决策", "review", "pending",
     (state.humanConfirmationRequests || []).filter((item) => inScope(item) && item.status === "pending"), canReviewGroup, "humanConfirmationRequests");
-  add("permissions", "待你批准的授权请求", "review",
+  add("permissions", "待你批准的授权请求", "review", "decisions",
     (state.permissionRequests || []).filter((item) => inScope(item) && item.status === "pending_approval"), canGrant, "permissionRequests");
-  add("approvals", "待你处理的审批请求", "review",
+  add("approvals", "待你处理的审批请求", "review", "decisions",
     (state.approvalRequests || []).filter((item) => inScope(item) && ["requested", "quorum_collecting"].includes(item.status)), canReviewGroup, "approvalRequests");
-  add("findings", "待你处置的发现项", "review",
+  add("findings", "待你处置的发现项", "review", "decisions",
     (state.findings || []).filter((item) => inScope(item) && !["resolved", "closed", "dismissed", "wontfix"].includes(item.status)), canReviewGroup, "findings");
-  add("qualityGates", "未通过、可由你豁免的质量门", "monitor",
+  add("qualityGates", "未通过、可由你豁免的质量门", "monitor", "evidence",
     (state.qualityGates || []).filter((item) => inScope(item) && !["passed", "waived"].includes(item.status)), canReviewGroup, "qualityGates");
-  add("reviewPlans", "待你收尾的评审计划", "monitor",
+  add("reviewPlans", "待你收尾的评审计划", "monitor", "barriers",
     (state.reviewPlans || []).filter((item) => inScope(item) && !["closed", "rejected", "superseded"].includes(item.status)), canReviewGroup, "reviewPlans");
-  add("reviewBundles", "待你收尾的评审包", "monitor",
+  add("reviewBundles", "待你收尾的评审包", "monitor", "barriers",
     (state.reviewBundles || []).filter((item) => inScope(item) && !["consumed", "rejected"].includes(item.status)), canReviewGroup, "reviewBundles");
-  add("ruleSources", "待你判定的规则来源", "monitor",
+  add("ruleSources", "待你判定的规则来源", "monitor", "barriers",
     (state.ruleSourceResolutions || []).filter((item) => inScope(item) && !["reference_only", "quarantined", "rejected", "superseded", "active"].includes(item.status)), canControlGroup, "ruleSourceResolutions");
-  add("upgradeCandidates", "待你判定的系统升级候选项", "monitor",
+  add("upgradeCandidates", "待你判定的系统升级候选项", "monitor", "barriers",
     (state.systemUpgradeCandidates || []).filter((item) => inScope(item) && item.status === "candidate_created"), canControlGroup, "systemUpgradeCandidates");
   // 这两类同样【只有人能了结】，而且都在关闭门的阻塞清单里 —— 之前却不在待办里：
   // 人看到"0 待处理"，任务组却因为等他终止一个卡住的方案、或确认一条指令已被消费而关不掉。
   // 状态集与 computeCloseBarrier 的判据对齐（拓扑终态 merged/downgraded/cancelled；
   // 指令 queued/acknowledged 才算未消费），不另立一套 —— 两套口径迟早分叉，而分叉那天没人会发现。
-  add("topologies", "待你终止的卡住执行方案", "monitor",
+  add("topologies", "待你终止的卡住执行方案", "monitor", "barriers",
     (state.executionTopologies || []).filter((item) => inScope(item)
       && ["blocked", "needs_reconcile"].includes(item.status)), canControlGroup, "executionTopologies");
-  add("directives", "待你确认已被消费的人工指令", "directives",
+  add("directives", "待你确认已被消费的人工指令", "directives", "history",
     (state.humanDirectives || []).filter((item) => inScope(item)
       && ["queued", "acknowledged"].includes(item.status)), canControlGroup, "humanDirectives");
   const visibleProjectIds = new Set(groups.map((taskGroup) => taskGroup.projectId).filter(Boolean));
-  add("sharedDefinitions", "待你处置的共享定义契约", "monitor",
+  add("sharedDefinitions", "待你处置的共享定义契约", "monitor", "barriers",
     (state.sharedDefinitions || []).filter((item) => ["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"].includes(item.status)
       && (!item.projectId || visibleProjectIds.has(item.projectId))), canUpdateProject, "sharedDefinitions");
   // "看不到"不等于"没有"。这些待办的来源集合只在 tasks 视角下发；在组织/系统/运行时视角里它们
@@ -2178,9 +2178,8 @@ function menuItemAvailable(item) {
 }
 
 function menuTodoFor(item, counts) {
-  if (item.id === "monitor" && item.workspace !== "barriers") return {count: 0, capped: false};
-  if (item.id === "review" && !["pending", "inbox", "decisions"].includes(item.workspace)) return {count: 0, capped: false};
-  return counts[item.id] || {count: 0, capped: false};
+  if (item.id === "review" && item.workspace === "inbox") return counts.__all || {count: 0, capped: false};
+  return counts[`${item.id}|${item.workspace || ""}`] || {count: 0, capped: false};
 }
 
 function workspaceOptions() {
@@ -6593,8 +6592,13 @@ function todoCountsByPage() {
     // 数据没下发到这一页时不出红点：0 与"未知"在红点上长得一模一样，而它们的含义相反。
     // 数不全时红点也要跟着改口径，否则同一件事在同一屏上出现两个数字：面板写"2+"，徽标写"2"。
     if (todo.known) for (const bucket of todo.buckets) {
-      const prev = counts[bucket.page] || {count: 0, capped: false};
-      counts[bucket.page] = {count: prev.count + bucket.count, capped: prev.capped || bucket.capped};
+      const addCount = (key) => {
+        const prev = counts[key] || {count: 0, capped: false};
+        counts[key] = {count: prev.count + bucket.count, capped: prev.capped || bucket.capped};
+      };
+      addCount(bucket.page);
+      addCount(`${bucket.page}|${bucket.workspace}`);
+      addCount("__all");
     }
   } catch { /* 计数是提示性的，任何异常都不该挡住导航渲染 */ }
   return counts;
@@ -6652,12 +6656,12 @@ function renderPendingForMePanel() {
            ${todo.buckets.map((bucket) => `
              <div class="record">
                <div class="record-title"><strong>${esc(bucket.label)}</strong> ${customBadge(`${bucket.count}${bucket.capped ? "+" : ""}`, "red")}</div>
-               <div class="record-meta"><span>处置入口：${esc(PAGE_META[bucket.page]?.[0] || bucket.page)}${bucketNeedsProjectJump(bucket)
+               <div class="record-meta"><span>处置入口：${esc(menuMeta(perspectiveOf(currentAccount), bucket.page, bucket.workspace)[0])}${bucketNeedsProjectJump(bucket)
                  ? ` · 先进入项目：${bucket.projectIds.slice(0, 3).map(projectNameOf).map(esc).join("、")}${bucket.projectIds.length > 3 ? "…" : ""}`
                  : ""}</span></div>
                <div class="button-row">${bucketNeedsProjectJump(bucket)
-                 ? `<button class="secondary-button" data-action="open-project-page" data-project="${esc(bucket.projectIds[0])}" data-target-menu="${esc(bucket.page)}">${bucket.projectIds.length > 1 ? "前往首个项目处置" : "前往处置"}</button>`
-                 : `<button class="secondary-button" data-menu="${esc(bucket.page)}">前往处置</button>`}</div>
+                 ? `<button class="secondary-button" data-action="open-project-page" data-project="${esc(bucket.projectIds[0])}" data-target-menu="${esc(bucket.page)}" data-target-workspace="${esc(bucket.workspace)}">${bucket.projectIds.length > 1 ? "前往首个项目处置" : "前往处置"}</button>`
+                 : `<button class="secondary-button" data-menu="${esc(bucket.page)}" data-menu-workspace="${esc(bucket.workspace)}">前往处置</button>`}</div>
              </div>`).join("")}
          </div>`}
   `, {wide: true});

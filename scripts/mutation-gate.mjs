@@ -11804,6 +11804,30 @@ const MUTATIONS = [
     expect: "从任务组回到全局任务菜单必须清除旧分页游标"
   },
   {
+    name: "待办桶必须声明准确叶子功能",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    buckets.push({id, label, page, workspace, count: mine.length, capped: scopeTruncated || truncated.has(sourceField),",
+    to: "    buckets.push({id, label, page, count: mine.length, capped: scopeTruncated || truncated.has(sourceField),",
+    expect: "确认、授权审批和质量门必须拆到三个准确叶子"
+  },
+  {
+    name: "菜单待办红点不得回退到父页面总数",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  return counts[`${item.id}|${item.workspace || ""}`] || {count: 0, capped: false};',
+    to: "  return counts[item.id] || {count: 0, capped: false};",
+    expect: "菜单叶子红点必须与各自页面记录数一致"
+  },
+  {
+    name: "待办处置按钮必须携带叶子 workspace",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: ': `<button class="secondary-button" data-menu="${esc(bucket.page)}" data-menu-workspace="${esc(bucket.workspace)}">前往处置</button>`}</div>',
+    to: ': `<button class="secondary-button" data-menu="${esc(bucket.page)}">前往处置</button>`}</div>',
+    expect: "每类待办的处置按钮必须携带准确 workspace"
+  },
+  {
     name: "任务组详情必须保留对象局部功能栏",
     file: "apps/control-plane-ui/public/modules/workspaces.js",
     gate: "workspace",

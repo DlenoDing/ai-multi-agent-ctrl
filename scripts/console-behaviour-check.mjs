@@ -4387,8 +4387,8 @@ function runNoVisibleProjectCase() {
     }, "p1", "review", "inbox");
     const crossProjectHtml = String(crossProjectRoot.innerHTML || "").replace(/<!--[\s\S]*?-->/gu, "");
     check("跨项目待办入口必须先切到待办所在项目",
-      /处置入口：人工审核 · 先进入项目：待办项目/u.test(crossProjectHtml)
-        && /data-action="open-project-page" data-project="p2" data-target-menu="review"/u.test(crossProjectHtml),
+      /处置入口：待我审核 · 先进入项目：待办项目/u.test(crossProjectHtml)
+        && /data-action="open-project-page" data-project="p2" data-target-menu="review" data-target-workspace="pending"/u.test(crossProjectHtml),
       "待你处理面板必须按当前项目口径说明；若混入跨项目数据，按钮要先切到待办所属项目");
   }
   // 「受阻项」数的是任务组身上的 blockers；而【被挡住的派发】是另一回事，只在执行监控页上说。
@@ -6027,6 +6027,56 @@ async function runPendingTruncationCase() {
     check("红点口径与面板一致",
       (counts.monitor?.count || 0) >= 1 && (counts.directives?.count || 0) >= 1,
       "面板里列出来了，菜单红点却不算 —— 同一件事在同一屏上给出两个数字");
+    check("待办红点必须落到实际能处置的叶子功能",
+      counts["monitor|barriers"]?.count === 1 && counts["directives|history"]?.count === 1
+        && !counts["monitor|overview"] && !counts["directives|compose"] && counts.__all?.count === 2,
+      `叶子功能待办计数错位：${JSON.stringify(counts)}`);
+    check("待办按钮必须直达阻塞门禁和指令记录",
+      /data-menu="monitor" data-menu-workspace="barriers"/u.test(panel)
+        && /data-menu="directives" data-menu-workspace="history"/u.test(panel)
+        && /处置入口：阻塞与门禁/u.test(panel) && /处置入口：指令记录/u.test(panel),
+      "待办卡仍只携带父页面，点击后会落到项目监控或下达指令");
+  }
+
+  {
+    const routed = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1,
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", workItems: []}],
+      humanConfirmationRequests: [{requestId: "h1", taskGroupId: "tg1", status: "pending"}],
+      permissionRequests: [{requestId: "p1", taskGroupId: "tg1", status: "pending_approval"}],
+      approvalRequests: [{approvalId: "a1", taskGroupId: "tg1", status: "requested"},
+        {approvalId: "a2", taskGroupId: "tg1", status: "quorum_collecting"}],
+      findings: [], qualityGates: [{gateId: "q1", taskGroupId: "tg1", status: "failed"}],
+      reviewPlans: [], reviewBundles: [], ruleSourceResolutions: [], systemUpgradeCandidates: [],
+      executionTopologies: [], humanDirectives: [], sharedDefinitions: [], truncatedCollections: []
+    };
+    const counts = probe.todoCountsWith(routed, admin);
+    check("确认、授权审批和质量门必须拆到三个准确叶子",
+      counts["review|pending"]?.count === 1 && counts["review|decisions"]?.count === 3
+        && counts["monitor|evidence"]?.count === 1 && !counts["monitor|barriers"]
+        && counts.__all?.count === 5,
+      `父页面聚合仍污染叶子红点：${JSON.stringify(counts)}`);
+    const pendingHtml = probe.renderPendingPanelWith(routed, admin);
+    check("每类待办的处置按钮必须携带准确 workspace",
+      /data-menu="review" data-menu-workspace="pending"/u.test(pendingHtml)
+        && /data-menu="review" data-menu-workspace="decisions"/u.test(pendingHtml)
+        && /data-menu="monitor" data-menu-workspace="evidence"/u.test(pendingHtml),
+      "待办按钮仍会进入父页面的第一个叶子，而不是记录所在功能");
+    const menuRoot = el("div");
+    loadConsole(menuRoot, {realI18n: true}).renderFullPagePaneWith(routed, admin, "p1", "review", "inbox");
+    const menuHtml = String(menuRoot.innerHTML || "");
+    const leafButton = (pageId, workspace) => {
+      const start = menuHtml.indexOf(`data-menu="${pageId}" data-menu-workspace="${workspace}"`);
+      return start < 0 ? "" : menuHtml.slice(start, menuHtml.indexOf("</button>", start));
+    };
+    check("菜单叶子红点必须与各自页面记录数一致",
+      /nav-badge">1</u.test(leafButton("review", "pending"))
+        && /nav-badge">3</u.test(leafButton("review", "decisions"))
+        && /nav-badge">5</u.test(leafButton("review", "inbox"))
+        && /nav-badge">1</u.test(leafButton("monitor", "evidence"))
+        && !/nav-badge/u.test(leafButton("monitor", "barriers")),
+      "父页面总数仍被复制到多个叶子菜单，或质量门红点落错功能");
   }
 
   const scopeCapped = probe.renderPendingPanelWith(stateWith(["taskGroups"]), admin);
