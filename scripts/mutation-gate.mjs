@@ -959,8 +959,8 @@ const MUTATIONS = [
     name: "没有可用模型时要给人挂 S1 阻塞",
     check: "verifyNoModelFallbackMatchesWhatEngineDoes",
     file: CORE,
-    from: '        addBlocker(taskGroup, "S1", `没有可运行的模型满足工作项 ${workItem.id} 的硬性约束。`);',
-    to: "",
+    from: '          : `没有可运行的模型满足工作项 ${workItem.id} 的硬性约束。`);',
+    to: '          : "");',
     expect: "没有给人挂 S1 阻塞"
   },
   {
@@ -8678,8 +8678,8 @@ const MUTATIONS = [
     name: "借来的提示项不算自己的技能",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "mcp",
-    from: "  const ownSkill = (ownHint ? skillCandidates[0] : null) || state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`);",
-    to: "  const ownSkill = skillCandidates[0] || state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`);",
+    from: "  const ownSkill = explicitRoleSkill || (ownHint ? skillCandidates[0] : null)\n    || state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`);",
+    to: "  const ownSkill = explicitRoleSkill || skillCandidates[0]\n    || state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`);",
     expect: "拿到了别人的技能却不留痕"
   },
   {
