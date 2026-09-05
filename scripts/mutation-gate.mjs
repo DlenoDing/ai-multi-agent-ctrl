@@ -1036,7 +1036,7 @@ const MUTATIONS = [
   {
     name: "项目角色替换必须撤销旧活动授权",
     file: "apps/control-plane-ui/server.mjs",
-    gate: "workspace",
+    gate: "workspace-flows",
     from: '      existing.status = "revoked";\n      existing.revokedReason = "project_role_replaced";',
     to: '      existing.status = "active";\n      existing.revokedReason = "project_role_replaced";',
     expect: "project role replacement must leave one active grant"
@@ -1044,7 +1044,7 @@ const MUTATIONS = [
   {
     name: "任务组角色替换必须撤销旧活动授权",
     file: "apps/control-plane-ui/server.mjs",
-    gate: "workspace",
+    gate: "workspace-flows",
     from: '        existing.status = "revoked";\n        existing.revokedReason = "role_replaced";',
     to: '        existing.status = "active";\n        existing.revokedReason = "role_replaced";',
     expect: "task-group role replacement must leave one active grant"
@@ -1052,7 +1052,7 @@ const MUTATIONS = [
   {
     name: "移出项目必须级联撤销任务组角色",
     file: "apps/control-plane-ui/server.mjs",
-    gate: "workspace",
+    gate: "workspace-flows",
     from: '      else if (grant.resource?.resourceType === "task_group" && taskGroupIds.has(grant.resource.resourceId)) revokedTaskGroupGrants += 1;',
     to: '      else if (false && grant.resource?.resourceType === "task_group" && taskGroupIds.has(grant.resource.resourceId)) revokedTaskGroupGrants += 1;',
     expect: "removing a project member must revoke project and child task-group grants"
@@ -1060,7 +1060,7 @@ const MUTATIONS = [
   {
     name: "更换组织管理员必须撤销旧管理员身份",
     file: "apps/control-plane-ui/server.mjs",
-    gate: "workspace",
+    gate: "workspace-flows",
     from: '      oldAdmin.accountType = "user_account";',
     to: '      oldAdmin.accountType = "org_admin";',
     expect: "old admin must be demoted to a normal organization member"
@@ -12358,6 +12358,7 @@ const GATE_COMMANDS = {
   writer: "scripts/concurrent-writer-gate.mjs",
   console: "scripts/console-behaviour-check.mjs",
   workspace: "scripts/workspaces-check.mjs",
+  "workspace-flows": "scripts/workspace-flows-check.mjs",
   idle: "scripts/idle-tick-gate.mjs",
   specs: "scripts/validate-specs.rb",
   // 控制面 e2e（约 94 秒，其中九成在等 I/O，与别的变异并行几乎不占额外墙钟）。
