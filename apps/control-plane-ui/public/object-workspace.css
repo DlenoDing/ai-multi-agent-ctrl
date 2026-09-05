@@ -18,6 +18,7 @@
 .member-grant-focus strong { overflow-wrap: anywhere; }
 .governance-object-workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; grid-column: 1 / -1; min-width: 0; }
 .governance-object-header { padding: 4px 0 12px; border-bottom: 1px solid var(--card-border); }
+.governance-object-header:focus { outline: 2px solid #2458b8; outline-offset: 4px; }
 .governance-object-header h2 { margin: 8px 0 6px; font-size: 22px; overflow-wrap: anywhere; }
 .governance-eyebrow { margin-top: 12px; }
 .governance-object-band { padding: 2px 0; }

@@ -6421,7 +6421,7 @@ async function handleApi(req, res) {
     const initialAdminOrganization = (state.organizations || []).find((organization) =>
       organization.initialAdminAccountId === member.accountId && organization.orgId === organizationMembershipOf(member));
     const mayResetActiveInitialAdmin = resetActiveInitialAdmin && isSystemAccount(reissueActor)
-      && Boolean(initialAdminOrganization) && member.accountType === "org_admin";
+      && Boolean(initialAdminOrganization) && member.accountType === "org_admin" && member.status !== "retired";
     if (resetActiveInitialAdmin && !mayResetActiveInitialAdmin) {
       return json(res, 403, {error: "org_initial_admin_reset_forbidden",
         message: "只有系统管理员可以重置组织的初始管理员登录凭据，且目标必须是该组织登记的初始管理员"});

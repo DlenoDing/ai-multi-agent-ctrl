@@ -2324,7 +2324,7 @@ function systemOrganizationActions(org, initialAdmin) {
     `<button class="secondary-button" data-action="org-quota" data-org="${esc(org.orgId)}">调整配额</button>`,
     initialAdmin?.status === "invited"
       ? `<button class="secondary-button" data-action="member-reissue-invite" data-account="${esc(org.initialAdminAccountId)}">重发管理员邀请</button>` : "",
-    initialAdmin && initialAdmin.status !== "invited"
+    initialAdmin && ["active", "suspended", "locked"].includes(initialAdmin.status)
       ? `<button class="secondary-button" data-action="reset-initial-admin-login" data-account="${esc(org.initialAdminAccountId)}">重置管理员登录</button>` : "",
     org.status === "active"
       ? `<button class="danger-button" data-action="org-status" data-org="${esc(org.orgId)}" data-status="suspended">停用组织</button>`
@@ -9304,12 +9304,15 @@ document.addEventListener("click", async (event) => {
       selectedOrganizationId = orgId;
       render();
       window.scrollTo?.({top: 0});
+      document.querySelector("[data-governance-object-heading]")?.focus();
       return;
     }
     if (action === "close-org-detail") {
+      const orgId = selectedOrganizationId;
       selectedOrganizationId = "";
       render();
       window.scrollTo?.({top: 0});
+      document.querySelector(`[data-action="open-org-detail"][data-org="${CSS.escape(orgId)}"]`)?.focus();
       return;
     }
     if (action === "open-member-detail") {
@@ -9320,13 +9323,16 @@ document.addEventListener("click", async (event) => {
       workspaces.select("org-members", "list");
       render();
       window.scrollTo?.({top: 0});
+      document.querySelector("[data-governance-object-heading]")?.focus();
       return;
     }
     if (action === "close-member-detail") {
+      const accountId = selectedOrgMemberId;
       selectedOrgMemberId = "";
       memberGrantAccountId = "";
       render();
       window.scrollTo?.({top: 0});
+      document.querySelector(`[data-action="open-member-detail"][data-account="${CSS.escape(accountId)}"]`)?.focus();
       return;
     }
     if (action === "open-node-tasks") {

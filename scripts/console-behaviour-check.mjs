@@ -878,6 +878,11 @@ function check(name, condition, detail) {
     /data-action="reset-initial-admin-login" data-account="acct_org_admin"/u.test(activeHtml)
       && !/data-action="member-reissue-invite" data-account="acct_org_admin"/u.test(activeHtml),
     "已激活账号应显示登录重置，不应继续显示仅适用于待邀请账号的重发邀请");
+  admin.status = "retired";
+  const retiredHtml = probe.renderSysOrgsInventoryWith({accounts: [admin]}, account, [org], ["list"]);
+  check("已注销的初始组织管理员不显示登录重置入口",
+    !/data-action="reset-initial-admin-login" data-account="acct_org_admin"/u.test(retiredHtml),
+    "注销是终态，登录重置不能把已注销管理员复活成待邀请状态");
 }
 
 // 【暂停与恢复按当前状态二选一】。两个按钮一直摆着的话，总有一个按了什么都不会发生：

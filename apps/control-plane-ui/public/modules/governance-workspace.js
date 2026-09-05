@@ -7,7 +7,7 @@
   }
 
   function identityHeader({eyebrow, title, statusHtml, id, backAction, backLabel}) {
-    return `<header class="governance-object-header">
+    return `<header class="governance-object-header" data-governance-object-heading tabindex="-1">
       <div>${backButton(backAction, backLabel)}<div class="small muted governance-eyebrow">${esc(eyebrow)}</div>
         <h2>${esc(title)}</h2><div class="record-meta"><span>${statusHtml}</span><span class="mono">${esc(id)}</span></div></div>
     </header>`;
