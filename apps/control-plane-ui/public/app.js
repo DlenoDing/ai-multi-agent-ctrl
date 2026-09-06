@@ -20,6 +20,7 @@ const {
   sectionLabel,
   desktopMenuHtml,
   menuMeta,
+  contextualMenuMeta,
   mobileMenuHtml
 } = window.AIMAC_CONSOLE_NAV;
 const {
@@ -2057,7 +2058,7 @@ function render() {
     syncWorkspaceRoute();
   }
   const activeWorkspace = page === "tg" && expandedTaskGroupId ? "list" : workspaces.current(page)?.id || "";
-  const [title, subtitle] = contextualMenuMeta(perspective, page, activeWorkspace);
+  const [title, subtitle] = currentMenuMeta(perspective, page, activeWorkspace);
   // 菜单上直接带计数：否则"等你签字的东西"藏在一个叫"执行监控"的页面里，人根本不会去点。
   const menuTodoCounts = todoCountsByPage();
   const visibleMenu = menuForCurrentSection(perspective, page).filter((item) => item.divider || menuItemAvailable(item));
@@ -2143,7 +2144,7 @@ function renderContent() {
   const project = PROJECT_PAGES.has(page) ? currentProject() : null;
   const perspective = perspectiveOf(currentAccount);
   const functionalWorkspace = page === "tg" && expandedTaskGroupId ? "list" : workspaces.current(page)?.id || "";
-  const functionalPageLabel = contextualMenuMeta(perspective, page, functionalWorkspace)[0];
+  const functionalPageLabel = currentMenuMeta(perspective, page, functionalWorkspace)[0];
   const group = projectTaskGroups().find((item) => item.id === (managementGroupId || (page === "tg" ? expandedTaskGroupId : "")))
     || (taskWorkDetail?.taskGroup?.projectId === currentProjectId && taskWorkDetail.taskGroup.id === managementGroupId ? taskWorkDetail.taskGroup : null);
   const returnTask = ["monitor", "review", "directives", "tg"].includes(page) && group
@@ -2172,28 +2173,13 @@ function menuItemAvailable(item) {
   return hasPerm(item.requires);
 }
 
-function contextualMenuMeta(perspective, pageId, workspace) {
-  const base = menuMeta(perspective, pageId, workspace);
-  if (pageId === "sys-orgs" && selectedOrganizationId) return ["组织详情", "组织状态、初始管理员、配额与子账户构成"];
-  if (pageId === "org-members" && selectedOrgMemberId) return ["成员详情", "账号生命周期、项目角色和任务组角色"];
-  if (pageId === "proj-members" && selectedProjectMemberId) return ["项目成员详情", "项目角色、任务组权限和成员移出"];
-  if (["org-agents", "proj-agents"].includes(pageId) && selectedAgentProfileId) return ["Agent 档案详情", "执行角色、作用范围、模型偏好和 Skill"];
-  if (["org-agents", "proj-agents"].includes(pageId) && selectedRuntimeNodeId) return ["运行节点详情", "节点身份、准入状态、当前任务和控制记录"];
-  if (pageId === "monitor" && selectedExecutionObject.id) {
-    return [selectedExecutionObject.type === "session" ? "执行会话详情" : "Agent 派发详情",
-      "执行身份、模型决策、事件、仓库产出和控制状态"];
-  }
-  if (pageId === "tg" && expandedTaskGroupId) return ["任务组详情", "任务、进度、角色规则、执行控制和协作记录"];
-  if (pageId === "tasks" && selectedWork) return ["任务详情", "执行顺序、Agent、角色、规则、结果与证据"];
-  if (!managementGroupId) return base;
-  const scopedTitles = {
-    tasks: {list: "任务组任务", create: "任务组新建任务"},
-    monitor: {overview: "任务组监控", runs: "任务组执行会话", events: "任务组实时事件", nodes: "任务组节点控制", evidence: "任务组产出验收", barriers: "任务组阻塞与门禁", help: "任务组监控说明"},
-    review: {pending: "任务组待审核", decisions: "任务组授权复核", history: "任务组审核历史", inbox: "任务组待办汇总", help: "任务组审核说明"},
-    directives: {compose: "任务组下达指令", history: "任务组指令记录", help: "任务组指令说明"}
-  };
-  const title = scopedTitles[pageId]?.[workspace];
-  return title ? [title, `当前任务组范围 · ${base[1]}`] : base;
+function currentMenuMeta(perspective, pageId, workspace) {
+  return contextualMenuMeta(perspective, pageId, workspace, {
+    organization: Boolean(selectedOrganizationId), orgMember: Boolean(selectedOrgMemberId), projectMember: Boolean(selectedProjectMemberId),
+    agentProfile: Boolean(selectedAgentProfileId), runtimeNode: Boolean(selectedRuntimeNodeId),
+    executionObject: Boolean(selectedExecutionObject.id), executionType: selectedExecutionObject.type,
+    taskGroupObject: Boolean(expandedTaskGroupId), workObject: Boolean(selectedWork), taskGroupScope: Boolean(managementGroupId)
+  });
 }
 
 function menuTodoFor(item, counts) {

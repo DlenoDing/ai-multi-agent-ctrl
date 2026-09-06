@@ -11790,7 +11790,7 @@ const MUTATIONS = [
     name: "页面标题必须跟随具体功能菜单",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "  const [title, subtitle] = contextualMenuMeta(perspective, page, activeWorkspace);",
+    from: "  const [title, subtitle] = currentMenuMeta(perspective, page, activeWorkspace);",
     to: "  const [title, subtitle] = PAGE_META[page] || [\"管理后台\", \"\"];",
     expect: "页面标题直接使用具体功能名"
   },
@@ -12846,25 +12846,25 @@ const MUTATIONS = [
   },
   {
     name: "任务详情页头必须区别于任务列表",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
-    from: '  if (pageId === "tasks" && selectedWork) return ["任务详情", "执行顺序、Agent、角色、规则、结果与证据"];',
+    from: '    if (pageId === "tasks" && context.workObject) return ["任务详情", "执行顺序、Agent、角色、规则、结果与证据"];',
     to: "",
     expect: "对象详情页头必须直接说清当前对象类型"
   },
   {
     name: "任务组监控页头必须显示当前范围",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
-    from: '  if (!managementGroupId) return base;',
-    to: "  return base;",
+    from: '    if (!context.taskGroupScope) return base;',
+    to: "    return base;",
     expect: "任务组范围的监控页头必须直接显示范围"
   },
   {
     name: "任务组详情页头必须区别于任务组列表",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
-    from: '  if (pageId === "tg" && expandedTaskGroupId) return ["任务组详情", "任务、进度、角色规则、执行控制和协作记录"];',
+    from: '    if (pageId === "tg" && context.taskGroupObject) return ["任务组详情", "任务、进度、角色规则、执行控制和协作记录"];',
     to: "",
     expect: "任务组对象页头必须与任务组列表区分"
   },
