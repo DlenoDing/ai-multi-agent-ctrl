@@ -3401,6 +3401,11 @@ function renderOrgMembers() {
     const projects = assignableProjects().filter((project) => organizationOf(project) === organizationOf(selectedMember));
     const chosenProject = projects.find((project) => project.id === memberGrantProjectId) || projects[0] || null;
     if (chosenProject) memberGrantProjectId = chosenProject.id;
+    const projectMemberships = projectMembershipsForAccount(selectedMember.accountId);
+    const taskGroupGrants = taskGroupGrantsForAccount(selectedMember.accountId);
+    const chosenMembership = chosenProject
+      ? projectMemberships.find((membership) => membership.project.id === chosenProject.id)
+      : null;
     const projectSelectorHtml = chosenProject ? `<select id="member-detail-project" data-member-grant-project>${projects.map((project) =>
       `<option value="${esc(project.id)}"${project.id === chosenProject.id ? " selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}</select>` : "";
     const manageable = selectedMember.accountType === "user_account" && selectedMember.accountId !== currentAccount.accountId
@@ -3411,11 +3416,15 @@ function renderOrgMembers() {
     return window.AIMAC_GOVERNANCE_WORKSPACE.memberDetail({
       member: selectedMember,
       project: chosenProject,
-      projectMemberships: projectMembershipsForAccount(selectedMember.accountId),
-      taskGroupGrants: taskGroupGrantsForAccount(selectedMember.accountId),
+      projectMemberships,
+      taskGroupGrants,
       accountActionsHtml: organizationMemberActions(selectedMember),
       projectSelectorHtml,
-      projectGrantFormHtml: manageable && chosenProject ? renderProjectMemberForm({projectId: chosenProject.id}) : readOnlyNotice,
+      projectGrantFormHtml: manageable && chosenProject
+        ? chosenMembership
+          ? `<div class="notice">该成员已有“${esc(grantRoleLabel(chosenMembership.role))}”项目角色。请使用上方“管理项目角色”进入项目成员详情；项目负责人身份不可在这里替换。</div>`
+          : renderProjectMemberForm({projectId: chosenProject.id})
+        : readOnlyNotice,
       taskGroupGrantFormHtml: manageable && chosenProject ? renderTaskGroupGrantForm(chosenProject) : readOnlyNotice,
       helpers: {statusBadge, retiredNote, t, permLabel, grantRoleLabel, projectNameOf, taskGroupNameOf,
         projectLink: window.AIMAC_OBJECT_WORKSPACE.projectLink, panel: renderPanel}

@@ -13321,6 +13321,22 @@ const MUTATIONS = [
     expect: "不得跨项目展示用户侧角色 Skill 叠加"
   },
   {
+    name: "已有项目角色的组织成员详情不得重复展示通用授权表单",
+    file: APP,
+    gate: "console",
+    from: "        ? chosenMembership\n          ? `<div class=\"notice\">该成员已有“${esc(grantRoleLabel(chosenMembership.role))}”项目角色。请使用上方“管理项目角色”进入项目成员详情；项目负责人身份不可在这里替换。</div>`",
+    to: "        ? false\n          ? `<div class=\"notice\">该成员已有“${esc(grantRoleLabel(chosenMembership.role))}”项目角色。请使用上方“管理项目角色”进入项目成员详情；项目负责人身份不可在这里替换。</div>`",
+    expect: "成员详情固定成员上下文并区分已有项目角色与新增授权"
+  },
+  {
+    name: "组织成员已有项目角色必须提供定向管理入口",
+    file: "apps/control-plane-ui/public/modules/governance-workspace.js",
+    gate: "console",
+    from: '      actionHtml: h.projectLink(item, "管理项目角色", {page: "proj-members", workspace: "list", accountId: member.accountId})',
+    to: '      actionHtml: h.projectLink(item, "打开项目", {page: "proj-overview", workspace: "overview"})',
+    expect: "成员详情固定成员上下文并区分已有项目角色与新增授权"
+  },
+  {
     name: "项目监控菜单必须按执行跟踪、节点控制和验收收口分组",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",

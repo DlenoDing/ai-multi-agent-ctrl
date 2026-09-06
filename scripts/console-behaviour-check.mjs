@@ -5871,11 +5871,15 @@ async function runPendingTruncationCase() {
       const detailProbe = loadConsole(el("div"), {realI18n: true});
       detailProbe.setMemberDetail("acct_member");
       const memberDetail = detailProbe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["list"]);
-      check("成员详情固定成员上下文并在同页提供项目与任务组授权",
+      check("成员详情固定成员上下文并区分已有项目角色与新增授权",
         /返回成员列表/u.test(memberDetail)
           && /账号资料与生命周期/u.test(memberDetail)
           && /项目与任务组权限/u.test(memberDetail)
-          && /分配项目角色/u.test(memberDetail)
+          && /当前管理项目/u.test(memberDetail)
+          && /管理项目角色/u.test(memberDetail)
+          && /data-target-menu="proj-members" data-target-workspace="list" data-grant-account="acct_member"/u.test(memberDetail)
+          && /该成员已有“项目管理员”项目角色/u.test(memberDetail)
+          && !/data-form="project-member"/u.test(memberDetail)
           && /分配任务组角色/u.test(memberDetail)
           && /value="acct_member" selected/u.test(memberDetail),
         textOf(memberDetail).slice(0, 500));
@@ -5884,6 +5888,14 @@ async function runPendingTruncationCase() {
           && /data-action="member-status" data-account="acct_member"/u.test(memberDetail)
           && /data-action="member-retire" data-account="acct_member"/u.test(memberDetail),
         "成员列表收起动作后，详情里必须完整保留账号能力、停用与注销入口");
+      const unassignedState = {...orgScopeState,
+        projects: [{...orgScopeState.projects[0], members: []}], accessGrants: []};
+      const unassignedDetail = detailProbe.renderOrgMembersInventoryWith(unassignedState, orgAdmin, orgMembers, "p1", ["list"]);
+      check("成员尚未加入当前项目时才显示定向项目授权表单",
+        /data-form="project-member"/u.test(unassignedDetail)
+          && /value="acct_member" selected/u.test(unassignedDetail)
+          && !/该成员已有/u.test(unassignedDetail),
+        "成员详情对未加入项目的账号没有提供定向授权，或已有角色时仍展示重复授权表单");
     }
     {
       const focusedProbe = loadConsole(el("div"), {realI18n: true});

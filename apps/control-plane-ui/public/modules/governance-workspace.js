@@ -70,7 +70,7 @@
     projectGrantFormHtml, taskGroupGrantFormHtml, projectSelectorHtml, helpers: h}) {
     const projectItems = projectMemberships.map(({project: item, role}) => ({
       id: item.id, name: item.name || item.id, role: h.grantRoleLabel(role),
-      actionHtml: h.projectLink(item, "打开项目", {page: "proj-members", workspace: "list", accountId: member.accountId})
+      actionHtml: h.projectLink(item, "管理项目角色", {page: "proj-members", workspace: "list", accountId: member.accountId})
     }));
     const groupItems = taskGroupGrants.map((grant) => ({
       id: grant.resource?.resourceId || "-", name: h.taskGroupNameOf(grant.resource?.resourceId), role: h.grantRoleLabel(grant.role),
@@ -101,7 +101,7 @@
           : `<span>没有额外账号能力</span>`}</div>
           <div class="small muted">账号能力只决定组织层入口；项目与任务组实际权限以右侧角色授权为准。</div>`, {wide: true})}
       </div>
-      ${h.panel("项目与任务组权限", `<div class="member-grant-focus"><label for="member-detail-project">当前授权项目</label>${projectSelectorHtml || `<span class="muted">当前组织没有可授权项目</span>`}</div>
+      ${h.panel("项目与任务组权限", `<div class="member-grant-focus"><label for="member-detail-project">当前管理项目</label>${projectSelectorHtml || `<span class="muted">当前组织没有可授权项目</span>`}</div>
         <div class="governance-permission-columns">
           <section><h3>已有项目角色</h3>${grantRows(projectItems, "尚未分配项目角色。", h)}</section>
           <section><h3>已有任务组角色</h3>${grantRows(groupItems, "尚未分配任务组角色。", h)}</section>
