@@ -3280,7 +3280,8 @@ async function runErrorGuidanceCase() {
     sidebarWidth >= 232 && sidebarWidth <= 248 && sidebarWidth === sidebarBasis,
     `侧栏宽度 ${sidebarWidth}px / flex-basis ${sidebarBasis}px：过窄会换行，过宽会挤占主工作区`);
   check("总览摘要使用页面信息带而不是悬浮大卡片",
-    /\.project-hub\s*\{[\s\S]*background:\s*transparent;[\s\S]*border:\s*0;[\s\S]*border-bottom:\s*1px solid/u.test(styles),
+    /\.project-hub\s*\{[\s\S]*background:\s*transparent;[\s\S]*border:\s*0;[\s\S]*border-bottom:\s*1px solid/u.test(styles)
+      && /@media \(max-width: 860px\)[\s\S]*\.project-hub\s*\{[\s\S]*padding:\s*4px 0 14px/u.test(styles),
     "系统、组织和项目总览仍用大白卡包住另一组卡片，视觉层级被重复边框主导");
   check("移动端侧栏仍要覆盖为 100%，不能把桌面宽度带到窄屏",
     /@media \(max-width: 860px\)[\s\S]*\.sidebar \{ width: 100%; flex: none;/u.test(styles),

@@ -12022,6 +12022,14 @@ const MUTATIONS = [
     expect: "总览摘要使用页面信息带而不是悬浮大卡片"
   },
   {
+    name: "移动总览摘要不得残留旧卡片内边距",
+    file: "apps/control-plane-ui/public/styles.css",
+    gate: "console",
+    from: "    padding: 4px 0 14px;",
+    to: "    padding: 12px;",
+    expect: "总览摘要使用页面信息带而不是悬浮大卡片"
+  },
+  {
     name: "规则列表必须保留即时筛选入口",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
