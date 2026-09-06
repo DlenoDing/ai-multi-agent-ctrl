@@ -8,6 +8,23 @@
   min-width: 0;
 }
 
+.rule-editor-toolbar {
+  position: sticky;
+  top: 72px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--card-border);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 3px 10px rgba(20, 28, 46, 0.08);
+  backdrop-filter: blur(8px);
+}
+.rule-editor-toolbar .filter-input { flex: 0 1 320px; }
+.rule-editor-toolbar-spacer { flex: 1 1 auto; }
+
 .rule-row .rule-editor-fullscreen-button {
   flex: 0 0 auto;
   width: 32px;
@@ -112,6 +129,13 @@ body.rule-editor-fullscreen-open {
 }
 
 @media (max-width: 860px) {
+  .rule-editor-toolbar {
+    position: static;
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+  .rule-editor-toolbar .filter-input { flex: 1 1 100%; }
+  .rule-editor-toolbar-spacer { display: none; }
   .rule-editor-fullscreen {
     padding: 10px;
   }

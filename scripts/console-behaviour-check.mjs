@@ -1605,6 +1605,11 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         && /已启用/u.test(longRuleForm)
         && /继承/u.test(longRuleForm),
       "规则编辑器仍默认展开完整正文，用户打开项目设置或任务组配置就会先看到一长墙规则文本");
+    check("长规则列表提供筛选、默认窗口和固定保存工具栏",
+      /data-rule-filter(?:\s|>)/u.test(longRuleForm)
+        && /data-rule-editor-action="show-all"/u.test(longRuleForm)
+        && /class="rule-editor-toolbar"/u.test(longRuleForm),
+      "规则数量变多后仍只能从头滚到尾，缺少搜索、窗口或就近保存入口");
     check("规则正文 textarea 仍要留在折叠行里，展开后可编辑且保存逻辑不变",
       /textarea name="ruleContent"/u.test(longRuleForm)
         && /data-orig-content=/u.test(longRuleForm)
@@ -1618,10 +1623,18 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         && /textarea name="ruleContent"/u.test(newRuleRow),
       "新增规则也被折叠会让人点了新增还找不到可填写字段");
     const styleText = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/styles.css"), "utf8");
+    const ruleStyleText = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/rule-editor.css"), "utf8");
+    const ruleModuleText = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/modules/rule-editor.js"), "utf8");
     check("规则摘要样式要支持桌面三列与移动端单列",
       /\.rule-summary\s*\{[\s\S]*grid-template-columns:\s*auto minmax\(180px, 0\.9fr\) minmax\(220px, 1\.4fr\)/u.test(styleText)
         && /@media \(max-width: 860px\)[\s\S]*\.rule-summary \{ grid-template-columns: 1fr; \}/u.test(styleText),
       "规则摘要没有明确的桌面/移动布局约束，长标题或长预览在窄屏容易挤压错位");
+    check("规则默认窗口和保存工具栏必须真正生效",
+      /\.rule-row\[hidden\]\s*\{\s*display:\s*none/u.test(styleText)
+        && /\.rule-editor-toolbar\s*\{[\s\S]*position:\s*sticky/u.test(ruleStyleText)
+        && /const DEFAULT_VISIBLE_RULES = 12;/u.test(ruleModuleText)
+        && /matches\.slice\(0, DEFAULT_VISIBLE_RULES\)/u.test(ruleModuleText),
+      "规则脚本虽标记了隐藏行，但 display:flex 覆盖 hidden，或保存工具栏仍会滚出视野");
     check("默认角色为空时要说清回退到哪里",
       /还没有项目默认角色/.test(rolesText) && /内置角色/.test(rolesText),
       "空着不是坏事，但要说清系统会拿什么顶上");

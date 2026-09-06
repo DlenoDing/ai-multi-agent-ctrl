@@ -11966,6 +11966,30 @@ const MUTATIONS = [
     expect: "移动端宽表必须在表内滚动"
   },
   {
+    name: "规则列表必须保留即时筛选入口",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '        <input type="search" class="filter-input" data-rule-filter aria-label="筛选${catLabel}规则" placeholder="按标题或正文筛选">',
+    to: '        <input type="search" class="filter-input" aria-label="筛选${catLabel}规则" placeholder="按标题或正文筛选">',
+    expect: "长规则列表提供筛选、默认窗口和固定保存工具栏"
+  },
+  {
+    name: "规则默认窗口必须真实隐藏超量行",
+    file: "apps/control-plane-ui/public/styles.css",
+    gate: "console",
+    from: ".rule-row[hidden] { display: none; }",
+    to: ".rule-row[hidden] { display: flex; }",
+    expect: "规则默认窗口和保存工具栏必须真正生效"
+  },
+  {
+    name: "规则默认窗口不得退化为全量展示",
+    file: "apps/control-plane-ui/public/modules/rule-editor.js",
+    gate: "console",
+    from: "  const DEFAULT_VISIBLE_RULES = 12;",
+    to: "  const DEFAULT_VISIBLE_RULES = 1200;",
+    expect: "规则默认窗口和保存工具栏必须真正生效"
+  },
+  {
     name: "看板跨叶子跳转必须进入浏览器历史",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

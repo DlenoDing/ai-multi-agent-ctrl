@@ -5290,6 +5290,14 @@ function ruleEditorForm(opts) {
   return `
     <form class="form-grid" ${formAttr} data-category="${esc(category)}" data-list="${esc(listId)}" data-config-version="${esc(layer === "project" ? projConfigVersion || "" : tgDetail?.configVersion || "")}">
       ${opts.note ? `<div class="notice">${opts.note}</div>` : ""}
+      <div class="rule-editor-toolbar">
+        <input type="search" class="filter-input" data-rule-filter aria-label="筛选${catLabel}规则" placeholder="按标题或正文筛选">
+        <span class="small muted" data-rule-filter-count></span>
+        <button type="button" class="secondary-button" data-rule-editor-action="show-all">显示全部</button>
+        <span class="rule-editor-toolbar-spacer"></span>
+        <button type="button" class="secondary-button" data-action="rule-add" data-target="${esc(listId)}" data-category="${esc(category)}" ${disabled}>新增${catLabel}规则</button>
+        <button class="primary-button" type="submit" ${disabled}>保存${catLabel}规则</button>
+      </div>
       <div class="rule-list" data-cfg-list="${esc(listId)}">
         ${/* 「暂无规则。」对这两类的含义完全相反：业务规则空是常态，系统规则空【不正常】——
               内置默认系统规则本应始终在场（本机实测 32 条），一条都不剩说明要么被本项目全部停用了，
@@ -5301,10 +5309,6 @@ function ruleEditorForm(opts) {
             : `<div class="small muted">还没有业务规则：本项目只受系统规则约束。`
               // 只读身份下那颗按钮是灰的：叫人去点一个点不动的按钮，等于把人留在原地。
               + (readOnly ? `你当前没有改这一层配置的权限，要加约束请找有权限的人。</div>` : `要加本项目自己的约束，点下面的「新增业务规则」。</div>`))}
-      </div>
-      <div class="button-row">
-        <button type="button" class="secondary-button" data-action="rule-add" data-target="${esc(listId)}" data-category="${esc(category)}" ${disabled}>新增${catLabel}规则</button>
-        <button class="primary-button" type="submit" ${disabled}>保存${catLabel}规则</button>
       </div>
     </form>
   `;

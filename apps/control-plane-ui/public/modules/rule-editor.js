@@ -10,6 +10,8 @@
   const MANAGED_TEXTAREA_SELECTOR = `textarea[name='ruleContent'][${SOURCE_ATTR}]`;
   const ROW_SELECTOR = ".rule-row[data-rule-row]";
   const FORM_SELECTOR = "form[data-form='project-rules'], form[data-form='tg-rules']";
+  const FILTER_SELECTOR = "[data-rule-filter]";
+  const DEFAULT_VISIBLE_RULES = 12;
   const FOCUSABLE_SELECTOR = [
     "button:not([disabled])",
     "textarea:not([disabled])",
@@ -133,6 +135,7 @@
     bindListeners();
     const scope = root && typeof root.querySelectorAll === "function" ? root : document;
     scope.querySelectorAll(TEXTAREA_SELECTOR).forEach(enhanceTextarea);
+    scope.querySelectorAll(FILTER_SELECTOR).forEach(applyRuleFilter);
     observeRoot(scope);
   }
 
@@ -156,6 +159,12 @@
     listenersBound = true;
 
     document.addEventListener("input", (event) => {
+      const filter = event.target.closest?.(FILTER_SELECTOR);
+      if (filter) {
+        filter.closest(FORM_SELECTOR)?.removeAttribute("data-rule-show-all");
+        applyRuleFilter(filter);
+        return;
+      }
       const textarea = event.target.closest?.(MANAGED_TEXTAREA_SELECTOR);
       if (!textarea) return;
       if (activeSession?.textarea === textarea) activeSession.dirty = true;
@@ -175,6 +184,15 @@
       const actionEl = event.target.closest?.(`[${TOOL_ATTR}]`);
       if (!actionEl) return;
       const action = actionEl.dataset.ruleEditorAction;
+      if (action === "show-all") {
+        const form = actionEl.closest(FORM_SELECTOR);
+        if (!form) return;
+        if (form.dataset.ruleShowAll === "1") form.removeAttribute("data-rule-show-all");
+        else form.dataset.ruleShowAll = "1";
+        const filter = form.querySelector(FILTER_SELECTOR);
+        if (filter) applyRuleFilter(filter);
+        return;
+      }
       if (action === "open") {
         const row = actionEl.closest(ROW_SELECTOR);
         const textarea = row?.querySelector("textarea[name='ruleContent']");
@@ -204,6 +222,28 @@
     window.addEventListener("resize", () => {
       document.querySelectorAll(MANAGED_TEXTAREA_SELECTOR).forEach(queueAutosize);
     });
+  }
+
+  function applyRuleFilter(input) {
+    const form = input?.closest(FORM_SELECTOR);
+    if (!form) return;
+    const rows = [...form.querySelectorAll(ROW_SELECTOR)];
+    const needle = String(input.value || "").trim().toLocaleLowerCase();
+    const matches = rows.filter((row) => !needle || String(row.textContent || "").toLocaleLowerCase().includes(needle));
+    const showAll = form.dataset.ruleShowAll === "1" || Boolean(needle);
+    const visible = new Set((showAll ? matches : matches.slice(0, DEFAULT_VISIBLE_RULES)));
+    rows.forEach((row) => { row.hidden = !visible.has(row); });
+    const count = form.querySelector("[data-rule-filter-count]");
+    if (count) count.textContent = needle
+      ? `找到 ${matches.length} / ${rows.length} 条`
+      : showAll || rows.length <= DEFAULT_VISIBLE_RULES
+        ? `共 ${rows.length} 条`
+        : `显示前 ${Math.min(DEFAULT_VISIBLE_RULES, rows.length)} / 共 ${rows.length} 条`;
+    const toggle = form.querySelector("[data-rule-editor-action='show-all']");
+    if (toggle) {
+      toggle.hidden = Boolean(needle) || rows.length <= DEFAULT_VISIBLE_RULES;
+      toggle.textContent = showAll ? "收起" : "显示全部";
+    }
   }
 
   function openFullscreen(textarea) {

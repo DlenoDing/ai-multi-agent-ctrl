@@ -659,6 +659,7 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   gap: 8px;
 }
 .rule-row.disabled { opacity: 0.62; }
+.rule-row[hidden] { display: none; }
 .rule-row[open] { background: #fff; }
 .rule-summary {
   cursor: pointer;
