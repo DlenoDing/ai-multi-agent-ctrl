@@ -3274,7 +3274,7 @@ const MUTATIONS = [
     gate: "console",
     from: '  if (!(state.projects || []).length) return noProjectYetNotice("项目成员授权");',
     to: "  if (true) return noProjectYetNotice(\"项目成员授权\");",
-    expect: "项目成员授权与任务组授权分属不同 pane"
+    expect: "项目成员列表、项目授权、任务组权限列表和任务组授权分属四个 pane"
   },
   {
     // 手机键盘默认首字母大写：严格比较＝人拿自己的邮箱登不进来，且只回一句统一的 401。
@@ -13039,6 +13039,38 @@ const MUTATIONS = [
     from: '<div class="form-row"><label>执行角色</label><select name="role" required>${h.roleOptions}</select></div>',
     to: '<div class="form-row"><label>执行角色</label><input name="role" required></div>',
     expect: "编辑页也必须使用登记值选择器"
+  },
+  {
+    name: "项目成员与任务组授权必须拆成四个稳定页面",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "console",
+    from: '    "proj-members": [pane("list", "项目成员", ["项目成员列表"]), pane("add", "添加项目成员", ["项目成员授权"]), pane("groups", "任务组权限", ["任务组权限列表"]), pane("grant-group", "授予任务组权限", ["任务组权限授权"]), pane("help", "授权说明")],',
+    to: '    "proj-members": [pane("list", "项目成员", ["项目成员列表", "项目成员授权"]), pane("groups", "任务组权限", ["任务组权限列表", "任务组权限授权"]), pane("help", "授权说明")],',
+    expect: "必须是四个独立页面"
+  },
+  {
+    name: "项目成员授权必须有独立侧栏入口",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    leaf("proj-members", "add", "添加项目成员", "把组织成员加入当前项目", {requires: "project:grant"}),',
+    to: "",
+    expect: "添加项目成员"
+  },
+  {
+    name: "成员列表的添加按钮必须进入独立授权页面",
+    file: APP,
+    gate: "console",
+    from: 'data-menu="proj-members" data-menu-workspace="add">添加项目成员',
+    to: 'data-jump-panel="项目成员授权">添加项目成员',
+    expect: "四个独立页面"
+  },
+  {
+    name: "组织成员矩阵的定向授权必须直达创建页",
+    file: APP,
+    gate: "console",
+    from: '{page: "proj-members", workspace: "add", accountId: selected.accountId}',
+    to: '{page: "proj-members", workspace: "list", accountId: selected.accountId}',
+    expect: "成员定向授权保留成员和选择的项目"
   },
 ];
 

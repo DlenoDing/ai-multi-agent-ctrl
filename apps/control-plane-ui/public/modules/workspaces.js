@@ -13,7 +13,7 @@
     "org-agents": [pane("profiles", "共享 Agent 档案", ["组织级 Agent 档案"]), pane("create", "新建共享 Agent 档案", ["创建组织级 Agent 档案"]), pane("nodes", "共享运行节点", ["agent 节点"]), pane("register", "注册共享运行节点", ["注册共享运行节点"]), pane("tokens", "加入令牌", ["加入令牌审计"]), pane("help", "接入与管理说明")],
     "proj-agents": [pane("profiles", "Agent 档案", ["可调配 Agent 档案"]), pane("create", "新建 Agent 档案", ["创建项目级 Agent 档案"]), pane("nodes", "运行节点", ["项目 agent 节点"]), pane("register", "注册运行节点", ["注册运行节点"]), pane("help", "接入与运行说明")],
     "proj-overview": [pane("overview", "项目概况", ["项目概况", "关键指标", "任务组一览"]), pane("activity", "最新执行", ["最新执行事件"]), pane("outputs", "仓库产出", ["仓库产出归属概览", "仓库产出归属"]), pane("help", "准备与操作", ["流程导航"])],
-    "proj-members": [pane("list", "项目成员", ["项目成员列表", "项目成员授权"]), pane("groups", "任务组权限", ["任务组权限列表", "任务组权限授权"]), pane("help", "授权说明")],
+    "proj-members": [pane("list", "项目成员", ["项目成员列表"]), pane("add", "添加项目成员", ["项目成员授权"]), pane("groups", "任务组权限", ["任务组权限列表"]), pane("grant-group", "授予任务组权限", ["任务组权限授权"]), pane("help", "授权说明")],
     "proj-settings": [pane("repositories", "仓库与凭据", ["项目基础配置", "规则配置"]), pane("baseline", "基线资料", ["基线资料"]), pane("roles", "角色与 Skill", ["项目默认角色", "角色 Skill 定制"]), pane("system-rules", "系统规则", ["系统规则"]), pane("business-rules", "业务规则", ["业务规则"]), pane("help", "配置说明")],
     tg: [pane("list", "任务组列表", ["任务组列表", "任务组详情"]), pane("create", "创建任务组", ["创建任务组"]), pane("help", "任务组说明", ["任务组总览", "任务组处置看板", "任务组生命周期", "创建工作项"])],
     tasks: [pane("list", "任务工作台", ["任务工作台", "任务详情"]), pane("create", "创建任务", ["创建工作项"])],

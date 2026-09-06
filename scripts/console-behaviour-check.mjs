@@ -1876,7 +1876,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     accessGrants: [], agentJoinTokens: [], taskGroups: [], truncatedCollections: [], fleet: {online: 0, total: 0}
   };
   const pickerAdmin = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
-  pickerProbe.renderFullPageWith(pickerState, pickerAdmin, "p1", "proj-members");
+  pickerProbe.renderFullPagePaneWith(pickerState, pickerAdmin, "p1", "proj-members", "add");
   // 只看【下拉】：账号列表那张表本来就该把已注销的账号列出来（人要看得到它被注销了），
   // 搜整页会把那张表也算进去 —— 第一版就是这么误报的。
   const pickerHtml = String(pickerRoot.innerHTML || "");
@@ -2702,8 +2702,9 @@ async function runErrorGuidanceCase() {
   assertMenuLeaves("组织管理说明", orgNav, [["org-overview", "help", "组织操作说明"], ["org-members", "help", "成员授权说明"],
     ["org-projects", "help", "项目治理说明"], ["org-agents", "help", "共享 Agent 说明"]]);
   const projectNav = renderedNav({accountId: "user", email: "user@local", displayName: "项目成员",
-    accountType: "user_account", roles: ["workspace_owner"], permissions: ["project:view", "project:update", "agent:activate", "task_group:control", "task_group:review"], organizationId: "org_default"}, "p1", "proj-overview");
+    accountType: "user_account", roles: ["workspace_owner"], permissions: ["project:view", "project:update", "project:grant", "agent:activate", "task_group:control", "task_group:review"], organizationId: "org_default"}, "p1", "proj-overview");
   const projectMenuOrder = [["proj-overview", "overview", "项目概览"], ["proj-members", "list", "项目成员"],
+    ["proj-members", "add", "添加项目成员"], ["proj-members", "groups", "任务组权限"], ["proj-members", "grant-group", "授予任务组权限"],
     ["proj-agents", "profiles", "Agent 档案"], ["proj-agents", "create", "新建 Agent 档案"], ["tg", "list", "任务组"], ["tasks", "list", "任务"],
     ["monitor", "overview", "项目监控"], ["monitor", "runs", "执行会话"], ["review", "pending", "待我审核"],
     ["directives", "compose", "下达指令"], ["proj-settings", "repositories", "仓库凭据"]];
@@ -3055,30 +3056,35 @@ async function runErrorGuidanceCase() {
       {accountId: "acct_viewer", role: "viewer"}
     ]}],
     accountDirectory: {acct_admin: "项目管理员", acct_reviewer: "评审人甲", acct_agent: "Agent 操作员", acct_viewer: "观察者甲"},
-    taskGroups: [], agentDispatches: [], humanDirectives: []
+    taskGroups: [{id: "tg_member", projectId: "p1", name: "成员授权任务组", status: "development"}], agentDispatches: [], humanDirectives: []
   };
-  const projectMembersHtml = membersProbe.renderProjectMembersWith(projectMemberState,
-    {accountId: "acct_admin", email: "admin@local", displayName: "项目管理员",
-      accountType: "user_account", roles: ["project_admin"],
-      effectivePermissions: ["project:view", "project:update", "project:grant", "agent:activate", "task_group:read", "task_group:control", "task_group:review"],
-      organizationId: "org_default"}, "p1",
-    [{accountId: "acct_new", displayName: "待授权成员", accountType: "user_account", status: "active", organizationId: "org_default"}]);
-  const projectMembersPanelAt = (title) => projectMembersHtml.indexOf(`<h2>${title}</h2>`);
+  const memberAdmin = {accountId: "acct_admin", email: "admin@local", displayName: "项目管理员",
+    accountType: "user_account", roles: ["project_admin"],
+    effectivePermissions: ["project:view", "project:update", "project:grant", "agent:activate", "task_group:read", "task_group:control", "task_group:review"],
+    organizationId: "org_default"};
+  const memberCandidates = [{accountId: "acct_new", displayName: "待授权成员", accountType: "user_account", status: "active", organizationId: "org_default"}];
+  const projectMemberListHtml = membersProbe.renderProjectMembersInventoryWith(projectMemberState, memberAdmin, "p1", memberCandidates, ["list"]);
+  const projectMemberAddHtml = membersProbe.renderProjectMembersInventoryWith(projectMemberState, memberAdmin, "p1", memberCandidates, ["add"]);
+  const taskGroupPermissionListHtml = membersProbe.renderProjectMembersInventoryWith(projectMemberState, memberAdmin, "p1", memberCandidates, ["groups"]);
+  const taskGroupPermissionGrantHtml = membersProbe.renderProjectMembersInventoryWith(projectMemberState, memberAdmin, "p1", memberCandidates, ["grant-group"]);
+  const projectMemberHelpHtml = membersProbe.renderProjectMembersInventoryWith(projectMemberState, memberAdmin, "p1", memberCandidates, ["help"]);
+  const projectMembersHtml = [projectMemberListHtml, projectMemberAddHtml, taskGroupPermissionListHtml, taskGroupPermissionGrantHtml, projectMemberHelpHtml].join("\n");
   {
     const bundles = [...projectMembersHtml.matchAll(/<details class="guide-bundle"( open)?>([\s\S]*?)<\/details>/gu)];
-    check("项目成员页的「成员协作流程」要收进默认关闭的折叠块（列表与授权表单留在外面）",
+    check("项目成员说明必须只在独立说明页，不混入列表与授权页",
       bundles.length === 1 && !bundles[0][1] && bundles[0][2].includes("<h2>成员协作流程</h2>")
-        && !bundles[0][2].includes("<h2>项目成员列表</h2>") && !bundles[0][2].includes("<h2>项目成员授权</h2>"),
+        && ![projectMemberListHtml, projectMemberAddHtml, taskGroupPermissionListHtml, taskGroupPermissionGrantHtml].some((html) => /成员协作流程/u.test(html)),
       `折叠块 ${bundles.length} 个（默认打开 ${bundles.filter((m) => m[1]).length} 个）—— 成员列表被三层引导推到下面`);
   }
-  check("项目成员权限页首个面板必须是成员列表，统计与授权入口合并，指引放在操作之后",
-    projectMembersHtml.match(/<h2>(.*?)<\/h2>/u)?.[1] === "项目成员列表"
-      && projectMembersPanelAt("成员权限总览") === -1 && projectMembersPanelAt("成员权限操作看板") === -1
-      && /aria-label="项目成员统计"/u.test(projectMembersHtml)
-      && /data-jump-panel="任务组权限授权"/u.test(projectMembersHtml)
-      && projectMembersPanelAt("项目成员列表") < projectMembersPanelAt("项目成员授权")
-      && projectMembersPanelAt("任务组权限列表") < projectMembersPanelAt("成员协作流程"),
-    "项目成员列表仍被重复总览和引导挤下首屏，或缺少授权入口");
+  check("项目成员列表、添加成员、任务组权限和授权表单必须是四个独立页面",
+    /aria-label="项目成员统计"/u.test(projectMemberListHtml)
+      && /data-menu="proj-members" data-menu-workspace="add"/u.test(projectMemberListHtml)
+      && /data-menu="proj-members" data-menu-workspace="grant-group"/u.test(projectMemberListHtml)
+      && !/data-form="project-member"|data-form="grant-create"/u.test(projectMemberListHtml)
+      && /data-form="project-member"/u.test(projectMemberAddHtml) && !/项目成员列表|data-form="grant-create"/u.test(projectMemberAddHtml)
+      && /任务组权限列表/u.test(taskGroupPermissionListHtml) && !/data-form="project-member"|data-form="grant-create"/u.test(taskGroupPermissionListHtml)
+      && /data-form="grant-create"/u.test(taskGroupPermissionGrantHtml) && !/项目成员列表|项目成员授权/u.test(taskGroupPermissionGrantHtml),
+    "成员查阅、项目授权、任务组权限查阅和任务组授权仍有两个以上堆在同一页面");
   check("项目成员权限页必须说明成员角色如何影响 Agent、任务组、审核和监控",
     /智能体操作员/u.test(projectMembersHtml)
       && /任务组负责人/u.test(projectMembersHtml)
@@ -3088,10 +3094,10 @@ async function runErrorGuidanceCase() {
       && /授权不会直接启动任务/u.test(projectMembersHtml),
     "项目成员权限页仍只是成员表或授权表单，没有说明角色与 Agent、任务组、审核、监控之间的关系");
   check("项目成员权限页的授权表单要锁定当前项目，避免跨项目误授权",
-    /data-form="project-member"/u.test(projectMembersHtml)
-      && /type="hidden" name="projectId" value="p1"/u.test(projectMembersHtml)
-      && /<strong>项目一<\/strong>/u.test(projectMembersHtml)
-      && !/<select name="projectId">/u.test(String(projectMembersHtml).slice(projectMembersPanelAt("项目成员授权"))),
+    /data-form="project-member"/u.test(projectMemberAddHtml)
+      && /type="hidden" name="projectId" value="p1"/u.test(projectMemberAddHtml)
+      && /<strong>项目一<\/strong>/u.test(projectMemberAddHtml)
+      && !/<select name="projectId">/u.test(projectMemberAddHtml),
     "项目内授权表单仍允许在同一页切到别的项目，用户以为在当前项目授权但实际可能提交到别处");
   const styles = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/styles.css"), "utf8");
   const workspaceStyles = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/workspaces.css"), "utf8");
@@ -5682,23 +5688,26 @@ async function runPendingTruncationCase() {
       "组织管理员项目视图里重复摆危险按钮，或组织节点治理 pane 够不到立即切断");
 
     const projectMemberPane = probe.renderProjectMembersInventoryWith(overviewState, systemAdmin, "p1", overviewState.accounts, ["list"]);
+    const projectMemberAddPane = probe.renderProjectMembersInventoryWith(overviewState, systemAdmin, "p1", overviewState.accounts, ["add"]);
     const taskGroupMemberPane = probe.renderProjectMembersInventoryWith(overviewState, systemAdmin, "p1", overviewState.accounts, ["groups"]);
-    check("项目成员授权与任务组授权分属不同 pane",
-      /data-form="project-member"/u.test(projectMemberPane)
-        && !/data-refresh-project-members="1"/u.test(projectMemberPane)
-        && /data-form="grant-create" data-refresh-project-members="1"/u.test(taskGroupMemberPane)
-        && /name="resourceType" value="task_group"/u.test(taskGroupMemberPane),
-      "项目成员角色和任务组级权限又混回同一授权表单");
+    const taskGroupGrantPane = probe.renderProjectMembersInventoryWith(overviewState, systemAdmin, "p1", overviewState.accounts, ["grant-group"]);
+    check("项目成员列表、项目授权、任务组权限列表和任务组授权分属四个 pane",
+      !/data-form="project-member"|data-form="grant-create"/u.test(projectMemberPane)
+        && /data-form="project-member"/u.test(projectMemberAddPane)
+        && !/data-form="grant-create"/u.test(taskGroupMemberPane)
+        && /data-form="grant-create" data-refresh-project-members="1"/u.test(taskGroupGrantPane)
+        && /name="resourceType" value="task_group"/u.test(taskGroupGrantPane),
+      "成员和任务组权限的查阅、添加仍没有拆成四个独立页面");
     check("任务组角色表单明确使用替换语义，避免降级时叠加旧权限",
-      /name="replaceExisting" value="true"/u.test(taskGroupMemberPane)
-        && /同一账号在同一任务组只保留一个角色/u.test(taskGroupMemberPane)
-        && /再次提交会撤销其当前角色并替换为新角色/u.test(taskGroupMemberPane),
+      /name="replaceExisting" value="true"/u.test(taskGroupGrantPane)
+        && /同一账号在同一任务组只保留一个角色/u.test(taskGroupGrantPane)
+        && /再次提交会撤销其当前角色并替换为新角色/u.test(taskGroupGrantPane),
       "控制台必须执行替换并在提交前说清后果，避免降级时叠加旧权限或让管理员误以为会追加");
     check("项目成员授权 pane 绑定当前 projectId，任务组授权 pane 只列当前项目任务组",
-      /type="hidden" name="projectId" value="p1"/u.test(projectMemberPane)
-        && /value="tg1"/u.test(taskGroupMemberPane)
-        && /task_group_owner/u.test(taskGroupMemberPane)
-        && /reviewer/u.test(taskGroupMemberPane),
+      /type="hidden" name="projectId" value="p1"/u.test(projectMemberAddPane)
+        && /value="tg1"/u.test(taskGroupGrantPane)
+        && /task_group_owner/u.test(taskGroupGrantPane)
+        && /reviewer/u.test(taskGroupGrantPane),
       "项目授权缺少当前项目绑定，或任务组授权没有按当前项目角色落位");
 
     const orgMembers = [
@@ -5785,17 +5794,17 @@ async function runPendingTruncationCase() {
       const focusedProbe = loadConsole(el("div"), {realI18n: true});
       focusedProbe.setMemberFocus("acct_member");
       const focusedMatrix = focusedProbe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["grants"]);
-      const focusedProject = focusedProbe.renderProjectMembersInventoryWith(orgScopeState, orgAdmin, "p1", orgMembers, ["list"]);
-      const focusedGroup = focusedProbe.renderProjectMembersInventoryWith(orgScopeState, orgAdmin, "p1", orgMembers, ["groups"]);
+      const focusedProject = focusedProbe.renderProjectMembersInventoryWith(orgScopeState, orgAdmin, "p1", orgMembers, ["add"]);
+      const focusedGroup = focusedProbe.renderProjectMembersInventoryWith(orgScopeState, orgAdmin, "p1", orgMembers, ["grant-group"]);
       check("成员定向授权保留成员和选择的项目，项目角色与任务组角色各有入口",
         /data-member-grant-project/u.test(focusedMatrix)
-          && /data-target-workspace="list" data-grant-account="acct_member"/u.test(focusedMatrix)
-          && /data-target-workspace="groups" data-grant-account="acct_member"/u.test(focusedMatrix), textOf(focusedMatrix));
+          && /data-target-workspace="add" data-grant-account="acct_member"/u.test(focusedMatrix)
+          && /data-target-workspace="grant-group" data-grant-account="acct_member"/u.test(focusedMatrix), textOf(focusedMatrix));
       check("定向授权只预选成员，项目和任务组角色仍必须明确选择",
         /value="acct_member" selected/u.test(focusedProject) && /value="acct_member" selected/u.test(focusedGroup)
           && !/value="project_admin" selected/u.test(focusedProject) && !/value="task_group_owner" selected/u.test(focusedGroup), textOf(focusedProject));
       focusedProbe.setMemberFocus("foreign_account");
-      const foreignFocus = focusedProbe.renderProjectMembersInventoryWith(orgScopeState, orgAdmin, "p1", orgMembers, ["list"]);
+      const foreignFocus = focusedProbe.renderProjectMembersInventoryWith(orgScopeState, orgAdmin, "p1", orgMembers, ["add"]);
       check("候选范围外的成员不能被默认选中", !/value="foreign_account"/u.test(foreignFocus)
         && /value="" selected disabled/u.test(foreignFocus), textOf(foreignFocus));
     }
@@ -6372,7 +6381,7 @@ function runWholeListCapCase() {
       && !appSource.includes("创建项目（系统级）"),
     "系统账号兼容页仍藏着组织成员、通用授权或项目创建表单；未来误加入口就会恢复跨层旁路");
   const projectRoot = el("div");
-  loadConsole(projectRoot).renderFullPagePaneWith({...base}, admin, "p1", "proj-members", "groups");
+  loadConsole(projectRoot).renderFullPagePaneWith({...base}, admin, "p1", "proj-members", "grant-group");
   const projectHtml = String(projectRoot.innerHTML || "");
   check("项目成员页提供任务组级授权入口",
     /任务组权限授权/u.test(projectHtml) && /data-form="grant-create"/u.test(projectHtml)

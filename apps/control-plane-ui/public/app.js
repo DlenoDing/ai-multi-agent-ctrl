@@ -3090,8 +3090,8 @@ function renderOrgMemberScopeMatrix(members) {
   const focus = selected ? `<div class="member-grant-focus"><strong>${esc(selected.displayName || selected.email)}</strong>
     <button class="secondary-button" data-action="clear-member-grants">全部成员</button></div>
     ${chosen && selected.status !== "retired" ? `<div class="member-grant-focus"><label for="member-grant-project">授权项目</label><select id="member-grant-project" data-member-grant-project>${projects.map((project) => `<option value="${esc(project.id)}"${project.id === chosen.id ? " selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}</select>
-      ${window.AIMAC_OBJECT_WORKSPACE.projectLink(chosen, "分配项目角色", {page: "proj-members", workspace: "list", accountId: selected.accountId})}
-      ${window.AIMAC_OBJECT_WORKSPACE.projectLink(chosen, "分配任务组角色", {page: "proj-members", workspace: "groups", accountId: selected.accountId})}</div>` : ""}` : "";
+      ${window.AIMAC_OBJECT_WORKSPACE.projectLink(chosen, "分配项目角色", {page: "proj-members", workspace: "add", accountId: selected.accountId})}
+      ${window.AIMAC_OBJECT_WORKSPACE.projectLink(chosen, "分配任务组角色", {page: "proj-members", workspace: "grant-group", accountId: selected.accountId})}</div>` : ""}` : "";
   const rows = (selected ? [selected] : members).map((account) => {
     const projectMemberships = projectMembershipsForAccount(account.accountId);
     const taskGroupGrants = taskGroupGrantsForAccount(account.accountId);
@@ -4583,8 +4583,8 @@ function renderProjectMembers() {
     </div>` + (memberRows
       ? table(["成员", "项目角色", "角色影响", "操作"], memberRows)
       : `<div class="notice warn-notice">当前项目还没有成员授权。没有成员角色时，任务组控制、人工审核和 Agent 操作入口会缺少负责人。</div>`), {wide: true,
-      headerSide: `${filterInput("按成员、角色过滤…", "project-members")}${hasPerm("project:grant") ? `<button class="primary-button" data-jump-panel="项目成员授权">添加项目成员</button>
-        <button class="secondary-button" data-jump-panel="任务组权限授权">授任务组权限</button>` : ""}`}),
+      headerSide: `${filterInput("按成员、角色过滤…", "project-members")}${hasPerm("project:grant") ? `<button class="primary-button" data-menu="proj-members" data-menu-workspace="add">添加项目成员</button>
+        <button class="secondary-button" data-menu="proj-members" data-menu-workspace="grant-group">授任务组权限</button>` : ""}`}),
     panel("项目成员授权", grantPanel),
     panel("任务组权限授权", hasPerm("project:grant")
       ? renderTaskGroupGrantForm(project)
