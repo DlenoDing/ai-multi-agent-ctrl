@@ -142,8 +142,8 @@ const expectedDefaults = {
   "org-overview": "overview",
   "org-members": "list",
   "org-projects": "list",
-  "org-agents": "nodes",
-  "proj-agents": "nodes",
+  "org-agents": "profiles",
+  "proj-agents": "profiles",
   "proj-overview": "overview",
   "proj-members": "list",
   "proj-settings": "repositories",
@@ -493,10 +493,10 @@ const helpers = {
       && /本次仅调整创建项目能力，不改变已授予的项目和任务组角色/u.test(memberPermsClickBlock)
       && /permissionCheckboxes\(member\.permissions \|\| \[\]\)/u.test(memberPermsClickBlock),
     "member permission modal should not imply it edits project or task-group role grants");
-  check("user-account project-create topbar entry prefers state capability with direct-permission fallback",
-    /currentAccount\.accountType === "user_account" && \(state\.accountCapabilities\?\.canCreateProject \?\? \(currentAccount\.permissions \|\| \[\]\)\.includes\("project:create"\)\)/u.test(renderBlock)
+  check("user-account project-create sidebar entry prefers state capability with direct-permission fallback",
+    /currentAccount\.accountType === "user_account"\s*&& \(state\.accountCapabilities\?\.canCreateProject \?\? \(currentAccount\.permissions \|\| \[\]\)\.includes\("project:create"\)\)/u.test(renderBlock)
       && /data-action="open-create-project"/u.test(renderBlock),
-    "topbar project creation entry must use fresh server accountCapabilities when present and only fall back to cached account permissions when absent");
+    "sidebar project creation entry must use fresh server accountCapabilities when present and only fall back to cached account permissions when absent");
   check("open-create-project modal is short and has no owner selection",
     /currentAccount\?\.accountType !== "user_account" \|\| !\(state\.accountCapabilities\?\.canCreateProject \?\? \(currentAccount\.permissions \|\| \[\]\)\.includes\("project:create"\)\)/u.test(openCreateProjectBlock)
       && /data-form="project-create"/u.test(openCreateProjectBlock)
