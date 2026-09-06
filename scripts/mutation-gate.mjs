@@ -850,9 +850,17 @@ const MUTATIONS = [
     name: "任务详情事件索引不得超过服务端账本窗口",
     file: "apps/control-plane-ui/public/modules/task-workbench.js",
     gate: "console",
-    from: "    for (const event of (state.agentExecutionEvents || []).slice(0, 60)) {",
+    from: "    for (const event of (state.agentExecutionEvents || []).slice(-60)) {",
     to: "    for (const event of state.agentExecutionEvents || []) {",
     expect: "账本限流: 控制台用了 agentExecutionEvents 却看不到显式的渲染上限"
+  },
+  {
+    name: "任务详情事件二次限流必须保留最新窗口",
+    file: "apps/control-plane-ui/public/modules/task-workbench.js",
+    gate: "console",
+    from: "    for (const event of (state.agentExecutionEvents || []).slice(-60)) {",
+    to: "    for (const event of (state.agentExecutionEvents || []).slice(0, 60)) {",
+    expect: "任务详情二次限流必须保留最新事件"
   },
   {
     name: "只读身份不许渲染禁用的角色 Skill 定制表单",

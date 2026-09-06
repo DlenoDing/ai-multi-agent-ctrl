@@ -11734,7 +11734,8 @@ function verifyWhitelistRefusalsCarryTheWhitelist(output) {
   //（transition-engine 的 unknown_from_state / unknown_to_state 当时正是不带白名单的）。
   // "N/N 全通过"里的 N 是门自己定义的 —— 漏了一整族，从绿色输出里看不出来。
   const files = ["apps/mcp-server/server.mjs", "apps/control-plane-ui/server.mjs",
-    "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/command-bus.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",
+    "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/command-bus.mjs",
+    "apps/control-plane-ui/lib/runtime-issue-tracker.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",
     "apps/control-plane-ui/lib/state-store.mjs", "apps/control-plane-ui/lib/transition-engine.mjs",
     "apps/control-plane-ui/lib/project-event-store.mjs", "apps/agent-runtime/runtime.mjs"];
   let scanned = 0;
@@ -14361,7 +14362,8 @@ function verifyCapacityKnobsAreDocumented(output) {
 // 本仓这一族的规矩是「认不出就拒」（normalizedExpiry 返回 false 即拒），今天全都做到了；
 // 这道门守的是下一个接上入口的人。
 function verifyCallerSuppliedTimesAreNormalized(output) {
-  const files = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/command-bus.mjs", "apps/control-plane-ui/server.mjs",
+  const files = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/command-bus.mjs",
+    "apps/control-plane-ui/lib/runtime-issue-tracker.mjs", "apps/control-plane-ui/server.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs"];
   const raw = [];
   let scanned = 0;
@@ -14386,7 +14388,8 @@ function verifyCallerSuppliedTimesAreNormalized(output) {
 }
 
 function verifyCallerObjectsAreNotSpreadIntoRecords(output) {
-  const files = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/command-bus.mjs",
+  const files = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
+    "apps/control-plane-ui/lib/command-bus.mjs", "apps/control-plane-ui/lib/runtime-issue-tracker.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs"];
   const suspects = [];
   let scanned = 0;
@@ -19164,6 +19167,7 @@ function verifyEveryCapExplainsWhatItKeeps(output) {
   const core = [
     "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/command-bus.mjs",
+    "apps/control-plane-ui/lib/runtime-issue-tracker.mjs",
     "apps/control-plane-ui/lib/idempotency-records.mjs"
   ].map((rel) => readFileSync(join(root, rel), "utf8")).join("\n");
   // 三个是 export function（第一版只认行首 function，把它们当成"登记过期"报了红 ——

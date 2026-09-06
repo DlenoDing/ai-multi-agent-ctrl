@@ -345,6 +345,14 @@ globalThis.__probe = {
     if (nextState) state = nextState;
     return __workspaceInventory("group-detail", () => renderTaskGroupDetail(taskGroup), panes);
   },
+  renderTaskWorkbenchModule: ({groups, nextState, selected, workDetail}) => {
+    state = nextState;
+    return window.AIMAC_TASK_WORKBENCH.render({groups, state, selected, workDetail,
+      pageData: null, eventHistory: false, eventPage: 1, disclosure: {},
+      helpers: {badge, t, explainCoded, fmtTime, progressLine, humanTraceHtml, workItemExitHint,
+        workItemResultHtml, repositoryFailureAction, dispatchRuleSummaries, ruleSummaryHtml,
+        isTerminalDispatch: (status) => terminalDispatchStatuses.has(status)}});
+  },
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
   decisionSelect: (...args) => decisionSelect(...args),
   listEmptyText: (what, failure) => { lastError = failure; return listEmptyText(what); },
@@ -1616,6 +1624,35 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     check("默认角色为空时要说清回退到哪里",
       /还没有项目默认角色/.test(rolesText) && /内置角色/.test(rolesText),
       "空着不是坏事，但要说清系统会拿什么顶上");
+  }
+
+  // 任务详情接口的 latest=1 返回按 sequence 升序排列的最新窗口；二次限流必须保留窗口末尾，
+  // 否则高频任务会留下最旧一半、丢掉刚回送的进度。
+  {
+    const eventProbe = loadConsole(el("div"), {realI18n: true});
+    const group = {id: "tg_event_window", projectId: "p1", name: "事件窗口任务组", status: "development", workItems: []};
+    const work = {id: "work_event_window", taskGroupId: group.id, title: "事件窗口任务", status: "in_progress", ownerRole: "agent-runtime", requirements: []};
+    const events = Array.from({length: 120}, (_, index) => ({
+      sequence: index + 1, taskGroupId: group.id, workItemId: work.id, dispatchId: "adp_event_window",
+      eventType: "progress", status: "running", createdAt: `2026-09-06T00:${String(index % 60).padStart(2, "0")}:00.000Z`,
+      summary: index === 0 ? "oldest-window-event" : index === 119 ? "newest-window-event" : `event-${index + 1}`
+    }));
+    const baseState = {projects: [{id: "p1", name: "项目", status: "active"}], taskGroups: [group],
+      agentDispatches: [{dispatchId: "adp_event_window", taskGroupId: group.id, workItemId: work.id,
+        sessionId: "sess_event_window", status: "running", roleId: "agent-runtime", createdAt: "2026-09-06T00:00:00.000Z"}],
+      workSessions: [{sessionId: "sess_event_window", taskGroupId: group.id}], agentRuntimeNodes: [], agents: [],
+      agentExecutionEvents: events, repositoryOutputs: [], checkpoints: [], qualityGates: []};
+    const renderArgs = {groups: [group], selected: {taskGroupId: group.id, workItemId: work.id},
+      workDetail: {taskGroup: group, workItem: work, events: [], eventCount: 120, returnedEventCount: 120}};
+    const currentRun = eventProbe.renderTaskWorkbenchModule({...renderArgs, nextState: baseState});
+    check("任务详情二次限流必须保留最新事件",
+      /newest-window-event/u.test(currentRun) && !/oldest-window-event/u.test(currentRun),
+      "latest=1 已返回升序的最新窗口，任务详情却 slice(0, N) 留下最旧一半");
+    const archived = eventProbe.renderTaskWorkbenchModule({...renderArgs,
+      nextState: {...baseState, agentDispatches: [], workSessions: []}});
+    check("派发快照已淘汰时的历史事件也必须保留最新窗口",
+      /newest-window-event/u.test(archived) && !/oldest-window-event/u.test(archived),
+      "归档事件的二次限流仍从升序窗口开头截取，最新回送被丢掉");
   }
 
   if (process.env.AIMAC_READ_FIRST) {
@@ -7651,7 +7688,7 @@ await runCodedApiErrorCase();
     for (const use of appSource.matchAll(new RegExp(`state\\.${collection}\\b`, "gu"))) {
       const window = appSource.slice(use.index, use.index + 400);
       if (new RegExp(`state\\.${collection}\\s*=`, "u").test(window)) continue;
-      const cap = window.match(/\.slice\(0, (\d+)\)/u);
+      const cap = window.match(/\.slice\(\s*(?:0\s*,\s*|-)(\d+)\s*\)/u);
       // 取不到显式截断说明这张表可能整表铺开 —— 那更危险，必须说出来而不是放过
       if (!cap) {
         failures.push(`账本限流: 控制台用了 ${collection} 却看不到显式的渲染上限 ——`
