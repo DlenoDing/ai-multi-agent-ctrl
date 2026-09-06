@@ -13192,6 +13192,30 @@ const MUTATIONS = [
     to: '    const evidenceRechecks = Number(todos["monitor|checkpoints"]?.count || 0);',
     expect: "项目当前主操作必须直达准确待办叶子"
   },
+  {
+    name: "项目默认角色与 Skill 定制必须拆成两个治理页面",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "console",
+    from: 'pane("default-roles", "默认角色", ["项目默认角色"]), pane("skills", "Skill 定制", ["角色 Skill 定制"])',
+    to: 'pane("roles", "角色与 Skill", ["项目默认角色", "角色 Skill 定制"])',
+    expect: "必须分属两个 pane"
+  },
+  {
+    name: "Skill 定制必须有独立项目治理菜单入口",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    leaf("proj-settings", "skills", "Skill 定制", "项目与任务组的角色能力覆盖"),',
+    to: "",
+    expect: "Skill 定制"
+  },
+  {
+    name: "旧角色与 Skill 地址必须迁移到默认角色",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "workspace",
+    from: '"review:decisions": "permissions", "proj-settings:roles": "default-roles"',
+    to: '"review:decisions": "permissions"',
+    expect: "legacy project roles pane migrates"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

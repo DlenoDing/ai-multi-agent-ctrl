@@ -205,6 +205,8 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
     && workspaces.current("monitor")?.id === "checkpoints");
   check("legacy review decisions pane migrates to permission approvals", workspaces.select("review", "decisions") === true
     && workspaces.current("review")?.id === "permissions");
+  check("legacy project roles pane migrates to default roles", workspaces.select("proj-settings", "roles") === true
+    && workspaces.current("proj-settings")?.id === "default-roles");
   workspaces.select("monitor", "overview");
 }
 

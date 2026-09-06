@@ -1690,7 +1690,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
   const viewerBaselineHtml = viewerProbe.renderProjectSettingsInventoryWith(viewerState, viewer, "p1",
     {repositories: [], baselineData: [], defaultRoles: [], systemRules: [], businessRules: []}, ["baseline"]);
   const viewerRolesHtml = viewerProbe.renderProjectSettingsInventoryWith(viewerState, viewer, "p1",
-    {repositories: [], baselineData: [], defaultRoles: [], systemRules: [], businessRules: []}, ["roles"]);
+    {repositories: [], baselineData: [], defaultRoles: [], systemRules: [], businessRules: []}, ["default-roles"]);
   const buttons = [...viewerHtml.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/gu)]
     .map(([, attrs, label]) => ({label: label.replace(/<[^>]+>/gu, "").replace(/\s+/gu, " ").trim(), disabled: /\bdisabled\b/u.test(attrs)}));
   const writeLabels = ["添加仓库", "保存项目配置"];
@@ -2712,7 +2712,10 @@ async function runErrorGuidanceCase() {
     ["monitor", "dlq", "死信队列"], ["monitor", "checkpoints", "检查点证据"], ["monitor", "quality", "质量门禁"],
     ["monitor", "finalizations", "人工定稿"], ["monitor", "barriers", "阻塞与门禁"], ["review", "pending", "待我审核"],
     ["review", "permissions", "权限审批"], ["review", "approvals", "操作审批"], ["review", "findings", "发现处置"],
-    ["directives", "compose", "下达指令"], ["proj-settings", "repositories", "仓库凭据"]];
+    ["directives", "compose", "下达指令"], ["proj-settings", "repositories", "仓库凭据"],
+    ["proj-settings", "baseline", "基线资料"], ["proj-settings", "default-roles", "默认角色"],
+    ["proj-settings", "skills", "Skill 定制"], ["proj-settings", "system-rules", "系统规则"],
+    ["proj-settings", "business-rules", "业务规则"]];
   assertMenuLeaves("项目管理", projectNav, projectMenuOrder);
   assertMenuLeaves("项目管理说明", projectNav, [["proj-overview", "help", "项目操作说明"], ["proj-members", "help", "项目授权说明"],
     ["proj-agents", "help", "Agent 运行说明"], ["tg", "help", "任务组说明"], ["monitor", "help", "监控链路说明"],
@@ -5506,13 +5509,15 @@ async function runPendingTruncationCase() {
     };
     const repoPane = probe.renderProjectSettingsInventoryWith(overviewState, systemAdmin, "p1", projectConfig, ["repositories"]);
     const baselinePane = probe.renderProjectSettingsInventoryWith(overviewState, systemAdmin, "p1", projectConfig, ["baseline"]);
-    const rolesPane = probe.renderProjectSettingsInventoryWith(overviewState, systemAdmin, "p1", projectConfig, ["roles"]);
+    const rolesPane = probe.renderProjectSettingsInventoryWith(overviewState, systemAdmin, "p1", projectConfig, ["default-roles"]);
+    const skillsPane = probe.renderProjectSettingsInventoryWith(overviewState, systemAdmin, "p1", projectConfig, ["skills"]);
     const systemRulesPane = probe.renderProjectSettingsInventoryWith(overviewState, systemAdmin, "p1", projectConfig, ["system-rules"]);
     const businessRulesPane = probe.renderProjectSettingsInventoryWith(overviewState, systemAdmin, "p1", projectConfig, ["business-rules"]);
-    check("项目设置 split panes 覆盖仓库、基线、角色和规则",
+    check("项目设置 split panes 覆盖仓库、基线、默认角色、Skill 和规则",
       /data-config-fields="repositories"/u.test(repoPane)
         && /data-config-fields="baselineData"/u.test(baselinePane)
         && /data-config-fields="defaultRoles"/u.test(rolesPane)
+        && /data-form="role-skill-overlay" data-scope="project"/u.test(skillsPane)
         && /data-form="project-rules"[\s\S]*data-category="system"/u.test(systemRulesPane)
         && /data-form="project-rules"[\s\S]*data-category="business"/u.test(businessRulesPane),
       "仓库、基线、默认角色、系统规则、业务规则没有在各自 pane 中独立可达");
@@ -5526,13 +5531,14 @@ async function runPendingTruncationCase() {
         && /name="roleSkillRef"[\s\S]*value="reviewer"/u.test(rolesPane)
         && /<option value="reviewer">/u.test(rolesPane),
       textOf(rolesPane).slice(0, 220));
-    check("项目角色 Skill 定制表单在角色 pane 可达并显示 overlay patch",
-      /角色 Skill 定制/u.test(rolesPane)
-        && /data-form="role-skill-overlay" data-scope="project"/u.test(rolesPane)
-        && /放开 repo_read/u.test(rolesPane)
-        && /禁掉 schema_change/u.test(rolesPane)
-        && /modelRequirementPatchRef/u.test(rolesPane),
-      textOf(rolesPane).slice(0, 240));
+    check("项目默认角色与 Skill 定制必须分属两个 pane",
+      /项目默认角色/u.test(rolesPane) && !/角色 Skill 定制/u.test(rolesPane)
+        && /角色 Skill 定制/u.test(skillsPane) && !/项目默认角色/u.test(skillsPane)
+        && /data-form="role-skill-overlay" data-scope="project"/u.test(skillsPane)
+        && /放开 repo_read/u.test(skillsPane)
+        && /禁掉 schema_change/u.test(skillsPane)
+        && /modelRequirementPatchRef/u.test(skillsPane),
+      `${textOf(rolesPane).slice(0, 140)} | ${textOf(skillsPane).slice(0, 180)}`);
     check("项目规则 pane 保留继承/本层语义和 readOnly 编辑边界",
       /data-rule-source="default"/u.test(systemRulesPane)
         && /默认系统规则/u.test(systemRulesPane)

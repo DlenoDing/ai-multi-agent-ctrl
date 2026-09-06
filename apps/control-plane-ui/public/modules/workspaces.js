@@ -14,7 +14,7 @@
     "proj-agents": [pane("profiles", "Agent 档案", ["可调配 Agent 档案"]), pane("create", "新建 Agent 档案", ["创建项目级 Agent 档案"]), pane("nodes", "运行节点", ["项目 agent 节点"]), pane("register", "注册运行节点", ["注册运行节点"]), pane("help", "接入与运行说明")],
     "proj-overview": [pane("overview", "项目概况", ["项目概况", "关键指标", "任务组一览"]), pane("activity", "最新执行", ["最新执行事件"]), pane("outputs", "仓库产出", ["仓库产出归属概览", "仓库产出归属"]), pane("help", "准备与操作", ["流程导航"])],
     "proj-members": [pane("list", "项目成员", ["项目成员列表"]), pane("add", "添加项目成员", ["项目成员授权"]), pane("groups", "任务组权限", ["任务组权限列表"]), pane("grant-group", "授予任务组权限", ["任务组权限授权"]), pane("help", "授权说明")],
-    "proj-settings": [pane("repositories", "仓库与凭据", ["项目基础配置", "规则配置"]), pane("baseline", "基线资料", ["基线资料"]), pane("roles", "角色与 Skill", ["项目默认角色", "角色 Skill 定制"]), pane("system-rules", "系统规则", ["系统规则"]), pane("business-rules", "业务规则", ["业务规则"]), pane("help", "配置说明")],
+    "proj-settings": [pane("repositories", "仓库与凭据", ["项目基础配置", "规则配置"]), pane("baseline", "基线资料", ["基线资料"]), pane("default-roles", "默认角色", ["项目默认角色"]), pane("skills", "Skill 定制", ["角色 Skill 定制"]), pane("system-rules", "系统规则", ["系统规则"]), pane("business-rules", "业务规则", ["业务规则"]), pane("help", "配置说明")],
     tg: [pane("list", "任务组列表", ["任务组列表", "任务组详情"]), pane("create", "创建任务组", ["创建任务组"]), pane("help", "任务组说明", ["任务组总览", "任务组处置看板", "任务组生命周期", "创建工作项"])],
     tasks: [pane("list", "任务工作台", ["任务工作台", "任务详情"]), pane("create", "创建任务", ["创建工作项"])],
     monitor: [pane("overview", "进度总览", ["执行监控", "执行监控总览", "任务组监控矩阵", "自治控制"]), pane("sessions", "工作会话", ["工作会话"]), pane("dispatches", "Agent 派发", ["智能体派发"]), pane("lanes", "执行载体", ["可复用执行载体（Worker Lane）"]), pane("models", "模型决策", ["模型选择记录"]), pane("placements", "会话放置", ["会话放置记录"]), pane("admissions", "准入决策", ["准入决策"]), pane("events", "实时事件", ["实时事件流"]), pane("node-control", "运行节点", ["agent 节点"]), pane("commands", "控制命令", ["控制通道"]), pane("dlq", "死信队列", ["死信队列"]), pane("checkpoints", "检查点证据", ["检查点（Git 证据）"]), pane("quality", "质量门禁", ["质量门禁 / 测试证据"]), pane("finalizations", "人工定稿", ["最近的人工定稿"]), pane("barriers", "阻塞与复核"), pane("help", "监控说明", ["监控处置看板", "实时回送链路"])],
@@ -22,7 +22,7 @@
     directives: [pane("compose", "下达指令", ["下达人工指令", "人工指令"]), pane("history", "指令流水", ["指令流水"]), pane("help", "指令说明")]
   };
   const fallback = {"sys-orgs": "help", "sys-settings": "help", "org-members": "help", "org-projects": "help", "org-agents": "help", "proj-agents": "help", "proj-members": "help", "proj-settings": "help", tasks: "discard", monitor: "barriers", review: "help", directives: "help"};
-  const legacyPaneAliases = {"monitor:runs": "sessions", "monitor:nodes": "node-control", "monitor:evidence": "checkpoints", "review:decisions": "permissions"};
+  const legacyPaneAliases = {"monitor:runs": "sessions", "monitor:nodes": "node-control", "monitor:evidence": "checkpoints", "review:decisions": "permissions", "proj-settings:roles": "default-roles"};
   const storagePrefix = "aimac.workspaces";
   let accountId = "";
   let selections = {};
