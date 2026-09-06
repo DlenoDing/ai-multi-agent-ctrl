@@ -2692,13 +2692,8 @@ async function runErrorGuidanceCase() {
         > projectNav.indexOf(`data-menu="${projectMenuOrder[index - 1][0]}" data-menu-workspace="${projectMenuOrder[index - 1][1]}"`)),
     "项目菜单顺序没有按概览、Agent 准备、任务组织、实时监控、人工介入、控制补充、配置调整排列");
   check("项目管理侧栏要按普通管理动作分栏目",
-    /<div class="nav-divider">项目总览<\/div>/u.test(projectNav)
-      && /<div class="nav-divider">成员与权限<\/div>/u.test(projectNav)
-      && /<div class="nav-divider">Agent<\/div>/u.test(projectNav)
-      && /<div class="nav-divider">工作推进<\/div>/u.test(projectNav)
-      && /<div class="nav-divider">执行观测<\/div>/u.test(projectNav)
-      && /<div class="nav-divider">人工控制<\/div>/u.test(projectNav)
-      && /<div class="nav-divider">项目治理<\/div>/u.test(projectNav)
+    ["项目总览", "成员与权限", "Agent", "工作推进", "执行观测", "人工控制", "项目治理", "使用说明"]
+      .every((label) => projectNav.includes(`<span>${label}</span>`))
       && projectNav.indexOf("项目总览") < projectNav.indexOf('data-menu="proj-overview"')
       && projectNav.indexOf("成员与权限") < projectNav.indexOf('data-menu="proj-members"')
       && projectNav.indexOf("Agent") < projectNav.indexOf('data-menu="proj-agents"')
@@ -2710,13 +2705,22 @@ async function runErrorGuidanceCase() {
       && projectNav.indexOf("项目治理") < projectNav.indexOf('data-menu="proj-settings"')
       && projectNav.indexOf("项目治理") > projectNav.indexOf('data-menu="directives"'),
     "项目管理侧栏仍是平铺功能清单，没有把项目总览、准备接入、执行推进、人工控制和治理配置分开");
+  check("桌面菜单只展开当前功能所属分组",
+    (projectNav.match(/<details class="nav-group" open>/gu) || []).length === 1
+      && /<details class="nav-group" open>[\s\S]*?<span>项目总览<\/span>[\s\S]*?data-menu="proj-overview"/u.test(projectNav),
+    "项目侧栏仍一次铺开全部叶子，或当前功能所在分组没有自动展开");
   const runPageRoot = el("div");
   loadConsole(runPageRoot, {realI18n: true}).renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "runs");
   const runPageTopbar = String(runPageRoot.innerHTML || "").split('<header class="topbar">')[1]?.split("</header>")[0] || "";
+  const runPageAside = String(runPageRoot.innerHTML || "").split("</aside>")[0] || "";
   check("页面标题直接使用具体功能名而不是父页面名",
     /<h1>执行会话<\/h1>/u.test(runPageTopbar) && /工作会话、派发、载体和模型决定/u.test(runPageTopbar)
       && !/<h1>执行监控<\/h1>/u.test(runPageTopbar),
     "打开执行会话后页头仍写父页面“执行监控”，用户无法确认当前位置");
+  check("切换功能后自动展开新的业务分组并收起旧分组",
+    (runPageAside.match(/<details class="nav-group" open>/gu) || []).length === 1
+      && /<details class="nav-group" open>[\s\S]*?<span>执行观测<\/span>[\s\S]*?data-menu="monitor" data-menu-workspace="runs"/u.test(runPageAside),
+    "进入执行会话后侧栏没有把焦点收敛到执行观测组");
   const menuActionProbe = loadConsole(el("div"), {realI18n: true});
   menuActionProbe.renderFullPageWith(navState, systemAccount, "p1", "proj-overview");
   menuActionProbe.setObjectLocation({page: "tasks", projectId: "p1", groupId: "tg_old", workId: "w_old"});
@@ -2765,6 +2769,14 @@ async function runErrorGuidanceCase() {
     !/class="workspace-nav"/u.test(projectAside) && /data-menu="monitor" data-menu-workspace="runs"/u.test(projectAside)
       && /data-menu="proj-agents" data-menu-workspace="register"/u.test(projectAside),
     "侧栏仍把执行会话或注册 Agent 藏在父页面下面的临时栏目里");
+  const creatorShell = renderedNav({accountId: "creator", email: "creator@local", displayName: "项目创建者",
+    accountType: "user_account", roles: ["member"], permissions: ["project:view", "project:create"], organizationId: "org_default"}, "p1", "tasks");
+  const creatorAside = creatorShell.split("</aside>")[0] || "";
+  const creatorTopbar = String(creatorShell.split('<header class="topbar">')[1] || "").split("</header>")[0] || "";
+  check("创建项目入口属于项目选择区而不是每个任务页顶栏",
+    /class="sidebar-project-create"[\s\S]*data-action="open-create-project"/u.test(creatorAside)
+      && !/data-action="open-create-project"/u.test(creatorTopbar),
+    "创建项目仍常驻任务/监控顶栏，混淆组织动作与当前任务动作");
   const jumpProbe = loadConsole(el("div"), {realI18n: true});
   jumpProbe.renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "overview");
   jumpProbe.stubNavigation();

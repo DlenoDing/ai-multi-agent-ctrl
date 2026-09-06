@@ -18,7 +18,7 @@ const {
   managementSectionOf,
   menuForCurrentSection,
   sectionLabel,
-  menuItemHtml,
+  desktopMenuHtml,
   menuMeta,
   mobileMenuHtml
 } = window.AIMAC_CONSOLE_NAV;
@@ -2061,14 +2061,10 @@ function render() {
   // 菜单上直接带计数：否则"等你签字的东西"藏在一个叫"执行监控"的页面里，人根本不会去点。
   const menuTodoCounts = todoCountsByPage();
   const visibleMenu = menuForCurrentSection(perspective, page).filter((item) => item.divider || menuItemAvailable(item));
-  const menuHtml = visibleMenu.map((item) => item.divider
-    ? `<div class="nav-divider">${esc(item.divider)}</div>`
-    : (() => {
-        const todo = menuTodoFor(item, menuTodoCounts);
-        return menuItemHtml(item, item.id === page && item.workspace === activeWorkspace, todo);
-      })()
-  ).join("");
+  const menuHtml = desktopMenuHtml(visibleMenu, page, activeWorkspace, (item) => menuTodoFor(item, menuTodoCounts));
   const sidebarContext = sidebarContextHtml(perspective);
+  const canCreateProject = currentAccount.accountType === "user_account"
+    && (state.accountCapabilities?.canCreateProject ?? (currentAccount.permissions || []).includes("project:create"));
 
   const html = `
     <div class="app-shell">
@@ -2082,6 +2078,7 @@ function render() {
         </div>
         ${sidebarContext.spaces}
         ${sidebarContext.project}
+        ${canCreateProject ? `<div class="sidebar-project-create"><button class="secondary-button" data-action="open-create-project">创建项目</button></div>` : ""}
         <nav class="nav" aria-label="管理菜单">${menuHtml}</nav>
       </aside>
       <main class="workspace">
@@ -2090,8 +2087,6 @@ function render() {
             <h1>${esc(title)}</h1>
             <p class="subtitle">${esc(subtitle)}</p>
           </div>
-          ${currentAccount.accountType === "user_account" && (state.accountCapabilities?.canCreateProject ?? (currentAccount.permissions || []).includes("project:create"))
-            ? `<button class="secondary-button" data-action="open-create-project">创建项目</button>` : ""}
           <div class="topbar-actions">
             <span class="account-chip">${esc(currentAccount.displayName || currentAccount.email)} ${badge(currentAccount.accountType)}</span>
             ${/* 界面上所有时间都按浏览器本机时区渲染，而服务端日志（audit-log.jsonl、执行事件）是 UTC。

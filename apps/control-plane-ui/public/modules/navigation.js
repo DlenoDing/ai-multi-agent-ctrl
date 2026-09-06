@@ -206,7 +206,7 @@
     `;
   }
 
-  function mobileMenuHtml(items, pageId, workspace) {
+  function menuGroups(items) {
     const groups = [];
     let current = {label: "功能", items: []};
     for (const item of items) {
@@ -216,6 +216,22 @@
       } else current.items.push(item);
     }
     if (current.items.length) groups.push(current);
+    return groups;
+  }
+
+  function desktopMenuHtml(items, pageId, workspace, todoFor) {
+    return menuGroups(items).map((group) => {
+      const active = group.items.some((item) => item.id === pageId && item.workspace === workspace);
+      return `<details class="nav-group"${active ? " open" : ""}>
+        <summary class="nav-group-summary"><span>${esc(group.label)}</span><span class="nav-group-count">${group.items.length}</span></summary>
+        <div class="nav-group-items">${group.items.map((item) => menuItemHtml(item,
+          item.id === pageId && item.workspace === workspace, todoFor(item))).join("")}</div>
+      </details>`;
+    }).join("");
+  }
+
+  function mobileMenuHtml(items, pageId, workspace) {
+    const groups = menuGroups(items);
     return `<label class="mobile-function-picker"><span>当前功能</span><select data-menu-select aria-label="当前功能">${groups.map((group) =>
       `<optgroup label="${esc(group.label)}">${group.items.map((item) => `<option value="${esc(`${item.id}|${item.workspace || ""}`)}"${item.id === pageId && item.workspace === workspace ? " selected" : ""}>${esc(item.label)}</option>`).join("")}</optgroup>`).join("")}</select></label>`;
   }
@@ -237,6 +253,7 @@
     sectionLabel,
     sectionSwitchHtml,
     menuItemHtml,
+    desktopMenuHtml,
     mobileMenuHtml
   };
 })(window);

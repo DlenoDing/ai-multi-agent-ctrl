@@ -11726,8 +11726,8 @@ const MUTATIONS = [
     name: "当前项目选择和进度必须与模块导航同处侧栏",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "        ${sidebarContext.project}\n        <nav class=\"nav\"",
-    to: "        <nav class=\"nav\"",
+    from: "        ${sidebarContext.project}\n        ${canCreateProject ? `<div class=\"sidebar-project-create\"><button class=\"secondary-button\" data-action=\"open-create-project\">创建项目</button></div>` : \"\"}\n        <nav class=\"nav\"",
+    to: "        ${canCreateProject ? `<div class=\"sidebar-project-create\"><button class=\"secondary-button\" data-action=\"open-create-project\">创建项目</button></div>` : \"\"}\n        <nav class=\"nav\"",
     expect: "当前项目选择和进度必须与项目模块同处侧栏"
   },
   {
@@ -11750,9 +11750,33 @@ const MUTATIONS = [
     name: "桌面不得恢复父菜单下的临时 workspace 导航",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "        return menuItemHtml(item, item.id === page && item.workspace === activeWorkspace, todo);",
-    to: '        return menuItemHtml(item, item.id === page && item.workspace === activeWorkspace, todo) + (item.id === page ? workspaces.navigation(page, false, workspaceOptions()) : "");',
+    from: "  const menuHtml = desktopMenuHtml(visibleMenu, page, activeWorkspace, (item) => menuTodoFor(item, menuTodoCounts));",
+    to: '  const menuHtml = desktopMenuHtml(visibleMenu, page, activeWorkspace, (item) => menuTodoFor(item, menuTodoCounts)) + workspaces.navigation(page, false, workspaceOptions());',
     expect: "桌面侧栏直接列功能"
+  },
+  {
+    name: "桌面菜单不得一次展开所有业务组",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '      return `<details class="nav-group"${active ? " open" : ""}>',
+    to: '      return `<details class="nav-group" open>',
+    expect: "桌面菜单只展开当前功能所属分组"
+  },
+  {
+    name: "桌面菜单必须自动展开当前业务组",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '      return `<details class="nav-group"${active ? " open" : ""}>',
+    to: '      return `<details class="nav-group">',
+    expect: "桌面菜单只展开当前功能所属分组"
+  },
+  {
+    name: "创建项目入口必须留在项目选择区",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '        ${canCreateProject ? `<div class="sidebar-project-create"><button class="secondary-button" data-action="open-create-project">创建项目</button></div>` : ""}',
+    to: "",
+    expect: "创建项目入口属于项目选择区而不是每个任务页顶栏"
   },
   {
     name: "创建与注册功能菜单必须按权限隐藏",
