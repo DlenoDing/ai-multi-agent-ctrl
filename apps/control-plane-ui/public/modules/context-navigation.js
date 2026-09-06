@@ -2,12 +2,16 @@
   "use strict";
   const {esc} = global.AIMAC_CONSOLE_DOM_UTILS;
 
-  function managementSpaces({perspective, currentSection, organizationName = "", projectCount = 0} = {}) {
+  function managementSpaces({perspective, currentSection, organizationName = "", projectCount = 0,
+    projectConsoleAvailable = true} = {}) {
     const primary = perspective === "system"
       ? {target: "sys-overview", label: "系统管理", meta: "平台与组织"}
       : {target: "org-overview", label: "组织管理", meta: organizationName || "成员与共享资源"};
-    const spaces = perspective === "user" ? [] : [primary,
-      {target: "proj-overview", label: "项目管理", meta: `${projectCount} 个可见项目`}];
+    const spaces = perspective === "user"
+      ? []
+      : [primary, ...(projectConsoleAvailable
+        ? [{target: "proj-overview", label: "项目管理", meta: `${projectCount} 个可见项目`}]
+        : [])];
     if (!spaces.length) return "";
     return `<section class="management-space-switch" aria-label="管理空间">
       <span class="sidebar-eyebrow">管理空间</span>

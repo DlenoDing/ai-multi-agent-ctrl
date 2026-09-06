@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { clampEnvNumber } from "./lib/env-number.mjs";
 import { localAccountLoginHints } from "./lib/bootstrap-hints.mjs";
+import { consoleScopesForAccount } from "./lib/console-scopes.mjs";
 import { WebSocketServer } from "ws";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
@@ -3703,7 +3704,7 @@ async function handleApi(req, res) {
     state.authSessions = liveSessions.slice(0, activeCap);
     audit(state, "auth-service", "auth_login", `Account:${account.accountId}`);
     commitUnguardedWrite(state);
-	    json(res, 200, {sessionToken, expiresAt, account: {accountId: account.accountId, accountType: account.accountType, organizationId: account.organizationId || null, defaultProjectId: account.defaultProjectId || null, email: account.email, displayName: account.displayName, roles: account.roles, permissions: account.permissions, effectivePermissions: accountEffectivePermissions(state, account), passwordSet: Boolean(account.authPolicy?.passwordSet)}});
+	    json(res, 200, {sessionToken, expiresAt, account: {accountId: account.accountId, accountType: account.accountType, organizationId: account.organizationId || null, defaultProjectId: account.defaultProjectId || null, email: account.email, displayName: account.displayName, roles: account.roles, permissions: account.permissions, effectivePermissions: accountEffectivePermissions(state, account), consoleScopes: consoleScopesForAccount(account), passwordSet: Boolean(account.authPolicy?.passwordSet)}});
 	    return;
 	  }
 

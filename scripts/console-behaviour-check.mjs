@@ -2671,6 +2671,14 @@ async function runErrorGuidanceCase() {
   assertMenuLeaves("系统管理", systemNav, [["sys-overview", "overview", "系统概览"], ["sys-overview", "audit", "审计日志"],
     ["sys-orgs", "list", "组织列表"], ["sys-orgs", "create", "开通组织"], ["sys-settings", "models", "模型能力"]]);
   assertMenuLeaves("系统管理说明", systemNav, [["sys-orgs", "help", "组织治理说明"], ["sys-settings", "help", "平台能力说明"]]);
+  const systemOnlyShell = renderedNav({...systemAccount, consoleScopes: ["system"]}, "p1", "proj-overview");
+  const systemOnlyAside = systemOnlyShell.split("</aside>")[0] || "";
+  const systemOnlyTopbar = String(systemOnlyShell.split('<header class="topbar">')[1] || "").split("</header>")[0] || "";
+  check("系统管理员登录后只进入系统治理空间，不能从图形界面切进用户项目",
+    /<h1>系统概览<\/h1>/u.test(systemOnlyTopbar)
+      && !/data-section-target="proj-overview"/u.test(systemOnlyAside)
+      && !/id="project-switcher"/u.test(systemOnlyAside),
+    "系统管理员仍可从侧栏进入项目管理，系统治理与用户项目管理只做了视觉分栏、没有真正分开");
   const orgNav = renderedNav({accountId: "org", email: "org@local", displayName: "组织管理员",
     accountType: "org_admin", roles: ["org_admin"], permissions: ["org:*", "project:create", "member:invite", "agent:activate"], organizationId: "org_default"}, "p1", "org-overview");
   assertMenuLeaves("组织管理", orgNav, [["org-members", "list", "成员账户"], ["org-members", "create", "创建成员"],

@@ -1718,6 +1718,10 @@ function taskGroupOperationalStats(group) {
   return window.AIMAC_OPERATIONAL_STATS.forGroup(state, group, {terminalStatuses: terminalDispatchStatuses, detail: tgDetail});
 }
 
+function projectConsoleAvailable() {
+  return !Array.isArray(currentAccount?.consoleScopes) || currentAccount.consoleScopes.includes("project");
+}
+
 function sidebarContextHtml(perspective) {
   const currentSection = managementSectionOf(page, perspective);
   const accountOrganizationId = currentAccount?.organizationId || state.organizationContext?.id;
@@ -1727,7 +1731,8 @@ function sidebarContextHtml(perspective) {
     perspective,
     currentSection,
     organizationName: organization?.name || "",
-    projectCount: selectableProjects().length
+    projectCount: selectableProjects().length,
+    projectConsoleAvailable: projectConsoleAvailable()
   });
   if (currentSection !== "project") return {spaces, project: ""};
   const project = currentProject();
@@ -1891,6 +1896,11 @@ function render() {
     return;
   }
   const perspective = perspectiveOf(currentAccount);
+  if (PROJECT_PAGES.has(page) && !projectConsoleAvailable()) {
+    page = defaultPageFor(perspective);
+    currentProjectId = "";
+    toast.info("系统管理员只进入系统治理空间；项目、任务组和 Agent 由对应组织管理者负责");
+  }
   // 人点名要的那一页给不了时不能一声不吭。两种情形都落到这里：
   //   页 id 不认识（版本升级改了名、旧书签、别人发来的链接）；
   //   页存在但【在他的视角下没有】（权限）。

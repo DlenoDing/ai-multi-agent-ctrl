@@ -26,6 +26,7 @@ import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, diges
 import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps/control-plane-ui/lib/pg-sync-store.mjs";
 import { clampEnvNumber } from "../apps/control-plane-ui/lib/env-number.mjs";
 import { localAccountLoginHints } from "../apps/control-plane-ui/lib/bootstrap-hints.mjs";
+import { consoleScopesForAccount } from "../apps/control-plane-ui/lib/console-scopes.mjs";
 import { removeGlobalRemoteMcpClients, gitAuthEnvFor } from "../apps/agent-runtime/runtime.mjs";
 import { buildExecutionContentBundle as buildBundleForCheck, isSafeGitRemoteUrl, dispatchRepositoryCredential } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { classifyGitRemoteFailure, scrubConnectionDetail, testRepositoryConnection, REPOSITORY_CONNECTION_REASONS } from "../apps/control-plane-ui/lib/git-connection-test.mjs";
@@ -1616,6 +1617,11 @@ function verifyCommitWorksWithoutConfiguredIdentity(output) {
 function verifyHumanAndOrganizationContracts(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});
+  if (JSON.stringify(consoleScopesForAccount({accountType: "system_admin"})) !== JSON.stringify(["system"])
+    || JSON.stringify(consoleScopesForAccount({accountType: "org_admin"})) !== JSON.stringify(["organization", "project"])
+    || JSON.stringify(consoleScopesForAccount({accountType: "user_account"})) !== JSON.stringify(["project"])) {
+    output.push("登录会话的管理空间边界没有按系统管理员、组织管理员、组织成员三种身份分离");
+  }
   const mcpSource = readFileSync(join(root, "apps/mcp-server/server.mjs"), "utf8");
   if (!mcpSource.includes('if (role === "project_owner") {\n      return {ok: false, error: "project_owner_assignment_requires_project_creation"};')) {
     output.push("MCP 通用授权仍能铸造第二个项目负责人 —— REST 与 MCP 的负责人不可变规则不一致");

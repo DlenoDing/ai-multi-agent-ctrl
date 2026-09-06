@@ -12920,6 +12920,30 @@ const MUTATIONS = [
     to: '    acct_default_org_admin: digestOf(`account:acct_default_org_admin:${workspaceOwnerToken}`),',
     expect: "默认组织管理员无法以独立 org_admin 身份登录"
   },
+  {
+    name: "系统管理员登录会话只允许进入系统治理空间",
+    file: "apps/control-plane-ui/lib/console-scopes.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '  if (account.accountType === "system_admin") return ["system"];',
+    to: '  if (account.accountType === "system_admin") return ["system", "project"];',
+    expect: "管理空间边界没有按系统管理员"
+  },
+  {
+    name: "系统管理员的项目深链接必须回到系统概览",
+    file: APP,
+    gate: "console",
+    from: '  if (PROJECT_PAGES.has(page) && !projectConsoleAvailable()) {',
+    to: '  if (false && PROJECT_PAGES.has(page) && !projectConsoleAvailable()) {',
+    expect: "不能从图形界面切进用户项目"
+  },
+  {
+    name: "系统管理员侧栏不得出现项目管理空间入口",
+    file: "apps/control-plane-ui/public/modules/context-navigation.js",
+    gate: "console",
+    from: '      : [primary, ...(projectConsoleAvailable\n        ? [{target: "proj-overview", label: "项目管理", meta: `${projectCount} 个可见项目`}]\n        : [])];',
+    to: '      : [primary, {target: "proj-overview", label: "项目管理", meta: `${projectCount} 个可见项目`}];',
+    expect: "不能从图形界面切进用户项目"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），
