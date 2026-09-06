@@ -113,3 +113,7 @@
 ## 第十九项剩余问题：运行问题收集与核心编排混放
 
 运行问题样本、重复模式、升级候选和候选处置传导现迁入 `runtime-issue-tracker.mjs`。模块继续执行 `collect_only` 策略，只生成供系统外独立维护使用的候选；不会修改活动规则、调度策略、权限、MCP grant 或自行创建升级任务组。核心门面保持 `collectRuntimeIssue` 与 `settleRuntimeIssuePatternForCandidate` 兼容导出。
+
+## 第二十项剩余问题：完整执行监控仍由单个主函数渲染
+
+会话、派发、Lane、节点、控制命令、模型决策、放置、准入、实时事件、检查点、质量、阻塞和关闭门原由 `app.js` 内一个约 540 行函数生成。现整体迁入 `monitor-dashboard-workspace.js`；主程序只传入当前项目／任务组作用域、实时分页状态、权限结果和稳定 helper。浏览器、界面门与契约门均从 `index.html` 的真实脚本清单识别模块，表格截断、百分比缺省、按组判权、定稿理由和阻塞出口等既有守卫继续生效。

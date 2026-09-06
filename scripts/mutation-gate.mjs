@@ -822,6 +822,14 @@ const MUTATIONS = [
     expect: "task-group detail workspace loads before app.js"
   },
   {
+    name: "监控工作区模块必须先于主程序加载",
+    file: "apps/control-plane-ui/public/index.html",
+    gate: "workspace",
+    from: '    <script src="/modules/monitor-dashboard-workspace.js"></script>\n',
+    to: "",
+    expect: "monitor dashboard workspace loads before app.js"
+  },
+  {
     name: "任务详情事件索引不得超过服务端账本窗口",
     file: "apps/control-plane-ui/public/modules/task-workbench.js",
     gate: "console",
@@ -5878,7 +5886,7 @@ const MUTATIONS = [
   },
   {
     name: "控制命令被拒时要说出节点给的原因",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: '    {v: esc(explainCoded(command.ackResult?.reason || "")) || "-", c: "text-clip"},',
     to: '    {v: "-", c: "text-clip"},',
@@ -5886,7 +5894,7 @@ const MUTATIONS = [
   },
   {
     name: "控制命令的原因要查中文词表",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: '    {v: esc(explainCoded(command.ackResult?.reason || "")) || "-", c: "text-clip"},',
     to: '    {v: esc(command.ackResult?.reason || "") || "-", c: "text-clip"},',
@@ -6565,7 +6573,7 @@ const MUTATIONS = [
   },
   {
     name: "关闭任务组按钮必须按行判权",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     // 原先 to 写的是 canCloseTaskGroup —— 那个变量后来被删了（它一处都没被用过，
     // 是上一轮把逐行判权改成 hasGroupPerm 时留下的死变量）。变异引用一个不存在的标识符，
@@ -6628,7 +6636,7 @@ const MUTATIONS = [
     // 心跳早就超过判死阈值时，行上不许还写着「在线」—— status 只有扫描跑过才翻成 offline，
     // 而扫描挂在编排拍上；真实运行态上读到过【在线 + 已 175 分钟没有心跳】同行并排。
     name: "心跳超时的节点不许还显示在线",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: "    `${heartbeatTimedOut(node)",
     to: "    `${false",
@@ -6695,7 +6703,7 @@ const MUTATIONS = [
     // 刚装完那条横幅在项目空间里显示，跨空间指路必须先说切到哪个管理空间：
     // 指错成当前菜单里没有的具体页名，照着做的人会找不到入口。
     name: "刚装完的指路要指这个账号点得到的那一页",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: '    system: "先打开「项目管理」→「注册运行节点」",',
     to: '    system: "先打开「项目管理」→「项目设置」→「智能体接入」",',
@@ -6719,7 +6727,7 @@ const MUTATIONS = [
   },
   {
     name: "已了结的派发不许说「还没被领走」",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: "      : terminalDispatchStatuses.has(dispatch.status)",
     to: "      : false",
@@ -7937,7 +7945,7 @@ const MUTATIONS = [
   },
   {
     name: "正在跑的派发要说出上次动静是多久以前",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: "      ? esc(sinceText(dispatch.lastExecutionEventAt))",
     to: '      ? ""',
@@ -7953,7 +7961,7 @@ const MUTATIONS = [
   },
   {
     name: "领走了却没动静的派发不得留空",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: "`领走 ${esc(sinceText(dispatch.claimedAt))}，还没有过动静`",
     to: '""',
@@ -8950,7 +8958,7 @@ const MUTATIONS = [
   },
   {
     name: "派发卡住时要说清在等哪张卡",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: "      dispatch.humanConfirmationRef\n        ? `<div class=\"small muted\">\u5728\u7b49\u8fd9\u5f20\u5361\uff1a<span class=\"mono\">${esc(dispatch.humanConfirmationRef)}</span></div>`\n        : \"\",",
     to: "      \"\",",
@@ -9062,7 +9070,7 @@ const MUTATIONS = [
   },
   {
     name: "界面权限名写错时那道门形同虚设",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: "  const canOrchestrate = hasPerm(\"task_group:orchestrate\");",
     to: "  const canOrchestrate = hasPerm(\"task_group:orchestrate_typo\");",
@@ -9070,7 +9078,7 @@ const MUTATIONS = [
   },
   {
     name: "没有编排权限的人不得看到编排入口",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: "  const canOrchestrate = hasPerm(\"task_group:orchestrate\");",
     to: "  const canOrchestrate = true;",
@@ -9078,7 +9086,7 @@ const MUTATIONS = [
   },
   {
     name: "资格检查没过的方案必须在界面上看得见",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: "    .filter((item) => inScope(item) && item.status === \"eligibility_checked\" && (item.blockers || []).length)",
     to: "    .filter(() => false)",
@@ -9086,7 +9094,7 @@ const MUTATIONS = [
   },
   {
     name: "面板总开关漏掉一块等于那块没加",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: "openUpgradeCandidates.length || stuckTopologies.length\n      || downgradableTopologies.length) ? `",
     to: "openUpgradeCandidates.length || stuckTopologies.length) ? `",
@@ -9924,7 +9932,7 @@ const MUTATIONS = [
   },
   {
     name: "刚装完的监控页十一张空表要有一句话说清这是正常的",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: "    nothingRanYetNotice,",
     to: '    "",',
@@ -9932,7 +9940,7 @@ const MUTATIONS = [
   },
   {
     name: "有执行记录时不许还挂着「还没有任何执行记录」",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: "  const nothingRanYet = !eventsShown.length && !sessionsAll.length",
     to: "  const nothingRanYet = true || (!eventsShown.length && !sessionsAll.length)",
@@ -10880,7 +10888,7 @@ const MUTATIONS = [
   },
   {
     name: "百分比不得裸用 0 兜底（没上报过≠上报了 0）",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     check: "verifyMeasurementsDoNotFakeZero",
     from: '{v: percentCell(dispatch.progressPercent), c: "num"},',
     to: '{v: `${esc(dispatch.progressPercent || 0)}%`, c: "num"},',
@@ -11398,7 +11406,7 @@ const MUTATIONS = [
   },
   {
     name: "人工定稿的理由要在界面上看得见（五处收尾都要求真人写理由，此前全仓没有读取点）",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: '    finalizations.length ? panel("最近的人工定稿", `',
     to: '    false ? panel("最近的人工定稿", `',
@@ -11406,7 +11414,7 @@ const MUTATIONS = [
   },
   {
     name: "关闭任务组是真人专属的决定，界面上要说得出是谁定稿的",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: '        ? `${customBadge("已关闭", "gray")}${barrier.confirmedBy',
     to: '        ? `${customBadge("已关闭", "gray")}${false',
@@ -11562,8 +11570,8 @@ const MUTATIONS = [
     expect: "不能只摆一个数字"
   },
   {
-    name: "在别的组上有同名权限，不等于这个组上有：够不着的阻塞项要按任务组数出来",
-    file: "apps/control-plane-ui/public/app.js",
+   name: "在别的组上有同名权限，不等于这个组上有：够不着的阻塞项要按任务组数出来",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
     gate: "console",
     from: "  const outOfReach = [\n"
       + '    ...openReviewPlans.filter((item) => !hasGroupPerm(item.taskGroupId, "task_group:review"))',

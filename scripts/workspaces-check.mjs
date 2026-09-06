@@ -52,6 +52,7 @@ function loadPublicModules() {
     "modules/project-settings-workspace.js",
     "modules/execution-object-workspace.js",
     "modules/monitor-workspace.js",
+    "modules/monitor-dashboard-workspace.js",
     "modules/runtime-node-workspace.js"
   ]) {
     vm.runInContext(readPublic(file), context, {filename: file});
@@ -80,11 +81,14 @@ const locations = context.AIMAC_WORKSPACE_LOCATION;
   const indexSource = readPublic("index.html");
   const moduleAt = indexSource.indexOf('/modules/project-settings-workspace.js');
   const taskGroupDetailAt = indexSource.indexOf('/modules/task-group-detail-workspace.js');
+  const monitorDashboardAt = indexSource.indexOf('/modules/monitor-dashboard-workspace.js');
   const appAt = indexSource.indexOf('/app.js');
   check("project settings workspace loads before app.js", moduleAt >= 0 && appAt > moduleAt,
     `moduleAt=${moduleAt}; appAt=${appAt}`);
   check("task-group detail workspace loads before app.js", taskGroupDetailAt >= 0 && appAt > taskGroupDetailAt,
     `taskGroupDetailAt=${taskGroupDetailAt}; appAt=${appAt}`);
+  check("monitor dashboard workspace loads before app.js", monitorDashboardAt >= 0 && appAt > monitorDashboardAt,
+    `monitorDashboardAt=${monitorDashboardAt}; appAt=${appAt}`);
 }
 {
   const longCursor = "c".repeat(4096);

@@ -49,6 +49,7 @@ const consoleModuleFiles = [
   "modules/project-settings-workspace.js",
   "modules/execution-object-workspace.js",
   "modules/monitor-workspace.js",
+  "modules/monitor-dashboard-workspace.js",
   "modules/runtime-node-workspace.js"
 ];
 
@@ -7317,7 +7318,7 @@ await runCodedApiErrorCase();
 // 只是每开一次就让服务端停顿一次，规模越大停得越久。
 // 判据落在【控制台的取数调用】上，而不是某个页面名 —— 换个页面犯同样的错照样会被抓住。
 {
-  const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const appSource = readConsoleProductSource();
   const fetched = [...appSource.matchAll(/fetchState\("([a-z]+)"\)/gu)].map((match) => match[1]);
   if (fetched.length < 5) {
     failures.push(`视图规模: 只解析到 ${fetched.length} 处 fetchState 调用 —— 提取逻辑与代码脱节，本条在空转`);
@@ -8601,7 +8602,8 @@ await runCodedApiErrorCase();
 //   二、行构造体里的 .slice 多半是截【字符串】（短 SHA），不是截集合 —— 按第一个 .map( 切开只看前半。
 //      不切的话 sources 那张表会被误判成静默截断（实际截的是 pinnedCommit）。
 {
-  const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const appSource = readConsoleProductSource();
+  const tableDefinitionLine = appSource.slice(0, appSource.indexOf("function table(")).split("\n").length;
   const callAt = (start) => {
     let depth = 1;
     let cursor = start;
@@ -8628,7 +8630,7 @@ await runCodedApiErrorCase();
   let scanned = 0;
   for (const match of appSource.matchAll(/\btable\(/gu)) {
     const line = appSource.slice(0, match.index).split("\n").length;
-    if (line === appSource.slice(0, appSource.indexOf("function table(")).split("\n").length) continue;
+    if (line === tableDefinitionLine) continue;
     const call = callAt(match.index + match[0].length);
     if (/moreText/u.test(call)) { scanned += 1; continue; }
     const body = (topLevelArgs(call)[1] || "").trim();
@@ -8655,7 +8657,7 @@ await runCodedApiErrorCase();
   let paired = 0;
   for (const entry of appSource.matchAll(/\btable\(/gu)) {
     const line = appSource.slice(0, entry.index).split("\n").length;
-    if (line < 615) continue;
+    if (line === tableDefinitionLine) continue;
     const call = callAt(entry.index + entry[0].length);
     const notice = /moreText\(/u.exec(call);
     if (!notice) continue;
