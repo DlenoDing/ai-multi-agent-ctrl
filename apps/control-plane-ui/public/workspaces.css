@@ -51,6 +51,12 @@
 .task-list-title { font-size: 14px; color: var(--text-main); overflow-wrap: anywhere; }
 .task-list-meta { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--text-sub); margin-top: 6px; }
 .task-detail-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.task-result-section { padding: 4px 0 14px; border-bottom: 1px solid var(--card-border); }
+.task-result-summary { padding: 12px 0 2px; }
+.task-result-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.task-result-head strong { font-size: 15px; }
+.task-result-summary .kv-list { grid-template-columns: 86px minmax(0, 1fr); }
+.task-result-summary .kv-list dd { min-width: 0; }
 .execution-stages { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); list-style: none; gap: 1px; padding: 0; margin: 12px 0; background: var(--card-border); border: 1px solid var(--card-border); }
 .execution-stages li { padding: 10px 8px; background: var(--th-bg); text-align: center; font-size: 12px; overflow-wrap: anywhere; }
 .execution-stages li.done { background: var(--green-bg); color: var(--green); }

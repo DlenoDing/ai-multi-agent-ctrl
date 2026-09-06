@@ -2317,11 +2317,23 @@ function runWorkItemResultCase() {
   const none = probe.renderTaskGroupDetail(detail, group, baseState);
   check("工作项卡：没有产出时要如实说还没有", /结果：还没有产出/u.test(none), "没有任何产出的任务，卡上一个字都不提结果");
   const pushed = probe.renderTaskGroupDetail(detail, group, {...baseState,
-    repositoryOutputs: [{taskGroupId: "tg_r", workItemId: "w_r", repositoryId: "repo_x", branch: "feat/x", status: "pushed"}],
-    checkpoints: [{taskGroupId: "tg_r", workId: "w_r", commitRefs: ["c1"], pushRefs: ["p1"]}]});
+    repositoryOutputs: [{taskGroupId: "tg_r", workItemId: "w_r", repositoryId: "repo_x", branch: "feat/x", status: "pushed",
+      changedPaths: ["apps/api.js", "docs/result.md"], artifactManifestPath: "docs/artifact-manifest.json", updatedAt: "2026-09-07T00:00:00Z"}],
+    checkpoints: [{taskGroupId: "tg_r", workId: "w_r", summary: "完成接口与文档",
+      commitRefs: [{repo: "repo_x", branch: "feat/x", commit: "abcdef1234567890abcdef1234567890abcdef12"}],
+      pushRefs: [{remote: "origin", ref: "refs/heads/feat/x", remoteSha: "abcdef1234567890abcdef1234567890abcdef12"}],
+      artifactManifestRefs: ["docs/artifact-manifest.json"], createdAt: "2026-09-07T00:00:00Z"}]});
+  const pushedText = pushed.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+  const resultStart = pushed.indexOf('class="task-result-summary"');
+  const pushedResult = resultStart < 0 ? "" : pushed.slice(resultStart, pushed.indexOf("</dl>", resultStart));
   check("工作项卡：结果要说清仓库产出到哪一步与检查点的 Git 证据",
-    /结果：/u.test(pushed) && pushed.includes("repo_x") && pushed.includes("feat/x") && /检查点 1 个/u.test(pushed) && /有提交/u.test(pushed) && /已推送/u.test(pushed),
+    /结果：已推送到远端/u.test(pushedText) && pushedText.includes("repo_x") && pushedText.includes("feat/x")
+      && /检查点 1 个/u.test(pushedText) && /有提交/u.test(pushedText) && /已推送/u.test(pushedText),
     "任务的结果（仓库/分支/状态/提交/推送）没有在卡上说清");
+  check("工作项结果必须显示可核验的提交、变更文件和产出清单",
+    pushedResult.includes("abcdef123456") && pushedResult.includes("apps/api.js") && pushedResult.includes("docs/result.md")
+      && pushedResult.includes("docs/artifact-manifest.json") && pushedResult.includes("完成接口与文档"),
+    "任务结果只说有提交和已推送，没有给出提交号、实际变更文件或产出清单，人仍无法核验具体结果");
   const unpushed = probe.renderTaskGroupDetail(detail, group, {...baseState,
     checkpoints: [{taskGroupId: "tg_r", workId: "w_r", commitRefs: ["c1"], pushRefs: []}]});
   check("工作项卡：有提交没推送时要说未推送",
@@ -3019,6 +3031,15 @@ async function runErrorGuidanceCase() {
     /过程事件：共 0 条 · 本页 0 条 · 执行尝试 1 次/u.test(objectHtml)
       && !/当前查询共 0 条记录/u.test(objectHtml),
     "过程事件是 0 条时仍与下方派发卡共用“记录”口径，看起来像数据互相矛盾");
+  check("任务详情必须先展示结果，再展示要求和执行过程",
+    objectHtml.indexOf("当前执行结果") > 0
+      && objectHtml.indexOf("当前执行结果") < objectHtml.indexOf("执行要求")
+      && objectHtml.indexOf("执行要求") < objectHtml.indexOf("执行过程"),
+    "用户打开任务后仍要先翻完执行要求和多次尝试，最后才能知道任务产出了什么");
+  check("每次执行只保留一个统一详情入口",
+    /data-action="open-execution-object"[^>]*>查看执行详情<\/button>/u.test(objectHtml)
+      && !/历史执行记录|本次执行规则|查看本次执行/u.test(objectHtml),
+    "同一次执行仍提供事件、规则和详情三个交叉跳转入口，用户无法预判按钮会跳到哪里");
   check("任务组和任务对象上下文必须跨页面持续显示",
     /当前任务组/u.test(objectAside) && /支付链路任务组/u.test(objectAside)
       && /任务 1/u.test(objectAside) && /运行 1/u.test(objectAside) && /待审 1/u.test(objectAside)

@@ -5388,11 +5388,43 @@ function workItemResultHtml(taskGroupId, workItemId) {
     .sort((left, right) => String(right.updatedAt || right.createdAt || "").localeCompare(String(left.updatedAt || left.createdAt || "")))[0] || null;
   const points = (state.checkpoints || []).filter((item) => item.taskGroupId === taskGroupId && item.workId === workItemId);
   const latest = points.slice().sort((left, right) => String(right.createdAt || right.submittedAt || "").localeCompare(String(left.createdAt || left.submittedAt || "")))[0] || null;
-  if (!target && !points.length) return `<div class="record-meta"><span>结果：还没有产出（尚未提交检查点）</span></div>`;
-  const parts = [];
-  if (target) parts.push(`仓库产出：<span class="mono">${esc(target.repositoryId || "-")}</span>${target.branch ? ` @ <span class="mono">${esc(target.branch)}</span>` : ""} ${badge(target.status)}`);
-  if (latest) parts.push(`检查点 ${esc(points.length)} 个，最近一次：${(latest.commitRefs || []).length ? "有提交" : "无提交"} · ${(latest.pushRefs || []).length ? "已推送" : "未推送"}`);
-  return `<div class="record-meta"><span>结果：</span>${parts.map((part) => `<span>${part}</span>`).join("")}</div>`;
+  if (!target && !points.length) return `<div class="notice">结果：还没有产出（尚未提交检查点）。任务开始执行后，这里会显示仓库、提交、推送和产出清单。</div>`;
+  const refValue = (ref, keys) => {
+    if (!ref || typeof ref !== "object") return String(ref || "");
+    return keys.map((key) => ref[key]).find(Boolean) || "";
+  };
+  const distinct = (values) => [...new Set(values.filter(Boolean))];
+  const commitRefs = distinct([...(latest?.commitRefs || []), ...(target?.commitRefs || [])]
+    .map((ref) => refValue(ref, ["commit", "sourceCommit"]).replace(/^commit:/u, "")));
+  const pushRefs = distinct([...(latest?.pushRefs || []), ...(target?.pushRefs || [])].map((ref) => {
+    if (!ref || typeof ref !== "object") return String(ref || "").replace(/^push:/u, "");
+    const remote = ref.remote || "origin";
+    const branch = String(ref.ref || "").replace(/^refs\/heads\//u, "");
+    const sha = ref.remoteSha || ref.sourceCommit || "";
+    return `${remote}${branch ? `/${branch}` : ""}${sha ? ` @ ${sha}` : ""}`;
+  }));
+  const manifests = distinct([...(latest?.artifactManifestRefs || []), target?.artifactManifestPath]);
+  const changedPaths = distinct(target?.changedPaths || []);
+  const repository = target?.repositoryId || refValue(latest?.commitRefs?.[0], ["repo"]) || "未记录";
+  const branch = target?.branch || refValue(latest?.commitRefs?.[0], ["branch"]) || "未记录";
+  const headline = pushRefs.length ? "已推送到远端" : commitRefs.length ? "已提交，尚未确认推送" : "正在生成仓库产出";
+  const refs = (values, limit = 4) => values.length
+    ? values.slice(0, limit).map((value) => `<span class="mono" title="${esc(value)}">${esc(value.length > 56 ? `${value.slice(0, 53)}...` : value)}</span>`).join("、")
+      + (values.length > limit ? ` 等 ${esc(values.length)} 项` : "")
+    : "—";
+  return `<div class="task-result-summary">
+    <div class="task-result-head"><strong>结果：${headline}</strong>${target?.status ? badge(target.status) : ""}</div>
+    <dl class="kv-list">
+      <dt>仓库</dt><dd class="mono">${esc(repository)}</dd>
+      <dt>分支</dt><dd class="mono">${esc(branch)}</dd>
+      <dt>提交</dt><dd>${commitRefs.length ? `有提交 · ${refs(commitRefs)}` : "无提交"}</dd>
+      <dt>推送</dt><dd>${pushRefs.length ? `已推送 · ${refs(pushRefs)}` : "未推送"}</dd>
+      <dt>变更文件</dt><dd>${refs(changedPaths, 6)}</dd>
+      <dt>产出清单</dt><dd>${refs(manifests)}</dd>
+      <dt>检查点</dt><dd>${esc(points.length)} 个${latest?.summary ? ` · ${esc(latest.summary)}` : ""}</dd>
+      <dt>最近更新</dt><dd>${fmtTime(latest?.createdAt || latest?.submittedAt || target?.updatedAt || target?.createdAt)}</dd>
+    </dl>
+  </div>`;
 }
 
 

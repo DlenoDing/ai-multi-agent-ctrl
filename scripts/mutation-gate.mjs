@@ -996,9 +996,17 @@ const MUTATIONS = [
     name: "工作项结果行必须如实区分已推送与未推送",
     file: APP,
     gate: "console",
-    from: "${(latest.pushRefs || []).length ? \"已推送\" : \"未推送\"}",
-    to: "已推送",
+    from: '  const headline = pushRefs.length ? "已推送到远端" : commitRefs.length ? "已提交，尚未确认推送" : "正在生成仓库产出";',
+    to: '  const headline = "已推送到远端";',
     expect: "没推送却说已推送"
+  },
+  {
+    name: "工作项结果必须显示真实提交与产出清单",
+    file: APP,
+    gate: "console",
+    from: '  const manifests = distinct([...(latest?.artifactManifestRefs || []), target?.artifactManifestPath]);',
+    to: "  const manifests = [];",
+    expect: "工作项结果必须显示可核验的提交、变更文件和产出清单"
   },
   {
     // 项目设置的配置行（仓库/基线/角色）对只读成员必须收起「删除」：cfg-del 是本地暂存，保存已禁用，
@@ -12313,9 +12321,25 @@ const MUTATIONS = [
     name: "任务执行次数必须进入统一派发对象详情",
     file: "apps/control-plane-ui/public/modules/task-workbench.js",
     gate: "workspace",
-    from: '<button class="primary-button" data-action="open-execution-object" data-execution-type="dispatch" data-execution-id="${esc(run.dispatchId)}" data-task="${esc(group.id)}">查看本次执行</button>',
-    to: '<button class="primary-button">查看本次执行</button>',
+    from: '<button class="primary-button" data-action="open-execution-object" data-execution-type="dispatch" data-execution-id="${esc(run.dispatchId)}" data-task="${esc(group.id)}">查看执行详情</button>',
+    to: '<button class="primary-button">查看执行详情</button>',
     expect: "each task execution attempt opens the addressable dispatch object"
+  },
+  {
+    name: "任务详情必须按结果要求过程排序",
+    file: "apps/control-plane-ui/public/modules/task-workbench.js",
+    gate: "console",
+    from: '      <section class="task-result-section"><h3>当前执行结果</h3>${h.workItemResultHtml(group.id, work.id)}</section>\n      <details><summary>执行要求',
+    to: '      <details><summary>执行要求',
+    expect: "任务详情必须先展示结果，再展示要求和执行过程"
+  },
+  {
+    name: "单次执行不得恢复三个交叉入口",
+    file: "apps/control-plane-ui/public/modules/task-workbench.js",
+    gate: "console",
+    from: '<div class="button-row"><button class="primary-button" data-action="open-execution-object" data-execution-type="dispatch" data-execution-id="${esc(run.dispatchId)}" data-task="${esc(group.id)}">查看执行详情</button></div>',
+    to: '<div class="button-row"><button class="primary-button" data-action="open-execution-object" data-execution-type="dispatch" data-execution-id="${esc(run.dispatchId)}" data-task="${esc(group.id)}">查看执行详情</button><button>历史执行记录</button><button>本次执行规则</button></div>',
+    expect: "每次执行只保留一个统一详情入口"
   },
   {
     name: "派发详情控制必须明确绑定当前派发状态",

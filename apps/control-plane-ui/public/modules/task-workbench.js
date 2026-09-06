@@ -70,9 +70,7 @@
           <dt>派发时间</dt><dd>${h.fmtTime(run.createdAt)}</dd>
           <dt>最新回送</dt><dd>${h.fmtTime(run.lastExecutionEventAt || run.updatedAt)}</dd></dl>
         ${run.failureReason || run.blockedReason ? `<div class="notice warn-notice">${esc(h.explainCoded(run.failureReason || run.blockedReason))}${h.repositoryFailureAction(run)}</div>` : ""}
-        <div class="button-row"><button class="primary-button" data-action="open-execution-object" data-execution-type="dispatch" data-execution-id="${esc(run.dispatchId)}" data-task="${esc(group.id)}">查看本次执行</button>
-          <button class="secondary-button" data-action="show-dispatch-events" data-event-mode="history" data-dispatch-id="${esc(run.dispatchId)}" data-task="${esc(group.id)}">历史执行记录</button>
-          <button class="secondary-button" data-action="show-dispatch-rules" data-dispatch-id="${esc(run.dispatchId)}">本次执行规则</button></div>
+        <div class="button-row"><button class="primary-button" data-action="open-execution-object" data-execution-type="dispatch" data-execution-id="${esc(run.dispatchId)}" data-task="${esc(group.id)}">查看执行详情</button></div>
         ${h.dispatchRuleSummaries[run.dispatchId] ? h.ruleSummaryHtml(h.dispatchRuleSummaries[run.dispatchId]) : ""}
         ${events.length ? `<details class="task-run-events"${disclosure[`${run.dispatchId}:events`] ? " open" : ""}><summary data-run-disclosure="${esc(run.dispatchId)}:events">执行记录（${events.length} 条）</summary><ol class="task-requirements">${events.map((event) => `<li><span class="small muted">${h.fmtTime(event.createdAt)}</span> ${esc(h.t(event.eventType))}：${esc(event.summary || "")}</li>`).join("")}</ol></details>` : ""}
       </div></details>`;
@@ -86,6 +84,7 @@
       ${String(group.goalExecutionStatus || "").startsWith("active_paused") ? `<div class="notice warn-notice">任务组处于暂停状态。${group.canControl ? `<button class="primary-button" data-action="task-control" data-task="${esc(group.id)}" data-task-action="resume">启动任务组</button>` : "需要任务组负责人启动。"}</div>` : ""}
       ${work.blockedReason ? `<div class="notice warn-notice">${esc(h.explainCoded(work.blockedReason))}</div>` : ""}
       ${h.workItemExitHint(work)}${h.humanTraceHtml(work)}
+      <section class="task-result-section"><h3>当前执行结果</h3>${h.workItemResultHtml(group.id, work.id)}</section>
       <details><summary>执行要求（${(work.requirements || []).length} 项）</summary><ul class="task-requirements">${(work.requirements || []).map((requirement) => `<li>${esc(requirement)}</li>`).join("")}</ul></details>
       ${group.canReview && group.status !== "closed" && group.status !== "aborted" ? `<details><summary>执行方案定稿要求：${work.requiresPlanFinalization ? "必须人工定稿" : "按系统判断"}</summary>
         <form class="form-grid" data-form="plan-finalization" data-task="${esc(group.id)}" data-work="${esc(work.id)}">
@@ -96,8 +95,7 @@
         <div class="small muted">过程事件：${eventInfo.eventTotalExact === true && typeof eventInfo.eventCount === "number" ? `共 ${eventInfo.eventCount} 条` : "近期窗口"} · 本页 ${eventInfo.returnedEventCount ?? (eventInfo.events || []).length} 条${eventInfo.historyTruncated ? " · 含未显示的历史" : ""} · 执行尝试 ${runs.length} 次</div>
         <div class="task-run-trace">${histories || (archivedEvents.length ? "" : `<div class="notice">当前没有可展示的派发记录。${esc(h.t(work.status))}</div>`)}</div>
         ${archivedEvents.length ? `<div class="notice">以下事件的派发快照已不在当前运行态，历史事件仍保留。</div><ol class="task-requirements">${archivedEvents.map((event) => `<li>${h.fmtTime(event.createdAt)} · <code>${esc(event.dispatchId)}</code> · ${esc(h.t(event.eventType))}：${esc(event.summary || "")}</li>`).join("")}</ol>` : ""}
-        ${eventHistory ? `<div class="button-row"><button class="secondary-button" data-work-event-page="previous"${eventPage <= 1 ? " disabled" : ""}>上一页</button><span class="small muted">第 ${eventPage} 页</span><button class="secondary-button" data-work-event-page="next"${eventInfo.hasMoreEvents ? "" : " disabled"}>下一页</button></div>` : ""}</section>
-      <section><h3>结果与证据</h3>${h.workItemResultHtml(group.id, work.id)}</section></div>`;
+        ${eventHistory ? `<div class="button-row"><button class="secondary-button" data-work-event-page="previous"${eventPage <= 1 ? " disabled" : ""}>上一页</button><span class="small muted">第 ${eventPage} 页</span><button class="secondary-button" data-work-event-page="next"${eventInfo.hasMoreEvents ? "" : " disabled"}>下一页</button></div>` : ""}</section></div>`;
   }
 
   window.AIMAC_TASK_WORKBENCH = {itemsFor, render};
