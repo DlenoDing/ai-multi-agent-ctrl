@@ -13092,8 +13092,8 @@ const MUTATIONS = [
     name: "旧执行会话地址必须迁移到工作会话",
     file: "apps/control-plane-ui/public/modules/workspaces.js",
     gate: "workspace",
-    from: '  const legacyPaneAliases = {"monitor:runs": "sessions"};',
-    to: "  const legacyPaneAliases = {};",
+    from: '"monitor:runs": "sessions", "monitor:nodes":',
+    to: '"monitor:nodes":',
     expect: "legacy monitor runs pane migrates"
   },
   {
@@ -13103,6 +13103,30 @@ const MUTATIONS = [
     from: '      workspaces.select("monitor", "dispatches");',
     to: '      workspaces.select("monitor", "sessions");',
     expect: "多派发节点进入项目级执行会话"
+  },
+  {
+    name: "节点、控制命令和死信必须拆成三个监控页面",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "console",
+    from: 'pane("node-control", "运行节点", ["agent 节点"]), pane("commands", "控制命令", ["控制通道"]), pane("dlq", "死信队列", ["死信队列"])',
+    to: 'pane("nodes", "节点控制", ["agent 节点", "控制通道", "死信队列"])',
+    expect: "必须是三个独立监控页面"
+  },
+  {
+    name: "控制命令必须有独立监控菜单入口",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    leaf("monitor", "commands", "控制命令", "暂停、恢复、取消和节点 ACK"),',
+    to: "",
+    expect: "控制命令"
+  },
+  {
+    name: "旧节点控制地址必须迁移到运行节点",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "workspace",
+    from: '"monitor:runs": "sessions", "monitor:nodes": "node-control"',
+    to: '"monitor:runs": "sessions"',
+    expect: "legacy monitor nodes pane migrates"
   },
 ];
 

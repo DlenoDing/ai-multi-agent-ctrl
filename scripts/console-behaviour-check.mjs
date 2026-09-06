@@ -2707,7 +2707,9 @@ async function runErrorGuidanceCase() {
     ["proj-members", "add", "添加项目成员"], ["proj-members", "groups", "任务组权限"], ["proj-members", "grant-group", "授予任务组权限"],
     ["proj-agents", "profiles", "Agent 档案"], ["proj-agents", "create", "新建 Agent 档案"], ["tg", "list", "任务组"], ["tasks", "list", "任务"],
     ["monitor", "overview", "项目监控"], ["monitor", "sessions", "工作会话"], ["monitor", "dispatches", "Agent 派发"],
-    ["monitor", "lanes", "执行载体"], ["monitor", "models", "模型决策"], ["monitor", "placements", "会话放置"], ["review", "pending", "待我审核"],
+    ["monitor", "lanes", "执行载体"], ["monitor", "models", "模型决策"], ["monitor", "placements", "会话放置"],
+    ["monitor", "events", "实时事件"], ["monitor", "node-control", "运行节点"], ["monitor", "commands", "控制命令"],
+    ["monitor", "dlq", "死信队列"], ["monitor", "evidence", "产出验收"], ["monitor", "barriers", "阻塞与门禁"], ["review", "pending", "待我审核"],
     ["directives", "compose", "下达指令"], ["proj-settings", "repositories", "仓库凭据"]];
   assertMenuLeaves("项目管理", projectNav, projectMenuOrder);
   assertMenuLeaves("项目管理说明", projectNav, [["proj-overview", "help", "项目操作说明"], ["proj-members", "help", "项目授权说明"],
@@ -5205,6 +5207,15 @@ async function runPendingTruncationCase() {
         monitorObjectPanes.every((current) => current.html.includes(`<h2>${current.title}</h2>`)
           && monitorObjectPanes.filter((other) => other.pane !== current.pane).every((other) => !current.html.includes(`<h2>${other.title}</h2>`))),
         monitorObjectPanes.map((item) => `${item.pane}:${textOf(item.html).slice(0, 80)}`).join(" | "));
+      const monitorControlPanes = [
+        ["node-control", "agent 节点"],
+        ["commands", "控制通道"],
+        ["dlq", "死信队列"]
+      ].map(([pane, title]) => ({pane, title, html: objectProbe.renderMonitorInventoryWith(multiState, orgAdmin, "p1", [pane])}));
+      check("运行节点、控制命令和死信队列必须是三个独立监控页面",
+        monitorControlPanes.every((current) => current.html.includes(`<h2>${current.title}</h2>`)
+          && monitorControlPanes.filter((other) => other.pane !== current.pane).every((other) => !current.html.includes(`<h2>${other.title}</h2>`))),
+        monitorControlPanes.map((item) => `${item.pane}:${textOf(item.html).slice(0, 80)}`).join(" | "));
       const executionDetailBase = {
         objectType: "dispatch", objectId: "run1", settled: false,
         taskGroup: {id: "tg1", name: "任务组一"}, workItem: {id: "w1", title: "执行任务"},
@@ -6879,7 +6890,7 @@ function runHeartbeatHintCase() {
     const nodeRoot = el("div");
     loadConsole(nodeRoot, {realI18n: true}).renderFullPagePaneWith(nodeState,
       {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"},
-      "p1", "monitor", "nodes");
+      "p1", "monitor", "node-control");
     const nodeText = String(nodeRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
     if (!/僵尸节点/u.test(nodeText)) {
       check("心跳超时的节点行要渲染出来", false, "这一屏没渲染出 agent 节点表 —— 下面几条什么也没验");
@@ -7009,7 +7020,7 @@ function runControlCommandReasonCase() {
     workerLanes: [], modelSelectionDecisions: [], sessionPlacementDecisions: [],
     accounts: [], accessGrants: [], agents: [], truncatedCollections: [], fleet: {online: 1, total: 1}};
   const monitorRoot = el("div");
-  loadConsole(monitorRoot, {realI18n: true}).renderFullPagePaneWith(state, admin, "p1", "monitor", "nodes");
+  loadConsole(monitorRoot, {realI18n: true}).renderFullPagePaneWith(state, admin, "p1", "monitor", "commands");
   const text = String(monitorRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
   check("控制命令被拒时要说出节点给的原因（不能只留一个「已拒绝」）",
     /认不出这条控制命令/u.test(text),
@@ -8134,7 +8145,7 @@ await runCodedApiErrorCase();
     headers: {get: (name) => String(name).toLowerCase() === "date" ? new Date(Date.now() - 20 * 60 * 1000).toUTCString() : null},
     json: async () => nodeState, text: async () => JSON.stringify(nodeState)});
   // 心跳提示渲染在执行监控页（renderMonitor 的节点表），不是智能体档案那一屏。
-  probe.selectWorkspace("monitor", "nodes");
+  probe.selectWorkspace("monitor", "node-control");
   const skewBody = await probe.loadWithFetch(nodeState, admin, "p1", "monitor", skewedFetch);
   const skewHtml = `${String(skewRoot.innerHTML || "")}${skewBody || ""}`;
   // 先自证这一屏真的渲染出来了：不然"没找到失联提示"只是因为什么都没渲染。
