@@ -1,9 +1,23 @@
 (function () {
   "use strict";
   const {esc} = window.AIMAC_CONSOLE_DOM_UTILS;
-  const pane = (id, label, titles = []) => ({id, label, titles});
+  const pane = (id, label, titles = [], group = "") => ({id, label, titles, group});
   const catalog = {
-    "group-detail": [pane("tasks", "任务列表", ["工作项*"]), pane("progress", "事项与进度", ["事项清单", "任务执行时间线", "准入与阻断分类", "阻塞"]), pane("config", "角色与规则", ["角色列表", "配置（继承 / 自定义）", "本任务组角色 Skill 定制", "系统规则（默认 / 项目 / 任务组）", "业务规则（默认 / 项目 / 任务组）"]), pane("control", "执行控制", ["执行控制"]), pane("collaboration", "协作记录", ["协作记录*"]), pane("help", "详情说明")],
+    "group-detail": [
+      pane("tasks", "任务列表", ["工作项*"], "工作推进"),
+      pane("progress", "事项拆解", ["事项清单"], "工作推进"),
+      pane("timeline", "执行时间线", ["任务执行时间线"], "工作推进"),
+      pane("roles", "参与角色", ["角色列表"], "执行配置"),
+      pane("inheritance", "配置继承", ["配置继承"], "执行配置"),
+      pane("skills", "Skill 定制", ["角色 Skill 定制"], "执行配置"),
+      pane("system-rules", "系统规则", ["系统规则"], "执行配置"),
+      pane("business-rules", "业务规则", ["业务规则"], "执行配置"),
+      pane("control", "执行控制", ["执行控制"], "控制与追溯"),
+      pane("admission", "准入与阻断", ["准入与阻断分类"], "控制与追溯"),
+      pane("blockers", "阻塞处置", ["阻塞"], "控制与追溯"),
+      pane("collaboration", "协作记录", ["协作记录*"], "控制与追溯"),
+      pane("help", "详情说明", [], "控制与追溯")
+    ],
     "sys-overview": [pane("overview", "运行状态"), pane("audit", "审计日志", ["审计日志"]), pane("maintenance", "维护操作", ["维护操作"])],
     "sys-orgs": [pane("list", "组织列表", ["组织列表"]), pane("create", "开通组织", ["创建组织"]), pane("help", "职责与配额说明")],
     "sys-settings": [pane("runtime", "运行参数", ["运行参数（只读）"]), pane("models", "模型能力", ["模型能力注册（只读）"]), pane("skills", "技能源", ["技能源"]), pane("instruction-efficiency", "指令效率", ["指令压缩指标", "指令信封"]), pane("definitions", "共享定义", ["共享定义归属"]), pane("help", "能力说明", ["系统设置总览"])],
@@ -22,7 +36,7 @@
     directives: [pane("compose", "下达指令", ["下达人工指令", "人工指令"]), pane("history", "指令流水", ["指令流水"]), pane("help", "指令说明")]
   };
   const fallback = {"sys-orgs": "help", "sys-settings": "help", "org-members": "help", "org-projects": "help", "org-agents": "help", "proj-agents": "help", "proj-members": "help", "proj-settings": "help", tasks: "discard", monitor: "barriers", review: "help", directives: "help"};
-  const legacyPaneAliases = {"monitor:runs": "sessions", "monitor:nodes": "node-control", "monitor:evidence": "checkpoints", "monitor:barriers": "blockers", "review:decisions": "permissions", "proj-settings:roles": "default-roles", "sys-settings:protocol": "instruction-efficiency"};
+  const legacyPaneAliases = {"group-detail:config": "inheritance", "monitor:runs": "sessions", "monitor:nodes": "node-control", "monitor:evidence": "checkpoints", "monitor:barriers": "blockers", "review:decisions": "permissions", "proj-settings:roles": "default-roles", "sys-settings:protocol": "instruction-efficiency"};
   const storagePrefix = "aimac.workspaces";
   let accountId = "";
   let selections = {};
@@ -94,8 +108,18 @@
   function objectNavigation(page, options = {}) {
     const entries = (catalog[page] || []).filter((entry) => options.canCreate !== false || !["create", "register"].includes(entry.id));
     if (!entries.length) return "";
-    return `<nav class="object-section-nav" aria-label="当前对象功能">${entries.map((entry) =>
-      `<button class="object-section-nav-item${current(page)?.id === entry.id ? " active" : ""}" data-workspace-page="${esc(page)}" data-workspace="${esc(entry.id)}" aria-current="${current(page)?.id === entry.id ? "page" : "false"}">${esc(entry.label)}</button>`).join("")}</nav>${navigation(page, true, options)}`;
+    const item = (entry) => `<button class="object-section-nav-item${current(page)?.id === entry.id ? " active" : ""}" data-workspace-page="${esc(page)}" data-workspace="${esc(entry.id)}" aria-current="${current(page)?.id === entry.id ? "page" : "false"}">${esc(entry.label)}</button>`;
+    const groups = [];
+    for (const entry of entries) {
+      const label = entry.group || "对象功能";
+      const group = groups.at(-1);
+      if (!group || group.label !== label) groups.push({label, entries: [entry]});
+      else group.entries.push(entry);
+    }
+    const desktop = entries.some((entry) => entry.group)
+      ? groups.map((group) => `<section class="object-section-group"><h3>${esc(group.label)}</h3>${group.entries.map(item).join("")}</section>`).join("")
+      : entries.map(item).join("");
+    return `<nav class="object-section-nav" aria-label="当前对象功能">${desktop}</nav>${navigation(page, true, options)}`;
   }
 
   function heading(page, options = {}) {

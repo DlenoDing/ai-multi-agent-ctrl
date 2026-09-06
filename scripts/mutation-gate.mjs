@@ -769,25 +769,25 @@ const MUTATIONS = [
     name: "任务组卡的阅读路径必须折叠",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "      ${guideBundle(\"详情阅读路径\", [detailPathHtml], [\"任务组详情阅读路径（9 段）\"])}",
+    from: "      ${guideBundle(\"详情阅读路径\", [detailPathHtml], [\"任务组详情阅读路径（12 项）\"])}",
     to: "      ${detailPathHtml}",
     expect: "「详情阅读路径」要收进默认关闭的折叠块"
   },
   {
-    name: "任务组卡规则区：全部继承时必须收起（展开条件写反＝永远展开）",
-    file: "apps/control-plane-ui/public/app.js",
+    name: "任务组配置继承、Skill 和两类规则必须拆成独立对象栏目",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
     gate: "console",
-    from: "        return `<details class=\"guide-bundle rules-bundle\"${overrides ? \" open\" : \"\"}>",
-    to: "        return `<details class=\"guide-bundle rules-bundle\" open>",
-    expect: "全部继承的规则区没有收起"
+    from: '      pane("inheritance", "配置继承", ["配置继承"], "执行配置"),\n      pane("skills", "Skill 定制", ["角色 Skill 定制"], "执行配置"),\n      pane("system-rules", "系统规则", ["系统规则"], "执行配置"),\n      pane("business-rules", "业务规则", ["业务规则"], "执行配置"),',
+    to: '      pane("config", "角色与规则", ["配置继承", "角色 Skill 定制", "系统规则", "业务规则"], "执行配置"),',
+    expect: "配置继承、Skill、系统规则或业务规则仍混在同一任务组页面"
   },
   {
-    name: "任务组卡规则区：本组有覆盖时必须展开",
+    name: "任务组详情阅读卡必须按对象局部栏目跳转",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "        return `<details class=\"guide-bundle rules-bundle\"${overrides ? \" open\" : \"\"}>",
-    to: "        return `<details class=\"guide-bundle rules-bundle\">",
-    expect: "本组明明有覆盖却把规则区收起来"
+    from: '    const workspacePage = page === "tg" && expandedTaskGroupId ? "group-detail" : page;',
+    to: "    const workspacePage = page;",
+    expect: "任务组详情卡仍按父级 tg 页面找目标"
   },
   {
     name: "只读身份不许渲染禁用的角色 Skill 定制表单",
@@ -11863,17 +11863,17 @@ const MUTATIONS = [
     name: "看板跨叶子跳转必须进入浏览器历史",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "      if (!(await navigateWorkspace(page, targetWorkspace))) return;",
-    to: "      workspaces.select(page, targetWorkspace);\n      render();",
+    from: "      if (!(await navigateWorkspace(workspacePage, targetWorkspace))) return;",
+    to: "      workspaces.select(workspacePage, targetWorkspace);\n      render();",
     expect: "功能看板跨叶子跳转必须写入浏览器历史"
   },
   {
     name: "任务组详情必须保留对象局部功能栏",
     file: "apps/control-plane-ui/public/modules/workspaces.js",
     gate: "workspace",
-    from: '    return `<nav class="object-section-nav" aria-label="当前对象功能">${entries.map((entry) =>',
-    to: '    return `<nav class="object-section-nav-removed" aria-label="当前对象功能">${entries.map((entry) =>',
-    expect: "task-group detail has a desktop object rail and one mobile local picker"
+    from: '    return `<nav class="object-section-nav" aria-label="当前对象功能">${desktop}</nav>${navigation(page, true, options)}`;',
+    to: '    return `<nav class="object-section-nav-removed" aria-label="当前对象功能">${desktop}</nav>${navigation(page, true, options)}`;',
+    expect: "task-group detail has a grouped desktop object rail and one mobile local picker"
   },
   {
     name: "任务深链接必须保留任务对象",

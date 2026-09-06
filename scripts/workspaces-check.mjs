@@ -253,19 +253,26 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
 }
 
 {
-  const detailTitles = ["任务组概览", "工作项（共 4000 个，当前展示 300 个）", "执行角色", "阻塞与状态"];
-  for (const title of detailTitles) {
+  const detailOwners = [
+    ["工作项（共 4000 个，当前展示 300 个）", "tasks"], ["事项清单", "progress"], ["任务执行时间线", "timeline"],
+    ["角色列表", "roles"], ["配置继承", "inheritance"], ["角色 Skill 定制", "skills"],
+    ["系统规则", "system-rules"], ["业务规则", "business-rules"], ["执行控制", "control"],
+    ["准入与阻断分类", "admission"], ["阻塞", "blockers"], ["协作记录（Agent 房间消息）", "collaboration"]
+  ];
+  for (const [title, expected] of detailOwners) {
     const owner = workspaces.owner("group-detail", title);
-    const ids = (workspaces.catalog["group-detail"] || []).map((pane) => pane.id);
-    check(`group detail title maps to a real pane: ${title}`, ids.includes(owner),
-      `owner=${owner}; panes=${ids.join(", ")}`);
+    check(`group detail title maps to ${expected}: ${title}`, owner === expected, `owner=${owner}`);
   }
-  workspaces.select("group-detail", "config");
+  workspaces.select("group-detail", "inheritance");
   const objectNav = workspaces.objectNavigation("group-detail");
-  check("task-group detail has a desktop object rail and one mobile local picker",
+  check("task-group detail has a grouped desktop object rail and one mobile local picker",
     /class="object-section-nav"/u.test(objectNav) && /class="workspace-mobile-picker"/u.test(objectNav)
       && (objectNav.match(/object-section-nav-item active/gu) || []).length === 1
-      && /data-workspace="config" aria-current="page"/u.test(objectNav), objectNav);
+      && /data-workspace="inheritance" aria-current="page"/u.test(objectNav)
+      && ["工作推进", "执行配置", "控制与追溯"].every((label) => objectNav.includes(`<h3>${label}</h3>`)), objectNav);
+  workspaces.select("group-detail", "config");
+  check("legacy task-group config pane migrates to inheritance",
+    workspaces.current("group-detail")?.id === "inheritance", JSON.stringify(workspaces.current("group-detail")));
   workspaces.select("group-detail", "tasks");
 }
 

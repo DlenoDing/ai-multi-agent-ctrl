@@ -5179,7 +5179,8 @@ async function runPendingTruncationCase() {
         {taskGroupId: "tg1", progress: {taskGroup: objectGroups.taskGroups[0], workItems: []}, config: {}, roomMessages: []});
       check("任务组详情使用对象局部功能栏而不是丢失入口或恢复横向 Tab",
         /class="object-detail-layout"/u.test(groupShell) && /class="object-section-nav"/u.test(groupShell)
-          && /任务列表/u.test(groupShell) && /角色与规则/u.test(groupShell) && /执行控制/u.test(groupShell),
+          && /工作推进/u.test(groupShell) && /执行配置/u.test(groupShell) && /控制与追溯/u.test(groupShell)
+          && /任务列表/u.test(groupShell) && /Skill 定制/u.test(groupShell) && /执行控制/u.test(groupShell),
         textOf(groupShell).slice(0, 420));
       const stalePermissionProbe = loadConsole(el("div"), {realI18n: true});
       stalePermissionProbe.renderTaskGroupsWith(objectGroups, orgAdmin, "p1", "tg1", {taskGroupId: "tg1", progress: {taskGroup: {...objectGroups.taskGroups[0], canControl: true}, workItems: []}, config: {}, roomMessages: []}, ["list"]);
@@ -5613,47 +5614,58 @@ async function runPendingTruncationCase() {
     };
     const detailTasksPane = probe.renderTaskGroupDetailPane("tasks", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
     const detailProgressPane = probe.renderTaskGroupDetailPane("progress", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
-    const detailConfigPane = probe.renderTaskGroupDetailPane("config", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
+    const detailRolesPane = probe.renderTaskGroupDetailPane("roles", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
+    const detailInheritancePane = probe.renderTaskGroupDetailPane("inheritance", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
+    const detailSkillsPane = probe.renderTaskGroupDetailPane("skills", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
+    const detailSystemRulesPane = probe.renderTaskGroupDetailPane("system-rules", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
+    const detailBusinessRulesPane = probe.renderTaskGroupDetailPane("business-rules", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
     const detailHelpPane = probe.renderTaskGroupDetailPane("help", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
     check("任务组详情阅读路径保持默认折叠",
       /<details class="guide-bundle"[^>]*>[\s\S]*详情阅读路径/u.test(detailHelpPane)
         && !/<details class="guide-bundle" open[^>]*>[\s\S]*详情阅读路径/u.test(detailHelpPane),
       "「详情阅读路径」要收进默认关闭的折叠块");
-    const inheritedRules = /<details class="guide-bundle rules-bundle"( open)?>/u.exec(detailConfigPane);
-    check("全部继承的任务组规则默认收起",
-      Boolean(inheritedRules) && !inheritedRules[1],
-      "全部继承的规则区没有收起");
-    const overrideDetail = structuredClone(detail);
-    overrideDetail.config.systemRules = [{ruleId: "tg.override", title: "任务组覆盖", content: "仅本组生效", source: "task_group", enabled: true}];
-    const overrideRulesPane = probe.renderTaskGroupDetailPane("config", overrideDetail, detailTaskGroup, overviewState, systemAdmin, "p1");
-    check("存在任务组覆盖时规则区默认展开",
-      /<details class="guide-bundle rules-bundle" open>/u.test(overrideRulesPane),
-      "本组明明有覆盖却把规则区收起来");
     check("任务组详情关键小节在 owning panes 内保留可定位锚点",
       /data-section-title="工作项"/u.test(detailTasksPane)
         && /data-section-title="事项清单"/u.test(detailProgressPane)
-        && /data-section-title="角色列表"/u.test(detailConfigPane)
-        && /data-section-title="配置（继承 \/ 自定义）"/u.test(detailConfigPane),
+        && /data-section-title="角色列表"/u.test(detailRolesPane)
+        && /data-section-title="配置继承"/u.test(detailInheritancePane)
+        && /data-section-title="角色 Skill 定制"/u.test(detailSkillsPane)
+        && /data-section-title="系统规则"/u.test(detailSystemRulesPane)
+        && /data-section-title="业务规则"/u.test(detailBusinessRulesPane),
       "详情小节没有在实际 pane 中输出 data-section-title，卡片无法定位到具体明细");
+    check("任务组配置对象分别进入独立 pane",
+      !/角色 Skill 定制|data-form="tg-rules"/u.test(detailInheritancePane)
+        && !/配置来源|data-form="tg-rules"/u.test(detailSkillsPane)
+        && /data-category="system"/u.test(detailSystemRulesPane) && !/data-category="business"/u.test(detailSystemRulesPane)
+        && /data-category="business"/u.test(detailBusinessRulesPane) && !/data-category="system"/u.test(detailBusinessRulesPane),
+      "配置继承、Skill、系统规则或业务规则仍混在同一任务组页面");
     check("任务组详情跳转处理器支持小节锚点和动态标题前缀",
       /querySelectorAll\("\[data-section-title\]"\)/u.test(probe.handlerSource("click"))
         && /sectionTitle\.startsWith\(title\)/u.test(probe.handlerSource("click")),
       "点击处理器只找顶层 panel，动态工作项标题或详情小节跳不过去");
-    check("任务组级角色 Skill 定制表单在配置 pane 可达并带任务组 scope/version",
-      /本任务组角色 Skill 定制/u.test(detailConfigPane)
-        && /项目级继承/u.test(detailConfigPane)
-        && /data-form="role-skill-overlay" data-scope="task_group"/u.test(detailConfigPane)
-        && /data-task="tg1"/u.test(detailConfigPane)
-        && /data-form="tg-rules"[\s\S]*data-config-version="tg-config-v1"/u.test(detailConfigPane),
-      textOf(detailConfigPane).slice(0, 260));
-    const readOnlyDetailConfig = probe.renderTaskGroupDetailPane("config", detail, detailTaskGroup,
+    check("任务组详情阅读卡必须在对象局部栏目内跳转",
+      /page === "tg" && expandedTaskGroupId \? "group-detail" : page/u.test(probe.handlerSource("click"))
+        && /workspaces\.owner\(workspacePage, title\)/u.test(probe.handlerSource("click"))
+        && /navigateWorkspace\(workspacePage, targetWorkspace\)/u.test(probe.handlerSource("click")),
+      "任务组详情卡仍按父级 tg 页面找目标，跨栏目点击会回任务组列表或提示没有明细");
+    check("任务组级角色 Skill 定制与规则页分别可达并带任务组 scope/version",
+      /角色 Skill 定制/u.test(detailSkillsPane)
+        && /项目级继承/u.test(detailSkillsPane)
+        && /data-form="role-skill-overlay" data-scope="task_group"/u.test(detailSkillsPane)
+        && /data-task="tg1"/u.test(detailSkillsPane)
+        && /data-form="tg-rules"[\s\S]*data-config-version="tg-config-v1"/u.test(detailSystemRulesPane),
+      `${textOf(detailSkillsPane).slice(0, 180)} | ${textOf(detailSystemRulesPane).slice(0, 180)}`);
+    const readOnlyDetailSkills = probe.renderTaskGroupDetailPane("skills", detail, detailTaskGroup,
       {...overviewState, taskGroupPermissions: {tg1: ["task_group:read"]}, taskGroupPermissionsDefault: ["task_group:read"]},
       readOnlyAccount, "p1");
-    check("只读任务组详情不渲染禁用的角色 Skill 定制表单",
-      /本任务组角色 Skill 定制/u.test(readOnlyDetailConfig)
-        && !/data-form="role-skill-overlay"/u.test(readOnlyDetailConfig)
-        && /不能创建角色 Skill 定制/u.test(readOnlyDetailConfig)
-        && /data-action="rule-add"[\s\S]*disabled/u.test(readOnlyDetailConfig),
+    const readOnlyDetailRules = probe.renderTaskGroupDetailPane("system-rules", detail, detailTaskGroup,
+      {...overviewState, taskGroupPermissions: {tg1: ["task_group:read"]}, taskGroupPermissionsDefault: ["task_group:read"]},
+      readOnlyAccount, "p1");
+    check("只读任务组详情不渲染 Skill 写表单且规则写按钮置灰",
+      /角色 Skill 定制/u.test(readOnlyDetailSkills)
+        && !/data-form="role-skill-overlay"/u.test(readOnlyDetailSkills)
+        && /不能创建角色 Skill 定制/u.test(readOnlyDetailSkills)
+        && /data-action="rule-add"[\s\S]*disabled/u.test(readOnlyDetailRules),
       "只读任务组仍摆出不能提交的 Skill 定制表单，或规则写按钮未置灰");
 
     const projectAgentHelp = probe.renderProjectAgentsInventoryWith(overviewState, systemAdmin, "p1", "table", ["help"]);

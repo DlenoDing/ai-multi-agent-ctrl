@@ -5195,7 +5195,8 @@ function renderTaskGroupDetailBody(taskGroup) {
   const canControl = hasGroupPerm(taskGroup.id, "task_group:control") && taskGroup.status !== "closed" && taskGroup.status !== "aborted";
   const canReviewWork = hasGroupPerm(taskGroup.id, "task_group:review");
   const editDisabled = canControl ? "" : "disabled";
-  const configHtml = config ? `
+  const configUnavailable = `<div class="notice">暂时无法读取任务组配置（${esc(tgDetail.configLoadError || "配置接口没取回来")}）：请点击右上角刷新重试；若一直取不回来，多半是这一台服务端有问题，配置本身没丢。</div>`;
+  const configSourceHtml = config ? `
     <div class="stack">
       <div class="record-title">
         <strong>配置来源：</strong>
@@ -5203,40 +5204,6 @@ function renderTaskGroupDetailBody(taskGroup) {
         ${config.configSource === "customized" && canControl ? `<button class="danger-button" data-action="tg-config-reset" data-task="${esc(taskGroup.id)}">重置为继承项目</button>` : ""}
       </div>
       ${canControl ? "" : `<div class="notice warn-notice">当前账号无“任务组控制”权限，配置为只读。</div>`}
-      ${sectionBlock("本任务组角色 Skill 定制", `
-        <div class="notice">这里只处理本任务组的特殊角色能力要求。项目级定制会显示为“项目级继承”，任务组级定制会优先生效；下一次派发时由服务端同步到 agent。</div>
-        ${roleSkillOverlayTable(taskGroupRoleSkillOverlays(taskGroup.id, taskGroup.projectId), {showScope: true})}
-        ${roleSkillOverlayForm({scope: "task_group", projectId: taskGroup.projectId, taskGroupId: taskGroup.id, readOnly: !canControl})}
-      `)}
-      ${(() => {
-        // 任务组卡里把项目/默认的全部规则（实测 32 条）整段全文渲染出来，即便本组一条覆盖都没有 —— 展开一张卡要滚几屏。
-        // 全部继承时默认收起（摘要报条数）；本组有自己的覆盖时展开，人正是来看它的。规则编辑器本身一字不改。
-        const systemRules = config.systemRules || [];
-        const businessRules = config.businessRules || [];
-        const overrides = [...systemRules, ...businessRules].filter((rule) => rule.source === "task_group").length;
-        const summary = `系统规则 ${systemRules.length} 条 · 业务规则 ${businessRules.length} 条（本组覆盖 ${overrides} 条）—— `
-          + (overrides ? "本组有自己的覆盖，已展开" : "全部继承自项目 / 默认，默认收起；点开查看，或在任务组层停用 / 改写 / 新增");
-        return `<details class="guide-bundle rules-bundle"${overrides ? " open" : ""}><summary class="guide-bundle-summary">${esc(summary)}</summary><div class="guide-bundle-body">`;
-      })()}
-      ${sectionBlock("系统规则（默认 / 项目 / 任务组）", ruleEditorForm({
-        rules: config.systemRules || [],
-        listId: "tg-system-rules",
-        category: "system",
-        layer: "task_group",
-        task: taskGroup.id,
-        readOnly: !canControl,
-        note: "展示解析结果：徽标标明来自默认、项目、任务组。可在任务组层停用、改写或新增。"
-      }))}
-      ${sectionBlock("业务规则（默认 / 项目 / 任务组）", ruleEditorForm({
-        rules: config.businessRules || [],
-        listId: "tg-business-rules",
-        category: "business",
-        layer: "task_group",
-        task: taskGroup.id,
-        readOnly: !canControl,
-        note: "任务组层可覆盖项目业务规则，或新增仅本任务组生效的规则。"
-      }))}
-      </div></details>
       <form class="form-grid" data-form="tg-config" data-task="${esc(taskGroup.id)}">
         <div class="form-row"><label>默认角色（逗号分隔角色 ID）</label>
           <input name="defaultRoles" list="config-role-options" data-orig="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}" value="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}" ${editDisabled}>
@@ -5249,7 +5216,30 @@ function renderTaskGroupDetailBody(taskGroup) {
         <button class="primary-button" type="submit" ${editDisabled}>保存默认角色</button>
       </form>
     </div>
-  ` : `<div class="notice">暂时无法读取任务组配置（${esc(tgDetail.configLoadError || "配置接口没取回来")}）：请点击右上角刷新重试；若一直取不回来，多半是这一台服务端有问题，配置本身没丢。</div>`;
+  ` : configUnavailable;
+  const skillConfigHtml = `
+    <div class="notice">这里只处理本任务组的特殊角色能力要求。项目级定制会显示为“项目级继承”，任务组级定制会优先生效；下一次派发时由服务端同步到 Agent。</div>
+    ${roleSkillOverlayTable(taskGroupRoleSkillOverlays(taskGroup.id, taskGroup.projectId), {showScope: true})}
+    ${roleSkillOverlayForm({scope: "task_group", projectId: taskGroup.projectId, taskGroupId: taskGroup.id, readOnly: !canControl})}
+  `;
+  const systemRulesHtml = config ? ruleEditorForm({
+    rules: config.systemRules || [],
+    listId: "tg-system-rules",
+    category: "system",
+    layer: "task_group",
+    task: taskGroup.id,
+    readOnly: !canControl,
+    note: "展示解析结果：徽标标明来自默认、项目、任务组。可在任务组层停用、改写或新增。"
+  }) : configUnavailable;
+  const businessRulesHtml = config ? ruleEditorForm({
+    rules: config.businessRules || [],
+    listId: "tg-business-rules",
+    category: "business",
+    layer: "task_group",
+    task: taskGroup.id,
+    readOnly: !canControl,
+    note: "任务组层可覆盖项目业务规则，或新增仅本任务组生效的规则。"
+  }) : configUnavailable;
 
   const languagePolicy = taskGroup.languagePolicy || {languageTag: "zh-CN"};
   const controlHtml = canControl ? `
@@ -5419,6 +5409,9 @@ function renderTaskGroupDetailBody(taskGroup) {
     analysisCount,
     roleCount,
     configLabel: config ? (config.configSource === "customized" ? "自定义" : "继承") : "未加载",
+    skillCount: taskGroupRoleSkillOverlays(taskGroup.id, taskGroup.projectId).length,
+    systemRuleCount: (config?.systemRules || []).length,
+    businessRuleCount: (config?.businessRules || []).length,
     canControl,
     workItemCount: Number.isFinite(workItemCount) ? workItemCount : 0,
     hasAdmission: Boolean(guard),
@@ -5428,10 +5421,13 @@ function renderTaskGroupDetailBody(taskGroup) {
 
   return `
     <div class="stack" style="margin-top:8px;">
-      ${guideBundle("详情阅读路径", [detailPathHtml], ["任务组详情阅读路径（9 段）"])}
+      ${guideBundle("详情阅读路径", [detailPathHtml], ["任务组详情阅读路径（12 项）"])}
       ${sectionBlock("事项清单", analysisHtml)}
       ${sectionBlock("角色列表", `<div class="stack">${roles}</div>`)}
-      ${sectionBlock("配置（继承 / 自定义）", configHtml)}
+      ${sectionBlock("配置继承", configSourceHtml)}
+      ${sectionBlock("角色 Skill 定制", skillConfigHtml)}
+      ${sectionBlock("系统规则", systemRulesHtml)}
+      ${sectionBlock("业务规则", businessRulesHtml)}
       ${sectionBlock("执行控制", controlHtml)}
       ${sectionBlock(`工作项${progressData.workItemsTruncated
         ? `（共 ${esc(progressData.workItemCount)} 个，当前展示 ${(progressData.workItems || []).length} 个）` : ""}`,
@@ -5468,15 +5464,39 @@ function renderTaskGroupDetailPath(summary) {
       action: "查看"
     }),
     jumpModuleCard({
-      title: "3 配置",
+      title: "3 配置继承",
       metric: summary.configLabel || "未加载",
-      detail: "继承关系、规则覆盖和默认角色",
-      panelTitle: "配置（继承 / 自定义）",
+      detail: "配置来源、默认角色、仓库与基线引用",
+      panelTitle: "配置继承",
       tone: summary.configLabel === "自定义" ? "orange" : "green",
       action: "查看"
     }),
     jumpModuleCard({
-      title: "4 执行控制",
+      title: "4 Skill 定制",
+      metric: String(summary.skillCount || 0),
+      detail: "项目继承与任务组特殊角色能力",
+      panelTitle: "角色 Skill 定制",
+      tone: summary.skillCount ? "blue" : "gray",
+      action: "查看"
+    }),
+    jumpModuleCard({
+      title: "5 系统规则",
+      metric: String(summary.systemRuleCount || 0),
+      detail: "安全、流程、证据和 AI-native 纪律",
+      panelTitle: "系统规则",
+      tone: "blue",
+      action: "查看"
+    }),
+    jumpModuleCard({
+      title: "6 业务规则",
+      metric: String(summary.businessRuleCount || 0),
+      detail: "本项目与任务组业务约束",
+      panelTitle: "业务规则",
+      tone: "blue",
+      action: "查看"
+    }),
+    jumpModuleCard({
+      title: "7 执行控制",
       metric: summary.canControl ? "可控" : "只读",
       detail: "暂停、恢复、评审和统一语言策略",
       panelTitle: "执行控制",
@@ -5484,7 +5504,7 @@ function renderTaskGroupDetailPath(summary) {
       action: "查看"
     }),
     jumpModuleCard({
-      title: "5 工作项",
+      title: "8 工作项",
       metric: String(summary.workItemCount || 0),
       detail: "执行单元、模型、派发和实时事件入口",
       panelTitle: "工作项",
@@ -5492,7 +5512,7 @@ function renderTaskGroupDetailPath(summary) {
       action: "查看"
     }),
     jumpModuleCard({
-      title: "6 准入与阻断",
+      title: "9 准入与阻断",
       metric: summary.hasAdmission ? "已计算" : "待编排",
       detail: "可执行、等待、真实阻断和整体阻断规则",
       panelTitle: "准入与阻断分类",
@@ -5500,7 +5520,7 @@ function renderTaskGroupDetailPath(summary) {
       action: "查看"
     }),
     jumpModuleCard({
-      title: "7 阻塞",
+      title: "10 阻塞",
       metric: String(summary.blockerCount || 0),
       detail: "关闭门禁、提示阻塞和下一步处置",
       panelTitle: "阻塞",
@@ -5508,7 +5528,7 @@ function renderTaskGroupDetailPath(summary) {
       action: "查看"
     }),
     jumpModuleCard({
-      title: "8 任务时间线",
+      title: "11 任务时间线",
       metric: "倒序",
       detail: "任务、模型、会话、派发、事件和 Git 证据",
       panelTitle: "任务执行时间线",
@@ -5516,7 +5536,7 @@ function renderTaskGroupDetailPath(summary) {
       action: "查看"
     }),
     jumpModuleCard({
-      title: "9 协作记录",
+      title: "12 协作记录",
       metric: roomMetric,
       detail: "agent 房间消息和过程追溯",
       panelTitle: "协作记录（agent 之间的房间消息）",
@@ -5526,7 +5546,7 @@ function renderTaskGroupDetailPath(summary) {
   ].join("");
   return sectionBlock("任务组详情阅读路径", `
     <div class="module-grid action-grid">${cards}</div>
-    <div class="small muted">建议按 1 到 9 查看：先确认拆解和执行单元，再看配置、控制、阻塞、任务时间线和协作过程；需要操作时直接点对应卡片跳到小节。</div>
+    <div class="small muted">按实际问题进入对应栏目：先确认拆解和参与角色，再看继承、Skill、规则、控制、阻塞、任务时间线和协作过程。</div>
   `);
 }
 
@@ -9243,9 +9263,10 @@ document.addEventListener("click", async (event) => {
   const jumpButton = event.target.closest("[data-jump-panel]");
   if (jumpButton) {
     const title = jumpButton.dataset.jumpPanel || "";
-    const targetWorkspace = workspaces.owner(page, title);
-    if (targetWorkspace && targetWorkspace !== workspaces.current(page)?.id) {
-      if (!(await navigateWorkspace(page, targetWorkspace))) return;
+    const workspacePage = page === "tg" && expandedTaskGroupId ? "group-detail" : page;
+    const targetWorkspace = workspaces.owner(workspacePage, title);
+    if (targetWorkspace && targetWorkspace !== workspaces.current(workspacePage)?.id) {
+      if (!(await navigateWorkspace(workspacePage, targetWorkspace))) return;
     }
     const targetHeader = [...document.querySelectorAll(".panel-header h2")]
       .find((header) => header.textContent.trim() === title);
