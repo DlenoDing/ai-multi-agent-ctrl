@@ -210,6 +210,7 @@ const CONSOLE_PUBLIC_MODULE_FILES = [
   "apps/control-plane-ui/public/modules/time-format.js",
   "apps/control-plane-ui/public/modules/request-failure-guidance.js",
   "apps/control-plane-ui/public/modules/task-group-insights.js",
+  "apps/control-plane-ui/public/modules/agent-node-cards.js",
   CONSOLE_UI_CONFIG_FILE,
   "apps/control-plane-ui/public/modules/ui-primitives.js"
 ];

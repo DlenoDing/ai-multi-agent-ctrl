@@ -41,6 +41,7 @@ const consoleModuleFiles = [
   "modules/project-command-center.js",
   "modules/governance-workspace.js",
   "modules/agent-profile-workspace.js",
+  "modules/agent-node-cards.js",
   "modules/task-group-workspace.js",
   "modules/task-group-insights.js",
   "modules/task-workbench.js",

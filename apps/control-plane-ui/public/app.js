@@ -3671,28 +3671,15 @@ function renderAgentProfileForm({projectId = "", title = "创建 Agent 档案", 
 }
 
 function projectAgentCards(nodes, canControlNodes, options = {}) {
-  return nodes.length ? `
-    <div class="agent-cards">
-      ${nodes.map((node) => {
-        const timedOut = heartbeatTimedOut(node);
-        return `
-          <div class="agent-card">
-            <h3><span class="hover-wrap">${esc(node.nodeName || node.nodeId)}${agentHoverPop(node)}</span>${timedOut ? badge("heartbeat_timeout") : badge(node.status)}</h3>
-            <div class="agent-meta">
-              <span>准入：${badge(node.admission)}</span>
-              <span>健康度：${badge(timedOut ? "offline" : node.display?.health || node.status)}</span>
-              <span>地区：${esc(node.display?.region || "-")}</span>
-              <span>当前任务数：${nodeDispatchIds(node).length}</span>
-              <span>最近心跳：${fmtTime(node.lastHeartbeatAt)}</span>
-            </div>
-            ${timedOut ? `<div class="small warn-text">上次状态仍为「${esc(t(node.status) || node.status)}」，但心跳已超过判死阈值。</div>` : ""}
-            ${claimMissHint(node)}${selfCheckFailureHint(node)}${heartbeatStaleHint(node)}
-            <div class="button-row" style="margin-top:10px;">${runtimeNodeDetailButton(node, true)}${canControlNodes ? agentActions(node, {scope: "project", showDanger: options.showDanger === true}) : `<span class="small muted">当前账号无节点控制权限</span>`}</div>
-          </div>
-        `;
-      }).join("")}
-    </div>
-  ` : `<div class="notice warn-notice">当前项目还没有任何 Agent 节点。要让任务实际执行，请直接进入“注册运行节点”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 Agent 主机执行。</div>`;
+  return window.AIMAC_AGENT_NODE_CARDS.render(nodes, {
+    canControl: canControlNodes,
+    scope: options.scope || "project",
+    showDanger: options.showDanger === true,
+    showAdmission: options.showAdmission !== false,
+    emptyText: options.emptyText
+      || "当前项目还没有任何 Agent 节点。要让任务实际执行，请直接进入“注册运行节点”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 Agent 主机执行。"
+  }, {heartbeatTimedOut, badge, agentHoverPop, nodeDispatchIds, fmtTime, t,
+    claimMissHint, selfCheckFailureHint, heartbeatStaleHint, runtimeNodeDetailButton, agentActions});
 }
 
 function renderOrgAgentsBoundaryGuide() {
@@ -4042,25 +4029,8 @@ function renderOrgAgents() {
   `;
   let bodyHtml;
   if (agentViewMode === "cards") {
-    bodyHtml = nodes.length ? `
-      <div class="agent-cards">
-        ${nodes.map((node) => {
-          const timedOut = heartbeatTimedOut(node);
-          return `
-          <div class="agent-card">
-            <h3><span class="hover-wrap">${esc(node.nodeName || node.nodeId)}${agentHoverPop(node)}</span>${timedOut ? badge("heartbeat_timeout") : badge(node.status)}</h3>
-            <div class="agent-meta">
-              <span>地区：${esc(node.display?.region || "-")}</span>
-              <span>健康度：${badge(timedOut ? "offline" : node.display?.health || node.status)}</span>
-              <span>当前任务数：${nodeDispatchIds(node).length}</span>
-              <span>最近心跳：${fmtTime(node.lastHeartbeatAt)}</span>
-            </div>
-            ${timedOut ? `<div class="small warn-text">上次状态仍为「${esc(t(node.status) || node.status)}」，但心跳已超过判死阈值。</div>` : ""}
-            <div class="button-row" style="margin-top:10px;">${runtimeNodeDetailButton(node, true)}${agentActions(node)}</div>
-          </div>
-        `;}).join("")}
-      </div>
-    ` : `<div class="notice">当前组织暂无 agent 节点。可注册组织共享节点，或在项目内注册专属节点。</div>`;
+    bodyHtml = projectAgentCards(nodes, true, {scope: "organization", showDanger: true, showAdmission: false,
+      emptyText: "当前组织暂无 agent 节点。可注册组织共享节点，或在项目内注册专属节点。"});
   } else {
     const nodeRows = nodes.map((node) => {
       const timedOut = heartbeatTimedOut(node);
