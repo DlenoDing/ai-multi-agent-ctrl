@@ -2728,16 +2728,20 @@ async function runErrorGuidanceCase() {
         > projectNav.indexOf(`data-menu="${projectMenuOrder[index - 1][0]}" data-menu-workspace="${projectMenuOrder[index - 1][1]}"`)),
     "项目菜单顺序没有按概览、Agent 准备、任务组织、实时监控、人工介入、控制补充、配置调整排列");
   check("项目管理侧栏要按普通管理动作分栏目",
-    ["项目总览", "成员与权限", "Agent", "工作推进", "执行观测", "人工控制", "项目治理", "使用说明"]
+    ["项目总览", "成员与权限", "Agent", "工作推进", "执行跟踪", "节点与控制", "验收与收口", "人工控制", "项目治理", "使用说明"]
       .every((label) => projectNav.includes(`<span>${label}</span>`))
       && projectNav.indexOf("项目总览") < projectNav.indexOf('data-menu="proj-overview"')
       && projectNav.indexOf("成员与权限") < projectNav.indexOf('data-menu="proj-members"')
       && projectNav.indexOf("Agent") < projectNav.indexOf('data-menu="proj-agents"')
       && projectNav.indexOf("工作推进") < projectNav.indexOf('data-menu="tg"')
-      && projectNav.indexOf("执行观测") < projectNav.indexOf('data-menu="monitor"')
+      && projectNav.indexOf("执行跟踪") < projectNav.indexOf('data-menu="monitor" data-menu-workspace="overview"')
+      && projectNav.indexOf("节点与控制") < projectNav.indexOf('data-menu="monitor" data-menu-workspace="node-control"')
+      && projectNav.indexOf("节点与控制") > projectNav.indexOf('data-menu="monitor" data-menu-workspace="events"')
+      && projectNav.indexOf("验收与收口") < projectNav.indexOf('data-menu="monitor" data-menu-workspace="checkpoints"')
+      && projectNav.indexOf("验收与收口") > projectNav.indexOf('data-menu="monitor" data-menu-workspace="dlq"')
       && projectNav.indexOf("人工控制") < projectNav.indexOf('data-menu="review"')
       && projectNav.indexOf("人工控制") < projectNav.indexOf('data-menu="directives"')
-      && projectNav.indexOf("人工控制") > projectNav.indexOf('data-menu="monitor"')
+      && projectNav.indexOf("人工控制") > projectNav.indexOf('data-menu="monitor" data-menu-workspace="close-gates"')
       && projectNav.indexOf("项目治理") < projectNav.indexOf('data-menu="proj-settings"')
       && projectNav.indexOf("项目治理") > projectNav.indexOf('data-menu="directives"'),
     "项目管理侧栏仍是平铺功能清单，没有把项目总览、准备接入、执行推进、人工控制和治理配置分开");
@@ -2755,8 +2759,8 @@ async function runErrorGuidanceCase() {
     "打开执行会话后页头仍写父页面“执行监控”，用户无法确认当前位置");
   check("切换功能后自动展开新的业务分组并收起旧分组",
     (runPageAside.match(/<details class="nav-group" open>/gu) || []).length === 1
-      && /<details class="nav-group" open>[\s\S]*?<span>执行观测<\/span>[\s\S]*?data-menu="monitor" data-menu-workspace="sessions"/u.test(runPageAside),
-    "进入执行会话后侧栏没有把焦点收敛到执行观测组");
+      && /<details class="nav-group" open>[\s\S]*?<span>执行跟踪<\/span>[\s\S]*?data-menu="monitor" data-menu-workspace="sessions"/u.test(runPageAside),
+    "进入工作会话后侧栏没有把焦点收敛到执行跟踪组");
   const menuActionProbe = loadConsole(el("div"), {realI18n: true});
   menuActionProbe.renderFullPageWith(navState, systemAccount, "p1", "proj-overview");
   menuActionProbe.setObjectLocation({page: "tasks", projectId: "p1", groupId: "tg_old", workId: "w_old"});

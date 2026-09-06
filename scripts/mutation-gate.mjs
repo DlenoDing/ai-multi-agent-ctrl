@@ -13280,6 +13280,14 @@ const MUTATIONS = [
     to: "  return [\n    ...(state.roleSkillOverlays || []).map((item) => `<div>${item.roleSkillRef} 禁掉 ${(item.patch?.forbiddenCapabilityAdds || []).join('、')}</div>`),\n    renderSysSettingsSummary(runtime, metrics),",
     expect: "不得跨项目展示用户侧角色 Skill 叠加"
   },
+  {
+    name: "项目监控菜单必须按执行跟踪、节点控制和验收收口分组",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    {divider: "节点与控制"},',
+    to: "",
+    expect: "项目管理侧栏仍是平铺功能清单"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），
