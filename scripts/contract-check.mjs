@@ -207,6 +207,7 @@ const CONSOLE_PUBLIC_MODULE_FILES = [
   CONSOLE_NAV_FILE,
   CONSOLE_LABELS_FILE,
   "apps/control-plane-ui/public/modules/time-format.js",
+  "apps/control-plane-ui/public/modules/request-failure-guidance.js",
   CONSOLE_UI_CONFIG_FILE,
   "apps/control-plane-ui/public/modules/ui-primitives.js"
 ];
@@ -12719,7 +12720,11 @@ function verifyMachineFacingErrorsAreOutOfConsoleReach(output) {
 
 function verifyMessagesDoNotPointAtInvisibleFields(output) {
   const dict = readFileSync(join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
-  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8").replace(/\/\/[^\n]*/gu, "");
+  const publicDir = join(root, "apps/control-plane-ui/public");
+  const entry = readFileSync(join(publicDir, "index.html"), "utf8");
+  const app = [...entry.matchAll(/<script\s+src="\/([^"<>]+\.js)"/gu)]
+    .map((match) => readFileSync(join(publicDir, match[1]), "utf8"))
+    .join("\n").replace(/\/\/[^\n]*/gu, "");
   // 文案里以"报文里的 X"/"响应里的 X"/"X 指出"这种方式点名的字段
   const named = new Set();
   for (const match of dict.matchAll(/(?:报文里的|响应里的|回执里的)\s*([a-zA-Z][a-zA-Z0-9_]{2,})/gu)) named.add(match[1]);

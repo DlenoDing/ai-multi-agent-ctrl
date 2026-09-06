@@ -30,6 +30,7 @@ const consoleModuleFiles = [
   "modules/context-navigation.js",
   "modules/labels.js",
   "modules/time-format.js",
+  "modules/request-failure-guidance.js",
   "modules/ui-config.js",
   "modules/ui-primitives.js",
   "modules/operational-stats.js",
