@@ -13032,6 +13032,14 @@ const MUTATIONS = [
     to: "安装器会生成配置样例",
     expect: "必须说明远程 MCP 客户端由安装器持续维护"
   },
+  {
+    name: "Agent 档案编辑必须使用登记值选择器",
+    file: "apps/control-plane-ui/public/modules/agent-profile-workspace.js",
+    gate: "console",
+    from: '<div class="form-row"><label>执行角色</label><select name="role" required>${h.roleOptions}</select></div>',
+    to: '<div class="form-row"><label>执行角色</label><input name="role" required></div>',
+    expect: "编辑页也必须使用登记值选择器"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

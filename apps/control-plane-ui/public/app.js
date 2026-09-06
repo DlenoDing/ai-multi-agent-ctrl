@@ -3637,6 +3637,11 @@ function agentProfileRows(agents, {showScope = true} = {}) {
     helpers: {row, t, modelCell: agentModelCell, scopeText: agentScopeText, statusBadge}});
 }
 
+function ownerRoleOptionsHtml(selected = "") {
+  return WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) =>
+    `<option value="${esc(roleId)}"${roleId === selected ? " selected" : ""}>${esc(t(roleId))}</option>`).join("");
+}
+
 function renderAgentProfileDetail(agent, {editable, scopeLabel}) {
   return window.AIMAC_AGENT_PROFILE_WORKSPACE.workspace({
     agent,
@@ -3644,24 +3649,24 @@ function renderAgentProfileDetail(agent, {editable, scopeLabel}) {
     editable,
     helpers: {
       statusBadge, t, modelCell: agentModelCell, fmtTime,
-      roleOptions: WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join(""),
-      modelOptions: modelOptionsHtml(),
-      skillOptions: roleSkillChoiceList("agent-profile-skill-options")
+      roleOptions: ownerRoleOptionsHtml(agent.role),
+      modelOptions: modelOptionsHtml(agent.model),
+      skillOptions: roleSkillOptionsHtml(agent.roleSkillRef)
     }
   });
 }
 
-function modelOptionsHtml() {
+function modelOptionsHtml(selected = "") {
   const common = ["auto_best", "auto_fast", "cost_aware", "gpt-5.5", "gpt-5.6-sol",
     "claude-sonnet-4.5", "claude-opus-4.1", "gemini-2.5-pro", "gemini-2.5-flash",
     "grok-4", "deepseek-v3.1", "deepseek-r1"];
-  const ids = [...common, ...(state.modelCapabilities || []).map((profile) => profile.modelId)].filter(Boolean);
-  return [...new Set(ids)].map((id) => `<option value="${esc(id)}">${esc(AGENT_MODEL_PRESET_LABEL[id] || id)}</option>`).join("");
+  const ids = [selected, ...common, ...(state.modelCapabilities || []).map((profile) => profile.modelId)].filter(Boolean);
+  return [...new Set(ids)].map((id) => `<option value="${esc(id)}"${id === selected ? " selected" : ""}>${esc(AGENT_MODEL_PRESET_LABEL[id] || id)}</option>`).join("");
 }
 
 function renderAgentProfileForm({projectId = "", title = "创建 Agent 档案", readOnly = false} = {}) {
   return window.AIMAC_AGENT_PROFILE_WORKSPACE.createForm({projectId, title, readOnly,
-    roleOptions: WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join(""),
+    roleOptions: ownerRoleOptionsHtml(),
     modelOptions: modelOptionsHtml(), skillOptions: roleSkillOptionsHtml()});
 }
 
@@ -7797,10 +7802,14 @@ function splitHumanList(value) {
   return String(value || "").split(/[,\n，、]/u).map((item) => item.trim()).filter(Boolean);
 }
 
-function roleSkillOptionsHtml() {
+function roleSkillOptionsHtml(selected = "") {
   const skills = state.roleSkillIndex || [];
-  return skills.slice(0, 500).map((skill) => `
-    <option value="${esc(skill.roleSkillId)}">${esc([skill.name, skill.category, skill.sourceId].filter(Boolean).join(" · "))}</option>
+  const indexed = skills.slice(0, 500);
+  const options = selected && !indexed.some((skill) => skill.roleSkillId === selected)
+    ? [{roleSkillId: selected, name: "当前引用（已不在活动索引）"}, ...indexed]
+    : indexed;
+  return options.map((skill) => `
+    <option value="${esc(skill.roleSkillId)}"${skill.roleSkillId === selected ? " selected" : ""}>${esc([skill.name, skill.category, skill.sourceId].filter(Boolean).join(" · "))}</option>
   `).join("");
 }
 

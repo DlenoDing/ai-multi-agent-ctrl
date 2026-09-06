@@ -5380,6 +5380,13 @@ async function runPendingTruncationCase() {
         && ["项目开发 Agent", "agent-runtime", "auto_fast", "0.8", "reviewer"].every((value) => agentForm.includes(`value="${value}"`))
         && /data-action="toggle-agent" data-agent="agent_project_profile"/u.test(projectProfileDetail),
       textOf(projectProfileDetail).slice(0, 500));
+    check("Agent 档案编辑页也必须使用登记值选择器并保留当前值",
+      /<select name="role" required>[\s\S]*?value="agent-runtime" selected/u.test(agentForm)
+        && /<select name="model" required>[\s\S]*?value="auto_fast" selected/u.test(agentForm)
+        && /<select name="roleSkillRef">[\s\S]*?value="reviewer" selected/u.test(agentForm)
+        && !/<input name="(?:role|model|roleSkillRef)"/u.test(agentForm)
+        && !/agent-profile-role-options|agent-profile-model-options/u.test(agentForm),
+      "Agent 档案编辑仍使用自由输入或遗留 datalist，创建与编辑两套交互不一致");
     profileProbe.setAgentProfileDetail("agent_org_profile");
     const sharedProfileDetail = profileProbe.renderProjectAgentsInventoryWith(agentProfileState, systemAdmin, "p1", "table", ["profiles"]);
     check("项目空间对组织共享 Agent 档案保持只读并指回组织管理",

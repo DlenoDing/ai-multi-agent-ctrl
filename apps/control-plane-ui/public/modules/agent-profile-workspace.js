@@ -37,14 +37,11 @@
     return `<form class="form-grid" data-form="agent-profile-update" data-agent="${esc(agent.id)}">
       <div class="form-row-inline">
         <div class="form-row"><label>档案名称</label><input name="name" required value="${esc(agent.name || "")}"></div>
-        <div class="form-row"><label>执行角色</label><input name="role" list="agent-profile-role-options" required value="${esc(agent.role || "")}">
-          <datalist id="agent-profile-role-options">${h.roleOptions}</datalist></div>
-        <div class="form-row"><label>模型偏好</label><input name="model" list="agent-profile-model-options" required value="${esc(agent.model || "auto_best")}">
-          <datalist id="agent-profile-model-options">${h.modelOptions}</datalist></div>
+        <div class="form-row"><label>执行角色</label><select name="role" required>${h.roleOptions}</select></div>
+        <div class="form-row"><label>模型偏好</label><select name="model" required>${h.modelOptions}</select></div>
         <div class="form-row"><label>信任分</label><input name="trustScore" type="number" step="0.01" min="0" max="1" required value="${esc(Number.isFinite(Number(agent.trustScore)) ? agent.trustScore : "")}"></div>
       </div>
-      <div class="form-row"><label>角色 Skill 引用（留空则按角色集中解析）</label><input name="roleSkillRef" list="agent-profile-skill-options" value="${esc(agent.roleSkillRef || "")}">
-        ${h.skillOptions}</div>
+      <div class="form-row"><label>角色 Skill 引用（留空则按角色集中解析）</label><select name="roleSkillRef"><option value=""${agent.roleSkillRef ? "" : " selected"}>按执行角色集中解析</option>${h.skillOptions}</select></div>
       <button class="primary-button" type="submit">保存 Agent 档案</button>
     </form>`;
   }
