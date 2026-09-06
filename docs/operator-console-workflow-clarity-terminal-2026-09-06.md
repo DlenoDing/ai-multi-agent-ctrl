@@ -138,3 +138,5 @@ Claude Sonnet/medium 以只读模式审查 `a82eeeb..HEAD` 后提出两项 P2，
 2. 白名单拒绝、调用方时间、调用方对象展开和容量裁剪四类核心元检查已纳入 `command-bus.mjs`，但漏了同批新增的 `runtime-issue-tracker.mjs`。现四处全部补齐，虽然当前模块没有对应违规，后续新增调用方字段或裁剪函数时不会从扫描面逃逸。
 
 Claude Opus/high 的第一次全仓只读审查运行约 11 分钟未返回结论，已终止且未采信；随后收窄差异范围的 Sonnet 审查完成并给出上述可复核结论。
+
+修复后第二轮 Claude Sonnet/medium 只读复核确认两项均无问题，并实际运行 823 条界面断言与 277 条契约检查。其附带怀疑 `task-group-insights.js` 的 `slice(0, 60)` 同类反向，经复核不成立：该模块读取的是中央状态视图，唯一生产者 `recordAgentExecutionEvent` 使用 `unshift`，数组顺序为最新在前；任务详情读取的则是项目事件接口，该接口显式按 sequence 升序，两处数据源顺序不同，不能统一改成 `slice(-60)`。
