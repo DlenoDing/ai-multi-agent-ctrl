@@ -12036,6 +12036,14 @@ const MUTATIONS = [
     expect: "任务组和任务对象上下文必须跨页面持续显示"
   },
   {
+    name: "任务详情必须区分过程事件和执行尝试数量",
+    file: "apps/control-plane-ui/public/modules/task-workbench.js",
+    gate: "console",
+    from: '} · 执行尝试 ${runs.length} 次</div>',
+    to: '}</div>',
+    expect: "必须分开标明过程事件数与执行尝试数"
+  },
+  {
     name: "项目当前主操作必须先解决仓库落点",
     file: "apps/control-plane-ui/public/modules/project-command-center.js",
     gate: "console",

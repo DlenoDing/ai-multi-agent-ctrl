@@ -2805,12 +2805,16 @@ async function runErrorGuidanceCase() {
   const objectHtml = objectProbe.renderObjectShellWith(objectState,
     {accountId: "sys", email: "sys@local", displayName: "系统管理员", accountType: "system_admin", permissions: ["system:*"], organizationId: null},
     {page: "tasks", projectId: "p1", groupId: group.id, workId: "work_context", workspace: "list"},
-    {taskGroup: group, workItem: group.workItems[0], events: [], eventCount: 0, returnedEventCount: 0});
+    {taskGroup: group, workItem: group.workItems[0], events: [], eventCount: 0, returnedEventCount: 0, eventTotalExact: true});
   const objectAside = String(objectHtml).split("</aside>")[0] || "";
   const objectTopbar = String(objectHtml).split('<header class="topbar">')[1]?.split("</header>")[0] || "";
   check("对象详情页头必须直接说清当前对象类型",
     /<h1>任务详情<\/h1>/u.test(objectTopbar) && /执行顺序、Agent、角色、规则、结果与证据/u.test(objectTopbar),
     "进入任务后页头仍只写父级“任务”，用户要到内容区才能判断自己是否在详情页");
+  check("任务详情必须分开标明过程事件数与执行尝试数",
+    /过程事件：共 0 条 · 本页 0 条 · 执行尝试 1 次/u.test(objectHtml)
+      && !/当前查询共 0 条记录/u.test(objectHtml),
+    "过程事件是 0 条时仍与下方派发卡共用“记录”口径，看起来像数据互相矛盾");
   check("任务组和任务对象上下文必须跨页面持续显示",
     /当前任务组/u.test(objectAside) && /支付链路任务组/u.test(objectAside)
       && /任务 1/u.test(objectAside) && /运行 1/u.test(objectAside) && /待审 1/u.test(objectAside)
