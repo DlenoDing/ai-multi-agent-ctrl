@@ -297,6 +297,7 @@ globalThis.__probe = {
   projectCommandDecision: (input) => window.AIMAC_PROJECT_COMMAND_CENTER.decide({...input,
     statsFor: (group) => group.stats || {tasks: group.workItemCount || 0, runs: 0, reviews: 0, blocked: 0}}),
   projectCommandHtml: (project, decision) => window.AIMAC_PROJECT_COMMAND_CENTER.render(project, decision),
+  renderSystemManagementHubWith: (nextState, overview) => { state = nextState; return renderSystemManagementHub(overview); },
   projectRepositoryConfigs: (project) => projectRepositoryConfigs(project),
   operationalStatsSources: () => ({index: String(window.AIMAC_OPERATIONAL_STATS.indexFor), group: String(window.AIMAC_OPERATIONAL_STATS.forGroup)}),
   grantRoleLabel: (role) => grantRoleLabel(role),
@@ -2681,6 +2682,11 @@ async function runErrorGuidanceCase() {
       && !/id="project-switcher"/u.test(systemOnlyAside)
       && !/data-menu="proj-overview"/u.test(systemOnlyShell),
     "系统管理员仍可从侧栏进入项目管理，系统治理与用户项目管理只做了视觉分栏、没有真正分开");
+  const systemHub = loadConsole(el("div"), {realI18n: true}).renderSystemManagementHubWith(navState,
+    {runtime: {organizations: 1, projects: 1, stateVersion: 1}, at: "2026-09-06T00:00:00Z"});
+  check("系统概览聚合卡不得残留进入具体项目的旁路",
+    /租户资源规模/u.test(systemHub) && !/data-menu="proj-overview"|进入项目/u.test(systemHub),
+    "系统侧栏已隔离项目空间，但系统概览卡仍能绕过边界进入具体项目");
   const joinInstructionSource = loadConsole(el("div"), {realI18n: true}).handlerSource("submit");
   check("节点注册弹窗必须说明远程 MCP 客户端由安装器持续维护",
     /安装器会自动探测 Codex、Claude、Cursor/u.test(joinInstructionSource)

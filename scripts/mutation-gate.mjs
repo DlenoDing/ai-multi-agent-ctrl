@@ -8414,7 +8414,7 @@ const MUTATIONS = [
     gate: "doctor",
     from: "  return (state.agentJoinTokens || [])\n    .filter((item) => !projectId || item.projectId === projectId)",
     to: "  ensureAgentGatewayCollections(state);\n  return (state.agentJoinTokens || [])\n    .filter((item) => !projectId || item.projectId === projectId)",
-    expect: "logout fixture bearer could not read state before revocation"
+    expect: "只读路径不得顺手补全集合"
   },
   {
     name: "被漂移守卫挡住时要说得出下一步",
@@ -10296,7 +10296,7 @@ const MUTATIONS = [
     file: "scripts/contract-check.mjs",
     check: "verifyCommentsDoNotCiteLineNumbers",
     from: "    .filter((file) => /\\.(mjs|js|rb|sh)$/u.test(file) && !file.endsWith(\"mutation-gate.mjs\"));",
-    to: "    .filter((file) => /\\.(mjsX|js|rb|sh)$/u.test(file) && !file.endsWith(\"mutation-gate.mjs\"));",
+    to: "    .filter(() => false);",
     expect: "本条在空转"
   },
   {
@@ -12974,7 +12974,7 @@ const MUTATIONS = [
     gate: "console",
     from: '{pageId: "sys-orgs", title: "租户资源规模", metric: `${projectCount}`, detail: "各组织项目总量，仅用于平台容量与配额观察", action: "查看组织", tone: projectCount ? "blue" : "gray"}',
     to: '{pageId: "proj-overview", title: "项目空间", metric: `${projectCount}`, detail: "进入当前项目", action: "进入项目", tone: "blue"}',
-    expect: "不能从图形界面切进用户项目"
+    expect: "系统概览聚合卡不得残留进入具体项目的旁路"
   },
   {
     name: "Agent 注册脚本必须默认配置远程 MCP 客户端",

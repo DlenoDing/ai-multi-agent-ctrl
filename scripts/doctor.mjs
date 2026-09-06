@@ -440,7 +440,7 @@ try {
   });
   if (!defaultOrgView.response.ok || defaultOrgView.payload?.organizations?.some((org) => org.orgId !== "org_default")
     || defaultOrgView.payload?.accounts?.some((account) => account.organizationId && account.organizationId !== "org_default")) {
-    throw new Error("默认组织管理员登录后没有进入自己的组织治理范围，或看到了其它组织数据");
+    throw new Error("默认组织管理员登录后没有进入自己的组织治理范围，或看到了其它组织数据；只读路径不得顺手补全集合或改变作用域投影");
   }
   console.log("  ok  系统管理员只进入系统治理空间；默认组织管理员进入组织与项目空间且只看到本组织");
   // 【拼错的执行角色要在建组时就拒】。原先任何字符串都收下、标 ready、"派发时再解析"，
