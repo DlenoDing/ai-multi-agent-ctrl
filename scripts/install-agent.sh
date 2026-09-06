@@ -13,7 +13,7 @@ WORK_DIR="${AIMAC_AGENT_DATA_ROOT:-${AIMAC_AGENT_WORK_DIR:-${DEFAULT_WORK_DIR}}}
 ROLES="${AIMAC_AGENT_ROLES:-}"
 EXECUTOR_COMMAND="${AIMAC_AGENT_EXECUTOR_COMMAND:-}"
 START_DAEMON=true
-CONFIGURE_GLOBAL_CLIENTS=false
+CONFIGURE_GLOBAL_CLIENTS=true
 
 # 带取值的参数少了取值时，set -u 会让 $2 直接炸成 "line 20: $2: unbound variable" ——
 # 这是 shell 版的崩溃栈，而复制安装命令时被截断正是最常见的情形。
@@ -34,7 +34,7 @@ for arg in "$@"; do
       printf '%s\n' "  · 必给：--server，以及 --join-token 或 --join-token-file 之一"
       printf '%s\n' "  · 认得的参数：--server --join-token --join-token-file --node-name --work-dir"
       printf '%s\n' "                --roles --executor-command --no-daemon"
-      printf '%s\n' "                --configure-global-clients / --no-configure-global-clients（别名 --configure-clients / --no-configure-clients）"
+      printf '%s\n' "                --configure-global-clients / --no-configure-global-clients（默认自动配置；别名 --configure-clients / --no-configure-clients）"
       printf '%s\n' "  · --executor-command：自定义模型执行器。不给时自动探测 codex / claude / gemini / ollama；"
       printf '%s\n' "    四个都没有、也不给它，这台节点就没有可用执行器，派发会卡住"
       exit 0

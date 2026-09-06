@@ -12976,6 +12976,54 @@ const MUTATIONS = [
     to: '{pageId: "proj-overview", title: "项目空间", metric: `${projectCount}`, detail: "进入当前项目", action: "进入项目", tone: "blue"}',
     expect: "不能从图形界面切进用户项目"
   },
+  {
+    name: "Agent 注册脚本必须默认配置远程 MCP 客户端",
+    file: "scripts/install-agent.sh",
+    gate: "specs",
+    from: "CONFIGURE_GLOBAL_CLIENTS=true\n\n# 带取值的参数",
+    to: "CONFIGURE_GLOBAL_CLIENTS=false\n\n# 带取值的参数",
+    expect: "configure remote MCP clients by default"
+  },
+  {
+    name: "Agent 节点档案必须探测 Cursor 客户端",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: '"codex", "claude", "cursor", "gemini", "ollama"',
+    to: '"codex", "claude", "gemini", "ollama"',
+    expect: "did not configure every detected remote MCP client"
+  },
+  {
+    name: "Agent 必须持久化远程 MCP 客户端刷新策略",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "    configureGlobalClients: globalClientConfigurationEnabled(),",
+    to: "    configureGlobalClients: false,",
+    expect: "did not persist its default remote MCP client configuration policy"
+  },
+  {
+    name: "Agent 常驻进程必须沿用注册时的 MCP 客户端策略",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  return config.configureGlobalClients === true;",
+    to: "  return false;",
+    expect: "没有持久化注册脚本的远程 MCP 客户端配置策略"
+  },
+  {
+    name: "节点令牌轮换后必须刷新全局远程 MCP 配置",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "        writeAgentScopedMcpConfig(config, currentProfile);\n        if (globalClientConfigurationEnabled(config)) configureGlobalRemoteMcpClients(config, currentProfile);",
+    to: "        writeAgentScopedMcpConfig(config, currentProfile);",
+    expect: "did not configure or refresh the centralized MCP"
+  },
+  {
+    name: "Agent 注册弹窗必须说明 MCP 自动配置与退出方式",
+    file: APP,
+    gate: "console",
+    from: "安装器会自动探测 Codex、Claude、Cursor，并把仅指向本控制面",
+    to: "安装器会生成配置样例",
+    expect: "必须说明远程 MCP 客户端由安装器持续维护"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

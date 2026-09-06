@@ -114,7 +114,7 @@ curl -fsSL https://control.example.com/install-agent.sh | sh -s -- \
   --join-token-file /path/to/0600.join-token
 ```
 
-安装脚本只下载轻量 `agent-runtime.mjs`，校验服务端发布的 SHA256，注册节点、探测本机模型/工具、自动生成并维护 `$AIMAC_AGENT_WORK_DIR/mcp-client-configs/` 下的远程 MCP 配置、执行自检并启动轮询进程。它不会安装或启动 MCP server、PostgreSQL、控制平面、Skill Registry，也不会同步完整 Skill 仓库。默认不会把长期 node token 写入 Codex/Claude/Cursor 等用户全局配置；只有显式传 `--configure-global-clients` 时才把远程 MCP 配置合并到本机全局客户端配置。总控为每个 dispatch 解析有效 role skill 和项目/任务组 overlay，Agent 只下载摘要绑定的最小工作集；下级角色必须取得总控单独签发的工作集，不能隐式继承或自行选择。
+安装脚本只下载轻量 `agent-runtime.mjs`，校验服务端发布的 SHA256，注册节点、探测本机模型/工具、自动生成并维护 `$AIMAC_AGENT_WORK_DIR/mcp-client-configs/` 下的远程 MCP 配置、执行自检并启动轮询进程。它不会安装或启动 MCP server、PostgreSQL、控制平面、Skill Registry，也不会同步完整 Skill 仓库。注册脚本默认把同一远程 MCP endpoint 合并到检测到的 Codex/Claude/Cursor 配置，并把该策略写入节点配置；node token 轮换后持续刷新，节点撤销后自动清理。专用隔离主机可显式传 `--no-configure-global-clients` 退出该行为。总控为每个 dispatch 解析有效 role skill 和项目/任务组 overlay，Agent 只下载摘要绑定的最小工作集；下级角色必须取得总控单独签发的工作集，不能隐式继承或自行选择。
 
 注册后交互链路固定为服务器集中式：Agent Runtime 使用一次性 join token 调用 `/api/agent/v1/register`，服务端签发唯一 node token 并只保存 digest；后续用 node token 调用 `/api/agent/v1/heartbeat`、`/self-check`、`/dispatches/next`、`/skill-worksets/:id`、`/control`、`/events`、`/checkpoint` 和 `/fail`。执行中的 MCP 工具调用统一走公网 `/mcp` Streamable HTTP，并受 node/project/dispatch 绑定的 MCP grant 限制。节点 token 可按节点撤销或轮换，服务端撤销节点时会停止后续 claim、冻结运行中的 dispatch、立即撤销 dispatch MCP grant，并在 Agent ACK 停止后重新入队。
 

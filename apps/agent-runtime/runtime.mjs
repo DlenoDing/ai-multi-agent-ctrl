@@ -184,6 +184,7 @@ async function bootstrap() {
     taskDir: join(workDir, "tasks"),
     outboxDir: join(workDir, "outbox"),
     executorCommand: configuredExecutor,
+    configureGlobalClients: globalClientConfigurationEnabled(),
     pollIntervalSeconds: registration.pollIntervalSeconds || 5,
     heartbeatIntervalSeconds: registration.heartbeatIntervalSeconds || 30,
     installedAt: new Date().toISOString()
@@ -191,7 +192,7 @@ async function bootstrap() {
   for (const path of [config.repositoryDir, config.skillCacheDir, config.taskDir, config.outboxDir]) mkdirSync(path, {recursive: true});
   writeSecretJson(configPath, config);
   writeAgentScopedMcpConfig(config, profile);
-  if (globalClientConfigurationEnabled()) configureGlobalRemoteMcpClients(config, profile);
+  if (globalClientConfigurationEnabled(config)) configureGlobalRemoteMcpClients(config, profile);
   const check = await selfCheck(config);
   if (!check.ok) throw new Error(`agent self-check failed: ${check.missingChecks.join(",")}`);
   process.stdout.write([
@@ -363,7 +364,7 @@ async function run(config) {
         }
         writeSecretJson(configPath, config);
         writeAgentScopedMcpConfig(config, currentProfile);
-        if (globalClientConfigurationEnabled()) configureGlobalRemoteMcpClients(config, currentProfile);
+        if (globalClientConfigurationEnabled(config)) configureGlobalRemoteMcpClients(config, currentProfile);
       }
       lastHeartbeat = Date.now();
     }
@@ -591,7 +592,7 @@ async function handleControlCommand(config, command, options = {}) {
       config.nodeToken = heartbeat.nodeToken;
       writeSecretJson(configPath, config);
       writeAgentScopedMcpConfig(config, profile);
-      if (globalClientConfigurationEnabled()) configureGlobalRemoteMcpClients(config, profile);
+      if (globalClientConfigurationEnabled(config)) configureGlobalRemoteMcpClients(config, profile);
     }
     await ackControlCommand(config, command, "completed", {profileDigest: heartbeat.node?.profileDigest || null});
     return;
@@ -2028,7 +2029,7 @@ function verifySkillFiles(directory, files) {
 }
 
 function probeProfile(executorCommand = "") {
-  const tools = ["git", "node", "npm", "docker", "codex", "claude", "gemini", "ollama"].map((name) => executableVersion(name, ["--version"]));
+  const tools = ["git", "node", "npm", "docker", "codex", "claude", "cursor", "gemini", "ollama"].map((name) => executableVersion(name, ["--version"]));
   const models = [];
   if (tools.find((tool) => tool.name === "codex")?.available) models.push({providerClass: "openai", adapter: "codex", available: true}, {providerClass: "azure_openai", adapter: "codex", available: true});
   if (tools.find((tool) => tool.name === "claude")?.available) models.push({providerClass: "anthropic", adapter: "claude", available: true}, {providerClass: "aws_bedrock", adapter: "claude", available: true});
@@ -2473,9 +2474,14 @@ function uniqueStrings(values) {
   return [...new Set((values || []).map((item) => String(item || "").trim()).filter(Boolean))];
 }
 
-function globalClientConfigurationEnabled() {
-  return [args["configure-global-clients"], args["configure-clients"]].some((value) => value === true || value === "true") ||
-    process.env.AIMAC_AGENT_CONFIGURE_GLOBAL_CLIENTS === "true" || process.env.AIMAC_AGENT_CONFIGURE_CLIENTS === "true";
+export function globalClientConfigurationEnabled(config = {}) {
+  const argument = [args["configure-global-clients"], args["configure-clients"]]
+    .find((value) => value !== undefined);
+  if (argument !== undefined) return argument === true || argument === "true";
+  const environment = [process.env.AIMAC_AGENT_CONFIGURE_GLOBAL_CLIENTS, process.env.AIMAC_AGENT_CONFIGURE_CLIENTS]
+    .find((value) => value !== undefined);
+  if (environment !== undefined) return environment === "true";
+  return config.configureGlobalClients === true;
 }
 
 function readJoinToken() {

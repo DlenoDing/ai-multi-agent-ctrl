@@ -833,7 +833,7 @@ sh install-agent.sh \
   --work-dir "$HOME/.local/share/aimac-agent"
 ```
 
-安装脚本必须自动生成并持续维护 `$AIMAC_AGENT_WORK_DIR/mcp-client-configs/` 下的远程 MCP 配置，Codex/Claude/Cursor 等客户端配置片段只指向系统服务器 `/mcp`，不得启动本地 MCP server。只有命令显式携带 `--configure-global-clients` 时，才允许把该远程 MCP 配置合并到 Agent 主机用户全局配置。
+安装脚本必须自动生成并持续维护 `$AIMAC_AGENT_WORK_DIR/mcp-client-configs/` 下的远程 MCP 配置，Codex/Claude/Cursor 等客户端配置只指向系统服务器 `/mcp`，不得启动本地 MCP server。注册脚本默认自动合并检测到的客户端配置，并持久化刷新策略；节点凭据轮换后同步刷新，节点撤销后清理。专用隔离主机可显式携带 `--no-configure-global-clients` 关闭。
 
 ### 10.7 实时控制与执行事件回送
 

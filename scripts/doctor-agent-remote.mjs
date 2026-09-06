@@ -349,16 +349,30 @@ try {
     idempotencyKey: "doctor-agent-verified-install-token",
     body: {projectId: "prj_control_plane", nodeName: "verified-command-node", allowedRoles: ["*"], ttlSeconds: 1800, maxUses: 1}
   });
+  const verifiedHome = join(sandbox, "verified-home");
+  const verifiedCodexHome = join(verifiedHome, ".codex");
+  const fakeClientBin = join(sandbox, "fake-ai-clients");
+  mkdirSync(fakeClientBin, {recursive: true});
+  for (const client of ["codex", "claude", "cursor"]) {
+    const path = join(fakeClientBin, client);
+    writeFileSync(path, "#!/bin/sh\nprintf '%s\\n' 'fixture client 1.0'\n");
+    chmodSync(path, 0o700);
+  }
+  const verifiedEnv = {
+    ...process.env,
+    HOME: verifiedHome,
+    CODEX_HOME: verifiedCodexHome,
+    PATH: `${fakeClientBin}:${process.env.PATH || ""}`,
+    AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true",
+    AIMAC_AGENT_NODE_NAME: "verified-command-node",
+    AIMAC_AGENT_WORK_DIR: verifiedCommandWorkDir,
+    AIMAC_AGENT_EXECUTOR_COMMAND: `node ${JSON.stringify(executor)}`
+  };
+  delete verifiedEnv.AIMAC_AGENT_CONFIGURE_CLIENTS;
+  delete verifiedEnv.AIMAC_AGENT_CONFIGURE_GLOBAL_CLIENTS;
   const verifiedInstall = spawnSync("sh", ["-c", verifiedJoinResult.verifiedInstallCommand], {
     cwd: sandbox,
-    env: {
-      ...process.env,
-      AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true",
-      AIMAC_AGENT_CONFIGURE_CLIENTS: "false",
-      AIMAC_AGENT_NODE_NAME: "verified-command-node",
-      AIMAC_AGENT_WORK_DIR: verifiedCommandWorkDir,
-      AIMAC_AGENT_EXECUTOR_COMMAND: `node ${JSON.stringify(executor)}`
-    },
+    env: verifiedEnv,
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024
   });
@@ -367,6 +381,24 @@ try {
     throw new Error(`checksum-verified Agent install command failed: ${verifiedInstall.stderr || verifiedInstall.stdout}`);
   }
   assertAgentScopedMcpConfig(verifiedCommandWorkDir, baseUrl);
+  const verifiedConfigPath = join(verifiedCommandWorkDir, "agent-config.json");
+  const verifiedConfig = JSON.parse(readFileSync(verifiedConfigPath, "utf8"));
+  if (verifiedConfig.configureGlobalClients !== true) {
+    throw new Error("Agent installer did not persist its default remote MCP client configuration policy");
+  }
+  assertGlobalRemoteMcpConfig(verifiedHome, verifiedCodexHome, baseUrl, verifiedConfig.nodeToken);
+  forceNodeCredentialNearExpiry(verifiedConfig.nodeId);
+  const verifiedRotation = spawnSync(process.execPath,
+    [join(verifiedCommandWorkDir, "bin", "aimac-agent-runtime.mjs"), "run", "--work-dir", verifiedCommandWorkDir, "--once"],
+    {cwd: sandbox, env: verifiedEnv, encoding: "utf8", maxBuffer: 32 * 1024 * 1024});
+  if (verifiedRotation.status !== 0) {
+    throw new Error(`Default MCP client configuration did not survive the daemon boundary: ${verifiedRotation.stderr || verifiedRotation.stdout}`);
+  }
+  const rotatedVerifiedConfig = JSON.parse(readFileSync(verifiedConfigPath, "utf8"));
+  if (rotatedVerifiedConfig.nodeToken === verifiedConfig.nodeToken) {
+    throw new Error("Default MCP client persistence probe did not rotate the node credential");
+  }
+  assertGlobalRemoteMcpConfig(verifiedHome, verifiedCodexHome, baseUrl, rotatedVerifiedConfig.nodeToken);
 
   const joinTokenFile = join(sandbox, "doctor.join");
   writeFileSync(joinTokenFile, joinResult.joinToken, {mode: 0o600});
@@ -1764,6 +1796,20 @@ function assertAgentScopedMcpConfig(workDir, baseUrl, expectedToken) {
   if (expectedToken && server.headers?.Authorization !== `Bearer ${expectedToken}`) throw new Error("Agent scoped MCP config was not refreshed after node credential rotation");
   for (const filename of ["codex_config.toml", "claude_desktop_config.json", "cursor_mcp.json"]) {
     if (!existsSync(join(configDir, filename))) throw new Error(`Agent scoped MCP client snippet missing: ${filename}`);
+  }
+}
+
+function assertGlobalRemoteMcpConfig(homeDir, codexHome, baseUrl, expectedToken) {
+  const codex = readFileSync(join(codexHome, "config.toml"), "utf8");
+  if (!codex.includes(`${baseUrl}/mcp`) || !codex.includes(`Bearer ${expectedToken}`)) {
+    throw new Error("Agent registration did not configure or refresh the centralized MCP in Codex");
+  }
+  for (const path of [join(homeDir, ".claude", "mcp.json"), join(homeDir, ".cursor", "mcp.json")]) {
+    if (!existsSync(path)) throw new Error(`Agent registration did not configure every detected remote MCP client: ${path}`);
+    const remote = JSON.parse(readFileSync(path, "utf8")).mcpServers?.ai_multi_agent_ctrl;
+    if (remote?.url !== `${baseUrl}/mcp` || remote?.headers?.Authorization !== `Bearer ${expectedToken}` || remote.command) {
+      throw new Error(`Agent registration did not configure or refresh a remote-only MCP client: ${path}`);
+    }
   }
 }
 

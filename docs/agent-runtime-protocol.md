@@ -54,8 +54,8 @@ sh install-agent.sh \
 | `--work-dir` | 节点数据根目录 |
 | `--roles` | 这个节点承接哪些角色（逗号分隔），不给则由控制面按派发决定 |
 | `--executor-command` | **自定义模型执行器命令**。不给时节点自动探测 `codex` / `claude` / `gemini` / `ollama` 四个命令；四个都没有、也没给这个参数，节点就没有可用执行器 —— 派发会卡在 `agent_runtime_executor_required`，控制台上那条阻塞提示写的也是这句 |
-| `--configure-clients` / `--no-configure-clients` | 是否改写这台机器上 codex/claude/cursor 的 MCP 客户端配置（项目级） |
-| `--configure-global-clients` / `--no-configure-global-clients` | 同上，但改写用户全局配置 |
+| `--configure-clients` / `--no-configure-clients` | `--configure-global-clients` 的兼容别名 |
+| `--configure-global-clients` / `--no-configure-global-clients` | 是否把远程 MCP 合并到检测到的 codex/claude/cursor 用户配置；安装脚本默认启用，可显式关闭 |
 | `--no-daemon` | 只安装、不起常驻进程 |
 
 ## 让它常驻（开机自启 + 崩了自动重启）
@@ -204,7 +204,7 @@ $AIMAC_AGENT_WORK_DIR/mcp-client-configs/claude_desktop_config.json
 $AIMAC_AGENT_WORK_DIR/mcp-client-configs/cursor_mcp.json
 ```
 
-这些配置只指向控制平面公网 `/mcp` Streamable HTTP endpoint，并携带服务端签发的 node token。node token 轮换后 Runtime 必须刷新这些文件。默认不得改写 Agent 主机上的 Codex/Claude/Cursor 用户全局配置；只有安装命令显式携带 `--configure-global-clients` 时，才把同一远程 MCP endpoint 合并到全局客户端配置。Agent 主机禁止安装或启动本地 MCP server。
+这些配置只指向控制平面公网 `/mcp` Streamable HTTP endpoint，并携带服务端为该节点单独签发、可单独吊销的 node token。注册脚本默认把同一远程 endpoint 合并到检测到的 Codex/Claude/Cursor 用户配置，并把此策略写入节点本地配置；node token 轮换后 Runtime 持续刷新，节点撤销后清理。专用隔离主机可显式携带 `--no-configure-global-clients` 关闭。Agent 主机禁止安装或启动本地 MCP server。
 
 ## 4. 心跳协议
 
@@ -589,8 +589,8 @@ runtime_start
 | `AIMAC_AGENT_NODE_NAME` | 主机名 | 节点名（也可用 `--node-name`）；票上指定了名字时必须一致 | 不一致被拒：join_token_node_name_mismatch |
 | `AIMAC_AGENT_REGION` | 无 | 上报给控制面的地区标签，只用于展示 | — |
 | `AIMAC_AGENT_DATA_ROOT` / `AIMAC_AGENT_WORK_DIR` | 平台默认数据目录 | 节点工作根目录（也可用 `--work-dir`）：配置、仓库、技能缓存、任务目录、发件箱都在它之下 | 换目录等于换了一台节点 |
-| `AIMAC_AGENT_CONFIGURE_CLIENTS` | `false` | 注册后把远程 MCP 配置写进本机 codex / claude / cursor 的配置文件 | 开了会改用户自己的配置文件（原子写） |
-| `AIMAC_AGENT_CONFIGURE_GLOBAL_CLIENTS` | `false` | 同上，但写全局配置而非项目级 | 同上 |
+| `AIMAC_AGENT_CONFIGURE_CLIENTS` | 直接运行 Runtime 时 `false`；`install-agent.sh` 默认 `true` | 注册后把远程 MCP 配置写进本机 codex / claude / cursor 的用户配置；兼容别名 | 开了会改用户自己的配置文件（原子写） |
+| `AIMAC_AGENT_CONFIGURE_GLOBAL_CLIENTS` | 直接运行 Runtime 时 `false`；`install-agent.sh` 默认 `true` | 同上；安装策略会写入节点配置供常驻进程持续刷新 | 同上 |
 | `AIMAC_AGENT_ALLOW_INSECURE_HTTP` | `false` | 允许用 http 连非本机控制面 | 节点凭据明文走网络 |
 
 ### 11.2 执行

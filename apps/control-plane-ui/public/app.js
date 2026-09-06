@@ -8424,6 +8424,7 @@ document.addEventListener("submit", async (event) => {
       openModal("一次性智能体加入令牌", `
         <div class="stack">
           <div class="notice warn-notice">以下注册命令仅显示一次，请立即复制到目标主机执行。</div>
+          <div class="notice">安装器会自动探测 Codex、Claude、Cursor，并把仅指向本控制面 <span class="mono">/mcp</span> 的远程配置写入对应客户端；节点令牌轮换时持续刷新，节点撤销时自动清理。该节点使用独立、可由服务端单独吊销的身份；专用隔离主机如不希望修改客户端配置，可在命令末尾加 <span class="mono">--no-configure-global-clients</span>。</div>
           <div class="command-box"><strong>直接安装</strong><pre id="join-install">${esc(result.installCommand || "-")}</pre></div>
           <div class="button-row"><button type="button" class="secondary-button" data-action="copy-el" data-copy-target="#join-install">复制直接安装命令</button></div>
           <div class="command-box"><strong>带完整性校验的安装（推荐）</strong><pre id="join-verified">${esc(result.verifiedInstallCommand || "-")}</pre></div>

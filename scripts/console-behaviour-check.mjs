@@ -2680,6 +2680,12 @@ async function runErrorGuidanceCase() {
       && !/id="project-switcher"/u.test(systemOnlyAside)
       && !/data-menu="proj-overview"/u.test(systemOnlyShell),
     "系统管理员仍可从侧栏进入项目管理，系统治理与用户项目管理只做了视觉分栏、没有真正分开");
+  const joinInstructionSource = loadConsole(el("div"), {realI18n: true}).handlerSource("submit");
+  check("节点注册弹窗必须说明远程 MCP 客户端由安装器持续维护",
+    /安装器会自动探测 Codex、Claude、Cursor/u.test(joinInstructionSource)
+      && /节点令牌轮换时持续刷新/u.test(joinInstructionSource)
+      && /--no-configure-global-clients/u.test(joinInstructionSource),
+    "注册命令会修改并持续维护客户端 MCP 配置，但一次性弹窗没有说明默认行为或退出方式");
   const orgNav = renderedNav({accountId: "org", email: "org@local", displayName: "组织管理员",
     accountType: "org_admin", roles: ["org_admin"], permissions: ["org:*", "project:create", "member:invite", "agent:activate"], organizationId: "org_default"}, "p1", "org-overview");
   assertMenuLeaves("组织管理", orgNav, [["org-members", "list", "成员账户"], ["org-members", "create", "创建成员"],

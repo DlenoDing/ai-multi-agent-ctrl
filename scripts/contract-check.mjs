@@ -27,7 +27,7 @@ import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps
 import { clampEnvNumber } from "../apps/control-plane-ui/lib/env-number.mjs";
 import { localAccountLoginHints } from "../apps/control-plane-ui/lib/bootstrap-hints.mjs";
 import { consoleScopesForAccount } from "../apps/control-plane-ui/lib/console-scopes.mjs";
-import { removeGlobalRemoteMcpClients, gitAuthEnvFor } from "../apps/agent-runtime/runtime.mjs";
+import { removeGlobalRemoteMcpClients, globalClientConfigurationEnabled, gitAuthEnvFor } from "../apps/agent-runtime/runtime.mjs";
 import { buildExecutionContentBundle as buildBundleForCheck, isSafeGitRemoteUrl, dispatchRepositoryCredential } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { classifyGitRemoteFailure, scrubConnectionDetail, testRepositoryConnection, REPOSITORY_CONNECTION_REASONS } from "../apps/control-plane-ui/lib/git-connection-test.mjs";
 import { publicAgentNode, agentRuntimeOutdated, REQUIRED_AGENT_RUNTIME_VERSION } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
@@ -5092,6 +5092,21 @@ function verifyHumanAndOrganizationContracts(output) {
   // 原先没有任何移除路径：节点被撤销之后配置里那份凭据照样留着，而运维以为撤销就是撤销了。
   // （服务端的撤销截止期会让那份凭据失效；这里清的是"它还躺在别处配置里"这件事本身。）
   {
+    const savedGlobal = process.env.AIMAC_AGENT_CONFIGURE_GLOBAL_CLIENTS;
+    const savedAlias = process.env.AIMAC_AGENT_CONFIGURE_CLIENTS;
+    delete process.env.AIMAC_AGENT_CONFIGURE_GLOBAL_CLIENTS;
+    delete process.env.AIMAC_AGENT_CONFIGURE_CLIENTS;
+    try {
+      if (!globalClientConfigurationEnabled({configureGlobalClients: true})
+        || globalClientConfigurationEnabled({configureGlobalClients: false})) {
+        output.push("Agent 没有持久化注册脚本的远程 MCP 客户端配置策略，常驻后令牌轮换不会继续刷新客户端配置");
+      }
+    } finally {
+      if (savedGlobal === undefined) delete process.env.AIMAC_AGENT_CONFIGURE_GLOBAL_CLIENTS;
+      else process.env.AIMAC_AGENT_CONFIGURE_GLOBAL_CLIENTS = savedGlobal;
+      if (savedAlias === undefined) delete process.env.AIMAC_AGENT_CONFIGURE_CLIENTS;
+      else process.env.AIMAC_AGENT_CONFIGURE_CLIENTS = savedAlias;
+    }
     const cleanupDir = mkdtempSync(join(tmpdir(), "aimac-mcp-cleanup-"));
     const codexPath = join(cleanupDir, "config.toml");
     const claudePath = join(cleanupDir, "claude-mcp.json");
