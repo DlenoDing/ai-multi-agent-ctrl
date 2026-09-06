@@ -67,7 +67,7 @@
   }
 
   function memberDetail({member, project, projectMemberships, taskGroupGrants, accountActionsHtml,
-    projectGrantFormHtml, taskGroupGrantFormHtml, projectSelectorHtml, helpers: h}) {
+    projectGrantFormHtml, projectGrantTitle, taskGroupGrantFormHtml, projectSelectorHtml, helpers: h}) {
     const projectItems = projectMemberships.map(({project: item, role}) => ({
       id: item.id, name: item.name || item.id, role: h.grantRoleLabel(role),
       actionHtml: h.projectLink(item, "管理项目角色", {page: "proj-members", workspace: "list", accountId: member.accountId})
@@ -107,7 +107,7 @@
           <section><h3>已有任务组角色</h3>${grantRows(groupItems, "尚未分配任务组角色。", h)}</section>
         </div>`, {wide: true})}
       ${project ? `<div class="governance-object-columns">
-        ${h.panel(`分配项目角色 · ${esc(project.name || project.id)}`, projectGrantFormHtml, {wide: true})}
+        ${h.panel(`${esc(projectGrantTitle || "分配项目角色")} · ${esc(project.name || project.id)}`, projectGrantFormHtml, {wide: true})}
         ${h.panel(`分配任务组角色 · ${esc(project.name || project.id)}`, taskGroupGrantFormHtml, {wide: true})}
       </div>` : ""}
     </div>`;

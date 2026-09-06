@@ -3420,12 +3420,15 @@ function renderOrgMembers() {
       taskGroupGrants,
       accountActionsHtml: organizationMemberActions(selectedMember),
       projectSelectorHtml,
+      projectGrantTitle: chosenMembership ? "项目角色" : "分配项目角色",
       projectGrantFormHtml: manageable && chosenProject
         ? chosenMembership
           ? `<div class="notice">该成员已有“${esc(grantRoleLabel(chosenMembership.role))}”项目角色。请使用上方“管理项目角色”进入项目成员详情；项目负责人身份不可在这里替换。</div>`
           : renderProjectMemberForm({projectId: chosenProject.id})
         : readOnlyNotice,
-      taskGroupGrantFormHtml: manageable && chosenProject ? renderTaskGroupGrantForm(chosenProject) : readOnlyNotice,
+      taskGroupGrantFormHtml: manageable && chosenProject
+        ? renderTaskGroupGrantForm(chosenProject, {accountId: selectedMember.accountId})
+        : readOnlyNotice,
       helpers: {statusBadge, retiredNote, t, permLabel, grantRoleLabel, projectNameOf, taskGroupNameOf,
         projectLink: window.AIMAC_OBJECT_WORKSPACE.projectLink, panel: renderPanel}
     });

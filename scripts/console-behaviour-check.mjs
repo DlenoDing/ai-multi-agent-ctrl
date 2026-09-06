@@ -5879,10 +5879,15 @@ async function runPendingTruncationCase() {
           && /管理项目角色/u.test(memberDetail)
           && /data-target-menu="proj-members" data-target-workspace="list" data-grant-account="acct_member"/u.test(memberDetail)
           && /该成员已有“项目管理员”项目角色/u.test(memberDetail)
+          && /<h2>项目角色 · /u.test(memberDetail)
           && !/data-form="project-member"/u.test(memberDetail)
           && /分配任务组角色/u.test(memberDetail)
-          && /value="acct_member" selected/u.test(memberDetail),
+          && /type="hidden" name="subjectId" value="acct_member"/u.test(memberDetail),
         textOf(memberDetail).slice(0, 500));
+      check("成员详情里的任务组授权锁定当前成员",
+        /type="hidden" name="subjectId" value="acct_member"/u.test(memberDetail)
+          && !/<select name="subjectId">/u.test(memberDetail),
+        "成员甲详情仍能把任务组角色改授给成员乙，成员对象上下文没有锁住");
       check("成员详情集中放置账号生命周期操作",
         /data-action="member-perms" data-account="acct_member"/u.test(memberDetail)
           && /data-action="member-status" data-account="acct_member"/u.test(memberDetail)

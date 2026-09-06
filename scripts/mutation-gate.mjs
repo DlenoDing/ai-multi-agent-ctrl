@@ -13337,6 +13337,14 @@ const MUTATIONS = [
     expect: "成员详情固定成员上下文并区分已有项目角色与新增授权"
   },
   {
+    name: "组织成员详情的任务组授权必须锁定当前成员",
+    file: APP,
+    gate: "console",
+    from: "        ? renderTaskGroupGrantForm(chosenProject, {accountId: selectedMember.accountId})",
+    to: "        ? renderTaskGroupGrantForm(chosenProject)",
+    expect: "成员详情里的任务组授权锁定当前成员"
+  },
+  {
     name: "项目监控菜单必须按执行跟踪、节点控制和验收收口分组",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
