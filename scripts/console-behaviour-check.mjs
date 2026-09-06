@@ -2707,7 +2707,7 @@ async function runErrorGuidanceCase() {
     ["proj-members", "add", "添加项目成员"], ["proj-members", "groups", "任务组权限"], ["proj-members", "grant-group", "授予任务组权限"],
     ["proj-agents", "profiles", "Agent 档案"], ["proj-agents", "create", "新建 Agent 档案"], ["tg", "list", "任务组"], ["tasks", "list", "任务"],
     ["monitor", "overview", "项目监控"], ["monitor", "sessions", "工作会话"], ["monitor", "dispatches", "Agent 派发"],
-    ["monitor", "lanes", "执行载体"], ["monitor", "models", "模型决策"], ["monitor", "placements", "会话放置"],
+    ["monitor", "lanes", "执行载体"], ["monitor", "models", "模型决策"], ["monitor", "placements", "会话放置"], ["monitor", "admissions", "准入决策"],
     ["monitor", "events", "实时事件"], ["monitor", "node-control", "运行节点"], ["monitor", "commands", "控制命令"],
     ["monitor", "dlq", "死信队列"], ["monitor", "checkpoints", "检查点证据"], ["monitor", "quality", "质量门禁"],
     ["monitor", "finalizations", "人工定稿"], ["monitor", "barriers", "阻塞与门禁"], ["review", "pending", "待我审核"],
@@ -5202,9 +5202,10 @@ async function runPendingTruncationCase() {
         ["dispatches", "智能体派发"],
         ["lanes", "可复用执行载体（Worker Lane）"],
         ["models", "模型选择记录"],
-        ["placements", "会话放置记录"]
+        ["placements", "会话放置记录"],
+        ["admissions", "准入决策"]
       ].map(([pane, title]) => ({pane, title, html: objectProbe.renderMonitorInventoryWith(multiState, orgAdmin, "p1", [pane])}));
-      check("会话、派发、执行载体、模型决策和会话放置必须是五个独立监控页面",
+      check("会话、派发、执行载体、模型决策、会话放置和准入必须是六个独立监控页面",
         monitorObjectPanes.every((current) => current.html.includes(`<h2>${current.title}</h2>`)
           && monitorObjectPanes.filter((other) => other.pane !== current.pane).every((other) => !current.html.includes(`<h2>${other.title}</h2>`))),
         monitorObjectPanes.map((item) => `${item.pane}:${textOf(item.html).slice(0, 80)}`).join(" | "));

@@ -13073,12 +13073,12 @@ const MUTATIONS = [
     expect: "成员定向授权保留成员和选择的项目"
   },
   {
-    name: "执行会话复合页必须拆成五个监控对象页面",
+    name: "执行会话复合页必须拆成六个监控对象页面",
     file: "apps/control-plane-ui/public/modules/workspaces.js",
     gate: "console",
-    from: 'pane("sessions", "工作会话", ["工作会话"]), pane("dispatches", "Agent 派发", ["智能体派发"]), pane("lanes", "执行载体", ["可复用执行载体（Worker Lane）"]), pane("models", "模型决策", ["模型选择记录"]), pane("placements", "会话放置", ["会话放置记录", "准入决策"])',
+    from: 'pane("sessions", "工作会话", ["工作会话"]), pane("dispatches", "Agent 派发", ["智能体派发"]), pane("lanes", "执行载体", ["可复用执行载体（Worker Lane）"]), pane("models", "模型决策", ["模型选择记录"]), pane("placements", "会话放置", ["会话放置记录"]), pane("admissions", "准入决策", ["准入决策"])',
     to: 'pane("runs", "执行会话", ["工作会话", "智能体派发", "可复用执行载体（Worker Lane）", "模型选择记录", "会话放置记录", "准入决策"])',
-    expect: "必须是五个独立监控页面"
+    expect: "必须是六个独立监控页面"
   },
   {
     name: "模型决策必须有独立监控菜单入口",
