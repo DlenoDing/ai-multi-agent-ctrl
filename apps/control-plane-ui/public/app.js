@@ -6754,7 +6754,7 @@ function renderExecutionObjectDetail() {
 
 function renderMonitor() {
   return window.AIMAC_MONITOR_DASHBOARD_WORKSPACE.render({
-    currentAccount, currentProjectId, execEvents, execHasMore, execHistoryMode,
+    currentAccount, currentProjectId, execEvents, execEventsDropped, execHasMore, execHistoryMode,
     execHistoryStack, execScope, managementGroupId, selectedExecutionObject, state
   }, {
     AGENT_MODEL_PRESET_LABEL, SESSION_SETTLED_STATUSES, accountName, admissionReasonLabel,

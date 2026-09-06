@@ -3,7 +3,7 @@
 
 function render(context, helpers) {
   const {
-    currentAccount, currentProjectId, execEvents = [], execHasMore, execHistoryMode,
+    currentAccount, currentProjectId, execEvents = [], execEventsDropped, execHasMore, execHistoryMode,
     execHistoryStack = [], execScope = {}, managementGroupId, selectedExecutionObject, state
   } = context;
   const {

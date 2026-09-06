@@ -830,6 +830,14 @@ const MUTATIONS = [
     expect: "monitor dashboard workspace loads before app.js"
   },
   {
+    name: "监控工作区必须收到实时事件截断计数",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "workspace",
+    from: "    currentAccount, currentProjectId, execEvents, execEventsDropped, execHasMore, execHistoryMode,",
+    to: "    currentAccount, currentProjectId, execEvents, execHasMore, execHistoryMode,",
+    expect: "monitor dashboard receives every declared runtime context value"
+  },
+  {
     name: "任务详情事件索引不得超过服务端账本窗口",
     file: "apps/control-plane-ui/public/modules/task-workbench.js",
     gate: "console",

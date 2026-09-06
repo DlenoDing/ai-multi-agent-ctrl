@@ -90,6 +90,18 @@ const locations = context.AIMAC_WORKSPACE_LOCATION;
   check("monitor dashboard workspace loads before app.js", monitorDashboardAt >= 0 && appAt > monitorDashboardAt,
     `monitorDashboardAt=${monitorDashboardAt}; appAt=${appAt}`);
 }
+
+{
+  const appSource = readPublic("app.js");
+  const moduleSource = readPublic("modules/monitor-dashboard-workspace.js");
+  const contextKeys = [...(moduleSource.match(/const \{([\s\S]*?)\} = context;/u)?.[1] || "")
+    .matchAll(/\b([A-Za-z_$][\w$]*)\b(?:\s*=\s*[^,]+)?\s*(?:,|$)/gu)].map((match) => match[1]);
+  const callAt = appSource.indexOf("AIMAC_MONITOR_DASHBOARD_WORKSPACE.render({");
+  const contextBlock = callAt < 0 ? "" : appSource.slice(callAt, appSource.indexOf("}, {", callAt));
+  const missing = contextKeys.filter((key) => !new RegExp(`\\b${key}\\b`, "u").test(contextBlock));
+  check("monitor dashboard receives every declared runtime context value", contextKeys.length >= 9 && !missing.length,
+    `declared=${contextKeys.join(",")}; missing=${missing.join(",")}`);
+}
 {
   const longCursor = "c".repeat(4096);
   const snapshot = {version: 1, accountId: "a1", projectId: "p1", page: "tasks", groupId: "g1", workId: "w1", workspace: "list", cursor: longCursor, stack: Array.from({length: 100}, (_, index) => `cursor-${index}`), token: "DO_NOT_STORE_TOKEN", objective: "DO_NOT_STORE_BODY"};
