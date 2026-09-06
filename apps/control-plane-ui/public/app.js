@@ -4760,8 +4760,7 @@ function renderProjectOverview() {
       const stuck = (state.agentDispatches || [])
         .filter((item) => item.taskGroupId === taskGroup.id && item.status === "blocked").length;
       return stuck ? `${blocked} <span class="warn-text">· 派发被挡 ${stuck}</span>` : String(blocked);
-    })(), c: "num"},
-    window.AIMAC_OBJECT_WORKSPACE.groupLink(taskGroup, "进入任务组", "tg", true)
+    })(), c: "num"}
   ])).join("");
   const repoTargets = (state.repositoryOutputs || []).filter((target) => target.projectId === project.id);
   const repoRows = repoTargets.map((target) => row([
@@ -4796,10 +4795,10 @@ function renderProjectOverview() {
     projectHubHtml(project),
     panel("关键指标", `
       <div class="metric-grid">
-        <div class="metric">${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "任务组", {page: "tg", workspace: "list", primary: true})}<strong>${openGroups.length}/${groups.length}</strong></div>
+        <div class="metric"><span>任务组</span><strong>${openGroups.length}/${groups.length}</strong></div>
         <div class="metric"><span>任务组平均进度</span><strong>${avgProgress}%</strong>
           <div class="small muted">按任务组平均；上面那个总进度是按工作项平均的，两者不一定相等</div></div>
-        <div class="metric">${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "受阻项", {page: "monitor", workspace: "blockers", primary: true})}<strong>${blockers.length}</strong>
+        <div class="metric"><span>受阻项</span><strong>${blockers.length}</strong>
           ${(() => {
             // 这一格数的是【任务组身上的 blockers】（关闭门那一套）。而「被挡住的派发」是另一回事，
             // 它出现在执行监控页上，那里明说「有执行被挡住，需要人处理」——
@@ -4812,7 +4811,7 @@ function renderProjectOverview() {
               + " 到“Agent 派发”或“阻塞处置”看它们卡在哪</div>";
           })()}
         </div>
-        <div class="metric">${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "待人工确认", {page: "review", workspace: "pending", primary: true})}<strong>${pendingConfirmCount}</strong>
+        <div class="metric"><span>待人工确认</span><strong>${pendingConfirmCount}</strong>
           ${(() => {
             // 这一格只数【确认单】一类。而等人拍板的东西有九类，散在人工审核与执行监控两页上 ——
             // 项目概览是人每天先看的那一屏，它显示 0 的时候人就不会再往下找了
@@ -4833,7 +4832,7 @@ function renderProjectOverview() {
           })()}</div>
       </div>
     `, {wide: true}),
-    panel("任务组一览", table(["任务组", "状态", "阶段", "进度", "健康度", {label: "受阻数", c: "num"}, "操作"], groupRows), {wide: true,
+    panel("任务组一览", table(["任务组", "状态", "阶段", "进度", "健康度", {label: "受阻数", c: "num"}], groupRows), {wide: true,
       headerSide: `${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "全部任务组", {page: "tg", workspace: "list"})}${hasProjectPermission("task_group:control") && project.status !== "archived" ? `<button class="primary-button" data-workspace-page="tg" data-workspace="create">创建任务组</button>` : ""}`}),
     panel("最新执行事件", table([{label: "时间", c: "nowrap"}, "事件", "状态", {label: "摘要", c: "text-clip"}], events,
       {moreText: moreText(eventsInScope.length, 10, "agentExecutionEvents")})),

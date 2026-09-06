@@ -28,9 +28,9 @@
         <div class="project-object-progress"><span>总进度</span>${h.progressLine(project.progress?.percent)}</div>
       </div>
       <div class="project-object-resources">
-        ${projectLink(project, `Agent 节点 ${agentOnline}/${agentTotal} 在线`, {page: "proj-agents", workspace: "nodes"})}
-        ${projectLink(project, `仓库 ${repositoryCount} 个`, {page: "proj-settings", workspace: "repositories"})}
-        ${projectLink(project, `成员 ${(project.members || []).length} 人`, {page: "proj-members", workspace: "list"})}
+        <span class="project-resource-fact">Agent 节点 ${esc(agentOnline)}/${esc(agentTotal)} 在线</span>
+        <span class="project-resource-fact">仓库 ${esc(repositoryCount)} 个</span>
+        <span class="project-resource-fact">成员 ${esc((project.members || []).length)} 人</span>
       </div>
     </section>`;
   }

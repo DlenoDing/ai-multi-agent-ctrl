@@ -12478,6 +12478,30 @@ const MUTATIONS = [
     expect: "项目概览与下一步使用服务端相同的仓库兼容口径"
   },
   {
+    name: "项目资源摘要不得恢复跨模块按钮",
+    file: "apps/control-plane-ui/public/modules/object-workspace.js",
+    gate: "console",
+    from: '        <span class="project-resource-fact">仓库 ${esc(repositoryCount)} 个</span>',
+    to: '        ${projectLink(project, `仓库 ${repositoryCount} 个`, {page: "proj-settings", workspace: "repositories"})}',
+    expect: "项目资源摘要只展示事实，不再作为跨模块导航"
+  },
+  {
+    name: "项目概览任务组行不得恢复重复入口",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '    })(), c: "num"}\n  ])).join("");',
+    to: '    })(), c: "num"},\n    window.AIMAC_OBJECT_WORKSPACE.groupLink(taskGroup, "进入任务组", "tg", true)\n  ])).join("");',
+    expect: "项目概览任务组表每行只保留一个详情入口"
+  },
+  {
+    name: "项目关键指标不得恢复跨栏目按钮",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '<div class="metric"><span>受阻项</span><strong>${blockers.length}</strong>',
+    to: '<div class="metric">${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "受阻项", {page: "monitor", workspace: "blockers", primary: true})}<strong>${blockers.length}</strong>',
+    expect: "项目关键指标只展示状态，不承担跨栏目跳转"
+  },
+  {
     name: "任务组详情必须显示真实运行摘要",
     file: "apps/control-plane-ui/public/modules/task-group-workspace.js",
     gate: "console",

@@ -5635,8 +5635,25 @@ async function runPendingTruncationCase() {
       (objectOverview.match(/aria-label="项目摘要"/gu) || []).length === 1
         && !/项目进度 ·/u.test(objectOverview) && !/class="module-card/u.test(objectOverview)
         && /任务组平均进度/u.test(objectOverview) && /待人工确认/u.test(objectOverview), textOf(objectOverview).slice(0, 300));
-  check("项目资源摘要取实际配置与服务端节点范围，不把产出记录数当仓库数",
+    check("项目资源摘要取实际配置与服务端节点范围，不把产出记录数当仓库数",
       /仓库 1 个/u.test(objectOverview) && /Agent 节点 2\/3 在线/u.test(objectOverview), textOf(objectOverview));
+    const summaryAt = objectOverview.indexOf('aria-label="项目摘要"');
+    const summaryHtml = summaryAt < 0 ? "" : objectOverview.slice(summaryAt, objectOverview.indexOf("</section>", summaryAt));
+    check("项目资源摘要只展示事实，不再作为跨模块导航",
+      /project-resource-fact/u.test(summaryHtml) && !/<button/u.test(summaryHtml),
+      "节点、仓库和成员数字仍是跨模块按钮，用户点击项目事实后会突然离开概览");
+    const groupPanelAt = objectOverview.indexOf("<h2>任务组一览</h2>");
+    const groupPanelHtml = groupPanelAt < 0 ? "" : objectOverview.slice(groupPanelAt, objectOverview.indexOf("</article>", groupPanelAt));
+    check("项目概览任务组表每行只保留一个详情入口",
+      !/<th[^>]*>操作<\/th>/u.test(groupPanelHtml)
+        && (groupPanelHtml.match(/data-focus-group="tg1"/gu) || []).length === 1
+        && !/进入任务组/u.test(groupPanelHtml),
+      "任务组名称已经可以进入详情，行尾仍重复一个“进入任务组”按钮");
+    const metricAt = objectOverview.indexOf("<h2>关键指标</h2>");
+    const metricHtml = metricAt < 0 ? "" : objectOverview.slice(metricAt, objectOverview.indexOf("</article>", metricAt));
+    check("项目关键指标只展示状态，不承担跨栏目跳转",
+      /任务组/u.test(metricHtml) && /受阻项/u.test(metricHtml) && /待人工确认/u.test(metricHtml) && !/<button/u.test(metricHtml),
+      "关键指标仍被做成跨页面按钮，项目概览同时存在多个互相竞争的导航源");
     const legacyRepositoryProject = {...objectOverviewState.projects[0], config: {repositories: []},
       repositories: [{id: "repo_legacy", url: "https://example.test/repo.git"}]};
     const repositoryScopeProbe = loadConsole(el("div"), {realI18n: true});
