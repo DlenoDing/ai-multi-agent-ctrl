@@ -303,7 +303,7 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
     /class="object-section-nav"/u.test(objectNav) && /class="workspace-mobile-picker"/u.test(objectNav)
       && (objectNav.match(/object-section-nav-item active/gu) || []).length === 1
       && /data-workspace="inheritance" aria-current="page"/u.test(objectNav)
-      && ["工作推进", "任务组配置", "执行与审计"].every((label) => objectNav.includes(`<h3>${label}</h3>`))
+      && ["工作推进", "任务组配置", "执行与审计"].every((label) => objectNav.includes(`<div class="object-section-group-title">${label}</div>`))
       && ["任务组角色", "继承与覆盖", "任务组 Skill", "任务组系统规则", "任务组业务规则"].every((label) => objectNav.includes(label)), objectNav);
   workspaces.select("group-detail", "config");
   check("legacy task-group config pane migrates to inheritance",
@@ -363,7 +363,6 @@ const helpers = {
   })[char])),
   explainCoded: (value) => `explained:${value}`,
   fmtTime: (value) => `time:${value}`,
-  dispatchRuleSummaries: {},
   ruleSummaryHtml: () => "",
   repositoryFailureAction: () => "",
   isTerminalDispatch,

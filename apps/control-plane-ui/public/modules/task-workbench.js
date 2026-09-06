@@ -87,7 +87,6 @@
           <dt>最新回送</dt><dd>${h.fmtTime(run.lastExecutionEventAt || run.updatedAt)}</dd></dl>
         ${run.failureReason || run.blockedReason ? `<div class="notice warn-notice">${esc(h.explainCoded(run.failureReason || run.blockedReason))}${h.repositoryFailureAction(run)}</div>` : ""}
         <div class="button-row"><button class="primary-button" data-action="open-execution-object" data-execution-type="dispatch" data-execution-id="${esc(run.dispatchId)}" data-task="${esc(group.id)}">查看执行详情</button></div>
-        ${h.dispatchRuleSummaries[run.dispatchId] ? h.ruleSummaryHtml(h.dispatchRuleSummaries[run.dispatchId]) : ""}
         ${events.length ? `<details class="task-run-events"${disclosure[`${run.dispatchId}:events`] ? " open" : ""}><summary data-run-disclosure="${esc(run.dispatchId)}:events">执行记录（${events.length} 条）</summary><ol class="task-requirements">${events.map((event) => `<li><span class="small muted">${h.fmtTime(event.createdAt)}</span> ${esc(h.t(event.eventType))}：${esc(event.summary || "")}</li>`).join("")}</ol></details>` : ""}
       </div></details>`};
     });

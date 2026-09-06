@@ -212,8 +212,6 @@ let execScope = {type: "", id: ""};
 let selectedExecutionObject = {type: "", id: ""};
 let executionObjectDetail = null;
 let executionObjectUnavailable = false;
-// 执行历史里按需展开的「规则」摘要缓存（dispatchId → /contract-summary 回执）；再点一次收起。
-const dispatchRuleSummaries = {};
 let execEvents = [];
 // 事件流是客户端的滚动窗口（只留最近 300 条）。丢弃发生过之后，页脚再报"共 N 条"就等于说
 // "总共只发生过这些"，而人正是在这张表上排查"那一步到底做了什么"。丢过就改口径。
@@ -2116,7 +2114,7 @@ function renderTaskWorkbench() {
     pageData: taskPageData, workDetail: taskWorkDetail, pageNumber: taskCursorStack.length + 1, loading: taskPageLoading,
     eventHistory: workEventHistoryMode, eventPage: workEventCursorStack.length + 1,
     disclosure: taskRunDisclosure,
-    helpers: {badge, t, explainCoded, fmtTime, progressLine, humanTraceHtml, workItemExitHint, workItemResultHtml, repositoryFailureAction, dispatchRuleSummaries, ruleSummaryHtml,
+    helpers: {badge, t, explainCoded, fmtTime, progressLine, humanTraceHtml, workItemExitHint, workItemResultHtml, repositoryFailureAction,
       isTerminalDispatch: (status) => terminalDispatchStatuses.has(status)}
   }), {wide: true, headerSide: !selectedWork && hasPerm("task_group:control")
     ? `<button class="primary-button" data-workspace-page="tasks" data-workspace="create">新建任务</button>` : ""});
@@ -5164,12 +5162,12 @@ function renderTaskGroupDetail(taskGroup) {
 }
 
 function renderTaskGroupDetailBody(taskGroup) {
-  return window.AIMAC_TASK_GROUP_DETAIL_WORKSPACE.render(taskGroup, {tgDetail, state, dispatchRuleSummaries}, {
+  return window.AIMAC_TASK_GROUP_DETAIL_WORKSPACE.render(taskGroup, {tgDetail, state}, {
     WORK_ITEM_OWNER_ROLE_CHOICES, badge, blockerGuide, customBadge, esc, explainCoded,
     findWorkItemDispatches, fmtTime, guideBundle, hasGroupPerm, humanTraceHtml, kindLabel,
     languageLabel, languageSelectOptions, orchestratorCadenceText, percentCell, progressBar,
     progressLine, repositoryFailureAction, roleSkillOverlayForm, roleSkillOverlayTable,
-    ruleEditorForm, ruleSummaryHtml, sectionBlock, taskGroupRoleSkillOverlays,
+    ruleEditorForm, sectionBlock, taskGroupRoleSkillOverlays,
     workItemExitHint, workItemResultHtml, renderTaskGroupExecutionTimeline, jumpModuleCard, t
   });
 }
@@ -8947,17 +8945,6 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "open-execution-object") {
       await focusExecutionObject(target.dataset.executionType, target.dataset.executionId, target.dataset.task || "", {projectId: target.dataset.project || ""});
-      return;
-    }
-    if (action === "show-dispatch-events") {
-      await focusExecutionObject("dispatch", target.dataset.dispatchId || "", target.dataset.task || "", {history: target.dataset.eventMode === "history"});
-      return;
-    }
-    if (action === "show-dispatch-rules") {
-      const dispatchId = target.dataset.dispatchId || "";
-      if (dispatchRuleSummaries[dispatchId]) { delete dispatchRuleSummaries[dispatchId]; render(); return; }
-      dispatchRuleSummaries[dispatchId] = await api(`/api/agent-dispatches/${encodeURIComponent(dispatchId)}/contract-summary`);
-      render();
       return;
     }
     if (action === "show-session-events") {

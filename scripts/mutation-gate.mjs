@@ -593,13 +593,13 @@ const MUTATIONS = [
     expect: "没有契约的派发不能报成 found"
   },
   {
-    // 执行历史每条派发要有「规则」入口；去掉按钮即人看得到派给了谁、看不到按什么规则干的。
-    name: "工作项执行历史每条派发必须有「规则」入口",
+    // 执行历史每条派发要进同一个执行对象；把按钮退回成"实时事件/规则"两条分叉，就又需要人猜结果在哪。
+    name: "工作项执行历史必须收敛到统一执行详情",
     file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
-    from: "                <button class=\"secondary-button\" data-action=\"show-dispatch-rules\" data-dispatch-id=\"${esc(item.dispatchId)}\">${dispatchRuleSummaries[item.dispatchId] ? \"收起规则\" : \"规则\"}</button>\n",
-    to: "",
-    expect: "执行历史没有「规则」入口"
+    from: "                <button class=\"secondary-button\" data-action=\"open-execution-object\" data-execution-type=\"dispatch\" data-execution-id=\"${esc(item.dispatchId)}\" data-task=\"${esc(taskGroup.id)}\">查看执行详情</button>",
+    to: "                <button class=\"secondary-button\" data-action=\"show-dispatch-events\" data-dispatch-id=\"${esc(item.dispatchId)}\">实时事件</button>\n                <button class=\"secondary-button\" data-action=\"show-dispatch-rules\" data-dispatch-id=\"${esc(item.dispatchId)}\">规则</button>",
+    expect: "执行历史仍把实时事件和规则拆成多个入口"
   },
   {
     // 流程导航第一步要如实说"尚未接入"。把在线数硬加 1 即没接入也显示在线。
@@ -7188,8 +7188,8 @@ const MUTATIONS = [
     name: "compose 发布的端口不得意外对外",
     file: "docker-compose.yml",
     check: "verifyComposePortsAreNotAccidentallyPublic",
-    from: '      - "127.0.0.1:55432:5432"',
-    to: '      - "55432:5432"',
+    from: '      - "127.0.0.1:${AIMAC_POSTGRES_PORT:-55432}:5432"',
+    to: '      - "${AIMAC_POSTGRES_PORT:-55432}:5432"',
     expect: "绑在 0.0.0.0 上"
   },
   {
@@ -12105,7 +12105,7 @@ const MUTATIONS = [
     name: "任务组列表不得恢复多条平行跳转",
     file: "apps/control-plane-ui/public/modules/task-group-workspace.js",
     gate: "console",
-    from: '      `<div class="button-row"><button class="primary-button" data-action="tg-detail" data-task="${esc(group.id)}">进入任务组</button>${h.quickControl(group)}</div>`',
+    from: '      `<div class="button-row">${h.quickControl(group)}</div>`',
     to: '      `<div class="button-row"><button class="primary-button" data-action="tg-detail" data-task="${esc(group.id)}">进入任务组</button>${h.quickControl(group)}${h.groupLink(group, "任务", "tasks")}${h.groupLink(group, "监控", "monitor")}</div>`',
     expect: "任务组列表行只保留进入对象和必要状态控制"
   },

@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from "node:child_process";
+import net from "node:net";
 import { dockerFailureAdvice } from "./lib/docker-failure-advice.mjs";
 
 const root = new URL("..", import.meta.url).pathname;
+const controlPort = await freePort();
+const postgresPort = await freePort();
+const baseUrl = `http://127.0.0.1:${controlPort}`;
 
 process.on("uncaughtException", (error) => {
   if (error?.friendlyDockerFailure) {
@@ -38,7 +42,9 @@ process.on("uncaughtException", (error) => {
 
 const composeEnv = {
   ...process.env,
-  AIMAC_PUBLIC_URL: "http://127.0.0.1:4317",
+  AIMAC_PORT: String(controlPort),
+  AIMAC_POSTGRES_PORT: String(postgresPort),
+  AIMAC_PUBLIC_URL: baseUrl,
   AIMAC_BOOTSTRAP_TOKEN: "doctor-bootstrap-token-0123456789",
   AIMAC_MCP_SERVICE_TOKEN: "doctor-mcp-service-token-0123456789",
   AIMAC_LOCAL_SEED_ORG_ADMIN_TOKEN: "doctor-org-admin-token-0123456789",
@@ -53,15 +59,15 @@ const composeEnv = {
 run("docker", ["compose", "config"]);
 try {
   run("docker", ["compose", "up", "-d", "--build", "--wait"], {timeout: 180000});
-  const health = json(execFileSync("curl", ["-fsSL", "http://127.0.0.1:4317/api/health"], {cwd: root, encoding: "utf8"}));
-  if (health.status !== "ok" || health.mcp?.hostedBy !== "control-plane" || health.mcp?.endpoint !== "http://127.0.0.1:4317/mcp") {
+  const health = json(execFileSync("curl", ["-fsSL", `${baseUrl}/api/health`], {cwd: root, encoding: "utf8"}));
+  if (health.status !== "ok" || health.mcp?.hostedBy !== "control-plane" || health.mcp?.endpoint !== `${baseUrl}/mcp`) {
     throw new Error("compose control-plane health did not expose centralized MCP");
   }
-  const manifest = json(execFileSync("curl", ["-fsSL", "http://127.0.0.1:4317/api/agent/v1/bootstrap-manifest"], {cwd: root, encoding: "utf8"}));
+  const manifest = json(execFileSync("curl", ["-fsSL", `${baseUrl}/api/agent/v1/bootstrap-manifest`], {cwd: root, encoding: "utf8"}));
   if (manifest.localMcpServerAllowed !== false || manifest.skillSynchronization !== "server_managed_on_demand") {
     throw new Error("compose bootstrap manifest did not enforce lightweight remote-only Agent Runtime");
   }
-  const installerChecksum = execFileSync("curl", ["-fsSL", "http://127.0.0.1:4317/install-agent.sh.sha256"], {cwd: root, encoding: "utf8"});
+  const installerChecksum = execFileSync("curl", ["-fsSL", `${baseUrl}/install-agent.sh.sha256`], {cwd: root, encoding: "utf8"});
   if (!/install-agent\.sh/u.test(installerChecksum)) throw new Error("compose server did not publish installer checksum");
   const stateStore = execFileSync("docker", ["compose", "exec", "-T", "postgres", "psql", "-U", "aimac", "-d", "aimac", "-t", "-A", "-c", "select concat(jsonb_typeof(state), '|', state->'runtime'->'storage'->>'stateStore') from aimac_control_plane_state where id='default';"], {cwd: root, env: composeEnv, encoding: "utf8"}).trim();
   if (stateStore !== "object|postgresql") throw new Error(`compose PostgreSQL state-store not active: ${stateStore}`);
@@ -69,7 +75,7 @@ try {
   // 这里从【两个独立进程】读同一个版本再各自写回：CAS 必须只让一个成功，另一个收到冲突 ——
   // 两个都成功就意味着后写的把先写的整份覆盖掉了，而谁也不会察觉。
   const pgEnv = {...composeEnv, AIMAC_STATE_STORE: "postgresql",
-    DATABASE_URL: `postgres://aimac:${composeEnv.POSTGRES_PASSWORD}@127.0.0.1:55432/aimac`};
+    DATABASE_URL: `postgres://aimac:${composeEnv.POSTGRES_PASSWORD}@127.0.0.1:${postgresPort}/aimac`};
   // 空转不落盘这条此前只在 runtime_json 后端上量过。PG 这一侧的读路径不同（分片按 project_id
   // 排序读回、再水合），指纹只要有一处不稳定，跳过就永远不会发生，而外面完全看不出来 ——
   // 系统照常工作，只是每分钟白写一次整份状态、并作废所有客户端的 ETag。
@@ -91,10 +97,10 @@ try {
     }
     const login = json(execFileSync("curl", ["-fsSL", "-X", "POST", "-H", "content-type: application/json",
       "-d", JSON.stringify({email: "system.admin@local", token: composeEnv.AIMAC_BOOTSTRAP_TOKEN}),
-      "http://127.0.0.1:4317/api/auth/login"], {cwd: root, encoding: "utf8"}));
+      `${baseUrl}/api/auth/login`], {cwd: root, encoding: "utf8"}));
     if (!login.sessionToken) throw new Error("compose 登录失败，拿不到会话令牌，无法核对自治循环状态");
     const tick = json(execFileSync("curl", ["-fsSL", "-H", `authorization: Bearer ${login.sessionToken}`,
-      "http://127.0.0.1:4317/api/state?view=runtime"], {cwd: root, encoding: "utf8"}))?.runtime?.autonomousOrchestrator;
+      `${baseUrl}/api/state?view=runtime`], {cwd: root, encoding: "utf8"}))?.runtime?.autonomousOrchestrator;
     if (!tick?.lastTickAt) throw new Error("PostgreSQL 后端上读不到自治循环心跳，无法判断它是不是根本没在跑");
     if (tick.lastTickResult !== "unchanged") {
       throw new Error(`PostgreSQL 后端上自治循环最后一拍报的是 ${tick.lastTickResult}，期望 unchanged —— 版本号不涨可能只是因为循环停了`);
@@ -139,11 +145,11 @@ try {
       // 只动分片里的内容，不碰中央索引里的摘要 —— 这正是"有 DB 写权限的人"能做的那种改动。
       psql(`update aimac_project_state_shards set shard = jsonb_set(shard, '{collections,taskGroups}', '[]'::jsonb) where project_id = '${target}'`);
       const probe = spawnSync("curl", ["-fsS", "-o", "/dev/null", "-w", "%{http_code}",
-        "-H", "accept: application/json", "http://127.0.0.1:4317/api/health"],
+        "-H", "accept: application/json", `${baseUrl}/api/health`],
         {cwd: root, env: composeEnv, encoding: "utf8"});
       const tampered = spawnSync("curl", ["-fsS", "-X", "POST", "-H", "content-type: application/json",
         "-d", JSON.stringify({email: "system.admin@local", token: composeEnv.AIMAC_BOOTSTRAP_TOKEN || "docker-doctor-bootstrap-token"}),
-        "http://127.0.0.1:4317/api/auth/login"], {cwd: root, env: composeEnv, encoding: "utf8"});
+        `${baseUrl}/api/auth/login`], {cwd: root, env: composeEnv, encoding: "utf8"});
       const said = `${tampered.stdout || ""}${tampered.stderr || ""}`;
       if (tampered.status === 0 && !/digest_mismatch|shard/u.test(said)) {
         throw new Error("直接改了 PostgreSQL 里的分片行，控制面照读照用 —— "
@@ -161,7 +167,7 @@ try {
         {cwd: root, env: composeEnv, encoding: "utf8"});
       const loginNow = () => spawnSync("curl", ["-fsS", "-X", "POST", "-H", "content-type: application/json",
         "-d", JSON.stringify({email: "system.admin@local", token: composeEnv.AIMAC_BOOTSTRAP_TOKEN || "docker-doctor-bootstrap-token"}),
-        "http://127.0.0.1:4317/api/auth/login"], {cwd: root, env: composeEnv, encoding: "utf8"});
+        `${baseUrl}/api/auth/login`], {cwd: root, env: composeEnv, encoding: "utf8"});
       for (const [why, sql, expect] of [
         ["整行被删掉", `delete from aimac_project_state_shards where project_id = '${target}'`, /missing|shard/u],
         // 改 schemaVersion 也改了分片内容，所以【摘要那道门会先拦下它】——
@@ -194,7 +200,7 @@ try {
   {
     const login = json(execFileSync("curl", ["-fsSL", "-X", "POST", "-H", "content-type: application/json",
       "-d", JSON.stringify({email: "system.admin@local", token: composeEnv.AIMAC_BOOTSTRAP_TOKEN}),
-      "http://127.0.0.1:4317/api/auth/login"], {cwd: root, encoding: "utf8"}));
+      `${baseUrl}/api/auth/login`], {cwd: root, encoding: "utf8"}));
     if (!login.sessionToken) throw new Error("compose 登录失败，拿不到会话令牌，库掉线那条没法验");
     const curlJson = (args) => {
       const raw = execFileSync("curl", ["-s", "-m", "30", "-w", "\n%{http_code}", ...args], {cwd: root, encoding: "utf8"});
@@ -204,12 +210,12 @@ try {
     execFileSync("docker", ["compose", "stop", "postgres"], {cwd: root, env: composeEnv, encoding: "utf8"});
     try {
       const blocked = curlJson(["-X", "POST", "-H", `authorization: Bearer ${login.sessionToken}`, "-H", "content-type: application/json",
-        "-H", "idempotency-key: docker-pg-down-1", "-d", JSON.stringify({name: "库掉线时建的项目"}), "http://127.0.0.1:4317/api/projects"]);
+        "-H", "idempotency-key: docker-pg-down-1", "-d", JSON.stringify({name: "库掉线时建的项目"}), `${baseUrl}/api/projects`]);
       if (blocked.status !== 503 || blocked.payload.error !== "state_storage_unavailable" || !/数据库连不上/u.test(String(blocked.payload.message || ""))) {
         throw new Error(`库掉线时写请求该回 503 state_storage_unavailable 并说清该查什么，实际 HTTP ${blocked.status} ${blocked.body.slice(0, 200)}`);
       }
       if (/ECONNREFUSED|5432|postgres:\/\//u.test(blocked.body)) throw new Error(`库掉线的拒绝报文把库的地址或驱动原话回给了调用方：${blocked.body.slice(0, 200)}`);
-      const degraded = curlJson(["http://127.0.0.1:4317/api/health"]);
+      const degraded = curlJson([`${baseUrl}/api/health`]);
       if (degraded.status !== 503 || degraded.payload.status !== "degraded") throw new Error(`库掉线时健康检查该 503 degraded，实际 ${degraded.status} ${degraded.body.slice(0, 160)}`);
     } finally {
       execFileSync("docker", ["compose", "start", "postgres"], {cwd: root, env: composeEnv, encoding: "utf8"});
@@ -217,7 +223,7 @@ try {
     let recovered = null;
     for (let attempt = 0; attempt < 45; attempt += 1) {
       execFileSync("sleep", ["2"]);
-      const probe = curlJson(["http://127.0.0.1:4317/api/health"]);
+      const probe = curlJson([`${baseUrl}/api/health`]);
       if (probe.status === 200 && probe.payload.status === "ok") { recovered = probe; break; }
     }
     if (!recovered) throw new Error("库回来 90 秒后健康检查还没转回 ok —— 库掉线要能不重启就恢复");
@@ -239,7 +245,7 @@ try {
     }
     console.log(`  PostgreSQL 产出规范核对 ok: ${report.validated} 条记录符合各自声明的 schema；${report.uncoveredNote}；${report.statesNote}`);
   }
-  const doctor = spawnSync("npm", ["run", "agentctl", "--", "doctor", "--server=http://127.0.0.1:4317"], {cwd: root, env: composeEnv, encoding: "utf8"});
+  const doctor = spawnSync("npm", ["run", "agentctl", "--", "doctor", `--server=${baseUrl}`], {cwd: root, env: composeEnv, encoding: "utf8"});
   if (doctor.status !== 0 || !doctor.stdout.includes("agent gateway doctor ok")) throw new Error(`compose agentctl doctor failed: ${doctor.stderr || doctor.stdout}`);
   console.log("docker compose doctor ok: config, build, health, centralized MCP, installer artifacts and PostgreSQL state-store verified");
 } finally {
@@ -267,4 +273,19 @@ function run(command, args, options = {}) {
 
 function json(text) {
   return JSON.parse(text);
+}
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const port = server.address()?.port;
+      server.close((error) => {
+        if (error) reject(error);
+        else if (!Number.isInteger(port)) reject(new Error("failed to reserve a local TCP port"));
+        else resolve(port);
+      });
+    });
+  });
 }

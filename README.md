@@ -78,6 +78,7 @@ export AIMAC_MCP_SERVICE_TOKEN='<central-mcp-service-token>'
 | --- | --- | --- |
 | `AIMAC_HOST` | `127.0.0.1` | 监听地址。对外监听（`0.0.0.0`）时必须同时给 `AIMAC_PUBLIC_URL`，否则启动会被拒 |
 | `AIMAC_PORT` | `4317` | 监听端口（写 0 则随机挑一个可用端口，启动横幅会显示真正绑上的端口；下限 0） |
+| `AIMAC_POSTGRES_PORT` | `55432` | Docker 部署时 PostgreSQL 只绑定宿主回环地址的端口；已有本地服务占用时可改成别的端口 |
 | `AIMAC_PUBLIC_URL` | 按监听地址推导 | 对外访问地址。它会进安装命令与 MCP 端点，明文远程地址会被拒 |
 | `AIMAC_RUNTIME_DIR` | `.runtime` | 运行态落盘目录（状态、项目分片、审计台账、锁） |
 | `AIMAC_REPOSITORY_ROOT` | 仓库根 | 核验档位下本机工作副本的根目录 |
@@ -125,7 +126,7 @@ curl -fsSL https://control.example.com/install-agent.sh | sh -s -- \
 Codex/Claude/Cursor 等 Agent 侧远程 MCP 配置由安装脚本和 Runtime 使用该节点的 node token 自动生成、刷新和维护。不要把 `scripts/register-mcp-client.mjs` 当作 Agent 入网步骤；它只保留给内部协议诊断，并且必须显式传入 bearer token。
 
 容器以**非 root**（镜像自带的 `node` 用户）运行，端口只发布控制面自己那一个；
-PostgreSQL 只绑回环 `127.0.0.1:55432`（Docker 的端口发布会绕过宿主防火墙，绑 0.0.0.0
+PostgreSQL 默认只绑回环 `127.0.0.1:55432`；要换宿主端口就设置 `AIMAC_POSTGRES_PORT`（Docker 的端口发布会绕过宿主防火墙，绑 0.0.0.0
 等于把整份状态所在的库放到公网上）。
 **从更早的版本升级时**：那时容器是 root 跑的，已存在的 `aimac-runtime` 卷属主是 root，
 换成非 root 之后写不进去。升级前执行一次

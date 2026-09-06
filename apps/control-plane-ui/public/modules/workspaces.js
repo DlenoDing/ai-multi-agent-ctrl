@@ -121,7 +121,7 @@
       else group.entries.push(entry);
     }
     const desktop = entries.some((entry) => entry.group)
-      ? groups.map((group) => `<section class="object-section-group"><h3>${esc(group.label)}</h3>${group.entries.map(item).join("")}</section>`).join("")
+      ? groups.map((group) => `<section class="object-section-group"><div class="object-section-group-title">${esc(group.label)}</div>${group.entries.map(item).join("")}</section>`).join("")
       : entries.map(item).join("");
     return `<nav class="object-section-nav" aria-label="当前对象功能">${desktop}</nav>${navigation(page, true, options)}`;
   }

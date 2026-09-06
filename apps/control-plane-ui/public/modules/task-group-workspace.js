@@ -11,9 +11,9 @@
       `<span data-field="role-count">${group.roleCount ?? 0}</span>`,
       `<span data-field="group-language">${esc(h.languageLabel(group.languagePolicy))}</span>`,
       h.fmtTime(group.updatedAt),
-      `<div class="button-row"><button class="primary-button" data-action="tg-detail" data-task="${esc(group.id)}">进入任务组</button>${h.quickControl(group)}</div>`
+      `<div class="button-row">${h.quickControl(group)}</div>`
     ])).join("");
-    return h.table(["任务组", "执行状态", "进度", {label: "任务数", c: "num nowrap"}, {label: "角色数", c: "num nowrap"}, "语言", {label: "更新时间", c: "nowrap"}, "操作"], rows, {emptyText: "当前项目暂无任务组。"});
+    return h.table(["任务组", "执行状态", "进度", {label: "任务数", c: "num nowrap"}, {label: "角色数", c: "num nowrap"}, "语言", {label: "更新时间", c: "nowrap"}, "状态控制"], rows, {emptyText: "当前项目暂无任务组。"});
   }
 
   function detail(group, body, h) {

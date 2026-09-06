@@ -51,7 +51,7 @@ services:
       # 写成 "55432:5432" 的话监听的是 0.0.0.0 —— 而 Docker 的端口发布会【绕过宿主防火墙】
       #（UFW 那类规则挡不住它），云上 `docker compose up` 一开，整份控制面状态所在的库
       # 就只隔着一个 POSTGRES_PASSWORD 暴露在公网上。
-      - "127.0.0.1:55432:5432"
+      - "127.0.0.1:${AIMAC_POSTGRES_PORT:-55432}:5432"
     volumes:
       - aimac-postgres:/var/lib/postgresql/data
     healthcheck:

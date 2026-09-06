@@ -2,13 +2,13 @@
   "use strict";
 
 function render(taskGroup, context, helpers) {
-  const {tgDetail, state, dispatchRuleSummaries = {}} = context;
+  const {tgDetail, state} = context;
   const {
     WORK_ITEM_OWNER_ROLE_CHOICES, badge, blockerGuide, customBadge, esc, explainCoded,
     findWorkItemDispatches, fmtTime, guideBundle, hasGroupPerm, humanTraceHtml, kindLabel,
     languageLabel, languageSelectOptions, orchestratorCadenceText, percentCell, progressBar,
     progressLine, repositoryFailureAction, roleSkillOverlayForm, roleSkillOverlayTable,
-    ruleEditorForm, ruleSummaryHtml, sectionBlock, taskGroupRoleSkillOverlays,
+    ruleEditorForm, sectionBlock, taskGroupRoleSkillOverlays,
     workItemExitHint, workItemResultHtml, renderTaskGroupExecutionTimeline, jumpModuleCard, t
   } = helpers;
   if (!tgDetail || tgDetail.taskGroupId !== taskGroup.id) {
@@ -178,10 +178,9 @@ function render(taskGroup, context, helpers) {
                 ${item.blockedReason ? `<span>受阻：${esc(explainCoded(item.blockedReason))}</span>` : ""}
                 ${repositoryFailureAction(item)}
                 <span>派发：<span class="mono">${esc(item.dispatchId)}</span></span>
-                <button class="secondary-button" data-action="show-dispatch-events" data-dispatch-id="${esc(item.dispatchId)}">实时事件</button>
-                <button class="secondary-button" data-action="show-dispatch-rules" data-dispatch-id="${esc(item.dispatchId)}">${dispatchRuleSummaries[item.dispatchId] ? "收起规则" : "规则"}</button>
+                <button class="secondary-button" data-action="open-execution-object" data-execution-type="dispatch" data-execution-id="${esc(item.dispatchId)}" data-task="${esc(taskGroup.id)}">查看执行详情</button>
               </div>
-              ${dispatchRuleSummaries[item.dispatchId] ? ruleSummaryHtml(dispatchRuleSummaries[item.dispatchId]) : ""}`).join("")}
+            `).join("")}
           </div>`;
         })()}
         ${workItemResultHtml(taskGroup.id, workItem.id, workItem.status)}

@@ -1502,7 +1502,7 @@ readme_numbers = [
   {"what" => "控制面本机默认端口", "readme" => %r{http://127\.0\.0\.1:(\d+)},
    "source" => "apps/control-plane-ui/server.mjs", "pattern" => /AIMAC_PORT, 0, (\d+)\)/},
   {"what" => "compose 里 PostgreSQL 的宿主端口", "readme" => /只绑回环 `127\.0\.0\.1:(\d+)`/,
-   "source" => "docker-compose.yml", "pattern" => /"127\.0\.0\.1:(\d+):5432"/}
+   "source" => "docker-compose.yml", "pattern" => /"127\.0\.0\.1:\$\{AIMAC_POSTGRES_PORT:-(\d+)\}:5432"/}
 ]
 readme_numbers.each do |entry|
   in_readme = readme_source.scan(entry["readme"]).flatten.uniq

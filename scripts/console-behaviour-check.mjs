@@ -351,7 +351,7 @@ globalThis.__probe = {
     return window.AIMAC_TASK_WORKBENCH.render({groups, state, selected, workDetail,
       pageData: null, eventHistory: false, eventPage: 1, disclosure: {},
       helpers: {badge, t, explainCoded, fmtTime, progressLine, humanTraceHtml, workItemExitHint,
-        workItemResultHtml, repositoryFailureAction, dispatchRuleSummaries, ruleSummaryHtml,
+        workItemResultHtml, repositoryFailureAction,
         isTerminalDispatch: (status) => terminalDispatchStatuses.has(status)}});
   },
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
@@ -2216,9 +2216,11 @@ function runWorkItemDispatchHistoryCase() {
     html.includes("node_beta") && html.includes("node_alpha") && /角色：/u.test(html)
       && html.includes("anthropic:claude-sonnet-4-5") && html.includes("openai:gpt-5.5") && /第 2 次尝试/u.test(html) && /失败：/u.test(html),
     "执行历史缺了节点、角色、模型、尝试次数或失败原因中的某一项——「涉及哪些 agent 分别执行了什么」答不上来");
-  check("执行历史每条派发要有「规则」入口",
-    (html.match(/data-action="show-dispatch-rules"/gu) || []).length === 2,
-    "执行历史没有「规则」入口：人看得到派给了谁、看不到按什么规则干的");
+  check("执行历史每条派发收敛到统一执行详情入口",
+    (html.match(/data-action="open-execution-object"/gu) || []).length === 2
+      && /data-execution-type="dispatch"/u.test(html)
+      && !/data-action="show-dispatch-(?:events|rules)"/u.test(html),
+    "执行历史仍把实时事件和规则拆成多个入口，用户需要在不同按钮间猜具体结果在哪");
 }
 
 // 「流程导航」：登入后我在第几步、下一步去哪——每一步要如实反映真实状态，并能直达对应页。
@@ -6232,7 +6234,9 @@ async function runPendingTruncationCase() {
         && !/data-menu-workspace="create"/u.test(String(writableTg).split("</aside>")[0] || ""),
       "创建或注册入口没有回到对应对象列表，或仍与日常导航并列");
     check("任务组列表行只保留进入对象和必要状态控制",
-      /data-action="tg-detail"[^>]*>进入任务组/u.test(writableTg)
+      /class="object-name-link" data-action="tg-detail"/u.test(writableTg)
+        && !/data-action="tg-detail"[^>]*>进入任务组/u.test(writableTg)
+        && /状态控制/u.test(writableTg)
         && !/data-focus-page="tasks"|data-focus-page="monitor"/u.test(writableTg),
       "任务组列表行仍同时堆叠详情、任务和监控入口");
     check("Agent 展示模式使用分段控件而不是第二组主按钮",
