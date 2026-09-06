@@ -59,6 +59,8 @@
 
 系统管理系统只处理系统级能力，不直接拥有项目文件、任务执行或 Agent 角色输出。
 
+系统外升级结果导入是系统管理动作，不属于 Agent Runtime 自动改进。运行期问题由 Monitor 收集并形成升级候选；真实修复在系统外完成后，系统管理员通过“系统管理 → 平台能力 → 外部升级导入”登记升级包引用和证据。导入记录状态固定为 `imported_pending_admin_activation`，并必须带有 `forbidsActiveRuntimeSelfMutation=true`，后续激活仍由系统管理员另行裁决。
+
 ## 4. 账号和权限
 
 账号类型：

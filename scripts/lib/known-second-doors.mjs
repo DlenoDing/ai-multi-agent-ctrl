@@ -97,6 +97,7 @@ export const HUMAN_ONLY_MCP_TOOL_REFUSALS = {
   "skill-mcp.role_skill_overlay_validate": "rule_layer_mutation_forbidden_for_machine_principal",
   "permission-mcp.permission_resolve": "permission_resolution_forbidden_for_machine_principal",
   "governance-mcp.contract_publish": "contract_publish_forbidden_for_machine_principal",
+  "governance-mcp.system_upgrade_external_import": "system_upgrade_external_import_forbidden_for_machine_principal",
   "identity-mcp.account_invite": "account_invite_forbidden_for_machine_principal",
   // 定稿是整套"人工闸门"的最后一道：机器主体替人点了确认，AI 的方案就此获得人的背书。
   // 它与上面五条同族，却一直不在册 —— 而这个工具【三套 e2e 从没调过】（2026-08-22 按

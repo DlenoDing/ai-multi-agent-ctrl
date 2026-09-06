@@ -71,7 +71,8 @@
     qualityGates: "质量门", repositoryOutputs: "仓库产出", reviewBundles: "评审包", reviewPlans: "评审计划",
     roleSkillOverlays: "角色技能叠加", roleSkills: "角色技能", ruleSourceResolutions: "规则来源",
     sessionPlacementDecisions: "会话放置", sharedDefinitions: "共享定义", skillSources: "技能源",
-    systemUpgradeCandidates: "升级候选", taskGroups: "任务组", testResults: "测试结果", dlqEntries: "死信队列",
+    systemUpgradeCandidates: "升级候选", externalUpgradeImports: "外部升级导入",
+    taskGroups: "任务组", testResults: "测试结果", dlqEntries: "死信队列",
     workSessions: "工作会话", workerLanes: "载体"
   };
 

@@ -413,8 +413,8 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/integration-batches` | **非入口设计项**：集成批次由编排链内部处理；当前没有独立 HTTP 创建入口 | release、orchestrator |
 | POST | `/api/runtime-issues` | 收集重复运行期问题并生成升级候选，不触发运行时自修改 | monitor |
 | POST | `/api/runtime-issue-patterns` | **非入口设计项**：运行时问题经 `/api/runtime-issues` 聚合，不能绕过 collect-only 策略直接写 pattern | monitor |
-| POST | `/api/system-upgrade-candidates/:candidateId/resolve` | 处置升级候选项（导出证据包尚未落地） | monitor、rule-steward |
-| POST | `/api/system-upgrade-candidates/import-external-result` | **非入口设计项**：外部维护结果当前经 `/api/system-upgrade-candidates/:candidateId/resolve` 处置；导入包 schema 属后续扩展 | admin console、orchestrator import service |
+| POST | `/api/system-upgrade-candidates/:candidateId/resolve` | 处置升级候选项，将运行期问题导出给系统外维护或关闭候选项 | monitor、rule-steward |
+| POST | `/api/system-upgrade-candidates/import-external-result` | 系统管理员导入系统外维护完成后的升级包；只登记为 `imported_pending_admin_activation`，不得触发运行时自修改 | admin console |
 | POST | `/api/close-barriers/compute` | **非入口设计项**：关闭门经 `/api/task-groups/:taskGroupId/readiness` 或 `/api/task-groups/:taskGroupId/close-barrier/compute` 重算 | orchestrator |
 | POST | `/api/agent/v1/register` | 使用一次性 join token 初始化 Agent Runtime 节点 | agent-runtime |
 | POST | `/api/agent/v1/heartbeat` | Agent Runtime 心跳与凭据轮换 | agent-runtime |

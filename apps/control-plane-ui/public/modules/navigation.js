@@ -93,6 +93,7 @@
     leaf("sys-settings", "instruction-efficiency", "指令效率", "token、压缩比例和缓存命中"),
     leaf("sys-settings", "envelopes", "指令信封", "稳定派发信封、缓存键和目标 token"),
     leaf("sys-settings", "definitions", "共享定义", "跨子系统公共语义与归属角色"),
+    leaf("sys-settings", "upgrade-imports", "外部升级导入", "登记系统外维护完成后的升级包"),
     {divider: "使用说明"},
     leaf("sys-orgs", "help", "组织治理说明", "系统侧组织、配额和初始管理员职责"),
     leaf("sys-settings", "help", "平台能力说明", "运行参数、模型、Skill 和协议边界")

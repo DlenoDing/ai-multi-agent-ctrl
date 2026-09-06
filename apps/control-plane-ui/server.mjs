@@ -133,6 +133,7 @@ import {
   activeSharedDefinitionRefs,
   permissionsForRoleGrant,
   validateGrantRoleTemplate,
+  assertUniqueRecordId,
   retireAccount,
   revokeAccountSessions,
   validateDelegatedGrant,
@@ -1386,6 +1387,7 @@ const HUMAN_ONLY_ACTIONS = [
   "org_member_invite_reissue",
   "permission_resolve",
   "system_upgrade_candidate_resolve",
+  "system_upgrade_external_import",
   // 豁免质量门是放行决定，必须由真人负责，不能由 AI 自我豁免。
   // 共享定义契约的激活有两条路：MCP 的 shared_definition_publish 已被限制为"只能提案"，
   // 由真人专属的 shared_definition_resolve 决定是否 active。而 POST /api/contracts 这条
@@ -2156,7 +2158,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     runtime: ["modelCapabilities", "modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions", "workerLanes", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkillOverlays"],
     // effectiveInstructionPackets / roleDriftGuards 控制台一处都没读（实测这一视图 608KB 里
     // 它们占 303KB）。需要时可从 view=full 或专用接口取，不该让每次打开这一页都付这笔钱。
-    instructions: ["instructionMetrics", "sharedDefinitions"],
+    instructions: ["instructionMetrics", "sharedDefinitions", "externalUpgradeImports"],
     // 组织概览此前只能取 view=full —— 因为没有任何视图带 organizations，而 full 是【不切片】的：
     // 实测 1000 个单元时它返回 16.9MB、单次请求同步占用主线程 149ms，且随部署规模无界增长。
     // 这一页真正要的只有 organizations（projects/taskGroups 本就在视图基底里）。
@@ -2421,6 +2423,7 @@ function permissionForAction(action) {
   if (action === "work_item_plan_finalization_set") return "task_group:review";
   if (action === "review_bundle_resolve") return "task_group:review";
   if (action === "system_upgrade_candidate_resolve") return "task_group:control";
+  if (action === "system_upgrade_external_import") return "system:*";
   if (action === "shared_definition_resolve") return "project:update";
   if (action === "project_config_update") return "project:update";
   if (action === "project_archive") return "project:update";
@@ -5543,6 +5546,38 @@ async function handleApi(req, res) {
     finishGuardedWrite(state, guard, 200, candidate);
     writeState(state);
     json(res, 200, candidate);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/system-upgrade-candidates/import-external-result") {
+    if (!requireAuthenticated(req, state, res)) return;
+    const guard = beginGuardedWrite(req, state, "system_upgrade_external_import", "ExternalUpgradeImport:new",
+      {resourceType: "system", resourceId: "external_upgrade_imports"});
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const packageRef = String(body.packageRef || "").trim();
+    if (!packageRef) return json(res, 400, {error: "upgrade_import_requires_package_ref",
+      message: "导入外部升级包必须点名 packageRef；不清楚来源的包不能进入系统升级台账"});
+    state.externalUpgradeImports ||= [];
+    const importId = String(body.importId || createId("upgrade_import")).trim();
+    assertUniqueRecordId(state.externalUpgradeImports, "importId", importId, "upgrade_import_id_conflict");
+    const evidenceRefs = Array.isArray(body.evidenceRefs)
+      ? body.evidenceRefs.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 40)
+      : String(body.evidenceRefs || "").split(/[\n,]/u).map((item) => item.trim()).filter(Boolean).slice(0, 40);
+    const externalUpgradeImport = {
+      schemaVersion: "external-upgrade-import/v1",
+      importId,
+      packageRef: assertHumanTextWithinLimit(packageRef, "upgrade_import_package_ref", 1000),
+      status: "imported_pending_admin_activation",
+      forbidsActiveRuntimeSelfMutation: true,
+      evidenceRefs,
+      createdAt: now()
+    };
+    state.externalUpgradeImports.unshift(externalUpgradeImport);
+    state.externalUpgradeImports = state.externalUpgradeImports.slice(0, 2000);
+    audit(state, guard.actor, "system_upgrade_external_import", `ExternalUpgradeImport:${externalUpgradeImport.importId}`, externalUpgradeImport.status);
+    finishGuardedWrite(state, guard, 201, {externalUpgradeImport});
+    writeState(state);
+    json(res, 201, {externalUpgradeImport});
     return;
   }
 

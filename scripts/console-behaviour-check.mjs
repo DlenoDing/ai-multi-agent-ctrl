@@ -2775,7 +2775,7 @@ async function runErrorGuidanceCase() {
   assertMenuLeaves("系统管理", systemNav, [["sys-overview", "overview", "系统概览"], ["sys-overview", "details", "技术状态"], ["sys-overview", "audit", "审计日志"],
     ["sys-orgs", "list", "组织列表"], ["sys-settings", "models", "模型能力"],
     ["sys-settings", "instruction-efficiency", "指令效率"], ["sys-settings", "envelopes", "指令信封"],
-    ["sys-settings", "definitions", "共享定义"]]);
+    ["sys-settings", "definitions", "共享定义"], ["sys-settings", "upgrade-imports", "外部升级导入"]]);
   check("系统管理侧栏不混入创建和说明入口",
     !/data-menu-workspace="create"|data-menu-workspace="help"/u.test(systemNav),
     "系统侧栏仍把低频创建或说明入口与日常查阅并列");
@@ -6496,6 +6496,10 @@ async function runPendingTruncationCase() {
     const efficiencyPane = probe.renderSysSettingsInventoryWith(withOverlay, instructionState, ["instruction-efficiency"]);
     const envelopesPane = probe.renderSysSettingsInventoryWith(withOverlay, instructionState, ["envelopes"]);
     const definitionsPane = probe.renderSysSettingsInventoryWith(withOverlay, instructionState, ["definitions"]);
+    const upgradePane = probe.renderSysSettingsInventoryWith({...withOverlay,
+      externalUpgradeImports: [{importId: "up_1", packageRef: "git:ops/upgrades@abc123", status: "imported_pending_admin_activation",
+        forbidsActiveRuntimeSelfMutation: true, evidenceRefs: ["audit:1"], createdAt: "2026-09-07T00:00:00Z"}]
+    }, instructionState, ["upgrade-imports"]);
     check("指令效率、指令信封和共享定义必须是三个独立系统能力页面",
       /指令压缩指标/u.test(efficiencyPane) && !/指令信封|env1|共享定义归属|def1/u.test(efficiencyPane)
         && /指令信封/u.test(envelopesPane) && /env1/u.test(envelopesPane)
@@ -6503,6 +6507,10 @@ async function runPendingTruncationCase() {
         && /共享定义归属/u.test(definitionsPane) && /def1/u.test(definitionsPane)
         && !/指令压缩指标|env1/u.test(definitionsPane),
       `${String(efficiencyPane).replace(/<[^>]+>/gu, " ").slice(0, 150)} | ${String(envelopesPane).replace(/<[^>]+>/gu, " ").slice(0, 150)} | ${String(definitionsPane).replace(/<[^>]+>/gu, " ").slice(0, 150)}`);
+    check("系统外升级导入必须有系统管理员可见的独立入口和记录台账",
+      /外部升级导入/u.test(upgradePane) && /data-form="external-upgrade-import"/u.test(upgradePane)
+        && /git:ops\/upgrades@abc123/u.test(upgradePane) && /禁止运行时自改/u.test(upgradePane),
+      "MCP 有 system_upgrade_external_import，但系统管理界面没有可用表单或看不到导入记录 —— 运行期问题只能导出不能回填");
   }
 
   // 自治循环连续失败＝此刻没有任何东西在自行推进，而人正在等系统往下走。

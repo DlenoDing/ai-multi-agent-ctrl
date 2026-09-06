@@ -11853,7 +11853,6 @@ async function verifyDocumentedApiPathsExist(output) {
     "/api/role-drift-guards/:guardId/rebound": "同上",
     "/api/runtime-issue-patterns": "模式由 /api/runtime-issues 归并产生，没有独立的集合路由",
     "/api/session-placement-decisions": "放置决策由编排内部产生，没有独立的集合路由",
-    "/api/system-upgrade-candidates/import-external-result": "外部结果回填尚未落地",
     // 2026-08-28 存在性判据改成真打之后补上：它是 WebSocket upgrade 路径，普通 HTTP 回 404 是对的。
     "/api/realtime": "WebSocket upgrade 路径：握手在 upgrade 事件里接，普通 HTTP 请求回 404 是对的",
     // 单个项目与单个任务组的只读详情路由已实现。不要再把它们登记在这里：否则文档明明可调，
@@ -12676,6 +12675,7 @@ function verifyLongLivedRecordsDoNotPointAtCappedOnes(output) {
   const cappedIn = (name) => [
     /state\.\w+ = state\.\w+\.slice/u.test(server) && new RegExp(`state\\.${name} = state\\.${name}\\.slice`, "u").test(server) ? "server" : null,
     new RegExp(`state\\.${name} = (?:state\\.${name}|\\[)[^\\n]*slice|state\\.${name} = capKeepingReferenced`, "u").test(core) ? "core" : null,
+    new RegExp(`state\\.${name} = (?:state\\.${name}|\\[)[^\\n]*slice|state\\.${name} = capKeepingReferenced`, "u").test(mcp) ? "mcp" : null,
     new RegExp(`state\\.${name} = `, "u").test(store) ? "store" : null
   ].filter(Boolean);
   const writtenIn = (name) => [
@@ -18669,6 +18669,7 @@ function verifyMachinePrincipalGuardsAreAllowlists(output) {
     rule_layer_mutation_forbidden_for_machine_principal: "改规则层",
     permission_resolution_forbidden_for_machine_principal: "批权限申请",
     contract_publish_forbidden_for_machine_principal: "发布契约",
+    system_upgrade_external_import_forbidden_for_machine_principal: "导入系统外升级结果",
     account_invite_forbidden_for_machine_principal: "拉人进来"
   };
   let checked = 0;

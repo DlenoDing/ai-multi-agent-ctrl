@@ -1703,6 +1703,12 @@ async function dispatchTool(state, name, args, context = {}) {
     case "governance-mcp.system_upgrade_candidate_export":
       return systemUpgradeCandidateExport(state, args);
     case "governance-mcp.system_upgrade_external_import":
+      // REST 侧把 system_upgrade_external_import 定为真人专属：运行时可以收集/导出问题，
+      // 但系统外升级结果只能由控制台代表的真人系统管理员导入。这里必须同规，
+      // 否则服务令牌或 agent 节点会绕过后台，把“运行时不自改”退化成配置约定。
+      if (context?.principal?.kind !== "system_admin") {
+        return {ok: false, error: "system_upgrade_external_import_forbidden_for_machine_principal"};
+      }
       return systemUpgradeExternalImport(state, args);
     case "governance-mcp.close_barrier_compute":
       return boundedTaskGroupGuard(state, args, context) || computeCloseBarrier(state, args.taskGroupId || "tg_runtime_management", args);

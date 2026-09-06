@@ -1042,6 +1042,7 @@ const SUBMIT_SUCCESS = {
   "plan-finalization": "已更新该工作项的方案定稿要求",
   "review-bundle-resolve": "已收尾评审包",
   "upgrade-candidate-resolve": "已处置系统升级候选项",
+  "external-upgrade-import": "已导入外部升级包：仅进入待管理员激活台账，运行中的系统不会自改",
   "shared-definition-resolve": "已处置共享定义契约",
   "topology-cancel": "已终止该执行方案：关闭门禁将在下一次重算时不再被它阻塞",
   "topology-downgrade": "已降级为串行执行：该方案进入终态，关闭门禁将在下一次重算时不再被它阻塞",
@@ -2627,6 +2628,7 @@ function renderSysSettingsSummary(runtime, metrics) {
   const availableModels = modelCapabilities.filter((profile) =>
     !["unavailable", "disabled", "retired"].includes(profile.availability)).length;
   const sharedDefinitions = instructionState?.sharedDefinitions || [];
+  const upgradeImports = state.externalUpgradeImports || [];
   return panel("系统设置总览", `
     <div class="metric-grid">
       ${summaryMetric("运行状态", t(runtime.status), "控制面当前运行状态")}
@@ -2636,8 +2638,9 @@ function renderSysSettingsSummary(runtime, metrics) {
       ${summaryMetric("技能源", skillSources.length, "可同步角色 skill 的来源")}
       ${summaryMetric("可用技能源", usableSkillSources, "已经同步到角色 skill 的来源")}
       ${summaryMetric("共享定义", sharedDefinitions.length, "公共语义和契约归属")}
+      ${summaryMetric("外部升级导入", upgradeImports.length, "系统外维护完成后的待激活记录")}
     </div>
-    <div class="small muted">查看顺序：先看“技能源”和“模型能力注册”，再看“指令压缩指标”和“共享定义归属”；异常时优先处理 stale 技能源或不可用模型。</div>
+    <div class="small muted">查看顺序：先看“技能源”和“模型能力注册”，再看“指令压缩指标”“共享定义归属”和“外部升级导入”；异常时优先处理 stale 技能源或不可用模型。</div>
   `, {wide: true});
 }
 
@@ -2651,6 +2654,7 @@ function renderSysSettingsActionBoard(runtime, metrics) {
     ["unavailable", "disabled", "retired"].includes(profile.availability)).length;
   const sharedDefinitions = instructionState?.sharedDefinitions || [];
   const envelopeCount = (metrics.envelopes || []).length;
+  const upgradeImports = state.externalUpgradeImports || [];
   return panel("系统设置操作看板", `
     <div class="module-grid action-grid">
       ${jumpModuleCard({
@@ -2701,6 +2705,14 @@ function renderSysSettingsActionBoard(runtime, metrics) {
         tone: sharedDefinitions.length ? "blue" : "gray",
         action: "看归属"
       })}
+      ${jumpModuleCard({
+        title: "外部升级",
+        metric: `${upgradeImports.length}`,
+        detail: "登记系统外维护包，只入账等待管理员激活",
+        panelTitle: "外部升级导入",
+        tone: upgradeImports.length ? "orange" : "gray",
+        action: "看导入"
+      })}
     </div>
     <div class="small muted">系统设置只做全局能力查看和治理，不签发项目 Agent 脚本；项目级注册直接进入「项目管理」→「注册运行节点」。</div>
   `, {wide: true});
@@ -2716,6 +2728,7 @@ function renderSysSettingsLifecycleGuide(runtime, metrics) {
     ["unavailable", "disabled", "retired"].includes(profile.availability)).length;
   const sharedDefinitions = instructionState?.sharedDefinitions || [];
   const envelopeCount = (metrics.envelopes || []).length;
+  const upgradeImports = state.externalUpgradeImports || [];
   return panel("系统能力治理流程", `
     <div class="module-grid action-grid">
       ${jumpModuleCard({
@@ -2768,6 +2781,14 @@ function renderSysSettingsLifecycleGuide(runtime, metrics) {
         tone: sharedDefinitions.length ? "blue" : "gray",
         action: "看定义"
       })}
+      ${jumpModuleCard({
+        title: "7 外部升级",
+        metric: `${upgradeImports.length}`,
+        detail: "运行时只收集问题；升级由系统外完成后在这里导入登记",
+        panelTitle: "外部升级导入",
+        tone: upgradeImports.length ? "orange" : "gray",
+        action: "看导入"
+      })}
     </div>
     <div class="small muted">系统设置是全局能力治理面板：集中 MCP、模型能力、技能源和公共定义在服务端统一维护；项目执行分别进入仓库凭据、Agent 档案、运行节点、任务组和项目监控。</div>
   `, {wide: true});
@@ -2812,6 +2833,14 @@ function renderSysSettings() {
     esc(t(definition.canonicalOwnerRole)),
     esc(t(definition.producerRole)),
     badge(definition.status)
+  ])).join("");
+  const upgradeImports = (state.externalUpgradeImports || []).slice(0, 20).map((item) => row([
+    `<span class="mono">${esc(item.importId || "-")}</span>`,
+    `<span class="mono">${esc(item.packageRef || "-")}</span>`,
+    badge(item.status),
+    item.forbidsActiveRuntimeSelfMutation === false ? `<span class="warn-text">未标记禁止运行时自改</span>` : "禁止运行时自改",
+    esc((item.evidenceRefs || []).slice(0, 3).join("、") || "-"),
+    fmtTime(item.createdAt)
   ])).join("");
 
   return [
@@ -2886,7 +2915,17 @@ function renderSysSettings() {
       </div>
     `),
     panel("指令信封", table(["编号", "接收角色", "缓存键", "状态", {label: "目标 Token 数", c: "num"}], envelopes, {moreText: moreText((metrics.envelopes || []).length, 12, (metrics.envelopes || []).length >= 2000)})),
-    panel("共享定义归属", table(["定义", "类型", "归属角色", "生产角色", "状态"], definitions), {wide: true})
+    panel("共享定义归属", table(["定义", "类型", "归属角色", "生产角色", "状态"], definitions), {wide: true}),
+    panel("外部升级导入", `
+      <div class="notice">这里只登记系统外维护完成后的升级包，状态固定为“待系统管理员激活”；登记不会触发运行中系统自我修改。</div>
+      <form class="form-grid" data-form="external-upgrade-import">
+        <div class="form-row"><label>外部升级包引用</label><input name="packageRef" required placeholder="示例：git:ops/aimac-upgrades@abc123 或 registry:aimac-upgrade-2026-09-07"></div>
+        <div class="form-row"><label>证据引用（可选，每行一条）</label><textarea name="evidenceRefs" rows="6" placeholder="示例：audit:...&#10;review:...&#10;artifact:..."></textarea></div>
+        <button class="primary-button" type="submit">导入升级包</button>
+      </form>
+      ${table(["导入编号", "升级包", "状态", "运行时保护", "证据", "导入时间"], upgradeImports,
+        {emptyText: "暂无外部升级导入记录。", moreText: moreText((state.externalUpgradeImports || []).length, 20, "externalUpgradeImports")})}
+    `, {wide: true})
   ].join("");
 }
 
@@ -7565,6 +7604,15 @@ document.addEventListener("submit", async (event) => {
       // 缺省 dismissed＝「不予处理」：下拉里有占位项，空着提交原先就替人判了一个。
       if (!data.status) throw new Error("请选择判定 —— 系统不会替你选一个（「不予处理」不是缺省）");
       await api(`/api/system-upgrade-candidates/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status, justification: data.justification})});
+      await loadPage();
+      return;
+    }
+    if (kind === "external-upgrade-import") {
+      const packageRef = String(data.packageRef || "").trim();
+      if (!packageRef) throw new Error("导入外部升级包必须填写升级包引用");
+      const evidenceRefs = String(data.evidenceRefs || "").split(/[\n,]/u).map((item) => item.trim()).filter(Boolean);
+      await api("/api/system-upgrade-candidates/import-external-result", {method: "POST", body: JSON.stringify({packageRef, evidenceRefs})});
+      formTouched = false;
       await loadPage();
       return;
     }

@@ -20,7 +20,7 @@
     ],
     "sys-overview": [pane("overview", "运行状态"), pane("details", "技术状态", ["运行指标", "服务器信息", "资源占用", "能耗估算", "存储体量", "系统服务"]), pane("audit", "审计日志", ["审计日志"]), pane("maintenance", "维护操作", ["维护操作"])],
     "sys-orgs": [pane("list", "组织列表", ["组织列表"]), pane("create", "开通组织", ["创建组织"]), pane("help", "职责与配额说明")],
-    "sys-settings": [pane("runtime", "运行参数", ["运行参数（只读）"]), pane("models", "模型能力", ["模型能力注册（只读）"]), pane("skills", "技能源", ["技能源"]), pane("instruction-efficiency", "指令效率", ["指令压缩指标"]), pane("envelopes", "指令信封", ["指令信封"]), pane("definitions", "共享定义", ["共享定义归属"]), pane("help", "能力说明", ["系统设置总览"])],
+    "sys-settings": [pane("runtime", "运行参数", ["运行参数（只读）"]), pane("models", "模型能力", ["模型能力注册（只读）"]), pane("skills", "技能源", ["技能源"]), pane("instruction-efficiency", "指令效率", ["指令压缩指标"]), pane("envelopes", "指令信封", ["指令信封"]), pane("definitions", "共享定义", ["共享定义归属"]), pane("upgrade-imports", "外部升级导入", ["外部升级导入"]), pane("help", "能力说明", ["系统设置总览"])],
     "org-overview": [pane("overview", "组织概况"), pane("help", "组织操作说明", ["组织操作路径"])],
     "org-members": [pane("list", "成员列表", ["成员列表"]), pane("create", "创建成员", ["创建成员"]), pane("grants", "权限矩阵", ["子账户项目 / 任务组权限矩阵"]), pane("help", "授权说明")],
     "org-projects": [pane("list", "项目列表", ["项目列表"]), pane("create", "创建项目", ["创建项目"]), pane("grants", "项目授权", ["项目成员授权"]), pane("help", "项目治理说明")],
