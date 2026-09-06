@@ -11918,6 +11918,14 @@ const MUTATIONS = [
     expect: "切换功能后自动展开新的业务分组并收起旧分组"
   },
   {
+    name: "收空分组的低频页面必须回落到可见父分组",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: "    const activeGroup = primaryGroups.some((group) => group.label === exactActiveGroup)\n      ? exactActiveGroup\n      : primaryGroups.find((group) => group.items.some((item) => item.id === pageId))?.label;",
+    to: "    const activeGroup = exactActiveGroup;",
+    expect: "独立分组被收空的低频页面也必须展开可见父分组"
+  },
+  {
     name: "页面标题必须跟随具体功能菜单",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
@@ -12068,6 +12076,14 @@ const MUTATIONS = [
     from: '    ].filter(Boolean).join(""), c: "text-clip"},\n    controls',
     to: '    ].filter(Boolean).join(""), c: "nowrap"},\n    controls',
     expect: "会话和派发长原因必须使用摘要列，避免窄屏整行被撑高"
+  },
+  {
+    name: "派发详情必须保留完整性警示",
+    file: "apps/control-plane-ui/public/modules/execution-object-workspace.js",
+    gate: "console",
+    from: "      ${integrityWarnings(dispatch, h)}\n      <div class=\"execution-object-columns\">",
+    to: "      <div class=\"execution-object-columns\">",
+    expect: "派发详情必须完整展示不会被列表摘要截断的完整性警示"
   },
   {
     name: "窄屏宽表不得把名称压成逐字竖排",

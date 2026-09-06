@@ -273,8 +273,12 @@
   }
 
   function desktopMenuHtml(items, pageId, workspace, todoFor) {
-    const activeGroup = menuGroups(items).find((group) => group.items.some((item) => item.id === pageId && item.workspace === workspace))?.label;
-    return menuGroups(primaryNavigationItems(items)).map((group) => {
+    const primaryGroups = menuGroups(primaryNavigationItems(items));
+    const exactActiveGroup = menuGroups(items).find((group) => group.items.some((item) => item.id === pageId && item.workspace === workspace))?.label;
+    const activeGroup = primaryGroups.some((group) => group.label === exactActiveGroup)
+      ? exactActiveGroup
+      : primaryGroups.find((group) => group.items.some((item) => item.id === pageId))?.label;
+    return primaryGroups.map((group) => {
       const active = group.label === activeGroup;
       return `<details class="nav-group"${active ? " open" : ""}>
         <summary class="nav-group-summary"><span>${esc(group.label)}</span></summary>

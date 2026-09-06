@@ -2893,6 +2893,14 @@ async function runErrorGuidanceCase() {
       && !/data-menu="monitor" data-menu-workspace="sessions"/u.test(runPageAside)
       && /工作会话（更多功能）/u.test(String(runPageRoot.innerHTML || "")),
     "进入工作会话后侧栏没有把焦点收敛到执行监控组");
+  const nodeControlRoot = el("div");
+  loadConsole(nodeControlRoot, {realI18n: true}).renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "node-control");
+  const nodeControlAside = String(nodeControlRoot.innerHTML || "").split("</aside>")[0] || "";
+  check("独立分组被收空的低频页面也必须展开可见父分组",
+    (nodeControlAside.match(/<details class="nav-group" open>/gu) || []).length === 1
+      && /<details class="nav-group" open>[\s\S]*?<span>执行监控<\/span>/u.test(nodeControlAside)
+      && /运行节点（更多功能）/u.test(String(nodeControlRoot.innerHTML || "")),
+    "节点控制、控制命令或死信页所属旧分组已经收空，深链接打开后侧栏没有任何分组展开");
   const menuActionProbe = loadConsole(el("div"), {realI18n: true});
   menuActionProbe.renderFullPageWith(navState, projectAccount, "p1", "proj-overview");
   menuActionProbe.setObjectLocation({page: "tasks", projectId: "p1", groupId: "tg_old", workId: "w_old"});
@@ -5243,6 +5251,14 @@ async function runPendingTruncationCase() {
         && /data-menu="proj-agents" data-menu-workspace="nodes"/.test(offlineView)
         && /检查运行节点/.test(offlineView),
       "只说没有在线节点，不说是一台都没装还是装了都挂了，人不知道下一步做什么");
+    const offlineDestination = /data-menu="([^"]+)" data-menu-workspace="([^"]+)"[^>]*>检查运行节点/u.exec(offlineView);
+    probe.stubNavigation();
+    if (offlineDestination) {
+      await probe.click({target: el("button", {dataset: {menu: offlineDestination[1], menuWorkspace: offlineDestination[2]}}), preventDefault: () => {}});
+    }
+    check("离线提示的处理按钮必须实际进入项目运行节点页",
+      offlineDestination && probe.sessionState().page === "proj-agents" && probe.workspaceCurrent("proj-agents") === "nodes",
+      `按钮目标=${offlineDestination?.slice(1).join("/") || "未找到"}，实际=${probe.sessionState().page}/${probe.workspaceCurrent("proj-agents")}`);
     check("项目监控只保留一层运行摘要",
       /class="monitor-scope-header/u.test(offlineView) && !/执行监控总览/u.test(offlineView),
       "顶部范围摘要已经显示会话、派发、待审核和受阻数，下方又重复一组相同指标");
@@ -5434,7 +5450,11 @@ async function runPendingTruncationCase() {
         placementDecision: {placement: "new_session"}, contractSummary: {found: false}, controlCommands: [], checkpoints: [], qualityGates: [], testResults: []
       };
       const runningDetail = objectProbe.renderExecutionObjectWith(multiState, orgAdmin, "p1", executionDetailBase);
-      const blockedDetail = objectProbe.renderExecutionObjectWith(multiState, orgAdmin, "p1", {...executionDetailBase, objectId: "run2", dispatch: {...executionDetailBase.dispatch, dispatchId: "run2", status: "blocked"}});
+      const blockedDetail = objectProbe.renderExecutionObjectWith(multiState, orgAdmin, "p1", {...executionDetailBase, objectId: "run2", dispatch: {
+        ...executionDetailBase.dispatch, dispatchId: "run2", status: "blocked", blockedReason: "awaiting_human_confirmation",
+        humanConfirmationRef: "hcr_integrity_review", previousHolderMayHavePushed: true,
+        recycledFromNodeId: "node_previous", rulesChangedAfterContract: true
+      }});
       check("派发对象详情按状态提供暂停或恢复，并始终明确绑定当前派发",
         /data-dispatch-id="run1" data-command="pause_dispatch"/u.test(runningDetail)
           && !/data-command="resume_dispatch"/u.test(runningDetail)
@@ -5442,6 +5462,11 @@ async function runPendingTruncationCase() {
           && !/data-command="pause_dispatch"/u.test(blockedDetail)
           && (runningDetail.match(/data-command="cancel_dispatch"/gu) || []).length === 1,
         `${textOf(runningDetail).slice(0, 360)} | ${textOf(blockedDetail).slice(0, 360)}`);
+      check("派发详情必须完整展示不会被列表摘要截断的完整性警示",
+        /执行完整性/u.test(blockedDetail) && /hcr_integrity_review/u.test(blockedDetail)
+          && /node_previous/u.test(blockedDetail) && /可能存在未复核提交/u.test(blockedDetail)
+          && /规则已在签约后变更/u.test(blockedDetail),
+        "确认卡、上一持有者可能已推送或签约后规则变更只出现在两行摘要里，点击详情后仍找不到完整信息");
       const modelMonitor = objectProbe.renderMonitorInventoryWith({...multiState,
         agents: [{id: "agent_project_review", name: "项目评审 Agent", role: "reviewer", model: "auto_fast", status: "active", projectId: "p1"}],
         modelSelectionDecisions: [{decisionId: "msd1", taskGroupId: "tg1", workItemId: "w1", roleId: "reviewer",

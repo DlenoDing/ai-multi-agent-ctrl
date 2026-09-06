@@ -87,6 +87,17 @@
         <time>${h.fmtTime(dispatch.updatedAt || dispatch.createdAt)}</time></button>`).join("")}</div></section>`;
   }
 
+  function integrityWarnings(dispatch, h) {
+    const warnings = [];
+    const reason = dispatch.blockedReason || dispatch.failureReason;
+    if (reason) warnings.push(`<div class="notice"><strong>当前原因</strong><div>${esc(h.explainCoded(reason))}</div></div>`);
+    if (dispatch.humanConfirmationRef) warnings.push(`<div class="notice warn-notice"><strong>等待人工确认</strong><div>需要处理确认卡 <span class="mono">${esc(dispatch.humanConfirmationRef)}</span>。</div></div>`);
+    if (dispatch.previousHolderMayHavePushed) warnings.push(`<div class="notice warn-notice"><strong>可能存在未复核提交</strong><div>上一任持有者${dispatch.recycledFromNodeId ? `（${esc(dispatch.recycledFromNodeId)}）` : ""}可能已经推送过提交；新持有者会把这些提交作为基线，继续执行前需要核对远端分支。</div></div>`);
+    if (dispatch.rulesChangedAfterContract) warnings.push(`<div class="notice warn-notice"><strong>规则已在签约后变更</strong><div>本次执行依据的任务契约可能与当前规则不同，需要对照任务契约后再判断结果。</div></div>`);
+    if (!warnings.length) return "";
+    return `<section class="execution-object-band execution-integrity-band"><span class="governance-eyebrow">执行完整性</span><h3>需要核对</h3><div class="stack">${warnings.join("")}</div></section>`;
+  }
+
   function render({detail, events = [], eventHistory = false, eventPage = 1, hasMoreEvents = false, historyTruncated = false, controls = "", helpers: h}) {
     const target = detail.objectType === "session" ? detail.session : detail.dispatch;
     const session = detail.session || {};
@@ -108,6 +119,7 @@
       </header>
       ${relationship(detail)}
       ${controls ? `<div class="execution-object-controls">${controls}</div>` : ""}
+      ${integrityWarnings(dispatch, h)}
       <div class="execution-object-columns">
         <section class="execution-object-band"><span class="governance-eyebrow">执行身份</span><h3>Agent 与节点</h3>${definitionList([
           ["逻辑 Agent", agent ? `<button class="object-name-link" data-action="execution-open-agent" data-agent="${esc(agent.id)}">${esc(agent.name || agent.id)}</button><div class="small muted mono">${esc(agent.id)}</div>` : "<span class=\"muted\">未绑定档案</span>"],
