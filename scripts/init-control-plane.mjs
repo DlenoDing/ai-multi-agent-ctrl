@@ -112,9 +112,11 @@ if (!force && storedStateExists(stateStoreOptions())) {
 
 const existingConfig = existsSync(configPath) ? loadJson(configPath) : {};
 const bootstrapToken = process.env.AIMAC_BOOTSTRAP_TOKEN || existingConfig.localBootstrapToken || randomBytes(24).toString("base64url");
+const orgAdminTokenEnv = process.env.AIMAC_LOCAL_SEED_ORG_ADMIN_TOKEN;
 const workspaceOwnerTokenEnv = process.env.AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN;
 const reviewerTokenEnv = process.env.AIMAC_LOCAL_SEED_REVIEWER_TOKEN;
 const agentRuntimeTokenEnv = process.env.AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN;
+const orgAdminToken = orgAdminTokenEnv || existingConfig.localAccountTokens?.acct_default_org_admin || randomBytes(24).toString("base64url");
 const workspaceOwnerToken = workspaceOwnerTokenEnv || existingConfig.localAccountTokens?.acct_workspace_owner || randomBytes(24).toString("base64url");
 const reviewerToken = reviewerTokenEnv || existingConfig.localAccountTokens?.acct_reviewer || randomBytes(24).toString("base64url");
 const agentRuntimeToken = agentRuntimeTokenEnv || existingConfig.localAccountTokens?.acct_agent_runtime || randomBytes(24).toString("base64url");
@@ -134,6 +136,7 @@ writeJson(configPath, {
   bootstrapTokenHash: digestOf(`bootstrap:${bootstrapToken}`),
   mcpServiceTokenHash: digestOf(`mcp-service:${mcpServiceToken}`),
   localAccountTokenHashes: {
+    acct_default_org_admin: digestOf(`account:acct_default_org_admin:${orgAdminToken}`),
     acct_workspace_owner: digestOf(`account:acct_workspace_owner:${workspaceOwnerToken}`),
     acct_reviewer: digestOf(`account:acct_reviewer:${reviewerToken}`),
     acct_agent_runtime: digestOf(`account:acct_agent_runtime:${agentRuntimeToken}`)
@@ -141,6 +144,7 @@ writeJson(configPath, {
   localBootstrapToken: process.env.AIMAC_BOOTSTRAP_TOKEN ? undefined : bootstrapToken,
   localMcpServiceToken: process.env.AIMAC_MCP_SERVICE_TOKEN ? undefined : mcpServiceToken,
   localAccountTokens: {
+    ...(orgAdminTokenEnv ? {} : {acct_default_org_admin: orgAdminToken}),
     ...(workspaceOwnerTokenEnv ? {} : {acct_workspace_owner: workspaceOwnerToken}),
     ...(reviewerTokenEnv ? {} : {acct_reviewer: reviewerToken}),
     ...(agentRuntimeTokenEnv ? {} : {acct_agent_runtime: agentRuntimeToken})
@@ -187,6 +191,10 @@ if (!process.env.AIMAC_BOOTSTRAP_TOKEN) {
 if (!workspaceOwnerTokenEnv) {
   console.log(`local seed workspace owner token: ${workspaceOwnerToken}`
     + "  (种子里的普通成员账号 owner@local，用来验非管理员视角；登录方式与上面相同)");
+}
+if (!orgAdminTokenEnv) {
+  console.log(`local seed organization admin login: org.admin@local / ${orgAdminToken}`
+    + "  (默认组织管理员；管理组织子账户、项目目录、两级授权和共享 Agent)");
 }
 // 这两个数原先是写死的字面量（"46 个工具、约 69k token"），而 46 是【过滤前】的条数 ——
 // 真实放行 44 个，远程客户端一跑 tools/list 就与这句话对不上。改成按同一处真相源算出来：

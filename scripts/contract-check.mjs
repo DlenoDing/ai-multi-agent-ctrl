@@ -1624,7 +1624,31 @@ function verifyHumanAndOrganizationContracts(output) {
   // Default organization exists and backfills membership/usage.
   const defaultOrg = (state.organizations || []).find((org) => org.orgId === "org_default");
   if (!defaultOrg) output.push("Default organization was not created during migration");
-  else validateSchema(defaultOrg, organizationSchema, "Organization:default", output);
+  else {
+    validateSchema(defaultOrg, organizationSchema, "Organization:default", output);
+    const initialAdmin = (state.accounts || []).find((account) => account.accountId === defaultOrg.initialAdminAccountId);
+    if (!initialAdmin || initialAdmin.accountType !== "org_admin" || initialAdmin.organizationId !== defaultOrg.orgId) {
+      output.push("默认组织登记的初始管理员不是本组织的 org_admin，登录后无法管理子账户和共享 Agent");
+    }
+    if (initialAdmin?.accountId === "acct_workspace_owner") {
+      output.push("默认组织管理员与示例项目负责人仍是同一个账号，组织权和项目权没有分开");
+    }
+  }
+  const legacyOrganizationState = structuredClone(seedState);
+  legacyOrganizationState.accounts = (legacyOrganizationState.accounts || [])
+    .filter((account) => account.accountId !== "acct_default_org_admin");
+  legacyOrganizationState.organizations = [{schemaVersion: "organization/v1", orgId: "org_default", name: "默认组织",
+    status: "active", quotas: {maxMembers: 50, maxProjects: 20, maxTaskGroups: 200, maxAgents: 100},
+    usage: {members: 0, projects: 0, taskGroups: 0, agents: 0}, initialAdminAccountId: "acct_workspace_owner",
+    createdBy: "system", createdAt: "2026-07-23T09:30:00Z", updatedAt: "2026-07-23T09:30:00Z"}];
+  legacyOrganizationState.orgMigrationVersion = 1;
+  ensureRuntimeCollections(legacyOrganizationState, {root});
+  const migratedDefaultOrg = legacyOrganizationState.organizations.find((org) => org.orgId === "org_default");
+  const migratedAdmin = legacyOrganizationState.accounts.find((account) => account.accountId === migratedDefaultOrg?.initialAdminAccountId);
+  if (legacyOrganizationState.orgMigrationVersion !== 2 || migratedAdmin?.accountType !== "org_admin"
+    || migratedAdmin?.organizationId !== "org_default" || migratedDefaultOrg?.initialAdminAccountId === "acct_workspace_owner") {
+    output.push("旧运行态没有把错误的默认组织管理员映射迁移成独立 org_admin");
+  }
   if (!(state.accounts || []).every((account) => ["system_admin", "service_account"].includes(account.accountType) ? true : account.organizationId)) {
     output.push("Organization migration left an org-scoped account without organizationId");
   }

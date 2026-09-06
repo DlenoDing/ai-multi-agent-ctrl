@@ -201,6 +201,36 @@
     },
     {
       "schemaVersion": "account/v1",
+      "accountId": "acct_default_org_admin",
+      "accountType": "org_admin",
+      "displayName": "Default Organization Admin",
+      "email": "org.admin@local",
+      "status": "active",
+      "organizationId": "org_default",
+      "roles": [
+        "org_admin"
+      ],
+      "permissions": [
+        "org:*",
+        "project:create",
+        "project:*",
+        "task_group:*",
+        "member:invite",
+        "agent:activate",
+        "project:grant"
+      ],
+      "authPolicy": {
+        "method": "local_password",
+        "mfaRequired": false,
+        "passwordSet": false,
+        "sessionTtlSeconds": 3600
+      },
+      "auditRef": "audit_seed_default_org_admin",
+      "createdAt": "2026-07-23T09:30:00Z",
+      "updatedAt": "2026-07-23T09:30:00Z"
+    },
+    {
+      "schemaVersion": "account/v1",
       "accountId": "acct_workspace_owner",
       "accountType": "user_account",
       "displayName": "Workspace Owner",

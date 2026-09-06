@@ -284,9 +284,32 @@ const defaultOrganizationQuotas = {
 };
 
 function ensureOrganizations(state) {
-  if (state.orgMigrationVersion === 1 && state.organizations.length) return;
+  if (state.orgMigrationVersion === 2 && state.organizations.length) return;
+  const ensureDefaultOrgAdmin = () => {
+    const existing = (state.accounts || []).find((account) => account.accountId === "acct_default_org_admin");
+    if (existing) return existing;
+    const at = new Date().toISOString();
+    const account = {
+      schemaVersion: "account/v1",
+      accountId: "acct_default_org_admin",
+      accountType: "org_admin",
+      displayName: "Default Organization Admin",
+      email: "org.admin@local",
+      status: "active",
+      organizationId: DEFAULT_ORGANIZATION_ID,
+      roles: ["org_admin"],
+      permissions: ["org:*", "project:create", "project:*", "task_group:*", "member:invite", "agent:activate", "project:grant"],
+      authPolicy: {method: "local_password", mfaRequired: false, passwordSet: false, sessionTtlSeconds: 3600},
+      auditRef: "audit_seed_default_org_admin",
+      createdAt: at,
+      updatedAt: at
+    };
+    state.accounts.unshift(account);
+    return account;
+  };
   if (!state.organizations.some((org) => org.orgId === DEFAULT_ORGANIZATION_ID)) {
     const at = new Date().toISOString();
+    ensureDefaultOrgAdmin();
     state.organizations.push({
       schemaVersion: "organization/v1",
       orgId: DEFAULT_ORGANIZATION_ID,
@@ -294,11 +317,19 @@ function ensureOrganizations(state) {
       status: "active",
       quotas: {...defaultOrganizationQuotas},
       usage: {members: 0, projects: 0, taskGroups: 0, agents: 0},
-      initialAdminAccountId: "acct_workspace_owner",
+      initialAdminAccountId: "acct_default_org_admin",
       createdBy: "system",
       createdAt: at,
       updatedAt: at
     });
+  }
+  const defaultOrganization = state.organizations.find((org) => org.orgId === DEFAULT_ORGANIZATION_ID);
+  const legacyInitialAdmin = (state.accounts || []).find((account) => account.accountId === defaultOrganization?.initialAdminAccountId);
+  if (state.orgMigrationVersion !== 2 && defaultOrganization?.initialAdminAccountId === "acct_workspace_owner"
+    && legacyInitialAdmin?.accountType === "user_account" && (legacyInitialAdmin.roles || []).includes("workspace_owner")) {
+    ensureDefaultOrgAdmin();
+    defaultOrganization.initialAdminAccountId = "acct_default_org_admin";
+    defaultOrganization.updatedAt = new Date().toISOString();
   }
   for (const account of state.accounts || []) {
     if (["system_admin", "service_account"].includes(account.accountType)) continue;
@@ -309,7 +340,7 @@ function ensureOrganizations(state) {
   for (const node of state.agentRuntimeNodes || []) node.organizationId ||= DEFAULT_ORGANIZATION_ID;
   for (const token of state.agentJoinTokens || []) token.organizationId ||= DEFAULT_ORGANIZATION_ID;
   recomputeOrganizationUsage(state);
-  state.orgMigrationVersion = 1;
+  state.orgMigrationVersion = 2;
 }
 
 // 账号状态一变，它已经签发的会话就必须失效。原先只有 REST 的"停用成员"这一条路做了撤销，

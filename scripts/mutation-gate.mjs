@@ -12788,6 +12788,40 @@ const MUTATIONS = [
     to: "  const archivedProject = false;",
     expect: "不许摆着「创建任务组 / 创建工作项」表单"
   },
+  {
+    name: "默认组织管理员必须与示例项目负责人分离",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    skip: "契约门的旧默认组织迁移会在同一次 ensureRuntimeCollections 中修正这一纵深默认值；迁移分支另有真实变异",
+    from: '      initialAdminAccountId: "acct_default_org_admin",',
+    to: '      initialAdminAccountId: "acct_workspace_owner",',
+    expect: "默认组织登记的初始管理员不是本组织的 org_admin"
+  },
+  {
+    name: "旧默认组织管理员错误映射必须自动迁移",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '  if (state.orgMigrationVersion !== 2 && defaultOrganization?.initialAdminAccountId === "acct_workspace_owner"',
+    to: '  if (false && defaultOrganization?.initialAdminAccountId === "acct_workspace_owner"',
+    expect: "旧运行态没有把错误的默认组织管理员映射迁移"
+  },
+  {
+    name: "默认组织管理员种子身份必须是 org_admin",
+    file: "data/seed-state.json",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '      "accountType": "org_admin",\n      "displayName": "Default Organization Admin",',
+    to: '      "accountType": "user_account",\n      "displayName": "Default Organization Admin",',
+    expect: "默认组织登记的初始管理员不是本组织的 org_admin"
+  },
+  {
+    name: "默认组织管理员必须使用独立本地令牌",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    acct_default_org_admin: digestOf(`account:acct_default_org_admin:${orgAdminToken}`),',
+    to: '    acct_default_org_admin: digestOf(`account:acct_default_org_admin:${workspaceOwnerToken}`),',
+    expect: "默认组织管理员无法以独立 org_admin 身份登录"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

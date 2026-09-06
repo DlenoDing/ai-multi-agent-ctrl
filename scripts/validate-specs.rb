@@ -2271,7 +2271,7 @@ end
 errors << "RuntimeBootstrapProfile schema missing mcp property" unless runtime_schema.dig("properties", "mcp", "properties", "toolCount")
 compose_source = read_source("docker-compose.yml")
 errors << "docker-compose must run control plane with PostgreSQL state store" unless compose_source.include?("AIMAC_STATE_STORE") && compose_source.include?("postgresql")
-%w[AIMAC_BOOTSTRAP_TOKEN AIMAC_MCP_SERVICE_TOKEN AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN AIMAC_LOCAL_SEED_REVIEWER_TOKEN AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN].each do |env_name|
+%w[AIMAC_BOOTSTRAP_TOKEN AIMAC_MCP_SERVICE_TOKEN AIMAC_LOCAL_SEED_ORG_ADMIN_TOKEN AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN AIMAC_LOCAL_SEED_REVIEWER_TOKEN AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN].each do |env_name|
   errors << "docker-compose must pass #{env_name}" unless compose_source.include?(env_name)
 end
 

@@ -43,6 +43,8 @@ local bootstrap token: ...              (与上面的登录账号配合使用)
 登录账号填 `system.admin@local`（或用 `AIMAC_SYSTEM_ADMIN_EMAIL` 指定的邮箱），令牌填 bootstrap token。
 本机访问时登录页也会显示这两项的提示；远程部署不显示（在公开页面上点名管理员账号等于把凭据的一半交出去）。
 
+本地种子同时提供两个不同的人类治理主体：`org.admin@local` 是默认组织管理员，负责组织子账户、项目目录、两级授权和共享 Agent；`owner@local` 是示例项目负责人，只管理有权项目。两者使用不同令牌，不能互相借权。
+
 其他入口：
 
 ```bash
@@ -57,8 +59,8 @@ npm run docker:up
 
 `npm run doctor` 是**全量**验收，按顺序跑六段：`npm run validate`（十一道快门，约 70 秒）→
 控制平面 e2e → 远程 Streamable HTTP MCP e2e → 公网 Agent Runtime e2e →
-**docker compose e2e（要装 Docker：它会构建镜像并起一台 PostgreSQL）** → **完整变异门（约 7 分钟，
-870+ 条，逐条验证「守卫失效时确实有东西变红」）**。整条跑完大约半小时，且**没有 Docker 会在第五段失败**。
+**docker compose e2e（要装 Docker：它会构建镜像并起一台 PostgreSQL）** → **完整变异门（耗时取决于机器，
+当前登记 1496 条，逐条验证「守卫失效时确实有东西变红」）**。整条跑完大约半小时，且**没有 Docker 会在第五段失败**。
 平时改完代码想快速自证，跑 `npm run validate` 加那三条 e2e 就够（本仓的提交脚本就是这么做的）。
 Agent 验收覆盖项目管理 UI/API 生成一次性 join token、服务端脚本下载与 SHA256 校验、自动注册、初始化、自检、远程 MCP 鉴权、按任务同步最小 Skill 工作集、模型 executor、Git commit/push、服务端远端 Git 复验和 checkpoint。`npm run skills:sync` 只在系统服务器同步 `DlenoDing/agency-agents-zh` pinned commit，并通过共享 state-store 建立 Skill Registry；Agent 主机不运行此命令，也不保存完整 Skill 仓库。
 
@@ -88,6 +90,7 @@ export AIMAC_MCP_SERVICE_TOKEN='<central-mcp-service-token>'
 本地演示/验收账号可选用 seed 覆盖变量；生产环境应在管理界面里创建用户、项目成员、任务组授权和服务账号授权，不把用户或项目凭证作为统一服务器 secret：
 
 ```bash
+export AIMAC_LOCAL_SEED_ORG_ADMIN_TOKEN='<local-dev-only-org-admin-token>'
 export AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN='<local-dev-only-owner-token>'
 export AIMAC_LOCAL_SEED_REVIEWER_TOKEN='<local-dev-only-reviewer-token>'
 export AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN='<local-dev-only-service-token>'
@@ -101,7 +104,7 @@ https://control.example.com/mcp
 
 MCP 请求必须携带节点 token、系统管理员 session 或服务 token；Agent 节点只能看到并调用 join token 所授予的工具，服务 token 默认只绑定 `prj_control_plane`，生产环境用 `AIMAC_MCP_SERVICE_PROJECT_IDS` 明确配置可见项目。生产 MCP 不提供服务端代执行 Agent 任务的工具，任务必须由已注册节点从 Agent Gateway claim。
 
-Agent 加入必须在管理界面完成。项目专属节点由系统管理员或有项目 `agent:activate` 权限的账号进入「项目管理」→「项目 Agent」→「注册项目节点」，生成绑定该项目的 join token。组织共享节点由组织管理员进入「组织管理」→「共享 Agent」→「注册共享节点」，生成绑定本组织的 join token；即使组织尚无项目也可接入，之后自动覆盖本组织有效项目。项目管理员不能签发组织级令牌或控制共享节点本身。
+Agent 加入必须在管理界面完成。项目专属节点由系统管理员或有项目 `agent:activate` 权限的账号进入「项目管理」→「注册运行节点」，生成绑定该项目的 join token。组织共享节点由组织管理员进入「组织管理」→「注册共享运行节点」，生成绑定本组织的 join token；即使组织尚无项目也可接入，之后自动覆盖本组织有效项目。项目管理员不能签发组织级令牌或控制共享节点本身。
 
 两种令牌都绑定角色范围、MCP allowlist、有效期、使用次数和创建者审计记录。注册时的 `projectIds` 是快照，服务端返回的 `effectiveProjectIds` 才是当前可调配范围；组织节点不会因空项目列表而获得全局权限。界面返回直接执行命令和 SHA256 校验版命令，典型形式如下：
 

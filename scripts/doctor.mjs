@@ -298,6 +298,7 @@ const child = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
     AIMAC_STATE_STORE: "runtime_json",
     DATABASE_URL: "",
     AIMAC_BOOTSTRAP_TOKEN: "doctor-bootstrap-token",
+    AIMAC_LOCAL_SEED_ORG_ADMIN_TOKEN: "doctor-org-admin-token",
     AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN: "doctor-workspace-token",
     AIMAC_LOCAL_SEED_REVIEWER_TOKEN: "doctor-reviewer-token",
     AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN: "doctor-agent-runtime-token",
@@ -418,6 +419,22 @@ try {
       + `（期望 401 invalid_credentials，得到 ${wrongSecret.response.status} ${wrongSecret.payload?.error || ""}）`);
   }
   const systemAuth = await loginAs(port, "system.admin@local", "doctor-bootstrap-token");
+  const defaultOrgAdminLogin = await jsonFetch(port, "/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({email: "org.admin@local", token: "doctor-org-admin-token"})
+  });
+  if (!defaultOrgAdminLogin.response.ok || defaultOrgAdminLogin.payload?.account?.accountType !== "org_admin"
+    || defaultOrgAdminLogin.payload?.account?.organizationId !== "org_default") {
+    throw new Error(`默认组织管理员无法以独立 org_admin 身份登录：${defaultOrgAdminLogin.response.status} ${JSON.stringify(defaultOrgAdminLogin.payload).slice(0, 200)}`);
+  }
+  const defaultOrgView = await jsonFetch(port, "/api/state?view=orgs", {
+    headers: {authorization: `Bearer ${defaultOrgAdminLogin.payload.sessionToken}`}
+  });
+  if (!defaultOrgView.response.ok || defaultOrgView.payload?.organizations?.some((org) => org.orgId !== "org_default")
+    || defaultOrgView.payload?.accounts?.some((account) => account.organizationId && account.organizationId !== "org_default")) {
+    throw new Error("默认组织管理员登录后没有进入自己的组织治理范围，或看到了其它组织数据");
+  }
+  console.log("  ok  默认组织管理员使用独立账号登录，并只进入默认组织治理范围");
   // 【拼错的执行角色要在建组时就拒】。原先任何字符串都收下、标 ready、"派发时再解析"，
   // 建组回执成功，到派发那一刻才以 role_skill_role_not_registered 炸出来。
   {

@@ -41,6 +41,7 @@ const composeEnv = {
   AIMAC_PUBLIC_URL: "http://127.0.0.1:4317",
   AIMAC_BOOTSTRAP_TOKEN: "doctor-bootstrap-token-0123456789",
   AIMAC_MCP_SERVICE_TOKEN: "doctor-mcp-service-token-0123456789",
+  AIMAC_LOCAL_SEED_ORG_ADMIN_TOKEN: "doctor-org-admin-token-0123456789",
   AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN: "doctor-workspace-owner-token-0123456789",
   AIMAC_LOCAL_SEED_REVIEWER_TOKEN: "doctor-reviewer-token-0123456789",
   AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN: "doctor-agent-runtime-token-0123456789",

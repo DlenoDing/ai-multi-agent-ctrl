@@ -239,19 +239,23 @@ function ensureRuntimeConfig() {
   mkdirSync(runtimeDir, { recursive: true });
   const existing = existsSync(configPath) ? readJsonFile(configPath, "运行时配置", CONFIG_NEXT_STEP) : {};
   const localToken = process.env.AIMAC_BOOTSTRAP_TOKEN || existing.localBootstrapToken || randomBytes(24).toString("base64url");
+  const orgAdminTokenEnv = process.env.AIMAC_LOCAL_SEED_ORG_ADMIN_TOKEN;
   const workspaceOwnerTokenEnv = process.env.AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN;
   const reviewerTokenEnv = process.env.AIMAC_LOCAL_SEED_REVIEWER_TOKEN;
   const agentRuntimeTokenEnv = process.env.AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN;
+  const orgAdminToken = orgAdminTokenEnv || existing.localAccountTokens?.acct_default_org_admin || randomBytes(24).toString("base64url");
   const workspaceOwnerToken = workspaceOwnerTokenEnv || existing.localAccountTokens?.acct_workspace_owner || randomBytes(24).toString("base64url");
   const reviewerToken = reviewerTokenEnv || existing.localAccountTokens?.acct_reviewer || randomBytes(24).toString("base64url");
   const agentRuntimeToken = agentRuntimeTokenEnv || existing.localAccountTokens?.acct_agent_runtime || randomBytes(24).toString("base64url");
   const mcpServiceToken = process.env.AIMAC_MCP_SERVICE_TOKEN || existing.localMcpServiceToken || randomBytes(32).toString("base64url");
   const localAccountTokenHashes = {
+    acct_default_org_admin: digestOf(`account:acct_default_org_admin:${orgAdminToken}`),
     acct_workspace_owner: digestOf(`account:acct_workspace_owner:${workspaceOwnerToken}`),
     acct_reviewer: digestOf(`account:acct_reviewer:${reviewerToken}`),
     acct_agent_runtime: digestOf(`account:acct_agent_runtime:${agentRuntimeToken}`)
   };
   const localAccountTokens = {
+    ...(orgAdminTokenEnv ? {} : {acct_default_org_admin: orgAdminToken}),
     ...(workspaceOwnerTokenEnv ? {} : {acct_workspace_owner: workspaceOwnerToken}),
     ...(reviewerTokenEnv ? {} : {acct_reviewer: reviewerToken}),
     ...(agentRuntimeTokenEnv ? {} : {acct_agent_runtime: agentRuntimeToken})
@@ -312,6 +316,7 @@ function assertRuntimeSecurity() {
   for (const envName of [
     "AIMAC_BOOTSTRAP_TOKEN",
     "AIMAC_MCP_SERVICE_TOKEN",
+    "AIMAC_LOCAL_SEED_ORG_ADMIN_TOKEN",
     "AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN",
     "AIMAC_LOCAL_SEED_REVIEWER_TOKEN",
     "AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN"
