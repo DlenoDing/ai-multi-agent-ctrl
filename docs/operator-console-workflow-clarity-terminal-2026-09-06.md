@@ -109,3 +109,7 @@
 ## 第十八项剩余问题：核心门面混入完整命令总线状态机
 
 `control-plane-core.mjs` 内原有约 370 行 Command、CommandEffect、DLQEntry 生命周期。现迁入 `command-bus.mjs`，由核心门面注入集合初始化、转移记录、审计事件、摘要和输入校验依赖，再按原名称重新导出。服务端、MCP 与测试导入路径不变；命令超时、重试、效果对账、死信人工处置和关闭门语义均保持原契约。全局时间字段、白名单拒绝、i18n 来源与容量裁剪元检查同步纳入新模块。
+
+## 第十九项剩余问题：运行问题收集与核心编排混放
+
+运行问题样本、重复模式、升级候选和候选处置传导现迁入 `runtime-issue-tracker.mjs`。模块继续执行 `collect_only` 策略，只生成供系统外独立维护使用的候选；不会修改活动规则、调度策略、权限、MCP grant 或自行创建升级任务组。核心门面保持 `collectRuntimeIssue` 与 `settleRuntimeIssuePatternForCandidate` 兼容导出。

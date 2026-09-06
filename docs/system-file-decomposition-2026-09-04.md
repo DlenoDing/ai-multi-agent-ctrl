@@ -70,9 +70,10 @@
 - `apps/control-plane-ui/lib/execution-object-detail.mjs`：会话／派发单对象的有界关联投影，不加载无限事件历史。
 - `apps/control-plane-ui/lib/runtime-node-detail.mjs`：组织／项目作用域的运行节点详情投影，按项目过滤负载、命令、事件和档案。
 - `apps/control-plane-ui/lib/command-bus.mjs`：Command、CommandEffect 与 DLQEntry 的完整状态机、超时清扫、重试、对账和人工死信处置。
+- `apps/control-plane-ui/lib/runtime-issue-tracker.mjs`：运行问题样本／模式聚类、升级候选生成，以及外部维护结论向问题模式的终态传导；运行中只收集，不自改系统。
 
 `server.mjs` 继续保留业务路由、鉴权、状态读写、MCP、实时通道和编排循环。
-`control-plane-core.mjs` 继续作为兼容门面导出既有 Command Bus 符号，内部通过依赖注入装配 `command-bus.mjs`。2026-09-06 迁移后核心门面为 8,422 行；调用方无须修改导入路径。
+`control-plane-core.mjs` 继续作为兼容门面导出既有 Command Bus 与运行问题追踪符号，内部通过依赖注入装配领域模块。2026-09-06 两项迁移后核心门面为 8,312 行；调用方无须修改导入路径。
 
 ### 行为门同步
 
@@ -101,6 +102,7 @@
 - 核心 skill 源目录在 `lib/skill-source-catalog.mjs`。
 - 核心管理界面目录在 `lib/management-surface-catalog.mjs`。
 - Command／CommandEffect／DLQ 状态机在 `lib/command-bus.mjs`，核心门面保留兼容导出。
+- 运行问题收集与系统外升级候选在 `lib/runtime-issue-tracker.mjs`，模块本身没有运行时自升级动作。
 - 核心 AI-native 编排规则仍在 `control-plane-core.mjs`，作为对外兼容门面暂时保留。
 
 ## 后续拆分约束
