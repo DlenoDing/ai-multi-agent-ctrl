@@ -2241,7 +2241,7 @@ const MUTATIONS = [
   {
     // 有副作用的命令要留下 CommandEffect 并对账到 verified；没对账的必须挡住关闭门。
     name: "命令效果必须被记录并对账",
-    file: CORE,
+    file: "apps/control-plane-ui/lib/command-bus.mjs",
     check: "verifyCommandBusLifecycle",
     from: "  state.commandEffects.unshift(effect);",
     to: "  void effect;",
@@ -4839,7 +4839,7 @@ const MUTATIONS = [
   },
   {
     name: "死信必须有处置出口（缺处置方式要拒，不得默认了结）",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    file: "apps/control-plane-ui/lib/command-bus.mjs",
     gate: "contract",
     check: "verifyDlqEntriesHaveAnOperatorExit",
     from: '    throw Object.assign(new Error("dlq_entry_resolution_required"),',
@@ -5287,7 +5287,7 @@ const MUTATIONS = [
   },
   {
     name: "新的自选 id 工厂必须防撞车或登记原因",
-    file: CORE,
+    file: "apps/control-plane-ui/lib/command-bus.mjs",
     check: "verifyCallerChosenIdsCannotShadow",
     from: '  assertUniqueRecordId(state.commands, "id", input.commandId, "command_id_conflict");',
     to: "",
@@ -5762,7 +5762,7 @@ const MUTATIONS = [
   },
   {
     name: "直接取调用方给的时间要被门看见",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    file: "apps/control-plane-ui/lib/command-bus.mjs",
     check: "verifyCallerSuppliedTimesAreNormalized",
     gate: "contract",
     from: "    ...(commandTimeoutAt ? {timeoutAt: commandTimeoutAt} : {}),",
@@ -5787,8 +5787,9 @@ const MUTATIONS = [
   },
   {
     name: "解析不了的命令超时时间必须当场拒",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    file: "apps/control-plane-ui/lib/command-bus.mjs",
     gate: "contract",
+    check: "verifyCommandBusLifecycle",
     from: "  if (commandTimeoutAt === false) {",
     to: "  if (false) {",
     expect: "收下了一个解析不了的 timeoutAt"

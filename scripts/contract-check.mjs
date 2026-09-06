@@ -202,18 +202,9 @@ const CONSOLE_APP_FILE = "apps/control-plane-ui/public/app.js";
 const CONSOLE_NAV_FILE = "apps/control-plane-ui/public/modules/navigation.js";
 const CONSOLE_LABELS_FILE = "apps/control-plane-ui/public/modules/labels.js";
 const CONSOLE_UI_CONFIG_FILE = "apps/control-plane-ui/public/modules/ui-config.js";
-const CONSOLE_PUBLIC_MODULE_FILES = [
-  "apps/control-plane-ui/public/modules/dom-utils.js",
-  "apps/control-plane-ui/public/modules/i18n-utils.js",
-  CONSOLE_NAV_FILE,
-  CONSOLE_LABELS_FILE,
-  "apps/control-plane-ui/public/modules/time-format.js",
-  "apps/control-plane-ui/public/modules/request-failure-guidance.js",
-  "apps/control-plane-ui/public/modules/task-group-insights.js",
-  "apps/control-plane-ui/public/modules/agent-node-cards.js",
-  CONSOLE_UI_CONFIG_FILE,
-  "apps/control-plane-ui/public/modules/ui-primitives.js"
-];
+const CONSOLE_PUBLIC_MODULE_FILES = [...readFileSync(join(root, "apps/control-plane-ui/public/index.html"), "utf8")
+  .matchAll(/<script src="\/(modules\/[^"?]+\.js)"/gu)]
+  .map((match) => `apps/control-plane-ui/public/${match[1]}`);
 const CONSOLE_PRODUCT_FILES = [CONSOLE_APP_FILE, ...CONSOLE_PUBLIC_MODULE_FILES];
 
 function productSource(file) {
@@ -11735,7 +11726,7 @@ function verifyWhitelistRefusalsCarryTheWhitelist(output) {
   //（transition-engine 的 unknown_from_state / unknown_to_state 当时正是不带白名单的）。
   // "N/N 全通过"里的 N 是门自己定义的 —— 漏了一整族，从绿色输出里看不出来。
   const files = ["apps/mcp-server/server.mjs", "apps/control-plane-ui/server.mjs",
-    "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",
+    "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/command-bus.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",
     "apps/control-plane-ui/lib/state-store.mjs", "apps/control-plane-ui/lib/transition-engine.mjs",
     "apps/control-plane-ui/lib/project-event-store.mjs", "apps/agent-runtime/runtime.mjs"];
   let scanned = 0;
@@ -12239,7 +12230,7 @@ function verifyCommentsDoNotCiteLineNumbers(output) {
 }
 
 function verifyMeasurementsDoNotFakeZero(output) {
-  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8")
+  const app = consoleProductSource()
     .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
   const uses = [...app.matchAll(/percentCell\(/gu)].length;
   // 定义 1 处 + 调用若干处。低于 3 处调用说明有人把它换回了裸的 `|| 0`。
@@ -14362,7 +14353,7 @@ function verifyCapacityKnobsAreDocumented(output) {
 // 本仓这一族的规矩是「认不出就拒」（normalizedExpiry 返回 false 即拒），今天全都做到了；
 // 这道门守的是下一个接上入口的人。
 function verifyCallerSuppliedTimesAreNormalized(output) {
-  const files = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
+  const files = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/command-bus.mjs", "apps/control-plane-ui/server.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs"];
   const raw = [];
   let scanned = 0;
@@ -14387,7 +14378,7 @@ function verifyCallerSuppliedTimesAreNormalized(output) {
 }
 
 function verifyCallerObjectsAreNotSpreadIntoRecords(output) {
-  const files = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
+  const files = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/command-bus.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs"];
   const suspects = [];
   let scanned = 0;
@@ -16999,7 +16990,7 @@ function verifyI18nKeysAreReachable(output) {
   const i18n = readFileSync(join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
   const keys = [...i18n.matchAll(/^\s{4}([a-z][a-z0-9_]+):\s/gmu)].map((hit) => hit[1]);
   if (keys.length < 500) { output.push(`i18n 只提出 ${keys.length} 个键 —— 提取脱节`); return; }
-  const codeFiles = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",
+  const codeFiles = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/command-bus.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",
     "apps/control-plane-ui/lib/state-store.mjs", "apps/control-plane-ui/lib/audit-ledger.mjs", "apps/control-plane-ui/lib/http-utils.mjs",
     "apps/control-plane-ui/lib/static-assets.mjs", "apps/control-plane-ui/lib/collection-utils.mjs",
     "apps/control-plane-ui/lib/digest-utils.mjs", "apps/control-plane-ui/lib/git-utils.mjs",
@@ -17109,7 +17100,7 @@ function verifyWriteActionsAreConfirmedOrRegistered(output) {
 // 按钮改了文案，提示还指着旧名字，人满屏找不到。只认带导航语气的点名（点/按/打开/进 + 「X」，或「X」按钮/面板/页/页签），
 // 名字要是某个真实按钮/页标题/面板名/表单标签的前缀；模板文案（新增${catLabel}规则）里的 ${…} 当通配。
 function verifyConsoleHintsNameRealControls(output) {
-  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const app = consoleProductSource();
   const i18n = readFileSync(join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
   const prose = `${app}\n${i18n}`.split("\n").filter((line) => !/^\s*\/\//u.test(line)).join("\n");
   const mentions = new Map();
@@ -19164,6 +19155,7 @@ function verifyCapKeepsLiveTaskGroupRecords(output) {
 function verifyEveryCapExplainsWhatItKeeps(output) {
   const core = [
     "apps/control-plane-ui/lib/control-plane-core.mjs",
+    "apps/control-plane-ui/lib/command-bus.mjs",
     "apps/control-plane-ui/lib/idempotency-records.mjs"
   ].map((rel) => readFileSync(join(root, rel), "utf8")).join("\n");
   // 三个是 export function（第一版只认行首 function，把它们当成"登记过期"报了红 ——
@@ -19257,16 +19249,16 @@ function verifyPanelGatesCoverEveryBlockInside(output) {
   // 「阻塞项人工处置」这个面板有一个总开关：任何一个集合非空就整块显示。往里加了一块、
   // 却忘了把它的集合加进总开关 —— 那一块永远不显示，等于没加（2026-08-22 实测撞过一次：
   // 降级入口写好了，人还是看不到）。总开关列的集合必须覆盖块内每一个 `xxx.length ?` 条件。
-  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
-  const gateStart = app.indexOf('? panel("阻塞项人工处置"');
+  const app = consoleProductSource();
+  const gateStart = app.indexOf('panel("阻塞项人工处置",');
   if (gateStart < 0) {
     output.push("找不到「阻塞项人工处置」面板 —— 这条判据的锚点漂了，它现在什么都没在查");
     console.log("阻塞项处置面板：锚点已漂");
     return;
   }
-  // 总开关：从这一行往前找到它所在表达式的开头（上一处 `\n    (`）。
-  const exprStart = app.lastIndexOf("\n    (", gateStart);
-  const gateExpr = app.slice(exprStart, gateStart);
+  // 总开关就在 panel 的第二个参数；只取到模板正文开始，避免把里面各块的条件反算进总开关。
+  const conditionEnd = app.indexOf("? `", gateStart);
+  const gateExpr = app.slice(gateStart, conditionEnd < 0 ? gateStart + 500 : conditionEnd);
   const gateSets = new Set([...gateExpr.matchAll(/(\w+)\.length/gu)].map((match) => match[1]));
   // 面板体：从 panel( 到这个 panel 的收尾（下一处 `\n    `), {wide` 或 `\n  ];`）。
   const bodyEnd = app.indexOf("\n  ];", gateStart);

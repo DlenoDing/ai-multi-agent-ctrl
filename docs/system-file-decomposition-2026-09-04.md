@@ -69,9 +69,10 @@
 - `apps/control-plane-ui/lib/management-surface-catalog.mjs`：系统管理系统与用户管理系统的默认界面分区、能力项和风险提示。
 - `apps/control-plane-ui/lib/execution-object-detail.mjs`：会话／派发单对象的有界关联投影，不加载无限事件历史。
 - `apps/control-plane-ui/lib/runtime-node-detail.mjs`：组织／项目作用域的运行节点详情投影，按项目过滤负载、命令、事件和档案。
+- `apps/control-plane-ui/lib/command-bus.mjs`：Command、CommandEffect 与 DLQEntry 的完整状态机、超时清扫、重试、对账和人工死信处置。
 
 `server.mjs` 继续保留业务路由、鉴权、状态读写、MCP、实时通道和编排循环。
-`control-plane-core.mjs` 继续作为兼容门面导出模型目录、语言策略、skill 源和管理界面目录相关符号，避免破坏现有调用方。
+`control-plane-core.mjs` 继续作为兼容门面导出既有 Command Bus 符号，内部通过依赖注入装配 `command-bus.mjs`。2026-09-06 迁移后核心门面为 8,422 行；调用方无须修改导入路径。
 
 ### 行为门同步
 
@@ -99,6 +100,7 @@
 - 核心语言策略在 `lib/language-policy.mjs`。
 - 核心 skill 源目录在 `lib/skill-source-catalog.mjs`。
 - 核心管理界面目录在 `lib/management-surface-catalog.mjs`。
+- Command／CommandEffect／DLQ 状态机在 `lib/command-bus.mjs`，核心门面保留兼容导出。
 - 核心 AI-native 编排规则仍在 `control-plane-core.mjs`，作为对外兼容门面暂时保留。
 
 ## 后续拆分约束
