@@ -356,26 +356,26 @@ function pendingForMe() {
     (state.findings || []).filter((item) => inScope(item) && !["resolved", "closed", "dismissed", "wontfix"].includes(item.status)), canReviewGroup, "findings");
   add("qualityGates", "未通过、可由你豁免的质量门", "monitor", "quality",
     (state.qualityGates || []).filter((item) => inScope(item) && !["passed", "waived"].includes(item.status)), canReviewGroup, "qualityGates");
-  add("reviewPlans", "待你收尾的评审计划", "monitor", "barriers",
+  add("reviewPlans", "待你收尾的评审计划", "monitor", "blockers",
     (state.reviewPlans || []).filter((item) => inScope(item) && !["closed", "rejected", "superseded"].includes(item.status)), canReviewGroup, "reviewPlans");
-  add("reviewBundles", "待你收尾的评审包", "monitor", "barriers",
+  add("reviewBundles", "待你收尾的评审包", "monitor", "blockers",
     (state.reviewBundles || []).filter((item) => inScope(item) && !["consumed", "rejected"].includes(item.status)), canReviewGroup, "reviewBundles");
-  add("ruleSources", "待你判定的规则来源", "monitor", "barriers",
+  add("ruleSources", "待你判定的规则来源", "monitor", "blockers",
     (state.ruleSourceResolutions || []).filter((item) => inScope(item) && !["reference_only", "quarantined", "rejected", "superseded", "active"].includes(item.status)), canControlGroup, "ruleSourceResolutions");
-  add("upgradeCandidates", "待你判定的系统升级候选项", "monitor", "barriers",
+  add("upgradeCandidates", "待你判定的系统升级候选项", "monitor", "blockers",
     (state.systemUpgradeCandidates || []).filter((item) => inScope(item) && item.status === "candidate_created"), canControlGroup, "systemUpgradeCandidates");
   // 这两类同样【只有人能了结】，而且都在关闭门的阻塞清单里 —— 之前却不在待办里：
   // 人看到"0 待处理"，任务组却因为等他终止一个卡住的方案、或确认一条指令已被消费而关不掉。
   // 状态集与 computeCloseBarrier 的判据对齐（拓扑终态 merged/downgraded/cancelled；
   // 指令 queued/acknowledged 才算未消费），不另立一套 —— 两套口径迟早分叉，而分叉那天没人会发现。
-  add("topologies", "待你终止的卡住执行方案", "monitor", "barriers",
+  add("topologies", "待你终止的卡住执行方案", "monitor", "blockers",
     (state.executionTopologies || []).filter((item) => inScope(item)
       && ["blocked", "needs_reconcile"].includes(item.status)), canControlGroup, "executionTopologies");
   add("directives", "待你确认已被消费的人工指令", "directives", "history",
     (state.humanDirectives || []).filter((item) => inScope(item)
       && ["queued", "acknowledged"].includes(item.status)), canControlGroup, "humanDirectives");
   const visibleProjectIds = new Set(groups.map((taskGroup) => taskGroup.projectId).filter(Boolean));
-  add("sharedDefinitions", "待你处置的共享定义契约", "monitor", "barriers",
+  add("sharedDefinitions", "待你处置的共享定义契约", "monitor", "blockers",
     (state.sharedDefinitions || []).filter((item) => ["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"].includes(item.status)
       && (!item.projectId || visibleProjectIds.has(item.projectId))), canUpdateProject, "sharedDefinitions");
   // "看不到"不等于"没有"。这些待办的来源集合只在 tasks 视角下发；在组织/系统/运行时视角里它们
@@ -4716,12 +4716,12 @@ function workflowGuidePanel(project, groups) {
     {title: "人工审核 / 定稿", done: reviewTodo === 0, attention: reviewTodo > 0, page: "review", workspace: "inbox",
       state: reviewTodo ? `${reviewTodo}${todo.partial ? "+" : ""} 项等你处理（定稿 / 授权 / 审批 / 发现项）`
         : (reviewOthers ? `有 ${reviewOthers} 项在等有权的人处置——你在相关任务组上没有审核权限，只能看` : "暂无等你处理的审核项")},
-    {title: "人工复核 / 阻塞处置", done: recheckTodo === 0, attention: recheckTodo > 0, page: "monitor", workspace: "barriers",
+    {title: "人工复核 / 阻塞处置", done: recheckTodo === 0, attention: recheckTodo > 0, page: "monitor", workspace: "blockers",
       state: recheckTodo ? `${recheckTodo} 项等你收尾（评审计划 / 评审包 / 卡住的执行方案 / 质量门豁免等）`
         : (recheckOthers ? `有 ${recheckOthers} 项在等有权的人处置——你在相关任务组上没有相应权限，只能看` : "暂无等你收尾的复核项")},
     {title: "人工指令", done: queuedDirectives === 0, attention: queuedDirectives > 0, page: "directives", workspace: "compose",
       state: queuedDirectives ? `${queuedDirectives} 条指令待编排消费` : "需要干预（暂停/纠偏/调优先级）时在这里下达"},
-    {title: "收口关闭", done: groups.length > 0 && openBarriers === 0, attention: openBarriers > 0, page: "monitor", workspace: "barriers",
+    {title: "收口关闭", done: groups.length > 0 && openBarriers === 0, attention: openBarriers > 0, page: "monitor", workspace: "close-gates",
       state: openBarriers ? `${openBarriers} 个任务组还有关闭门阻塞` : (groups.length ? "关闭门无阻塞" : "—")}
   ];
   return panel("流程导航", `<div class="stack">${steps.map((step, index) => `
@@ -4802,7 +4802,7 @@ function renderProjectOverview() {
         <div class="metric">${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "任务组", {page: "tg", workspace: "list", primary: true})}<strong>${openGroups.length}/${groups.length}</strong></div>
         <div class="metric"><span>任务组平均进度</span><strong>${avgProgress}%</strong>
           <div class="small muted">按任务组平均；上面那个总进度是按工作项平均的，两者不一定相等</div></div>
-        <div class="metric">${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "受阻项", {page: "monitor", workspace: "barriers", primary: true})}<strong>${blockers.length}</strong>
+        <div class="metric">${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "受阻项", {page: "monitor", workspace: "blockers", primary: true})}<strong>${blockers.length}</strong>
           ${(() => {
             // 这一格数的是【任务组身上的 blockers】（关闭门那一套）。而「被挡住的派发」是另一回事，
             // 它出现在执行监控页上，那里明说「有执行被挡住，需要人处理」——
@@ -4812,7 +4812,7 @@ function renderProjectOverview() {
             const stuck = (state.agentDispatches || []).filter((item) => item.status === "blocked").length;
             if (!stuck) return "";
             return `<div class="small warn-text">另有 ${stuck}${countSuffix("agentDispatches")} 个派发被挡住 ——`
-              + " 到“Agent 派发”或“阻塞与门禁”看它们卡在哪</div>";
+              + " 到“Agent 派发”或“阻塞处置”看它们卡在哪</div>";
           })()}
         </div>
         <div class="metric">${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "待人工确认", {page: "review", workspace: "pending", primary: true})}<strong>${pendingConfirmCount}</strong>
@@ -5192,7 +5192,7 @@ function renderTaskGroupDetailBody(taskGroup) {
       `).join("")}</div>`
     : `<div class="notice">事项清单尚未生成。控制面会按固定周期自动跑编排（${orchestratorCadenceText()}），
         生成后会出现在这里 —— 你不需要点任何按钮。若长时间没有变化，多半是这个任务组还缺前置条件
-        （例如项目尚未登记仓库、或角色 Skill 未同步），到“阻塞与门禁”查看。</div>`;
+        （例如项目尚未登记仓库、或角色 Skill 未同步），到“阻塞处置”查看。</div>`;
 
   // 只读进度接口那份：视图里的任务组【不再带整份 roles】（列表只用 roleCount）。
   // 留着 `|| taskGroup.roles` 那截兜底会骗人 —— 它永远是 undefined，看代码的人以为还有第二个来源。
@@ -5367,7 +5367,7 @@ function renderTaskGroupDetailBody(taskGroup) {
     ? `<div class="record"><div class="record-title">${badge("attention")} <span>另有 ${esc(taskGroup.blockersDroppedCount)} 条较早的提示因数量上限已不再保留 —— 不要据此认为问题只有上面这些</span></div></div>`
     : "");
   const barrierSummary = !groupBarrier
-    ? `<div class="record"><div class="record-title">关闭门禁：<strong>尚未计算</strong></div><div class="record-meta">进入“阻塞与门禁”重算关闭门禁，或等下一次编排周期，才会知道这个任务组能不能关闭。</div></div>`
+    ? `<div class="record"><div class="record-title">关闭门禁：<strong>尚未计算</strong></div><div class="record-meta">进入“关闭门禁”重算，或等下一次编排周期，才会知道这个任务组能不能关闭。</div></div>`
     : groupBarrier.satisfied
       ? `<div class="record"><div class="record-title">关闭门禁：${customBadge("可关闭", "green")}</div></div>`
       : `<div class="record">
@@ -5963,19 +5963,19 @@ const CLOSE_GATE_GUIDE = {
   no_pending_approvals: "到「人工审核」页处理待处理的审批请求",
   no_pending_human_confirmations: "到「人工审核」页定稿或打回待确认的卡",
   no_pending_human_directives: "到「人工指令」页确认那些指令已被消费",
-  no_open_execution_topologies: "在“阻塞与门禁”的“阻塞项人工处置”终止卡住的执行方案",
-  all_review_plans_closed: "在“阻塞与门禁”的“阻塞项人工处置”收尾评审计划",
-  no_pending_review_bundles: "在“阻塞与门禁”的“阻塞项人工处置”收尾评审包",
-  all_rule_sources_resolved: "在“阻塞与门禁”的“阻塞项人工处置”判定规则来源",
-  all_shared_definitions_active: "在“阻塞与门禁”的“阻塞项人工处置”处置共享定义契约",
-  rules_candidates_processed: "在“阻塞与门禁”的“阻塞项人工处置”判定系统升级候选项",
+  no_open_execution_topologies: "在“阻塞处置”终止卡住的执行方案",
+  all_review_plans_closed: "在“阻塞处置”收尾评审计划",
+  no_pending_review_bundles: "在“阻塞处置”收尾评审包",
+  all_rule_sources_resolved: "在“阻塞处置”判定规则来源",
+  all_shared_definitions_active: "在“阻塞处置”处置共享定义契约",
+  rules_candidates_processed: "在“阻塞处置”判定系统升级候选项",
   artifacts_verified: "还有产物没核验：等执行方补齐证据，或取消对应工作项",
   all_repository_output_targets_terminal: "还有写入目标没终结：等对应会话结束，或取消它的派发",
   all_leases_terminal: "写锁随持有它的会话一起释放：处理掉那个会话即可",
   all_commands_terminal: "无需操作：命令总线会自行推进到终态",
   all_command_effects_terminal: "无需操作：编排周期会自行和解命令效果",
   no_blocking_derived_task_requests: "无需操作：编排周期分类后会自行清除",
-  no_active_dlq: "死信条目只在命令重试超限时产生：到“阻塞与门禁”核对死信队列",
+  no_active_dlq: "死信条目只在命令重试超限时产生：到“死信队列”处置",
   // 挡住这道门的是【派发上的 MCP 授权】（mcpGrants），不是项目「成员权限」管的那些访问授权
   // （accessGrants）—— 原先这条指引指向后者，人撤了一圈门照样挡着。
   // 这类授权只随【派发的节点绑定被撤销】而回收：取消那次派发，或等它到期（门按到期时间判活跃）。
@@ -5984,7 +5984,7 @@ const CLOSE_GATE_GUIDE = {
     + "注意不要到项目「成员权限」撤销项目或任务组访问授权 —— 那是另一类，撤销它不会解开这道门",
   completion_readiness_clear: "完成度尚未就绪：看上面列出的其它阻塞项，它们清完这条自然就过",
   no_active_role_drift_blockers: "角色漂移守卫随对应会话终结自动关闭：处理掉那个会话即可",
-  runtime_issue_candidates_exported: "到“阻塞与门禁”把运行时问题候选导出或处置掉",
+  runtime_issue_candidates_exported: "到“阻塞处置”把运行时问题候选导出或处置掉",
   all_contracts_compatible: "契约不兼容：需要重新签发契约，通常伴随规则变更 —— 看规则页的变更记录"
 };
 
@@ -6337,7 +6337,7 @@ function renderPendingForMePanel() {
   const todo = pendingForMe();
   return panel("待你处理", `
     ${!todo.known
-      ? `<div class="notice">这一页没有加载待办所需的数据，因此这里不做统计（这不表示没有待办）。到“待办汇总”或“阻塞与门禁”查看。</div>`
+      ? `<div class="notice">这一页没有加载待办所需的数据，因此这里不做统计（这不表示没有待办）。到“待办汇总”或“阻塞处置”查看。</div>`
       : todo.total === 0
       ? `<div class="notice">当前没有需要你处置的项。（只统计你有权处置的；别人负责的部分不会出现在这里。）</div>`
       : `<div class="notice warn-notice">共 ${todo.total}${todo.partial ? "+" : ""} 项等待你处理，按当前项目视图统计。等人拍板的东西分布在两个页面上，这里是当前项目的汇总入口。${todo.partial ? "<br><strong>带 + 的类别数据量超过本页加载上限，实际项数只多不少 —— 处置完这里列出的也未必清空。</strong>" : ""}</div>
@@ -7562,8 +7562,8 @@ function renderMonitor() {
     `, {wide: true, headerSide: filterInput("按门禁类型、工作项过滤…", "quality-gates")}) : "",
     // 关闭门禁上每一个阻塞项都必须能在这里被人处理掉。后端有杠杆而界面上没有入口，
     // 等于这个杠杆不存在 —— 人只会看到一个红 chip，然后无从下手。
-    (openReviewPlans.length || openRuleSources.length || blockingDefinitions.length || openReviewBundles.length || openUpgradeCandidates.length || stuckTopologies.length
-      || downgradableTopologies.length) ? panel("阻塞项人工处置", `
+    panel("阻塞项人工处置", (openReviewPlans.length || openRuleSources.length || blockingDefinitions.length || openReviewBundles.length || openUpgradeCandidates.length || stuckTopologies.length
+      || downgradableTopologies.length) ? `
       <div class="notice">下面这些阻塞只能由人来收尾：AI 要么不该有权决定（采纳规则、激活规范），要么已经无法推进（评审角色不再参与）。</div>
       ${outOfReachBlockerNotice()}
       ${canReviewGates && openReviewPlans.length ? `
@@ -7651,7 +7651,7 @@ function renderMonitor() {
               <button class="danger-button" type="submit">终止该执行方案</button>
             </form>`).join("")}
         </div>` : ""}
-    `, {wide: true}) : "",
+    ` : `<div class="notice">当前范围没有需要人工收尾的评审计划、规则来源、评审包、系统升级候选、共享定义或卡住的执行方案。</div>`, {wide: true}),
     // 上面那一屏是"还要谁来收尾"，这一屏是"已经谁收的尾、为什么"。人写下的定稿理由此前落库之后
     // 没有任何读取点，而收尾之后对象又从待处置清单里消失 —— 于是这条链上唯一的人类判断不留痕迹。
     finalizations.length ? panel("最近的人工定稿", `

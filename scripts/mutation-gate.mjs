@@ -9047,8 +9047,8 @@ const MUTATIONS = [
     name: "面板总开关漏掉一块等于那块没加",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "openUpgradeCandidates.length || stuckTopologies.length\n      || downgradableTopologies.length) ? panel(\"\u963b\u585e\u9879\u4eba\u5de5\u5904\u7f6e\", `",
-    to: "openUpgradeCandidates.length || stuckTopologies.length) ? panel(\"\u963b\u585e\u9879\u4eba\u5de5\u5904\u7f6e\", `",
+    from: "openUpgradeCandidates.length || stuckTopologies.length\n      || downgradableTopologies.length) ? `",
+    to: "openUpgradeCandidates.length || stuckTopologies.length) ? `",
     expect: "界面上找不到它"
   },
   {
@@ -13180,8 +13180,8 @@ const MUTATIONS = [
     name: "旧授权复核地址必须迁移到权限审批",
     file: "apps/control-plane-ui/public/modules/workspaces.js",
     gate: "workspace",
-    from: '"monitor:evidence": "checkpoints", "review:decisions": "permissions"',
-    to: '"monitor:evidence": "checkpoints"',
+    from: '"review:decisions": "permissions", "proj-settings:roles":',
+    to: '"proj-settings:roles":',
     expect: "legacy review decisions pane migrates"
   },
   {
@@ -13239,6 +13239,38 @@ const MUTATIONS = [
     from: '"proj-settings:roles": "default-roles", "sys-settings:protocol": "instruction-efficiency"',
     to: '"proj-settings:roles": "default-roles"',
     expect: "legacy system protocol pane migrates"
+  },
+  {
+    name: "阻塞处置与关闭门禁必须拆成两个监控页面",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "console",
+    from: 'pane("blockers", "阻塞处置", ["阻塞项人工处置"]), pane("close-gates", "关闭门禁", ["关闭门禁"])',
+    to: 'pane("barriers", "阻塞与门禁", ["阻塞项人工处置", "关闭门禁"])',
+    expect: "必须是两个独立监控页面"
+  },
+  {
+    name: "关闭门禁必须有独立监控菜单入口",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    leaf("monitor", "close-gates", "关闭门禁", "任务组关闭条件与阻塞对象"),',
+    to: "",
+    expect: "关闭门禁"
+  },
+  {
+    name: "旧阻塞与门禁地址必须迁移到阻塞处置",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "workspace",
+    from: '"monitor:evidence": "checkpoints", "monitor:barriers": "blockers"',
+    to: '"monitor:evidence": "checkpoints"',
+    expect: "legacy monitor barriers pane migrates"
+  },
+  {
+    name: "项目主操作的执行阻塞必须直达阻塞处置",
+    file: "apps/control-plane-ui/public/modules/project-command-center.js",
+    gate: "console",
+    from: '      const workspace = !blocked && evidenceRechecks && !barrierRechecks ? "quality" : "blockers";',
+    to: '      const workspace = "close-gates";',
+    expect: "执行阻塞必须直达阻塞处置"
   },
 ];
 

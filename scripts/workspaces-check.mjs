@@ -203,6 +203,8 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
     && workspaces.current("monitor")?.id === "node-control");
   check("legacy monitor evidence pane migrates to the checkpoint page", workspaces.select("monitor", "evidence") === true
     && workspaces.current("monitor")?.id === "checkpoints");
+  check("legacy monitor barriers pane migrates to blocker handling", workspaces.select("monitor", "barriers") === true
+    && workspaces.current("monitor")?.id === "blockers");
   check("legacy review decisions pane migrates to permission approvals", workspaces.select("review", "decisions") === true
     && workspaces.current("review")?.id === "permissions");
   check("legacy project roles pane migrates to default roles", workspaces.select("proj-settings", "roles") === true

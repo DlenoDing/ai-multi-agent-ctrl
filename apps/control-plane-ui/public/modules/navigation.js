@@ -49,7 +49,8 @@
     leaf("monitor", "checkpoints", "检查点证据", "Git 提交、推送和产出清单"),
     leaf("monitor", "quality", "质量门禁", "测试结果、质量门和人工豁免"),
     leaf("monitor", "finalizations", "人工定稿", "收尾裁决、责任人、时间和理由"),
-    leaf("monitor", "barriers", "阻塞与门禁", "关闭阻塞、人工复核和死信"),
+    leaf("monitor", "blockers", "阻塞处置", "评审计划、共享定义和卡住方案"),
+    leaf("monitor", "close-gates", "关闭门禁", "任务组关闭条件与阻塞对象"),
     {divider: "人工控制"},
     leaf("review", "pending", "待我审核", "执行方案与确认卡"),
     leaf("review", "permissions", "权限审批", "Agent 请求的临时权限与作用范围"),
@@ -165,7 +166,7 @@
     if (!context.taskGroupScope) return base;
     const scopedTitles = {
       tasks: {list: "任务组任务", create: "任务组新建任务"},
-      monitor: {overview: "任务组监控", sessions: "任务组工作会话", dispatches: "任务组 Agent 派发", lanes: "任务组执行载体", models: "任务组模型决策", placements: "任务组会话放置", admissions: "任务组准入决策", events: "任务组实时事件", "node-control": "任务组运行节点", commands: "任务组控制命令", dlq: "任务组死信队列", checkpoints: "任务组检查点证据", quality: "任务组质量门禁", finalizations: "任务组人工定稿", barriers: "任务组阻塞与门禁", help: "任务组监控说明"},
+      monitor: {overview: "任务组监控", sessions: "任务组工作会话", dispatches: "任务组 Agent 派发", lanes: "任务组执行载体", models: "任务组模型决策", placements: "任务组会话放置", admissions: "任务组准入决策", events: "任务组实时事件", "node-control": "任务组运行节点", commands: "任务组控制命令", dlq: "任务组死信队列", checkpoints: "任务组检查点证据", quality: "任务组质量门禁", finalizations: "任务组人工定稿", blockers: "任务组阻塞处置", "close-gates": "任务组关闭门禁", help: "任务组监控说明"},
       review: {pending: "任务组待审核", permissions: "任务组权限审批", approvals: "任务组操作审批", findings: "任务组发现处置", history: "任务组审核历史", inbox: "任务组待办汇总", help: "任务组审核说明"},
       directives: {compose: "任务组下达指令", history: "任务组指令记录", help: "任务组指令说明"}
     };

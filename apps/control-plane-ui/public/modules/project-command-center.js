@@ -29,7 +29,7 @@
     const reviewDecisions = reviewPermissions + reviewApprovals + reviewFindings;
     const reviews = reviewPending + reviewDecisions || Number(todos.review?.count || 0);
     const evidenceRechecks = Number(todos["monitor|quality"]?.count || 0);
-    const barrierRechecks = Number(todos["monitor|barriers"]?.count || 0);
+    const barrierRechecks = Number(todos["monitor|blockers"]?.count || 0);
     const rechecks = evidenceRechecks + barrierRechecks || Number(todos.monitor?.count || 0);
     const credentialMissing = repositories.some((repo) => {
       const mode = repo.credentialMode || repo.credential?.mode || "none";
@@ -69,7 +69,7 @@
     }
     if (blocked || rechecks) {
       const target = groupStats.find((item) => item.stats.blocked)?.group || activeGroups[0];
-      const workspace = !blocked && evidenceRechecks && !barrierRechecks ? "quality" : "barriers";
+      const workspace = !blocked && evidenceRechecks && !barrierRechecks ? "quality" : "blockers";
       return {title: "处理执行阻塞", detail: `${blocked + rechecks} 项执行、复核或关闭门问题尚未收口。`,
         action: {kind: "group", page: "monitor", workspace, groupId: target?.id || "", label: "查看阻塞"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
     }

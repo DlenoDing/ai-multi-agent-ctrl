@@ -2173,7 +2173,8 @@ function runWorkflowGuideCase() {
       && /data-menu="tasks" data-menu-workspace="create"/u.test(freshGuide)
       && /data-menu="review" data-menu-workspace="inbox"/u.test(freshGuide)
       && /data-menu="directives" data-menu-workspace="compose"/u.test(freshGuide)
-      && /data-menu="monitor" data-menu-workspace="barriers"/u.test(freshGuide),
+      && /data-menu="monitor" data-menu-workspace="blockers"/u.test(freshGuide)
+      && /data-menu="monitor" data-menu-workspace="close-gates"/u.test(freshGuide),
     "流程导航没有「前往」：知道在第几步却点不过去，等于还是几个 tab");
   check("项目设置 / 成员权限的入口没有并进流程导航",
     /data-menu="proj-settings" data-menu-workspace="repositories"/u.test(freshGuide)
@@ -2711,7 +2712,7 @@ async function runErrorGuidanceCase() {
     ["monitor", "lanes", "执行载体"], ["monitor", "models", "模型决策"], ["monitor", "placements", "会话放置"], ["monitor", "admissions", "准入决策"],
     ["monitor", "events", "实时事件"], ["monitor", "node-control", "运行节点"], ["monitor", "commands", "控制命令"],
     ["monitor", "dlq", "死信队列"], ["monitor", "checkpoints", "检查点证据"], ["monitor", "quality", "质量门禁"],
-    ["monitor", "finalizations", "人工定稿"], ["monitor", "barriers", "阻塞与门禁"], ["review", "pending", "待我审核"],
+    ["monitor", "finalizations", "人工定稿"], ["monitor", "blockers", "阻塞处置"], ["monitor", "close-gates", "关闭门禁"], ["review", "pending", "待我审核"],
     ["review", "permissions", "权限审批"], ["review", "approvals", "操作审批"], ["review", "findings", "发现处置"],
     ["directives", "compose", "下达指令"], ["proj-settings", "repositories", "仓库凭据"],
     ["proj-settings", "baseline", "基线资料"], ["proj-settings", "default-roles", "默认角色"],
@@ -3002,10 +3003,17 @@ async function runErrorGuidanceCase() {
   const qualityOnly = objectProbe.projectCommandDecision({...commandInput,
     groups: [{...commandGroup, stats: {...commandGroup.stats, reviews: 0}}],
     todos: {monitor: {count: 1}, "monitor|quality": {count: 1}}});
+  const blockerTodoOnly = objectProbe.projectCommandDecision({...commandInput,
+    groups: [{...commandGroup, stats: {...commandGroup.stats, reviews: 0, blocked: 0}}],
+    todos: {monitor: {count: 1}, "monitor|blockers": {count: 1}}});
   check("项目当前主操作必须直达准确待办叶子",
     decisionOnly.action.workspace === "permissions" && confirmationOnly.action.workspace === "pending"
       && mixedReview.action.workspace === "inbox" && qualityOnly.action.workspace === "quality",
     `主操作仍只按父页面跳转：${JSON.stringify({decisionOnly: decisionOnly.action, confirmationOnly: confirmationOnly.action, mixedReview: mixedReview.action, qualityOnly: qualityOnly.action})}`);
+  const blockedOnly = commandResults.find((item) => item.expected === "处理执行阻塞")?.decision;
+  check("项目当前主操作的执行阻塞必须直达阻塞处置",
+    blockedOnly?.action?.workspace === "blockers" && blockerTodoOnly?.action?.workspace === "blockers",
+    `执行阻塞主操作落在 ${blockedOnly?.action?.workspace || "未指定"}，人工阻塞待办落在 ${blockerTodoOnly?.action?.workspace || "未指定"}`);
   const exactActionHtml = [decisionOnly, confirmationOnly, mixedReview, qualityOnly]
     .map((decision) => objectProbe.projectCommandHtml(commandProject, decision)).join("");
   check("项目当前主操作按钮必须携带精确 workspace",
@@ -3909,7 +3917,7 @@ function runNoVisibleProjectCase() {
       truncatedCollections: []
     };
     const stuckText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
-      organizationId: "org_default"}, stuckState, "monitor", "p1", undefined, "barriers");
+      organizationId: "org_default"}, stuckState, "monitor", "p1", undefined, "blockers");
     check("方案卡住时，「卡在这几项」里每一段都要是人话，不能出现英文尾码",
       /载体或隔离方式填的是/u.test(stuckText) && /一条验收项都没写/u.test(stuckText)
         && !/runner_or_isolation_none|no_acceptance_checks/u.test(stuckText),
@@ -3920,7 +3928,7 @@ function runNoVisibleProjectCase() {
     const eligibilityState = structuredClone(stuckState);
     eligibilityState.executionTopologies[0].status = "eligibility_checked";
     const eligibilityText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
-      organizationId: "org_default"}, eligibilityState, "monitor", "p1", undefined, "barriers");
+      organizationId: "org_default"}, eligibilityState, "monitor", "p1", undefined, "blockers");
     check("资格检查没过的执行方案要在界面上看得见（它是非终态，会一直挡着关闭门）",
       /topo1/u.test(eligibilityText),
       "界面上找不到它 —— 人只看到任务组「存在阻塞」，点不进去也不知道该做什么");
@@ -3944,7 +3952,7 @@ function runNoVisibleProjectCase() {
     closedState.closeBarriers = [{taskGroupId: "tg1", satisfied: true, blockingObjects: [],
       computedAt: "2026-08-12T00:00:00.000Z", confirmedBy: "u1", confirmedAt: "2026-08-12T01:00:00.000Z"}];
     const closedText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
-      organizationId: "org_default"}, closedState, "monitor", "p1", undefined, "barriers");
+      organizationId: "org_default"}, closedState, "monitor", "p1", undefined, "close-gates");
     check("已关闭的任务组要说得出是谁定稿关闭的（这是真人专属的决定）",
       /定稿于/u.test(closedText) && /管理员/u.test(closedText),
       "屏幕上只有一个「已关闭」，谁定的、什么时候定的都追不到");
@@ -4026,7 +4034,7 @@ function runNoVisibleProjectCase() {
     reachState.taskGroupPermissionsDefault = [];
     const partialReviewer = {accountId: "u9", accountType: "org_member", displayName: "评审员",
       organizationId: "org_default", effectivePermissions: ["task_group:review", "project:read"]};
-    const reachText = renderAs(partialReviewer, reachState, "monitor", "p1", undefined, "barriers");
+    const reachText = renderAs(partialReviewer, reachState, "monitor", "p1", undefined, "blockers");
     check("在别的组上有同名权限的人，也要被告知这几条他够不着（它们仍挡着关闭门）",
       /你处置不了/u.test(reachText) && /2 项/u.test(reachText) && /别人的组/u.test(reachText),
       "警告没出来：跨资源并集判成「有权」，而按组过滤又把这两条计划整个滤掉 —— 人什么都看不到");
@@ -4038,7 +4046,7 @@ function runNoVisibleProjectCase() {
     const fullReachState = structuredClone(reachState);
     fullReachState.taskGroupPermissions = {tg1: ["task_group:review"], tg2: ["task_group:review"]};
     check("全都够得着时不要多说一句",
-      !/你处置不了/u.test(renderAs(partialReviewer, fullReachState, "monitor", "p1", undefined, "barriers")),
+      !/你处置不了/u.test(renderAs(partialReviewer, fullReachState, "monitor", "p1", undefined, "blockers")),
       "有权处置的人也被告知自己处置不了");
 
     // 关闭门被 artifacts_verified 挡住时，人被告知"等执行方补齐证据，或取消对应工作项" ——
@@ -4060,7 +4068,7 @@ function runNoVisibleProjectCase() {
       truncatedCollections: []
     };
     const artifactText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
-      organizationId: "org_default"}, artifactState, "monitor", "p1", undefined, "barriers");
+      organizationId: "org_default"}, artifactState, "monitor", "p1", undefined, "close-gates");
     check("产物没核验挡住关闭门时，要点名是哪一条产物、哪个格子",
       /af_missing/u.test(artifactText) && /wi_7/u.test(artifactText),
       "只说了「还有产物没核验」，人不知道该盯哪个格子 —— 而它就在下发的载荷里");
@@ -4134,7 +4142,7 @@ function runNoVisibleProjectCase() {
       closeBarriers: [], qualityGates: [], findings: [], permissionRequests: [], approvalRequests: [],
       truncatedCollections: []
     };
-    const asUser = (perms) => ["overview", "barriers"].map((pane) => renderAs({accountId: "u2", accountType: "user_account", displayName: "操作员",
+    const asUser = (perms) => ["overview", "blockers"].map((pane) => renderAs({accountId: "u2", accountType: "user_account", displayName: "操作员",
       organizationId: "org_default", effectivePermissions: perms}, richState, "monitor", "p1", undefined, pane)).join(" ");
     const full = asUser(ALL_PERMS);
     const deadGates = [];
@@ -4344,7 +4352,7 @@ function runNoVisibleProjectCase() {
     };
     const monitorText = renderAs({accountId: "u_op", accountType: "member", displayName: "操作员",
       organizationId: "org_default", effectivePermissions: ["project:view", "task_group:read", "task_group:control"]},
-      monitorState, "monitor", "p1", undefined, "barriers");
+      monitorState, "monitor", "p1", undefined, "close-gates");
     const closeButtons = (monitorText.match(/关闭任务组/gu) || []).length;
     if (!/我能控的/u.test(monitorText)) {
       check("监控页按组判权的夹具要真渲染出关闭门那张表", false, "这一屏没渲染出关闭门 —— 断言什么也没验");
@@ -5236,6 +5244,12 @@ async function runPendingTruncationCase() {
         monitorEvidencePanes.every((current) => current.html.includes(`<h2>${current.title}</h2>`)
           && monitorEvidencePanes.filter((other) => other.pane !== current.pane).every((other) => !current.html.includes(`<h2>${other.title}</h2>`))),
         monitorEvidencePanes.map((item) => `${item.pane}:${textOf(item.html).slice(0, 80)}`).join(" | "));
+      const blockerPane = objectProbe.renderMonitorInventoryWith(evidenceState, orgAdmin, "p1", ["blockers"]);
+      const closeGatePane = objectProbe.renderMonitorInventoryWith(evidenceState, orgAdmin, "p1", ["close-gates"]);
+      check("阻塞处置和关闭门禁必须是两个独立监控页面",
+        /<h2>阻塞项人工处置<\/h2>/u.test(blockerPane) && !/<h2>关闭门禁<\/h2>/u.test(blockerPane)
+          && /<h2>关闭门禁<\/h2>/u.test(closeGatePane) && !/<h2>阻塞项人工处置<\/h2>/u.test(closeGatePane),
+        `${textOf(blockerPane).slice(0, 100)} | ${textOf(closeGatePane).slice(0, 100)}`);
       const executionDetailBase = {
         objectType: "dispatch", objectId: "run1", settled: false,
         taskGroup: {id: "tg1", name: "任务组一"}, workItem: {id: "w1", title: "执行任务"},
@@ -6281,13 +6295,13 @@ async function runPendingTruncationCase() {
       (counts.monitor?.count || 0) >= 1 && (counts.directives?.count || 0) >= 1,
       "面板里列出来了，菜单红点却不算 —— 同一件事在同一屏上给出两个数字");
     check("待办红点必须落到实际能处置的叶子功能",
-      counts["monitor|barriers"]?.count === 1 && counts["directives|history"]?.count === 1
+      counts["monitor|blockers"]?.count === 1 && counts["directives|history"]?.count === 1
         && !counts["monitor|overview"] && !counts["directives|compose"] && counts.__all?.count === 2,
       `叶子功能待办计数错位：${JSON.stringify(counts)}`);
     check("待办按钮必须直达阻塞门禁和指令记录",
-      /data-menu="monitor" data-menu-workspace="barriers"/u.test(panel)
+      /data-menu="monitor" data-menu-workspace="blockers"/u.test(panel)
         && /data-menu="directives" data-menu-workspace="history"/u.test(panel)
-        && /处置入口：阻塞与门禁/u.test(panel) && /处置入口：指令记录/u.test(panel),
+        && /处置入口：阻塞处置/u.test(panel) && /处置入口：指令记录/u.test(panel),
       "待办卡仍只携带父页面，点击后会落到项目监控或下达指令");
   }
 
@@ -6309,7 +6323,7 @@ async function runPendingTruncationCase() {
       counts["review|pending"]?.count === 1 && counts["review|permissions"]?.count === 1
         && counts["review|approvals"]?.count === 2
         && counts["review|findings"]?.count === 1
-        && counts["monitor|quality"]?.count === 1 && !counts["monitor|barriers"]
+        && counts["monitor|quality"]?.count === 1 && !counts["monitor|blockers"]
         && counts.__all?.count === 6,
       `父页面聚合仍污染叶子红点：${JSON.stringify(counts)}`);
     const pendingHtml = probe.renderPendingPanelWith(routed, admin);
@@ -6334,7 +6348,7 @@ async function runPendingTruncationCase() {
         && /nav-badge">1</u.test(leafButton("review", "findings"))
         && /nav-badge">6</u.test(leafButton("review", "inbox"))
         && /nav-badge">1</u.test(leafButton("monitor", "quality"))
-        && !/nav-badge/u.test(leafButton("monitor", "barriers")),
+        && !/nav-badge/u.test(leafButton("monitor", "blockers")),
       "父页面总数仍被复制到多个叶子菜单，或质量门红点落错功能");
     const reviewDispositionPanes = [
       ["permissions", "权限审批", "授权请求：", ["审批请求：", "发现："]],
