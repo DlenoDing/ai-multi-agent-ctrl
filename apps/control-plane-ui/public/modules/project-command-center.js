@@ -7,7 +7,7 @@
       return `<button class="primary-button" data-workspace-page="${esc(action.page)}" data-workspace="${esc(action.workspace)}"${action.groupId ? ` data-create-for-group="${esc(action.groupId)}"` : ""}>${esc(action.label)}</button>`;
     }
     if (action.kind === "group") {
-      return `<button class="primary-button" data-focus-group="${esc(action.groupId)}" data-focus-page="${esc(action.page)}">${esc(action.label)}</button>`;
+      return `<button class="primary-button" data-focus-group="${esc(action.groupId)}" data-focus-page="${esc(action.page)}"${action.workspace ? ` data-focus-workspace="${esc(action.workspace)}"` : ""}>${esc(action.label)}</button>`;
     }
     if (action.kind === "control") {
       return `<button class="primary-button" data-action="task-control" data-task="${esc(action.groupId)}" data-task-action="${esc(action.control)}">${esc(action.label)}</button>`;
@@ -21,8 +21,12 @@
     const tasks = groupStats.reduce((sum, item) => sum + Number(item.stats.tasks || 0), 0);
     const runs = groupStats.reduce((sum, item) => sum + Number(item.stats.runs || 0), 0);
     const blocked = groupStats.reduce((sum, item) => sum + Number(item.stats.blocked || 0), 0);
-    const reviews = Number(todos.review?.count || 0);
-    const rechecks = Number(todos.monitor?.count || 0);
+    const reviewPending = Number(todos["review|pending"]?.count || 0);
+    const reviewDecisions = Number(todos["review|decisions"]?.count || 0);
+    const reviews = reviewPending + reviewDecisions || Number(todos.review?.count || 0);
+    const evidenceRechecks = Number(todos["monitor|evidence"]?.count || 0);
+    const barrierRechecks = Number(todos["monitor|barriers"]?.count || 0);
+    const rechecks = evidenceRechecks + barrierRechecks || Number(todos.monitor?.count || 0);
     const credentialMissing = repositories.some((repo) => {
       const mode = repo.credentialMode || repo.credential?.mode || "none";
       return mode !== "none" && !(repo.credential?.passwordSet || repo.credential?.apiKeySet || repo.credential?.sealedSecret);
@@ -51,18 +55,20 @@
         : {kind: "group", page: "tg", groupId: paused.group.id, label: "查看任务组"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
     if (reviews) {
       const target = groupStats.find((item) => item.stats.reviews)?.group || activeGroups[0];
+      const workspace = reviewPending && reviewDecisions ? "inbox" : reviewDecisions ? "decisions" : reviewPending ? "pending" : "inbox";
       return {title: "处理人工审核", detail: `${reviews} 项定稿、授权或审批正在等待当前账号处理。`,
-        action: {kind: "group", page: "review", groupId: target?.id || "", label: "进入审核"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
+        action: {kind: "group", page: "review", workspace, groupId: target?.id || "", label: "进入审核"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
     }
     if (blocked || rechecks) {
       const target = groupStats.find((item) => item.stats.blocked)?.group || activeGroups[0];
+      const workspace = !blocked && evidenceRechecks && !barrierRechecks ? "evidence" : "barriers";
       return {title: "处理执行阻塞", detail: `${blocked + rechecks} 项执行、复核或关闭门问题尚未收口。`,
-        action: {kind: "group", page: "monitor", groupId: target?.id || "", label: "查看阻塞"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
+        action: {kind: "group", page: "monitor", workspace, groupId: target?.id || "", label: "查看阻塞"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
     }
     if (runs) {
       const target = groupStats.find((item) => item.stats.runs)?.group || activeGroups[0];
       return {title: "查看实时执行", detail: `${runs} 个会话正在排队或执行，过程事件会持续回送。`,
-        action: {kind: "group", page: "monitor", groupId: target?.id || "", label: "打开执行监控"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
+        action: {kind: "group", page: "monitor", workspace: "events", groupId: target?.id || "", label: "打开执行监控"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
     }
     const target = activeGroups[0] || groups[0];
     return {title: activeGroups.length ? "查看任务进展" : "查看任务结果", detail: activeGroups.length ? "当前没有待人工处理项，AI 总控会继续按阶段门推进。" : "任务组已结束，可核对任务结果和 Git 证据。",

@@ -9094,8 +9094,8 @@ async function focusManagementGroup(groupId, nextPage = page, options = {}) {
   directiveWorkItemId = nextPage === "directives" ? String(options.workItemId || "") : "";
   page = nextPage;
   sessionStorage.setItem("aimac.page", page);
-  if (page === "tg") workspaces.select(page, "list");
-  if (page === "tasks") workspaces.select(page, "list");
+  if (options.workspace) workspaces.select(page, options.workspace);
+  else if (page === "tg" || page === "tasks") workspaces.select(page, "list");
   execScope = managementGroupId ? {type: "taskGroup", id: managementGroupId} : {type: "project", id: currentProjectId};
   execHistoryMode = false;
   execHistoryStack = [];
@@ -9507,7 +9507,7 @@ document.addEventListener("click", async (event) => {
   const focusGroupButton = event.target.closest("[data-focus-group]");
   if (focusGroupButton) {
     try { await focusManagementGroup(focusGroupButton.dataset.focusGroup, focusGroupButton.dataset.focusPage || page,
-      {workItemId: focusGroupButton.dataset.focusWork || ""}); } catch (error) { showError(error); }
+      {workItemId: focusGroupButton.dataset.focusWork || "", workspace: focusGroupButton.dataset.focusWorkspace || ""}); } catch (error) { showError(error); }
     return;
   }
   const workButton = event.target.closest("[data-open-work]");

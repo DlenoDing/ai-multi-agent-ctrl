@@ -2922,6 +2922,36 @@ async function runErrorGuidanceCase() {
   check("项目主操作必须随真实执行阶段切换",
     commandResults.every(({expected, decision}) => decision.title === expected),
     commandResults.map(({expected, decision}) => `${expected}→${decision.title}`).join("；"));
+  const commandGroup = {id: "tg", projectId: "p_cmd", status: "active", stats: {tasks: 1, runs: 0, reviews: 1, blocked: 0}};
+  const commandInput = {project: commandProject, groups: [commandGroup], fleet: {total: 2, online: 1}, repositories: repo, canControl: true};
+  const decisionOnly = objectProbe.projectCommandDecision({...commandInput,
+    todos: {review: {count: 2}, "review|decisions": {count: 2}}});
+  const confirmationOnly = objectProbe.projectCommandDecision({...commandInput,
+    todos: {review: {count: 1}, "review|pending": {count: 1}}});
+  const mixedReview = objectProbe.projectCommandDecision({...commandInput,
+    todos: {review: {count: 3}, "review|pending": {count: 1}, "review|decisions": {count: 2}}});
+  const qualityOnly = objectProbe.projectCommandDecision({...commandInput,
+    groups: [{...commandGroup, stats: {...commandGroup.stats, reviews: 0}}],
+    todos: {monitor: {count: 1}, "monitor|evidence": {count: 1}}});
+  check("项目当前主操作必须直达准确待办叶子",
+    decisionOnly.action.workspace === "decisions" && confirmationOnly.action.workspace === "pending"
+      && mixedReview.action.workspace === "inbox" && qualityOnly.action.workspace === "evidence",
+    `主操作仍只按父页面跳转：${JSON.stringify({decisionOnly: decisionOnly.action, confirmationOnly: confirmationOnly.action, mixedReview: mixedReview.action, qualityOnly: qualityOnly.action})}`);
+  const exactActionHtml = [decisionOnly, confirmationOnly, mixedReview, qualityOnly]
+    .map((decision) => objectProbe.projectCommandHtml(commandProject, decision)).join("");
+  check("项目当前主操作按钮必须携带精确 workspace",
+    ["decisions", "pending", "inbox", "evidence"].every((workspace) => exactActionHtml.includes(`data-focus-workspace="${workspace}"`)),
+    "项目首页 CTA 没有把精确待办叶子传给任务组导航");
+  const commandClickProbe = loadConsole(el("div"), {realI18n: true});
+  commandClickProbe.renderFullPageWith({projects: [{...commandProject, organizationId: "org_default"}], taskGroups: [commandGroup],
+    organizations: [{orgId: "org_default", status: "active"}], truncatedCollections: []},
+  {accountId: "sys", accountType: "system_admin", organizationId: "org_default"}, "p_cmd", "proj-overview");
+  commandClickProbe.stubNavigation();
+  await commandClickProbe.click({target: el("button", {dataset: {focusGroup: "tg", focusPage: "review", focusWorkspace: "decisions"}}), preventDefault: () => {}});
+  check("项目当前主操作点击后必须真正选中精确叶子",
+    commandClickProbe.sessionState().page === "review" && commandClickProbe.workspaceCurrent("review") === "decisions"
+      && commandClickProbe.sessionState().managementGroupId === "tg",
+    `CTA 点击后的状态错误：${JSON.stringify(commandClickProbe.sessionState())}`);
   const commandHtml = objectProbe.projectCommandHtml(commandProject, commandResults[0].decision);
   check("项目概览只提供一个当前主操作",
     /aria-label="项目当前主操作"/u.test(commandHtml)

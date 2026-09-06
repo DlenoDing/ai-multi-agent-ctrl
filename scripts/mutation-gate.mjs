@@ -12027,6 +12027,30 @@ const MUTATIONS = [
     expect: "项目概览只提供一个当前主操作"
   },
   {
+    name: "项目当前主操作必须按待办类型选择准确叶子",
+    file: "apps/control-plane-ui/public/modules/project-command-center.js",
+    gate: "console",
+    from: '      const workspace = reviewPending && reviewDecisions ? "inbox" : reviewDecisions ? "decisions" : reviewPending ? "pending" : "inbox";',
+    to: '      const workspace = "pending";',
+    expect: "项目当前主操作必须直达准确待办叶子"
+  },
+  {
+    name: "项目当前主操作按钮必须携带 workspace",
+    file: "apps/control-plane-ui/public/modules/project-command-center.js",
+    gate: "console",
+    from: '${action.workspace ? ` data-focus-workspace="${esc(action.workspace)}"` : ""}',
+    to: "",
+    expect: "项目当前主操作按钮必须携带精确 workspace"
+  },
+  {
+    name: "项目当前主操作点击必须应用 workspace",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '{workItemId: focusGroupButton.dataset.focusWork || "", workspace: focusGroupButton.dataset.focusWorkspace || ""}',
+    to: '{workItemId: focusGroupButton.dataset.focusWork || ""}',
+    expect: "项目当前主操作点击后必须真正选中精确叶子"
+  },
+  {
     name: "项目概览仓库口径必须兼容顶层登记",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
