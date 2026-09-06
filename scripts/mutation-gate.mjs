@@ -11926,12 +11926,12 @@ const MUTATIONS = [
     expect: "切换功能后自动展开新的业务分组并收起旧分组"
   },
   {
-    name: "收空分组的低频页面必须回落到可见父分组",
+    name: "低频节点页面必须归入执行监控分组",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
-    from: "    const activeGroup = primaryGroups.some((group) => group.label === exactActiveGroup)\n      ? exactActiveGroup\n      : primaryGroups.find((group) => group.items.some((item) => item.id === pageId))?.label;",
-    to: "    const activeGroup = exactActiveGroup;",
-    expect: "独立分组被收空的低频页面也必须展开可见父分组"
+    from: '    leaf("monitor", "events", "实时事件", "Agent 执行过程持续回送"),\n    leaf("monitor", "node-control", "运行节点", "执行节点健康、准入和控制入口"),',
+    to: '    leaf("monitor", "events", "实时事件", "Agent 执行过程持续回送"),\n    {divider: "节点与控制"},\n    leaf("monitor", "node-control", "运行节点", "执行节点健康、准入和控制入口"),',
+    expect: "低频节点页面必须继续归入执行监控分组"
   },
   {
     name: "页面标题必须跟随具体功能菜单",
@@ -13464,7 +13464,7 @@ const MUTATIONS = [
     gate: "console",
     from: '    leaf("review", "approvals", "操作审批", "危险操作、阶段门和多方审批"),',
     to: "",
-    expect: "操作审批"
+    expect: "低频页面虽不常驻侧栏但仍可从功能概览进入"
   },
   {
     name: "旧授权复核地址必须迁移到权限审批",
@@ -13609,14 +13609,6 @@ const MUTATIONS = [
     from: "        ? renderTaskGroupGrantForm(chosenProject, {accountId: selectedMember.accountId})",
     to: "        ? renderTaskGroupGrantForm(chosenProject)",
     expect: "成员详情里的任务组授权锁定当前成员"
-  },
-  {
-    name: "项目监控菜单必须按执行跟踪、节点控制和验收收口分组",
-    file: "apps/control-plane-ui/public/modules/navigation.js",
-    gate: "console",
-    from: '    {divider: "节点与控制"},',
-    to: "",
-    expect: "项目管理侧栏仍是平铺功能清单"
   },
 ];
 

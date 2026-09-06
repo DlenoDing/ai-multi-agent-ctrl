@@ -2896,11 +2896,11 @@ async function runErrorGuidanceCase() {
   const nodeControlRoot = el("div");
   loadConsole(nodeControlRoot, {realI18n: true}).renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "node-control");
   const nodeControlAside = String(nodeControlRoot.innerHTML || "").split("</aside>")[0] || "";
-  check("独立分组被收空的低频页面也必须展开可见父分组",
+  check("低频节点页面必须继续归入执行监控分组",
     (nodeControlAside.match(/<details class="nav-group" open>/gu) || []).length === 1
       && /<details class="nav-group" open>[\s\S]*?<span>执行监控<\/span>/u.test(nodeControlAside)
       && /运行节点（更多功能）/u.test(String(nodeControlRoot.innerHTML || "")),
-    "节点控制、控制命令或死信页所属旧分组已经收空，深链接打开后侧栏没有任何分组展开");
+    "节点控制、控制命令或死信页被放进了没有常用入口的独立分组，深链接打开后侧栏没有任何分组展开");
   const menuActionProbe = loadConsole(el("div"), {realI18n: true});
   menuActionProbe.renderFullPageWith(navState, projectAccount, "p1", "proj-overview");
   menuActionProbe.setObjectLocation({page: "tasks", projectId: "p1", groupId: "tg_old", workId: "w_old"});

@@ -41,7 +41,6 @@
     leaf("monitor", "placements", "会话放置", "新会话、子 Agent 与准入判定"),
     leaf("monitor", "admissions", "准入决策", "阶段门、容量和执行准入理由"),
     leaf("monitor", "events", "实时事件", "Agent 执行过程持续回送"),
-    {divider: "节点与控制"},
     leaf("monitor", "node-control", "运行节点", "执行节点健康、准入和控制入口"),
     leaf("monitor", "commands", "控制命令", "暂停、恢复、取消和节点 ACK"),
     leaf("monitor", "dlq", "死信队列", "控制命令重试超限后的处置"),
@@ -273,12 +272,8 @@
   }
 
   function desktopMenuHtml(items, pageId, workspace, todoFor) {
-    const primaryGroups = menuGroups(primaryNavigationItems(items));
-    const exactActiveGroup = menuGroups(items).find((group) => group.items.some((item) => item.id === pageId && item.workspace === workspace))?.label;
-    const activeGroup = primaryGroups.some((group) => group.label === exactActiveGroup)
-      ? exactActiveGroup
-      : primaryGroups.find((group) => group.items.some((item) => item.id === pageId))?.label;
-    return primaryGroups.map((group) => {
+    const activeGroup = menuGroups(items).find((group) => group.items.some((item) => item.id === pageId && item.workspace === workspace))?.label;
+    return menuGroups(primaryNavigationItems(items)).map((group) => {
       const active = group.label === activeGroup;
       return `<details class="nav-group"${active ? " open" : ""}>
         <summary class="nav-group-summary"><span>${esc(group.label)}</span></summary>
