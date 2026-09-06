@@ -46,6 +46,8 @@ function loadPublicModules() {
     "modules/workspace-route.js",
     "modules/object-workspace.js",
     "modules/task-group-workspace.js",
+    "modules/task-group-insights.js",
+    "modules/task-group-detail-workspace.js",
     "modules/task-workbench.js",
     "modules/project-settings-workspace.js",
     "modules/execution-object-workspace.js",
@@ -77,9 +79,12 @@ const locations = context.AIMAC_WORKSPACE_LOCATION;
 {
   const indexSource = readPublic("index.html");
   const moduleAt = indexSource.indexOf('/modules/project-settings-workspace.js');
+  const taskGroupDetailAt = indexSource.indexOf('/modules/task-group-detail-workspace.js');
   const appAt = indexSource.indexOf('/app.js');
   check("project settings workspace loads before app.js", moduleAt >= 0 && appAt > moduleAt,
     `moduleAt=${moduleAt}; appAt=${appAt}`);
+  check("task-group detail workspace loads before app.js", taskGroupDetailAt >= 0 && appAt > taskGroupDetailAt,
+    `taskGroupDetailAt=${taskGroupDetailAt}; appAt=${appAt}`);
 }
 {
   const longCursor = "c".repeat(4096);

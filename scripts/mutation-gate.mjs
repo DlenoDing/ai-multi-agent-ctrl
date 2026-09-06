@@ -541,7 +541,7 @@ const MUTATIONS = [
   {
     // 任务组里的工作项要按时间线倒序（最新在前）。去掉 slice().sort(...) 即回到服务端的插入序（最旧在前）。
     name: "任务组内工作项必须按时间倒序展示（最新在前）",
-    file: APP,
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
     from: "(progressData.workItems || taskGroup.workItems || []).slice().sort((a, b) => String(b.createdAt || \"\").localeCompare(String(a.createdAt || \"\"))).map((workItem) => {",
     to: "(progressData.workItems || taskGroup.workItems || []).map((workItem) => {",
@@ -577,7 +577,7 @@ const MUTATIONS = [
   {
     // 执行历史要列出【全部】派发，不只是最新一次。把历史截成一条即回到"只看得到最新一次"。
     name: "工作项执行历史必须列出全部派发",
-    file: APP,
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
     from: "          const history = findWorkItemDispatches(taskGroup.id, workItem.id);",
     to: "          const history = findWorkItemDispatches(taskGroup.id, workItem.id).slice(0, 1);",
@@ -595,7 +595,7 @@ const MUTATIONS = [
   {
     // 执行历史每条派发要有「规则」入口；去掉按钮即人看得到派给了谁、看不到按什么规则干的。
     name: "工作项执行历史每条派发必须有「规则」入口",
-    file: APP,
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
     from: "                <button class=\"secondary-button\" data-action=\"show-dispatch-rules\" data-dispatch-id=\"${esc(item.dispatchId)}\">${dispatchRuleSummaries[item.dispatchId] ? \"收起规则\" : \"规则\"}</button>\n",
     to: "",
@@ -767,7 +767,7 @@ const MUTATIONS = [
   },
   {
     name: "任务组卡的阅读路径必须折叠",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
     from: "      ${guideBundle(\"详情阅读路径\", [detailPathHtml], [\"任务组详情阅读路径（12 项）\"])}",
     to: "      ${detailPathHtml}",
@@ -814,6 +814,22 @@ const MUTATIONS = [
     expect: "project settings workspace loads before app.js"
   },
   {
+    name: "任务组详情工作区模块必须先于主程序加载",
+    file: "apps/control-plane-ui/public/index.html",
+    gate: "workspace",
+    from: '    <script src="/modules/task-group-detail-workspace.js"></script>\n',
+    to: "",
+    expect: "task-group detail workspace loads before app.js"
+  },
+  {
+    name: "任务详情事件索引不得超过服务端账本窗口",
+    file: "apps/control-plane-ui/public/modules/task-workbench.js",
+    gate: "console",
+    from: "    for (const event of (state.agentExecutionEvents || []).slice(0, 60)) {",
+    to: "    for (const event of state.agentExecutionEvents || []) {",
+    expect: "账本限流: 控制台用了 agentExecutionEvents 却看不到显式的渲染上限"
+  },
+  {
     name: "只读身份不许渲染禁用的角色 Skill 定制表单",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
@@ -823,7 +839,7 @@ const MUTATIONS = [
   },
   {
     name: "工作项卡的定稿要求表单必须默认收起",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
     from: "          <details class=\"guide-bundle plan-finalization-toggle\"><summary class=\"guide-bundle-summary\">执行方案定稿要求：",
     to: "          <details class=\"guide-bundle plan-finalization-toggle\" open><summary class=\"guide-bundle-summary\">执行方案定稿要求：",
@@ -831,7 +847,7 @@ const MUTATIONS = [
   },
   {
     name: "定稿要求折叠块的摘要必须写当前取值",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
     from: "执行方案定稿要求：当前「${workItem.requiresPlanFinalization === true ? \"必须先由人定稿方案\" : \"不强制（按系统判断）\"}」—— 点开可改",
     to: "执行方案定稿要求 —— 点开可改",
@@ -963,7 +979,7 @@ const MUTATIONS = [
   },
   {
     name: "房间消息被截断时界面要说清共有多少条",
-    file: APP,
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
     from: "          ${tgDetail.roomMessagesTruncated",
     to: "          ${false && tgDetail.roomMessagesTruncated",
@@ -3367,7 +3383,7 @@ const MUTATIONS = [
     // "必须先定稿方案"那条提示原先只说事实。而这种情况下编排既不改工作项状态、也留不下任务组阻塞，
     // 所以除了这一句，屏幕上再没有别的地方讲它在等什么 —— 去掉出口，人就被留在原地。
     name: "要求先定稿方案的单元要给出口",
-    file: APP,
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
     from: "              等 agent 提出执行方案后，到「人工审核」页定稿它；没有在线 agent 时不会有人提方案。",
     to: "",
@@ -6014,7 +6030,7 @@ const MUTATIONS = [
   },
   {
     name: "「没权限」和「服务端故障」不许并成一句话",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
     from: "${tgDetail.roomLoadDenied\n",
     to: "${false\n",
@@ -6577,7 +6593,7 @@ const MUTATIONS = [
   },
   {
     name: "被裁字段的豁免必须可核（读取点确实来自声明的来源）",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "specs",
     from: "  const analysis = progressData.taskAnalysis;",
     to: "  const analysis = progressData.taskAnalysis; const stray = tgDetail.taskAnalysis;",
@@ -7592,7 +7608,7 @@ const MUTATIONS = [
   },
   {
     name: "不许再从任务组上读已被视图剥掉的字段",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     check: "verifyConsoleDoesNotReadStrippedTaskGroupFields",
     from: "  const roles = (progressData.roles || []).map((role) => `",
     to: "  const roles = (progressData.roles || taskGroup.roles || []).map((role) => `",
@@ -8328,7 +8344,7 @@ const MUTATIONS = [
   },
   {
     name: "编排节奏要按真实间隔说不能写死",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
     from: "\uff08${orchestratorCadenceText()}\uff09\uff0c",
     to: "\uff08\u9ed8\u8ba4\u6bcf\u5206\u949f\u4e00\u6b21\uff09\uff0c",
@@ -10365,7 +10381,7 @@ const MUTATIONS = [
   },
   {
     name: "任务组详情取失败时不许还说'正在加载'（第三处同形）",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
     from: "  if (tgDetail.loadFailed) {",
     to: "  if (false) {",

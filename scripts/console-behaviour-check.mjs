@@ -44,6 +44,7 @@ const consoleModuleFiles = [
   "modules/agent-node-cards.js",
   "modules/task-group-workspace.js",
   "modules/task-group-insights.js",
+  "modules/task-group-detail-workspace.js",
   "modules/task-workbench.js",
   "modules/project-settings-workspace.js",
   "modules/execution-object-workspace.js",
@@ -57,6 +58,10 @@ function readConsoleSource(file) {
 
 function readConsoleAppSource() {
   return readConsoleSource("app.js");
+}
+
+function readConsoleProductSource() {
+  return [...consoleModuleFiles, "app.js"].map((file) => readConsoleSource(file)).join("\n");
 }
 
 function readConsoleNavigationSource() {
@@ -7628,7 +7633,7 @@ await runCodedApiErrorCase();
 // 它就会安静地只显示 60 行，人以为那就是全部。判据按服务端的登记表全量核对。
 {
   const serverSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/server.mjs"), "utf8");
-  const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const appSource = readConsoleProductSource();
   const setAt = serverSource.indexOf("const LEDGER_COLLECTIONS = new Set([");
   const setBlock = setAt < 0 ? "" : serverSource.slice(setAt, serverSource.indexOf("]);", setAt));
   const ledgers = [...setBlock.matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"/gu)].map((match) => match[1]);
@@ -7703,7 +7708,7 @@ await runCodedApiErrorCase();
 // 判据按 server.mjs 的 viewDroppedFields 全量核对，新增一条裁剪就自动被守住。
 {
   const serverSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/server.mjs"), "utf8");
-  const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const appSource = readConsoleProductSource();
   const at = serverSource.indexOf("const viewDroppedFields = {");
   const block = at < 0 ? "" : serverSource.slice(at, serverSource.indexOf("\n  };", at));
   const dropped = [];
@@ -7753,7 +7758,7 @@ await runCodedApiErrorCase();
 // 而人以为那里本来就没东西。这一类在这套系统里反复出现过（视图裁字段、新页面忘了加字段、
 // 新加的字段只写了渲染没写投影），逐个页面盯是盯不过来的，所以按两侧的权威来源全量对一遍。
 {
-  const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const appSource = readConsoleProductSource();
   const serverSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/server.mjs"), "utf8");
   // 提取要认得住实际写法：控制台里既有 state.x，也有 (state || {}).x。
   // 只认字面 state.x 的话，用后一种写法的读取会静默逃逸 —— 第一版就是这样，

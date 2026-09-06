@@ -45,7 +45,7 @@
     const sessions = new Map((state.workSessions || []).map((session) => [session.sessionId, session]));
     const agents = new Map((state.agents || []).map((agent) => [agent.id, agent]));
     const eventsByRun = new Map();
-    for (const event of state.agentExecutionEvents || []) {
+    for (const event of (state.agentExecutionEvents || []).slice(0, 60)) {
       if (!eventsByRun.has(event.dispatchId)) eventsByRun.set(event.dispatchId, []);
       eventsByRun.get(event.dispatchId).push(event);
     }
@@ -78,7 +78,8 @@
       </div></details>`;
     }).join("");
     const runIds = new Set(runs.map((run) => run.dispatchId));
-    const archivedEvents = (state.agentExecutionEvents || []).filter((event) => event.taskGroupId === group.id && event.workItemId === work.id && !runIds.has(event.dispatchId));
+    const archivedEvents = (state.agentExecutionEvents || []).filter((event) => event.taskGroupId === group.id
+      && event.workItemId === work.id && !runIds.has(event.dispatchId)).slice(0, 60);
     return `<div class="stack"><div class="task-detail-header"><button class="secondary-button" data-close-work>返回任务列表</button></div>
       <div><h3>${esc(work.title || work.id)}</h3>${h.badge(work.status)} ${h.progressLine(work.progress)}
       <div class="task-list-meta"><span>任务组：${esc(group.name || group.id)}</span><span>执行角色：${esc(h.t(work.ownerRole))}</span><span class="mono">${esc(work.id)}</span></div></div>
