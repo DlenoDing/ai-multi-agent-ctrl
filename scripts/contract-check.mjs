@@ -18555,7 +18555,7 @@ function verifyConsoleDoesNotReadStrippedTaskGroupFields(output) {
   // 更坏的是留一截 `|| taskGroup.roles` 当兜底：它永远不生效，却让看代码的人以为还有第二个来源。
   // 注释要剥掉：解释「为什么不再读 taskGroup.roles」的那句注释本身含有这个写法，
   // 门会读到自己人写的字（本仓的老毛病，这次抓的正是它自己）。
-  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8")
+  const app = consoleProductSource()
     .replace(/\/\/[^\n]*/gu, (line) => " ".repeat(line.length));
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
   const stripped = {
@@ -18589,7 +18589,7 @@ function verifyConsoleDoesNotReadStrippedTaskGroupFields(output) {
 
 function verifyViewDropsCollectionsNobodyReads(output) {
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
-  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const app = consoleProductSource();
   for (const [name, why] of Object.entries(VIEW_OMITTED_UNREAD_COLLECTIONS)) {
     if (!new RegExp(`cloned\\.${name} = \\[\\]`, "u").test(server)) {
       output.push(`主视图又开始带上 ${name} 了（${why}）—— 界面不读它，这是纯浪费；`

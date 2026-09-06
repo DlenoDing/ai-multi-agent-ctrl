@@ -7822,6 +7822,7 @@ await runCodedApiErrorCase();
 //（实测 modelSelectionPolicies 就这样被丢掉）。所以逐页对一遍，而不是只盯监控页。
 {
   const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const monitorModuleSource = readConsoleSource("modules/monitor-dashboard-workspace.js");
   const serverSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/server.mjs"), "utf8");
   const sliceBalanced = (text, from, open, close) => {
     const at = text.indexOf(open, from);
@@ -7891,7 +7892,7 @@ await runCodedApiErrorCase();
         // `[state, other] = await Promise.all([...])`：只有 state 那一份是这一页的 state。
         views = [fetched[varNames.indexOf("state")]];
       }
-      const renderBody = bodyOf(renderName);
+      const renderBody = bodyOf(renderName) + (page === "monitor" ? `\n${monitorModuleSource}` : "");
       // 按【函数体】切会漏掉它调用的通用函数（modelSelectionPolicies 的读取就在
       // modelDecisionSummaryZh 里）。所以把它直接调用的本文件函数展开一层，更深的不展开。
       const helpers = new Set([...renderBody.matchAll(/\b([a-z][A-Za-z0-9_]*)\s*\(/gu)].map((m) => m[1]));

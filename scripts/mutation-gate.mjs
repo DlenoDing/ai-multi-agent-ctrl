@@ -908,7 +908,7 @@ const MUTATIONS = [
     gate: "console",
     from: "    guideBundle(\"协作流程指引\", [renderProjectMembersLifecycleGuide(project, stats)], [\"成员协作流程（5 步）\"]),",
     to: "    renderProjectMembersLifecycleGuide(project, stats),",
-    expect: "「成员协作流程」要收进默认关闭的折叠块"
+    expect: "项目成员说明必须只在独立说明页，不混入列表与授权页"
   },
   {
     name: "组织成员页的授权流程指引必须折叠",
@@ -924,7 +924,7 @@ const MUTATIONS = [
     gate: "console",
     from: "  return `<details class=\"guide-bundle\"><summary class=\"guide-bundle-summary\">",
     to: "  return `<details class=\"guide-bundle\" open><summary class=\"guide-bundle-summary\">",
-    expect: "项目成员页的「成员协作流程」要收进默认关闭的折叠块"
+    expect: "Agent 阅读型指引默认收起，注册操作台保持常显"
   },
   {
     name: "智能体页的注册与脚本操作台不许被折叠",
@@ -6108,7 +6108,7 @@ const MUTATIONS = [
     gate: "console",
     from: 'if (projConfigStatus !== "failed") return',
     to: 'if (false) return',
-    expect: "配置没取过与取失败要分开说"
+    expect: "配置没取过与取失败时仓库页都不许说「还没有配置」"
   },
   {
     name: "没有待用令牌时页面不许多挂一句",
@@ -11899,7 +11899,7 @@ const MUTATIONS = [
     gate: "console",
     from: "    buckets.push({id, label, page, workspace, count: mine.length, capped: scopeTruncated || truncated.has(sourceField),",
     to: "    buckets.push({id, label, page, count: mine.length, capped: scopeTruncated || truncated.has(sourceField),",
-    expect: "确认、授权审批和质量门必须拆到三个准确叶子"
+    expect: "确认、权限审批、操作审批和质量门必须拆到四个准确叶子"
   },
   {
     name: "菜单待办红点不得回退到父页面总数",

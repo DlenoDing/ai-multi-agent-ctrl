@@ -448,8 +448,9 @@ function deadExportFiles() {
       if (entry.name === "node_modules") continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (entry.name.endsWith(".mjs") && /^export function /mu.test(fs.readFileSync(full, "utf8"))) {
-        found.push(path.relative(root, full));
+      else if (entry.name.endsWith(".mjs")) {
+        const source = fs.readFileSync(full, "utf8");
+        if (/^export function /mu.test(source) || /^export const \{/mu.test(source)) found.push(path.relative(root, full));
       }
     }
   };
@@ -509,9 +510,21 @@ export function checkNoDeadExports() {
   let scanned = 0;
   for (const relative of deadExportFiles()) {
     const source = fs.readFileSync(path.join(root, relative), "utf8");
-    const names = [...source.matchAll(/^export function ([A-Za-z0-9_]+)\(/gmu)].map((match) => match[1]);
+    const directNames = [...source.matchAll(/^export function ([A-Za-z0-9_]+)\(/gmu)].map((match) => match[1]);
+    const facadeNames = [...source.matchAll(/^export const \{([\s\S]*?)\}\s*=/gmu)]
+      .flatMap((match) => [...match[1].matchAll(/\b([A-Za-z_$][A-Za-z0-9_$]*)\b/gu)].map((item) => item[1]));
+    const facadeSet = new Set(facadeNames);
+    const names = [...new Set([...directNames, ...facadeNames])];
     scanned += names.length;
     for (const name of names) {
+      if (facadeSet.has(name)) {
+        const calls = corpus.match(new RegExp(`(^|[^A-Za-z0-9_.])${name}\\s*\\(`, "gu")) || [];
+        if (calls.length > 1) continue;
+        if (Object.prototype.hasOwnProperty.call(DEAD_EXPORT_ACCEPTED, name)) continue;
+        failures.push(`死导出检查: ${relative} 导出的 ${name} 没有任何地方调用或引用 —— 这是一条够不到的杠杆；`
+          + "要么接上它，要么删掉它，要么在 DEAD_EXPORT_ACCEPTED 里写明为什么它现在到不了");
+        continue;
+      }
       const uses = corpus.match(new RegExp(`(^|[^A-Za-z0-9_.])${name}(?![A-Za-z0-9_])`, "gu")) || [];
       if (uses.length > 1) continue;
       if (Object.prototype.hasOwnProperty.call(DEAD_EXPORT_ACCEPTED, name)) continue;
