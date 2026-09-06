@@ -2239,7 +2239,7 @@ function renderSystemManagementHub(overview) {
       {pageId: "sys-orgs", title: "组织与配额", metric: `${orgCount}`, detail: "创建组织、调整配额、启停组织", action: "管理组织", tone: "blue"},
       {pageId: "sys-orgs", title: "默认组织管理员", metric: `${orgAdmins}`, detail: "组织创建时签发初始管理员账号；子账户由组织管理员维护", action: "查看管理员", tone: orgAdmins ? "blue" : "orange"},
       {pageId: "sys-settings", title: "模型与技能源", metric: `${mcpToolCount}`, detail: "模型能力、技能源同步、指令压缩指标", action: "查看设置", tone: "blue"},
-      {pageId: "proj-overview", title: "项目空间", metric: `${projectCount}`, detail: "进入当前项目的任务组、审核、指令和监控", action: "进入项目", tone: projectCount ? "blue" : "gray"}
+      {pageId: "sys-orgs", title: "租户资源规模", metric: `${projectCount}`, detail: "各组织项目总量，仅用于平台容量与配额观察", action: "查看组织", tone: projectCount ? "blue" : "gray"}
     ]
   });
 }

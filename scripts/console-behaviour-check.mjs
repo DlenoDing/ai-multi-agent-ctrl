@@ -2677,7 +2677,8 @@ async function runErrorGuidanceCase() {
   check("系统管理员登录后只进入系统治理空间，不能从图形界面切进用户项目",
     /<h1>系统概览<\/h1>/u.test(systemOnlyTopbar)
       && !/data-section-target="proj-overview"/u.test(systemOnlyAside)
-      && !/id="project-switcher"/u.test(systemOnlyAside),
+      && !/id="project-switcher"/u.test(systemOnlyAside)
+      && !/data-menu="proj-overview"/u.test(systemOnlyShell),
     "系统管理员仍可从侧栏进入项目管理，系统治理与用户项目管理只做了视觉分栏、没有真正分开");
   const orgNav = renderedNav({accountId: "org", email: "org@local", displayName: "组织管理员",
     accountType: "org_admin", roles: ["org_admin"], permissions: ["org:*", "project:create", "member:invite", "agent:activate"], organizationId: "org_default"}, "p1", "org-overview");

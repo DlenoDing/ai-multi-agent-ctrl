@@ -12944,6 +12944,14 @@ const MUTATIONS = [
     to: '      : [primary, {target: "proj-overview", label: "项目管理", meta: `${projectCount} 个可见项目`}];',
     expect: "不能从图形界面切进用户项目"
   },
+  {
+    name: "系统概览不得残留绕过边界的项目快捷入口",
+    file: APP,
+    gate: "console",
+    from: '{pageId: "sys-orgs", title: "租户资源规模", metric: `${projectCount}`, detail: "各组织项目总量，仅用于平台容量与配额观察", action: "查看组织", tone: projectCount ? "blue" : "gray"}',
+    to: '{pageId: "proj-overview", title: "项目空间", metric: `${projectCount}`, detail: "进入当前项目", action: "进入项目", tone: "blue"}',
+    expect: "不能从图形界面切进用户项目"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），
