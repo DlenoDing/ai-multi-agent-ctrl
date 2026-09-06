@@ -6669,7 +6669,7 @@ function verifyAgentGatewayContracts(output) {
   }
   // 仓库凭证静态加密：密封后落盘的形态里不得含明文；同钥可解开；换钥必须如实抛 credential_key_mismatch
   // 而不是回空（否则 agent 那头会以"没配凭证"失败，人查不到是密钥换了）。
-  {
+  credentialSealProbe: {
     const savedEnvKey = process.env.AIMAC_CREDENTIAL_KEY;
     delete process.env.AIMAC_CREDENTIAL_KEY;
     const dir = mkdtempSync(join(tmpdir(), "aimac-seal-"));
@@ -6678,7 +6678,10 @@ function verifyAgentGatewayContracts(output) {
       resetCredentialKeyCache();
       const plain = "doctor-repo-secret-ZzYyXx";
       const sealed = sealSecret(plain, dir);
-      if (JSON.stringify(sealed).includes(plain)) output.push("仓库凭证密封后仍含明文：落盘形态里能直接搜到密钥");
+      if (JSON.stringify(sealed).includes(plain)) {
+        output.push("仓库凭证密封后仍含明文：落盘形态里能直接搜到密钥");
+        break credentialSealProbe;
+      }
       if (openSecret(sealed, dir) !== plain) output.push("仓库凭证同钥解不开：密封/解封往返失败");
       if (!isSealed(sealed) || isSealed({v: 1}) || isSealed("x") || isSealed(null)) output.push("isSealed 判定不严：认不出密文或把残缺对象当密文");
       resetCredentialKeyCache();
@@ -11716,8 +11719,8 @@ function verifyWhitelistRefusalsCarryTheWhitelist(output) {
   // 下限要跟着真实面走：实测 13 处。原先写 10 —— 而"从文件清单里删掉两个文件"恰好降到 10，
   // 不小于 10，于是那条变异绿着过去了（2026-08-23 整跑变异门抓到）。
   // 这个数只增不减：新增白名单式拒绝会把它抬高，掉下去只可能是清单被删或提取失配。
-  if (scanned < 14) {
-    output.push(`白名单式拒绝只扫到 ${scanned} 处（应至少 14）—— 提取形状或文件清单与代码脱节，本条在空转`);
+  if (scanned < 17) {
+    output.push(`白名单式拒绝只扫到 ${scanned} 处（应至少 17）—— 提取形状或文件清单与代码脱节，本条在空转`);
     return;
   }
   if (bare.length) {
@@ -14234,7 +14237,7 @@ function verifyCapacityKnobsAreDocumented(output) {
   const readme = readFileSync(join(root, "README.md"), "utf8");
   const sources = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/state-store.mjs", "apps/control-plane-ui/lib/project-event-store.mjs",
-    "apps/mcp-server/server.mjs"];
+    "apps/control-plane-ui/lib/idempotency-records.mjs", "apps/mcp-server/server.mjs"];
   const defaults = new Map();
   for (const file of sources) {
     let text = "";

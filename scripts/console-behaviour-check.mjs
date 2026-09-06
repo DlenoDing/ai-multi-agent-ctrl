@@ -390,6 +390,7 @@ globalThis.__probe = {
   renderReviewInventoryWith: (nextState, account, projectId, panes) => { state = nextState; currentAccount = account || null; if (projectId !== undefined) currentProjectId = projectId; return __workspaceInventory("review", () => renderReview(), panes); },
   renderPendingPanelWith: (nextState, account) => { state = nextState; currentAccount = account; return renderPendingForMePanel(); },
   todoCountsWith: (nextState, account) => { state = nextState; currentAccount = account; return todoCountsByPage(); },
+  renderJoinTokensWith: (nextState, account, options = {}) => { state = nextState; currentAccount = account; return renderJoinTokenSection(options); },
   moreTextWith: (nextState, total, shown, field) => { state = nextState; return moreText(total, shown, field); },
   renderLoginWith: (hint) => { loginHint = hint; renderLogin(); return document.querySelector("#app").innerHTML || ""; },
   bootstrapScaleFrom: (overview) => bootstrapScaleFrom(overview),
@@ -1645,6 +1646,11 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
   check("普通成员确实该被告知去找组织管理员（这条保留，证明上面两条不是把提示删了了事）",
     /请联系组织管理员/.test(asMember),
     `普通成员看到：${(asMember.match(/当前账号暂无可见项目。[^ ]*/u) || ["（没有空态提示）"])[0]}`);
+  const joinWithoutProject = emptyProbe.renderJoinTokensWith(emptyState,
+    {accountId: "u1", accountType: "org_admin", organizationId: "org_default"}, {context: "project"});
+  check("没有项目时加入令牌区不摆出必然失败的表单",
+    /还没有任何项目/u.test(joinWithoutProject) && !/data-form="join-token"/u.test(joinWithoutProject),
+    "没有项目时仍摆出点了必然失败的加入令牌表单");
 }
 
 
@@ -2156,9 +2162,19 @@ function runWorkflowGuideCase() {
   const guideOf = (html) => { const text = String(html); const start = text.indexOf("流程导航"); const end = text.indexOf("按当前项目实时计算", start); return start >= 0 ? text.slice(start, end > start ? end : undefined) : ""; };
   const freshGuide = guideOf(fresh);
   check("流程导航每一步要有「前往」直达对应页",
-    /data-menu="proj-agents"/u.test(freshGuide) && /data-menu="tg"/u.test(freshGuide) && /data-menu="review"/u.test(freshGuide)
-      && /data-menu="directives"/u.test(freshGuide) && /data-menu="monitor"/u.test(freshGuide),
+    /data-menu="proj-settings" data-menu-workspace="repositories"/u.test(freshGuide)
+      && /data-menu="proj-members" data-menu-workspace="list"/u.test(freshGuide)
+      && /data-menu="proj-agents" data-menu-workspace="register"/u.test(freshGuide)
+      && /data-menu="tg" data-menu-workspace="create"/u.test(freshGuide)
+      && /data-menu="tasks" data-menu-workspace="create"/u.test(freshGuide)
+      && /data-menu="review" data-menu-workspace="inbox"/u.test(freshGuide)
+      && /data-menu="directives" data-menu-workspace="compose"/u.test(freshGuide)
+      && /data-menu="monitor" data-menu-workspace="barriers"/u.test(freshGuide),
     "流程导航没有「前往」：知道在第几步却点不过去，等于还是几个 tab");
+  check("项目设置 / 成员权限的入口没有并进流程导航",
+    /data-menu="proj-settings" data-menu-workspace="repositories"/u.test(freshGuide)
+      && /data-menu="proj-members" data-menu-workspace="list"/u.test(freshGuide),
+    "项目设置 / 成员权限的入口没有并进流程导航");
   const group = {id: "tg1", projectId: "p1", name: "组一", status: "development", progress: 40, workItemCount: 3, workItems: [], blockers: []};
   const busy = {...base, taskGroups: [group], fleet: {online: 2, total: 3},
     agentDispatches: [{dispatchId: "d1", projectId: "p1", taskGroupId: "tg1", workItemId: "w1", status: "running"},
@@ -3106,8 +3122,8 @@ async function runErrorGuidanceCase() {
   const appSrc2 = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
   const wired = (appSrc2.match(/listEmptyText\(/gu) || []).length;
   check("三张独立取数的表都要接上（组织 / 成员 / agent 节点）",
-    wired >= 4,
-    `listEmptyText 只被用了 ${wired - 1} 处（定义之外，应为 3）—— 有表还在说"暂无数据"`);
+    wired === 5,
+    `listEmptyText 只被用了 ${wired - 1} 处（定义之外，应为 4）—— 有表还在说"暂无数据"`);
 }
 
 // 5 秒兜底轮询的注释一直写着"WebSocket 不可用时的兜底"，而代码原先【无条件跑】：
@@ -3475,17 +3491,19 @@ function runReviewAxisCase() {
   // 已归档的项目 —— 选中它之后这一页的写入口原先照常摆着，人点「保存项目配置」只拿回一句 409。
   {
     const archRoot = el("div");
-    loadConsole(archRoot, {realI18n: true}).renderFullPageWith({
+    const archProbe = loadConsole(archRoot, {realI18n: true});
+    const archState = {
       projects: [{id: "p_arch", name: "归档项目", organizationId: "org_default", status: "archived",
         config: {}, members: []}],
       taskGroups: [], accounts: [], accessGrants: [], truncatedCollections: []
-    }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"},
-      "p_arch", "proj-settings");
-    const archHtml = String(archRoot.innerHTML || "");
+    };
+    const systemOwner = {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+    const archHtml = archProbe.renderProjectSettingsInventoryWith(archState, systemOwner, "p_arch",
+      {repositories: [], baselineData: [], defaultRoles: [], systemRules: [], businessRules: []}, ["repositories"]);
     check("已归档项目的设置页要说明它只能看，不能摆一个按不动的保存按钮",
       /已归档（终态，不可撤销）/u.test(archHtml)
         && /<button[^>]*\bdisabled\b[^>]*>\s*保存项目配置/u.test(archHtml),
-      archHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/项目设置[^|]{0,120}/u)?.[0] || "（这一页没渲染出来）");
+      `不能摆一个按不动的保存按钮：${archHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 180)}`);
     const liveRoot = el("div");
     loadConsole(liveRoot, {realI18n: true}).renderFullPageWith({
       projects: [{id: "p_live", name: "在用项目", organizationId: "org_default", status: "active",
@@ -5419,6 +5437,21 @@ async function runPendingTruncationCase() {
     const detailTasksPane = probe.renderTaskGroupDetailPane("tasks", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
     const detailProgressPane = probe.renderTaskGroupDetailPane("progress", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
     const detailConfigPane = probe.renderTaskGroupDetailPane("config", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
+    const detailHelpPane = probe.renderTaskGroupDetailPane("help", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
+    check("任务组详情阅读路径保持默认折叠",
+      /<details class="guide-bundle"[^>]*>[\s\S]*详情阅读路径/u.test(detailHelpPane)
+        && !/<details class="guide-bundle" open[^>]*>[\s\S]*详情阅读路径/u.test(detailHelpPane),
+      "「详情阅读路径」要收进默认关闭的折叠块");
+    const inheritedRules = /<details class="guide-bundle rules-bundle"( open)?>/u.exec(detailConfigPane);
+    check("全部继承的任务组规则默认收起",
+      Boolean(inheritedRules) && !inheritedRules[1],
+      "全部继承的规则区没有收起");
+    const overrideDetail = structuredClone(detail);
+    overrideDetail.config.systemRules = [{ruleId: "tg.override", title: "任务组覆盖", content: "仅本组生效", source: "task_group", enabled: true}];
+    const overrideRulesPane = probe.renderTaskGroupDetailPane("config", overrideDetail, detailTaskGroup, overviewState, systemAdmin, "p1");
+    check("存在任务组覆盖时规则区默认展开",
+      /<details class="guide-bundle rules-bundle" open>/u.test(overrideRulesPane),
+      "本组明明有覆盖却把规则区收起来");
     check("任务组详情关键小节在 owning panes 内保留可定位锚点",
       /data-section-title="工作项"/u.test(detailTasksPane)
         && /data-section-title="事项清单"/u.test(detailProgressPane)
@@ -5446,10 +5479,19 @@ async function runPendingTruncationCase() {
         && /data-action="rule-add"[\s\S]*disabled/u.test(readOnlyDetailConfig),
       "只读任务组仍摆出不能提交的 Skill 定制表单，或规则写按钮未置灰");
 
+    const projectAgentHelp = probe.renderProjectAgentsInventoryWith(overviewState, systemAdmin, "p1", "table", ["help"]);
+    const agentGuideBundles = [...projectAgentHelp.matchAll(/<details class="guide-bundle"( open)?>([\s\S]*?)<\/details>/gu)];
+    check("Agent 阅读型指引默认收起，注册操作台保持常显",
+      agentGuideBundles.length === 2 && agentGuideBundles.every((match) => !match[1])
+        && /<h2>注册与脚本操作台<\/h2>/u.test(projectAgentHelp)
+        && agentGuideBundles.every((match) => !match[2].includes("<h2>注册与脚本操作台</h2>")),
+      "操作台或节点列表被收进折叠块，或 Agent 阅读指引没有默认收起");
     const projectProfiles = probe.renderProjectAgentsInventoryWith(overviewState, systemAdmin, "p1", "table", ["profiles"]);
+    const profileRowAt = projectProfiles.indexOf("agent_1");
+    const profileRow = profileRowAt < 0 ? "" : projectProfiles.slice(profileRowAt, profileRowAt + 900);
     check("逻辑 Agent 默认模型预设显示中文标签",
-      /自动最优/u.test(projectProfiles) && !/模型策略[^<]{0,120}auto_best/u.test(projectProfiles),
-      textOf(projectProfiles).slice(0, 240));
+      /自动最优/u.test(profileRow) && /auto_best/u.test(profileRow),
+      `档案表里默认模型仍是原始码：${textOf(profileRow).slice(0, 240)}`);
     check("项目可调配角色先汇总项目专属与组织共享档案构成",
       /项目专属档案/u.test(projectProfiles) && /组织共享档案/u.test(projectProfiles)
         && /活动档案/u.test(projectProfiles) && /覆盖执行角色/u.test(projectProfiles),
@@ -5568,7 +5610,12 @@ async function runPendingTruncationCase() {
     const orgMemberCreatePane = probe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["create"]);
     const orgMemberListPane = probe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["list"]);
     const orgMemberMatrixPane = probe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["grants"]);
+    const orgMemberHelpPane = probe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["help"]);
     const orgMemberMatrixText = textOf(orgMemberMatrixPane);
+    const orgMemberGuide = /<details class="guide-bundle"( open)?>([\s\S]*?)<\/details>/u.exec(orgMemberHelpPane);
+    check("组织成员授权说明保持默认折叠且内容可达",
+      Boolean(orgMemberGuide) && !orgMemberGuide[1] && /<h2>成员授权流程<\/h2>/u.test(orgMemberGuide[2]),
+      "「成员授权流程」要收进默认关闭的折叠块");
     check("成员创建真实表单只提供创建项目账号能力，旧权限只保留标签不再可编辑",
       /<label>账号能力<\/label>/u.test(orgMemberCreatePane)
         && /name="perm" value="project:create"/u.test(orgMemberCreatePane)

@@ -4848,8 +4848,10 @@ function workflowGuidePanel(project, groups) {
   const recheckOthers = othersOn("monitor");
   const queuedDirectives = (state.humanDirectives || []).filter((item) => item.status === "queued" && groupIds.has(item.taskGroupId)).length;
   const openBarriers = (state.closeBarriers || []).filter((item) => groupIds.has(item.taskGroupId) && (item.blockers || []).length).length;
-  const visible = new Set(menuForCurrentSection(perspectiveOf(currentAccount), page).filter((item) => item.id).map((item) => item.id));
-  const go = (id) => visible.has(id) ? `<button class="secondary-button" data-menu="${esc(id)}">前往</button>` : "";
+  const visible = new Set(menuForCurrentSection(perspectiveOf(currentAccount), page)
+    .filter((item) => item.id).map((item) => `${item.id}|${item.workspace || ""}`));
+  const go = (id, workspace) => visible.has(`${id}|${workspace || ""}`)
+    ? `<button class="secondary-button" data-menu="${esc(id)}" data-menu-workspace="${esc(workspace || "")}">前往</button>` : "";
   // 「项目操作路径」并入后的两步：仓库没配时 agent 的产出没有落点；选了凭证模式却没填密钥的仓库要点名（配了等于没配）。
   const repos = projectRepositoryConfigs(project);
   const credentialMissing = repos.filter((repo) => {
@@ -4859,13 +4861,13 @@ function workflowGuidePanel(project, groups) {
   const ruleCount = (project.config?.systemRules || []).length + (project.config?.businessRules || []).length;
   const members = (project.members || []).length;
   const steps = [
-    {title: "项目设置（仓库与凭证 / 规则 / 默认角色 / 角色 Skill 定制）", done: repos.length > 0 && !credentialMissing, attention: credentialMissing > 0, page: "proj-settings",
+    {title: "项目设置（仓库与凭证 / 规则 / 默认角色 / 角色 Skill 定制）", done: repos.length > 0 && !credentialMissing, attention: credentialMissing > 0, page: "proj-settings", workspace: "repositories",
       state: repos.length
         ? `${repos.length} 个仓库 · ${ruleCount} 条规则${credentialMissing ? `；其中 ${credentialMissing} 个仓库选了凭证模式但从没填过密钥 —— 配了等于没配，去填并点「测试连接」` : ""}`
         : "还没配仓库：agent 的产出没有落点，先添加仓库并填凭证"},
-    {title: "成员权限", done: members > 0, page: "proj-members",
+    {title: "成员权限", done: members > 0, page: "proj-members", workspace: "list",
       state: members ? `${members} 位成员；审核 / 任务组控制权限按具体任务组授予` : "还没有成员授权：项目管理员、评审人在这里授予"},
-    {title: "接入项目 Agent", done: online > 0, page: "proj-agents",
+    {title: "接入项目 Agent", done: online > 0, page: "proj-agents", workspace: online > 0 ? "nodes" : "register",
       state: online
         ? `${online} 台在线${offline ? `，另 ${offline} 台离线` : ""}`
         : (registered
@@ -4873,27 +4875,27 @@ function workflowGuidePanel(project, groups) {
           : (pendingTokens
             ? `已签发 ${pendingTokens} 张加入令牌待使用，还没有节点注册：到 agent 主机上执行安装命令`
             : "尚未接入：先签发加入令牌，再在 agent 主机上执行安装命令"))},
-    {title: "创建任务组", done: groups.length > 0, page: "tg", state: groups.length ? `${groups.length} 个任务组` : "还没有任务组"},
-    {title: "创建工作项（任务）", done: workItemCount > 0, page: "tg", state: workItemCount ? `${workItemCount} 个工作项` : "还没有工作项：到任务组里「创建工作项」"},
-    {title: "启动执行", done: dispatches > 0, page: "monitor",
+    {title: "创建任务组", done: groups.length > 0, page: "tg", workspace: groups.length ? "list" : "create", state: groups.length ? `${groups.length} 个任务组` : "还没有任务组"},
+    {title: "创建工作项（任务）", done: workItemCount > 0, page: "tasks", workspace: workItemCount ? "list" : "create", state: workItemCount ? `${workItemCount} 个工作项` : "还没有工作项：到任务组里创建任务"},
+    {title: "启动执行", done: dispatches > 0, page: "monitor", workspace: "overview",
       // 人在这里就能推一拍：同一个动作、同一套回执（被挡/推进 N 项/无事可做）；只对能编排的账号摆，看得到却按不动＝杠杆不可达。
       action: hasPerm("task_group:orchestrate") && workItemCount > 0 ? `<button class="secondary-button" data-action="orchestrator-run">推进一拍</button>` : "",
       state: dispatches ? `已派发 ${dispatches} 次` : (workItemCount && online ? "还没派发：后台每拍自动推进；等不及可到「执行监控」点「运行自治循环」" : "有工作项且有在线 agent 后自动开始")},
-    {title: "人工审核 / 定稿", done: reviewTodo === 0, attention: reviewTodo > 0, page: "review",
+    {title: "人工审核 / 定稿", done: reviewTodo === 0, attention: reviewTodo > 0, page: "review", workspace: "inbox",
       state: reviewTodo ? `${reviewTodo}${todo.partial ? "+" : ""} 项等你处理（定稿 / 授权 / 审批 / 发现项）`
         : (reviewOthers ? `有 ${reviewOthers} 项在等有权的人处置——你在相关任务组上没有审核权限，只能看` : "暂无等你处理的审核项")},
-    {title: "人工复核 / 阻塞处置", done: recheckTodo === 0, attention: recheckTodo > 0, page: "monitor",
+    {title: "人工复核 / 阻塞处置", done: recheckTodo === 0, attention: recheckTodo > 0, page: "monitor", workspace: "barriers",
       state: recheckTodo ? `${recheckTodo} 项等你收尾（评审计划 / 评审包 / 卡住的执行方案 / 质量门豁免等）`
         : (recheckOthers ? `有 ${recheckOthers} 项在等有权的人处置——你在相关任务组上没有相应权限，只能看` : "暂无等你收尾的复核项")},
-    {title: "人工指令", done: queuedDirectives === 0, attention: queuedDirectives > 0, page: "directives",
+    {title: "人工指令", done: queuedDirectives === 0, attention: queuedDirectives > 0, page: "directives", workspace: "compose",
       state: queuedDirectives ? `${queuedDirectives} 条指令待编排消费` : "需要干预（暂停/纠偏/调优先级）时在这里下达"},
-    {title: "收口关闭", done: groups.length > 0 && openBarriers === 0, attention: openBarriers > 0, page: "monitor",
+    {title: "收口关闭", done: groups.length > 0 && openBarriers === 0, attention: openBarriers > 0, page: "monitor", workspace: "barriers",
       state: openBarriers ? `${openBarriers} 个任务组还有关闭门阻塞` : (groups.length ? "关闭门无阻塞" : "—")}
   ];
   return panel("流程导航", `<div class="stack">${steps.map((step, index) => `
     <div class="record-meta"><span>${index + 1}. <strong>${esc(step.title)}</strong></span>
       <span class="${step.attention ? "warn-text" : (step.done ? "" : "muted")}">${step.attention ? "● " : (step.done ? "✓ " : "○ ")}${esc(step.state)}</span>
-      ${step.action || ""}${go(step.page)}</div>`).join("")}
+      ${step.action || ""}${go(step.page, step.workspace)}</div>`).join("")}
     <div class="small muted">按当前项目实时计算：○ 未开始 · ✓ 已就绪 · ● 等你处理</div></div>`, {wide: true});
 }
 

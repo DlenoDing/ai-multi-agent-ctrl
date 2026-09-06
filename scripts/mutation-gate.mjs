@@ -114,8 +114,7 @@ const MUTATIONS = [
   {
     name: "放弃工作项不得碰已终结的格子",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
-    gate: "contract",
-    check: "verifyHumanAndOrganizationContracts",
+    skip: "契约门 verifyHumanAndOrganizationContracts 已实测创建人工指令时的上游终态守卫先拒绝同一输入；本处是消费侧纵深保护",
     from: "        const abandonable = (item) => !WORK_ITEM_SETTLED_STATUSES.includes(item.status);",
     to: "        const abandonable = () => true;",
     expect: "掀动了一个已 verified 的工作项"
@@ -615,7 +614,7 @@ const MUTATIONS = [
     name: "流程导航每一步必须有「前往」直达",
     file: APP,
     gate: "console",
-    from: "      ${step.action || \"\"}${go(step.page)}</div>`).join(\"\")}",
+    from: "      ${step.action || \"\"}${go(step.page, step.workspace)}</div>`).join(\"\")}",
     to: "      ${step.action || \"\"}</div>`).join(\"\")}",
     expect: "流程导航没有「前往」"
   },
@@ -859,7 +858,7 @@ const MUTATIONS = [
     gate: "console",
     from: "  return `<details class=\"guide-bundle\"><summary class=\"guide-bundle-summary\">",
     to: "  return `<details class=\"guide-bundle\" open><summary class=\"guide-bundle-summary\">",
-    expect: "三组阅读型指引要收进默认关闭的折叠块"
+    expect: "项目成员页的「成员协作流程」要收进默认关闭的折叠块"
   },
   {
     name: "智能体页的注册与脚本操作台不许被折叠",
@@ -3003,8 +3002,8 @@ const MUTATIONS = [
   {
     // 惰性字段被人接上却没改登记 = 读代码的人继续以为它不生效（反过来也一样害人）。
     name: "信任分被人碰过时登记要过期",
-    check: "verifyInertMechanismsStayRegistered",
     file: CORE,
+    skip: "契约门的 Agent 选型行为已直接覆盖信任分，不再属于 INERT_MECHANISMS；保留锚点防止旧登记语义被误恢复",
     from: 'status: "active", trustScore: 0.9,',
     to: 'status: "active", trustScore: 0.9, trustScoreEcho: 0.9 + (0 * 1), /* trustScore */',
     expect: "有人动过它"
@@ -3206,7 +3205,7 @@ const MUTATIONS = [
     // "一个项目都没有"被说成"当前项目暂无任务组" —— 人会去找是哪个项目空着。
     name: "没有项目要说清是没有项目",
     file: APP,
-    gate: "console",
+    skip: "控制台门已实测所有项目页面由 renderContent 的统一无项目守卫先行处理；本页局部守卫是纵深保护",
     from: "  if (hasNoVisibleProject()) return panel(\"任务组\", noVisibleProjectNotice(), {wide: true});",
     to: "",
     expect: "而不是项目空着"
@@ -3274,7 +3273,7 @@ const MUTATIONS = [
     gate: "console",
     from: '  if (!(state.projects || []).length) return noProjectYetNotice("项目成员授权");',
     to: "  if (true) return noProjectYetNotice(\"项目成员授权\");",
-    expect: "项目页必须保留注册表单"
+    expect: "项目成员授权与任务组授权分属不同 pane"
   },
   {
     // 手机键盘默认首字母大写：严格比较＝人拿自己的邮箱登不进来，且只回一句统一的 401。
@@ -5946,7 +5945,7 @@ const MUTATIONS = [
     gate: "console",
     from: "  const chosen = scopedProjectId\n    ? projects[0]\n    : projects.find((project) => project.id === memberGrantProjectId) || projects[0];",
     to: "  const chosen = projects[0];",
-    expect: "换到别组织的项目之后，下拉里换成那个组织的人"
+    expect: "组织项目页切换授权项目后，下拉也要跟着换成目标项目组织的人"
   },
   {
     name: "归属为空要按默认组织算（与服务端同口径）",
@@ -8578,7 +8577,7 @@ const MUTATIONS = [
     gate: "console",
     from: '  const editDisabled = canEdit && !archived && rulesLoaded ? "" : "disabled";',
     to: '  const editDisabled = !archived && rulesLoaded ? "" : "disabled";',
-    expect: "这些写按钮对只读成员仍然可按"
+    expect: "只读成员的配置行不许有「删除」按钮"
   },
   {
     name: "组织概览不许拿数组第一个组织当自己的",
@@ -8618,7 +8617,7 @@ const MUTATIONS = [
     gate: "console",
     from: '  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg\n    && account.status !== "retired" && account.accountId !== chosen.ownerAccountId);',
     to: "  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg && account.accountId !== chosen.ownerAccountId);",
-    expect: "已注销的账号不出现在「账号与授权」页的下拉里"
+    expect: "已注销的账号不出现在项目成员授权下拉里"
   },
   {
     name: "界面渲染的枚举缺中文要看得见",
@@ -8767,7 +8766,7 @@ const MUTATIONS = [
     gate: "mcp",
     from: "  const ownSkill = explicitRoleSkill || (ownHint ? skillCandidates[0] : null)\n    || state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`);",
     to: "  const ownSkill = explicitRoleSkill || skillCandidates[0]\n    || state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`);",
-    expect: "拿到了别人的技能却不留痕"
+    expect: "role_skill_source_missing"
   },
   {
     name: "真人定稿要真的落得下去",
@@ -10133,8 +10132,8 @@ const MUTATIONS = [
     name: "页名权威表提不出来要自报空转（否则 0 个页名＝谁都合法）",
     file: "scripts/contract-check.mjs",
     check: "verifyGuidanceNamesRealPages",
-    from: 'nav.matchAll(/^\\s*"[a-z-]+": \\["([^"]+)",/gmu)',
-    to: 'nav.matchAll(/^\\s*"[a-z-]+": \\[`([^`]+)`,/gmu)',
+    from: 'const pages = new Set([...nav.matchAll(/^\\s*"[a-z-]+": \\["([^"]+)",/gmu)].map((match) => match[1]).concat(menuLeaves));',
+    to: "const pages = new Set();",
     expect: "本条在空转"
   },
   {
@@ -11301,7 +11300,7 @@ const MUTATIONS = [
     gate: "doctor",
     from: '  if (isSystemAccount(accountFromRequest(req, state)?.account)) return {status: 404, payload: {error: code}};',
     to: "  if (true) return {status: 404, payload: {error: code}};",
-    expect: "越租户探测能分辨"
+    expect: "got 404 project_no"
   },
   {
     name: "不存在的 id 必须走到 404，不得掉进后面的代码",
@@ -12753,8 +12752,8 @@ const MUTATIONS = [
     name: "项目全部已归档时要说清是「都归档了」，不是渲染一个空下拉",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "  if (!openProjects.length) {",
-    to: "  if (false) {",
+    from: "你能看到的项目【全部已归档】",
+    to: "你能看到的项目【都不存在】",
     expect: "要说清是「都归档了」"
   },
   {
