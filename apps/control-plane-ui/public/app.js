@@ -2849,24 +2849,6 @@ function renderSysSettings() {
           : "而系统内置技能也是 0 个：现在没有任何角色技能可用，agent 只拿得到通用角色规则。";
         return `<div class="notice warn-notice">${esc(why)}，${esc(fallback)}</div>`;
       })()),
-    // 角色技能叠加会【改掉 agent 实际拥有的能力】（含 forbiddenCapabilityAdds）。系统设置只做全局追踪；
-    // 真正创建入口在项目设置和任务组详情，避免全局页误把定制打到错误项目。
-    panel("角色技能叠加（改动 agent 能力，只读）", (() => {
-      const overlays = (state.roleSkillOverlays || []).filter((item) => item.status === "active");
-      const rows = overlays.slice(0, 20).map((overlay) => row([
-        `<span class="mono">${esc(overlay.roleSkillRef || "-")}</span>`,
-        esc(overlay.taskGroupId ? `任务组 ${taskGroupNameOf(overlay.taskGroupId)}` : `项目 ${projectNameOf(overlay.projectId)}`),
-        esc([
-          (overlay.patch?.allowedCapabilityAdds || []).length ? `放开 ${(overlay.patch.allowedCapabilityAdds || []).join("、")}` : "",
-          (overlay.patch?.forbiddenCapabilityAdds || []).length ? `禁掉 ${(overlay.patch.forbiddenCapabilityAdds || []).join("、")}` : ""
-        ].filter(Boolean).join("；") || "只改了指令/模型要求"),
-        {v: fmtTime(overlay.createdAt), c: "nowrap"}
-      ])).join("");
-      return `${overlays.length
-        ? `<div class="notice">下面这些叠加正在改动 agent 实际拥有的能力。系统设置只做全局追踪；创建请到目标项目的「项目设置」或任务组详情。</div>`
-        : ""}${table(["被改的角色技能", "作用范围", "改了什么", {label: "创建时间", c: "nowrap"}], rows,
-        {emptyText: "没有生效中的叠加：agent 用的就是技能源里的原始角色规则", moreText: moreText(overlays.length, 20, "roleSkillOverlays")})}`;
-    })(), {wide: true}),
     panel("模型能力注册（只读）", table(["供应商", "模型", "能力", {label: "上下文窗口", c: "num"}, "可用性"], models, {moreText: moreText((state.modelCapabilities || []).length, 40, "modelCapabilities")}), {wide: true}),
     panel("指令压缩指标", `
       <div class="metric-grid">

@@ -4769,8 +4769,8 @@ const MUTATIONS = [
     name: "每个 moreText 使用点都要传 field（否则截断后的长度被当成总数）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyTruncationHonestyIsWiredAtEveryCallSite",
-    from: 'moreText(overlays.length, 20, "roleSkillOverlays")',
-    to: "moreText(overlays.length, 20)",
+    from: 'moreText((state.modelCapabilities || []).length, 40, "modelCapabilities")',
+    to: "moreText((state.modelCapabilities || []).length, 40)",
     expect: "没传 field"
   },
   {
@@ -13271,6 +13271,14 @@ const MUTATIONS = [
     from: '      const workspace = !blocked && evidenceRechecks && !barrierRechecks ? "quality" : "blockers";',
     to: '      const workspace = "close-gates";',
     expect: "执行阻塞必须直达阻塞处置"
+  },
+  {
+    name: "系统设置不得跨项目展示角色 Skill 叠加",
+    file: APP,
+    gate: "console",
+    from: "  return [\n    renderSysSettingsSummary(runtime, metrics),",
+    to: "  return [\n    ...(state.roleSkillOverlays || []).map((item) => `<div>${item.roleSkillRef} 禁掉 ${(item.patch?.forbiddenCapabilityAdds || []).join('、')}</div>`),\n    renderSysSettingsSummary(runtime, metrics),",
+    expect: "不得跨项目展示用户侧角色 Skill 叠加"
   },
 ];
 

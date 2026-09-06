@@ -6155,16 +6155,9 @@ async function runPendingTruncationCase() {
       truncatedCollections: []
     };
     const view = probe.renderSysSettingsWith(withOverlay);
-    check("生效中的角色技能叠加要看得见",
-      view.includes("rsk_reviewer") && /禁掉 repo_write/.test(view),
-      "叠加正在改动 agent 的能力，界面上却一个字都没有 —— 人不知道这个项目的角色规则被改过");
-    check("已失效的叠加不得混进来",
-      !view.includes("rsk_old"),
-      "已被取代的叠加仍显示成生效中 —— 人会以为一条早就不作数的限制还在起作用");
-    const noOverlay = {...withOverlay, roleSkillOverlays: []};
-    check("没有叠加时明说 agent 用的是原始规则",
-      /没有生效中的叠加/.test(probe.renderSysSettingsWith(noOverlay)),
-      "空态什么都不说，人分不清是没有叠加、还是这一页没加载出来");
+    check("系统设置不得跨项目展示用户侧角色 Skill 叠加",
+      !view.includes("rsk_reviewer") && !view.includes("rsk_old") && !/禁掉 repo_write/u.test(view),
+      "系统管理员界面仍在读取项目／任务组 Agent 能力覆盖，系统管理和用户项目管理没有真正分开");
     const instructionState = {
       instructionMetrics: {stablePrefixTokens: 1000, deltaMessageTargetTokens: 200, cacheHitTarget: 0.8,
         envelopes: [{envelopeId: "env1", recipientRole: "reviewer", cacheKey: "cache-1", status: "active", tokenBudget: {targetDeltaTokens: 200}}]},
