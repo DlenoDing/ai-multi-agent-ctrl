@@ -2706,7 +2706,8 @@ async function runErrorGuidanceCase() {
   const projectMenuOrder = [["proj-overview", "overview", "项目概览"], ["proj-members", "list", "项目成员"],
     ["proj-members", "add", "添加项目成员"], ["proj-members", "groups", "任务组权限"], ["proj-members", "grant-group", "授予任务组权限"],
     ["proj-agents", "profiles", "Agent 档案"], ["proj-agents", "create", "新建 Agent 档案"], ["tg", "list", "任务组"], ["tasks", "list", "任务"],
-    ["monitor", "overview", "项目监控"], ["monitor", "runs", "执行会话"], ["review", "pending", "待我审核"],
+    ["monitor", "overview", "项目监控"], ["monitor", "sessions", "工作会话"], ["monitor", "dispatches", "Agent 派发"],
+    ["monitor", "lanes", "执行载体"], ["monitor", "models", "模型决策"], ["monitor", "placements", "会话放置"], ["review", "pending", "待我审核"],
     ["directives", "compose", "下达指令"], ["proj-settings", "repositories", "仓库凭据"]];
   assertMenuLeaves("项目管理", projectNav, projectMenuOrder);
   assertMenuLeaves("项目管理说明", projectNav, [["proj-overview", "help", "项目操作说明"], ["proj-members", "help", "项目授权说明"],
@@ -2736,30 +2737,30 @@ async function runErrorGuidanceCase() {
       && /<details class="nav-group" open>[\s\S]*?<span>项目总览<\/span>[\s\S]*?data-menu="proj-overview"/u.test(projectNav),
     "项目侧栏仍一次铺开全部叶子，或当前功能所在分组没有自动展开");
   const runPageRoot = el("div");
-  loadConsole(runPageRoot, {realI18n: true}).renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "runs");
+  loadConsole(runPageRoot, {realI18n: true}).renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "sessions");
   const runPageTopbar = String(runPageRoot.innerHTML || "").split('<header class="topbar">')[1]?.split("</header>")[0] || "";
   const runPageAside = String(runPageRoot.innerHTML || "").split("</aside>")[0] || "";
   check("页面标题直接使用具体功能名而不是父页面名",
-    /<h1>执行会话<\/h1>/u.test(runPageTopbar) && /工作会话、派发、载体和模型决定/u.test(runPageTopbar)
+    /<h1>工作会话<\/h1>/u.test(runPageTopbar) && /持续多轮执行的会话状态/u.test(runPageTopbar)
       && !/<h1>执行监控<\/h1>/u.test(runPageTopbar),
     "打开执行会话后页头仍写父页面“执行监控”，用户无法确认当前位置");
   check("切换功能后自动展开新的业务分组并收起旧分组",
     (runPageAside.match(/<details class="nav-group" open>/gu) || []).length === 1
-      && /<details class="nav-group" open>[\s\S]*?<span>执行观测<\/span>[\s\S]*?data-menu="monitor" data-menu-workspace="runs"/u.test(runPageAside),
+      && /<details class="nav-group" open>[\s\S]*?<span>执行观测<\/span>[\s\S]*?data-menu="monitor" data-menu-workspace="sessions"/u.test(runPageAside),
     "进入执行会话后侧栏没有把焦点收敛到执行观测组");
   const menuActionProbe = loadConsole(el("div"), {realI18n: true});
   menuActionProbe.renderFullPageWith(navState, systemAccount, "p1", "proj-overview");
   menuActionProbe.setObjectLocation({page: "tasks", projectId: "p1", groupId: "tg_old", workId: "w_old"});
   menuActionProbe.stubNavigation();
-  await menuActionProbe.navigateMenuTarget("monitor", "runs");
+  await menuActionProbe.navigateMenuTarget("monitor", "sessions");
   check("稳定功能菜单点击会同时切换页面与具体功能",
-    menuActionProbe.sessionState().page === "monitor" && menuActionProbe.workspaceCurrent("monitor") === "runs"
-      && menuActionProbe.routeSnapshot().workspace === "runs" && menuActionProbe.sessionState().managementGroupId === ""
+    menuActionProbe.sessionState().page === "monitor" && menuActionProbe.workspaceCurrent("monitor") === "sessions"
+      && menuActionProbe.routeSnapshot().workspace === "sessions" && menuActionProbe.sessionState().managementGroupId === ""
       && menuActionProbe.sessionState().selectedWork === null,
     JSON.stringify(menuActionProbe.sessionState()));
   menuActionProbe.setObjectLocation({page: "monitor", projectId: "p1", groupId: "tg_old"});
-  menuActionProbe.workspaceSelect("monitor", "runs");
-  await menuActionProbe.navigateMenuTarget("monitor", "runs");
+  menuActionProbe.workspaceSelect("monitor", "sessions");
+  await menuActionProbe.navigateMenuTarget("monitor", "sessions");
   check("点击当前叶子菜单也必须退出旧任务组范围",
     menuActionProbe.sessionState().managementGroupId === "" && menuActionProbe.routeSnapshot().groupId === "",
     `当前执行会话仍被旧任务组限制：${JSON.stringify(menuActionProbe.sessionState())}`);
@@ -2792,7 +2793,7 @@ async function runErrorGuidanceCase() {
       && !/class="project-switch"/u.test(projectTopbar),
     "项目选择器、项目状态和项目模块仍散落在顶栏与内容区");
   check("桌面侧栏直接列功能，不在选中父菜单后临时展开 workspace 子导航",
-    !/class="workspace-nav"/u.test(projectAside) && /data-menu="monitor" data-menu-workspace="runs"/u.test(projectAside)
+    !/class="workspace-nav"/u.test(projectAside) && /data-menu="monitor" data-menu-workspace="sessions"/u.test(projectAside)
       && /data-menu="proj-agents" data-menu-workspace="register"/u.test(projectAside),
     "侧栏仍把执行会话或注册 Agent 藏在父页面下面的临时栏目里");
   const creatorShell = renderedNav({accountId: "creator", email: "creator@local", displayName: "项目创建者",
@@ -2808,7 +2809,7 @@ async function runErrorGuidanceCase() {
   jumpProbe.stubNavigation();
   await jumpProbe.click({target: el("button", {dataset: {jumpPanel: "工作会话"}}), preventDefault: () => {}});
   check("功能看板跨叶子跳转必须写入浏览器历史",
-    jumpProbe.workspaceCurrent("monitor") === "runs" && jumpProbe.sessionState().routeWriteMode === "push",
+    jumpProbe.workspaceCurrent("monitor") === "sessions" && jumpProbe.sessionState().routeWriteMode === "push",
     `看板跳到了 ${jumpProbe.workspaceCurrent("monitor")}，历史写入模式却是 ${jumpProbe.sessionState().routeWriteMode}`);
 
   const objectProbe = loadConsole(el("div"), {realI18n: true});
@@ -3947,7 +3948,7 @@ function runNoVisibleProjectCase() {
       roleId: "implementer", status: "denied", taskExecutionClass: "code_change",
       denialReason: "no_candidate_satisfied_hard_constraints", fallbackPolicyRef: "msp_impl"}];
     const denialText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
-      organizationId: "org_default"}, denialState, "monitor", "p1", undefined, "runs");
+      organizationId: "org_default"}, denialState, "monitor", "p1", undefined, "models");
     check("没选出模型时要说得出为什么、按的是哪条策略",
       /没有任何候选模型同时满足硬约束/u.test(denialText) && /msp_impl/u.test(denialText),
       `选型行上只有一个任务类型，人查不下去。渲染出来的片段：${String(denialText).replace(/<[^>]+>/gu, " ").match(/模型选择[\s\S]{0,200}/u)?.[0] || "（这一屏没渲染出模型选择）"}`);
@@ -4167,7 +4168,7 @@ function runNoVisibleProjectCase() {
       truncatedCollections: []
     };
     const blockedText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
-      organizationId: "org_default"}, blockedState, "monitor", "p1", undefined, "runs");
+      organizationId: "org_default"}, blockedState, "monitor", "p1", undefined, "dispatches");
     check("派发卡在人工确认上时，要说清在等哪一张卡",
       /hcr_the_one_blocking_it/u.test(blockedText),
       "只说了「到人工审核页定稿对应的确认卡」，没说是哪一张 —— 同时挂着几张时人只能一张张点开比对");
@@ -4215,7 +4216,7 @@ function runNoVisibleProjectCase() {
       truncatedCollections: []
     };
     const stallText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
-      organizationId: "org_default"}, stallState, "monitor", "p1", undefined, "runs");
+      organizationId: "org_default"}, stallState, "monitor", "p1", undefined, "dispatches");
     check("正在跑的派发要说出它上一次有动静是多久以前",
       /2 小时前|93 分钟前/u.test(stallText) && /30 秒前/u.test(stallText),
       "两个派发都是 running 45%，一个刚动过、一个一个半小时没动了 —— 屏幕上必须能分出来，"
@@ -4565,13 +4566,13 @@ function runNoVisibleProjectCase() {
         organizationId: "org_default", permissions: ["task_group:read"], effectivePermissions: ["task_group:read"]};
       const viewerText = renderAs(viewerAccount, {...stuckState,
         taskGroupPermissions: {tg1: ["task_group:read"]}, taskGroupPermissionsDefault: ["task_group:read"]},
-        "monitor", "p1", undefined, "runs");
+        "monitor", "p1", undefined, "dispatches");
       check("够不着的出口要说清是哪个任务组够不着",
         /有执行被挡住/u.test(viewerText) && /没有这个权限/u.test(viewerText) && /任务组/u.test(viewerText),
         "观察者读到「到该任务组页点「恢复执行」」，而那一页上没有这个按钮 —— "
           + "出口指到够不着的地方，人只会在两页之间来回找");
       const adminText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
-        organizationId: "org_default"}, stuckState, "monitor", "p1", undefined, "runs");
+        organizationId: "org_default"}, stuckState, "monitor", "p1", undefined, "dispatches");
       check("有权限的人不该看到那句「你没有权限」",
         /有执行被挡住/u.test(adminText) && !/没有这个权限/u.test(adminText),
         "给有权的人加一句「你没权限」，会让他以为自己按不动而去找别人");
@@ -5188,11 +5189,22 @@ async function runPendingTruncationCase() {
         agentDispatches: [...runningNodeState.agentDispatches, {dispatchId: "run2", taskGroupId: "tg1", assignedNodeId: "idle", status: "blocked"}]};
       const multiAgents = objectProbe.renderProjectAgentsInventoryWith(multiState, orgAdmin, "p1", "table", ["nodes"]);
       check("多派发节点不把暂停恢复误绑到数组第一项", /data-action="open-node-tasks"[^>]*>查看 2 个当前任务/u.test(multiAgents) && !/data-command="pause_dispatch"|data-command="resume_dispatch"/u.test(multiAgents), textOf(multiAgents));
-      const multiMonitor = objectProbe.renderMonitorInventoryWith(multiState, orgAdmin, "p1", ["runs"]);
+      const multiMonitor = objectProbe.renderMonitorInventoryWith(multiState, orgAdmin, "p1", ["dispatches"]);
       check("执行监控列表按派发 ID 进入对象详情而不平铺高影响控制",
         /data-execution-id="run1"[^>]*data-task="tg1"/u.test(multiMonitor)
           && /data-execution-id="run2"[^>]*data-task="tg1"/u.test(multiMonitor)
           && !/data-command="(?:pause_dispatch|resume_dispatch|cancel_dispatch)"/u.test(multiMonitor), textOf(multiMonitor).slice(0, 500));
+      const monitorObjectPanes = [
+        ["sessions", "工作会话"],
+        ["dispatches", "智能体派发"],
+        ["lanes", "可复用执行载体（Worker Lane）"],
+        ["models", "模型选择记录"],
+        ["placements", "会话放置记录"]
+      ].map(([pane, title]) => ({pane, title, html: objectProbe.renderMonitorInventoryWith(multiState, orgAdmin, "p1", [pane])}));
+      check("会话、派发、执行载体、模型决策和会话放置必须是五个独立监控页面",
+        monitorObjectPanes.every((current) => current.html.includes(`<h2>${current.title}</h2>`)
+          && monitorObjectPanes.filter((other) => other.pane !== current.pane).every((other) => !current.html.includes(`<h2>${other.title}</h2>`))),
+        monitorObjectPanes.map((item) => `${item.pane}:${textOf(item.html).slice(0, 80)}`).join(" | "));
       const executionDetailBase = {
         objectType: "dispatch", objectId: "run1", settled: false,
         taskGroup: {id: "tg1", name: "任务组一"}, workItem: {id: "w1", title: "执行任务"},
@@ -5215,7 +5227,7 @@ async function runPendingTruncationCase() {
         agents: [{id: "agent_project_review", name: "项目评审 Agent", role: "reviewer", model: "auto_fast", status: "active", projectId: "p1"}],
         modelSelectionDecisions: [{decisionId: "msd1", taskGroupId: "tg1", workItemId: "w1", roleId: "reviewer",
           selectedAgentId: "agent_project_review", agentModelPreference: "auto_fast", status: "selected",
-          selectedModel: {modelId: "openai:gpt-5.5"}, modelDecision: "modelDecision: fixed writeSet -> openai:gpt-5.5 / medium"}]}, orgAdmin, "p1", ["runs"]);
+          selectedModel: {modelId: "openai:gpt-5.5"}, modelDecision: "modelDecision: fixed writeSet -> openai:gpt-5.5 / medium"}]}, orgAdmin, "p1", ["models"]);
       check("模型选择记录显示逻辑 Agent 档案、偏好和实际模型",
         /项目评审 Agent/u.test(modelMonitor) && /agent_project_review/u.test(modelMonitor)
           && /偏好：自动快速/u.test(modelMonitor) && /openai:gpt-5.5/u.test(modelMonitor),
@@ -5236,6 +5248,7 @@ async function runPendingTruncationCase() {
       nodeTaskProbe.stubNavigation();
       await nodeTaskProbe.click({target: el("button", {dataset: {action: "open-node-tasks"}}), preventDefault: () => {}});
       check("多派发节点进入项目级执行会话而不遗留单任务组范围", nodeTaskProbe.sessionState().page === "monitor"
+        && nodeTaskProbe.workspaceCurrent("monitor") === "dispatches"
         && nodeTaskProbe.sessionState().managementGroupId === "", JSON.stringify(nodeTaskProbe.sessionState()));
       const overdueState = {...idleNodeState, fleet: {online: 0, total: 1}, agentRuntimeNodes: [{...idleNodeState.agentRuntimeNodes[0], lastHeartbeatAt: "2000-01-01T00:00:00Z"}]};
       const overdueHelp = objectProbe.renderProjectAgentsInventoryWith(overdueState, orgAdmin, "p1", "table", ["help"]);

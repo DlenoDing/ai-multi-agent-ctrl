@@ -197,6 +197,12 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
 }
 
 {
+  check("legacy monitor runs pane migrates to the work-session page", workspaces.select("monitor", "runs") === true
+    && workspaces.current("monitor")?.id === "sessions");
+  workspaces.select("monitor", "overview");
+}
+
+{
   workspaces.select("proj-settings", "repositories");
   const repositoriesPane = workspaces.run("proj-settings", () => ({
     repo: workspaces.allows("项目基础配置"),

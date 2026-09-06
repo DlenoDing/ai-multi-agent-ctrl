@@ -13072,6 +13072,38 @@ const MUTATIONS = [
     to: '{page: "proj-members", workspace: "list", accountId: selected.accountId}',
     expect: "成员定向授权保留成员和选择的项目"
   },
+  {
+    name: "执行会话复合页必须拆成五个监控对象页面",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "console",
+    from: 'pane("sessions", "工作会话", ["工作会话"]), pane("dispatches", "Agent 派发", ["智能体派发"]), pane("lanes", "执行载体", ["可复用执行载体（Worker Lane）"]), pane("models", "模型决策", ["模型选择记录"]), pane("placements", "会话放置", ["会话放置记录", "准入决策"])',
+    to: 'pane("runs", "执行会话", ["工作会话", "智能体派发", "可复用执行载体（Worker Lane）", "模型选择记录", "会话放置记录", "准入决策"])',
+    expect: "必须是五个独立监控页面"
+  },
+  {
+    name: "模型决策必须有独立监控菜单入口",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    leaf("monitor", "models", "模型决策", "实际模型、Agent 偏好和选型理由"),',
+    to: "",
+    expect: "模型决策"
+  },
+  {
+    name: "旧执行会话地址必须迁移到工作会话",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "workspace",
+    from: '  const legacyPaneAliases = {"monitor:runs": "sessions"};',
+    to: "  const legacyPaneAliases = {};",
+    expect: "legacy monitor runs pane migrates"
+  },
+  {
+    name: "节点当前任务入口必须直达 Agent 派发",
+    file: APP,
+    gate: "console",
+    from: '      workspaces.select("monitor", "dispatches");',
+    to: '      workspaces.select("monitor", "sessions");',
+    expect: "多派发节点进入项目级执行会话"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

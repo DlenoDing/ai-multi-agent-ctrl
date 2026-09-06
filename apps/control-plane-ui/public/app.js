@@ -4812,7 +4812,7 @@ function renderProjectOverview() {
             const stuck = (state.agentDispatches || []).filter((item) => item.status === "blocked").length;
             if (!stuck) return "";
             return `<div class="small warn-text">另有 ${stuck}${countSuffix("agentDispatches")} 个派发被挡住 ——`
-              + " 到“执行会话”或“阻塞与门禁”看它们卡在哪</div>";
+              + " 到“Agent 派发”或“阻塞与门禁”看它们卡在哪</div>";
           })()}
         </div>
         <div class="metric">${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "待人工确认", {page: "review", workspace: "pending", primary: true})}<strong>${pendingConfirmCount}</strong>
@@ -7446,7 +7446,7 @@ function renderMonitor() {
       + `不是没取回来。要让它动起来：${joinTokenWhere
         ? `${joinTokenWhere}，点「签发一次性加入令牌」并在 agent 主机运行安装命令注册一台节点，`
         : "先让管理员签发加入令牌，并在 agent 主机运行安装命令注册一台节点（签发加入令牌这件事你这个账号做不了），"}`
-      + `再到“任务”确认工作项已就绪。节点接上之后，“执行会话”和“实时事件”会持续显示运行过程。</div>`
+      + `再到“任务”确认工作项已就绪。节点接上之后，“工作会话”“Agent 派发”和“实时事件”会持续显示运行过程。</div>`
     : "";
   const selectedMonitorGroup = managementGroupId ? groups.find((group) => group.id === managementGroupId) || null : null;
   const selectedStats = selectedMonitorGroup ? taskGroupOperationalStats(selectedMonitorGroup) : {
@@ -9480,7 +9480,7 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "open-node-tasks") {
-      workspaces.select("monitor", "runs");
+      workspaces.select("monitor", "dispatches");
       await focusManagementGroup("", "monitor");
       return;
     }

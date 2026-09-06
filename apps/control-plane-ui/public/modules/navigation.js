@@ -36,7 +36,11 @@
     leaf("tasks", "create", "新建任务", "向任务组增加工作项", {requires: "task_group:control"}),
     {divider: "执行观测"},
     leaf("monitor", "overview", "项目监控", "项目或任务组进度与异常"),
-    leaf("monitor", "runs", "执行会话", "工作会话、派发、载体和模型决定"),
+    leaf("monitor", "sessions", "工作会话", "持续多轮执行的会话状态"),
+    leaf("monitor", "dispatches", "Agent 派发", "任务派发、进度、阻塞和结果"),
+    leaf("monitor", "lanes", "执行载体", "可复用 Worker Lane 与当前会话"),
+    leaf("monitor", "models", "模型决策", "实际模型、Agent 偏好和选型理由"),
+    leaf("monitor", "placements", "会话放置", "新会话、子 Agent 与准入判定"),
     leaf("monitor", "events", "实时事件", "Agent 执行过程持续回送"),
     leaf("monitor", "nodes", "节点控制", "运行节点和控制命令 ACK"),
     leaf("monitor", "evidence", "产出验收", "Git 检查点、测试和质量门"),
@@ -152,7 +156,7 @@
     if (!context.taskGroupScope) return base;
     const scopedTitles = {
       tasks: {list: "任务组任务", create: "任务组新建任务"},
-      monitor: {overview: "任务组监控", runs: "任务组执行会话", events: "任务组实时事件", nodes: "任务组节点控制", evidence: "任务组产出验收", barriers: "任务组阻塞与门禁", help: "任务组监控说明"},
+      monitor: {overview: "任务组监控", sessions: "任务组工作会话", dispatches: "任务组 Agent 派发", lanes: "任务组执行载体", models: "任务组模型决策", placements: "任务组会话放置", events: "任务组实时事件", nodes: "任务组节点控制", evidence: "任务组产出验收", barriers: "任务组阻塞与门禁", help: "任务组监控说明"},
       review: {pending: "任务组待审核", decisions: "任务组授权复核", history: "任务组审核历史", inbox: "任务组待办汇总", help: "任务组审核说明"},
       directives: {compose: "任务组下达指令", history: "任务组指令记录", help: "任务组指令说明"}
     };
