@@ -2796,6 +2796,10 @@ async function runErrorGuidanceCase() {
     {page: "tasks", projectId: "p1", groupId: group.id, workId: "work_context", workspace: "list"},
     {taskGroup: group, workItem: group.workItems[0], events: [], eventCount: 0, returnedEventCount: 0});
   const objectAside = String(objectHtml).split("</aside>")[0] || "";
+  const objectTopbar = String(objectHtml).split('<header class="topbar">')[1]?.split("</header>")[0] || "";
+  check("对象详情页头必须直接说清当前对象类型",
+    /<h1>任务详情<\/h1>/u.test(objectTopbar) && /执行顺序、Agent、角色、规则、结果与证据/u.test(objectTopbar),
+    "进入任务后页头仍只写父级“任务”，用户要到内容区才能判断自己是否在详情页");
   check("任务组和任务对象上下文必须跨页面持续显示",
     /当前任务组/u.test(objectAside) && /支付链路任务组/u.test(objectAside)
       && /任务 1/u.test(objectAside) && /运行 1/u.test(objectAside) && /待审 1/u.test(objectAside)
@@ -2813,6 +2817,20 @@ async function runErrorGuidanceCase() {
     (String(objectHtml).match(/class="mobile-function-picker"/gu) || []).length === 1
       && /data-menu-select/u.test(objectHtml) && !/class="workspace-mobile-picker"/u.test(objectHtml),
     "移动端仍同时存在横向主菜单和页面栏目选择器，或缺少稳定功能选择器");
+  const scopedMonitorHtml = objectProbe.renderObjectShellWith(objectState,
+    {accountId: "sys", accountType: "system_admin", permissions: ["system:*"], organizationId: null},
+    {page: "monitor", projectId: "p1", groupId: group.id, workspace: "evidence"});
+  const scopedMonitorTopbar = String(scopedMonitorHtml).split('<header class="topbar">')[1]?.split("</header>")[0] || "";
+  check("任务组范围的监控页头必须直接显示范围",
+    /<h1>任务组产出验收<\/h1>/u.test(scopedMonitorTopbar) && /当前任务组范围/u.test(scopedMonitorTopbar),
+    "任务组范围仍显示项目级“产出验收”，审核者必须再找范围选择器才能确认对象");
+  const groupObjectHtml = objectProbe.renderObjectShellWith(objectState,
+    {accountId: "sys", accountType: "system_admin", permissions: ["system:*"], organizationId: null},
+    {page: "tg", projectId: "p1", groupId: group.id, workspace: "tasks"});
+  const groupObjectTopbar = String(groupObjectHtml).split('<header class="topbar">')[1]?.split("</header>")[0] || "";
+  check("任务组对象页头必须与任务组列表区分",
+    /<h1>任务组详情<\/h1>/u.test(groupObjectTopbar),
+    "打开任务组对象后页头仍写“任务组”，列表和详情无法从页面名称区分");
 
   const taskRoute = objectProbe.routeBuild({page: "tasks", projectId: "prj_a", groupId: "tg_a", workId: "work_a", workspace: "list", token: "secret"});
   const parsedTaskRoute = objectProbe.routeParse(taskRoute);
