@@ -1,0 +1,44 @@
+/* 人本化展示层：减少重复卡片，保持状态、对象和主操作优先。 */
+
+.domain-overview { display: grid; gap: 14px; }
+.domain-overview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--card-border);
+}
+.domain-overview-header > div { display: grid; gap: 2px; min-width: 0; }
+.domain-overview-header strong { font-size: 16px; }
+.domain-overview-header span { color: var(--text-sub); font-size: 13px; }
+.domain-overview-count { white-space: nowrap; }
+.domain-action-list { display: grid; }
+.domain-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 58px;
+  padding: 9px 0;
+  border-bottom: 1px solid #eef1f5;
+}
+.domain-action-row:last-child { border-bottom: 0; }
+.domain-action-row > div { display: grid; gap: 2px; min-width: 0; }
+.domain-action-row strong { font-size: 14px; }
+.domain-action-row span { color: var(--text-sub); font-size: 12px; overflow-wrap: anywhere; }
+.domain-more { border-top: 1px solid var(--card-border); padding-top: 10px; }
+.domain-more > summary { cursor: pointer; color: var(--text-sub); font-size: 13px; }
+
+.panel + .panel { margin-top: 0; }
+.panel-header { min-height: 48px; }
+.panel-header h2 { font-weight: 650; }
+.record, .tree-item, .agent-card { background: #fff; }
+.module-card { box-shadow: none; transform: none; }
+.module-card:hover { transform: none; }
+
+@media (max-width: 860px) {
+  .domain-overview-header { align-items: flex-start; }
+  .domain-action-row { align-items: flex-start; }
+  .domain-action-row button { flex: 0 0 auto; }
+}

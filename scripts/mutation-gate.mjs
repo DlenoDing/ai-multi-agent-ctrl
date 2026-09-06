@@ -11854,12 +11854,12 @@ const MUTATIONS = [
     expect: "创建项目入口属于项目选择区而不是每个任务页顶栏"
   },
   {
-    name: "创建与注册功能菜单必须按权限隐藏",
-    file: "apps/control-plane-ui/public/app.js",
+    name: "创建、注册和说明入口不得挤进日常侧栏",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
-    from: "  const visibleMenu = menuForCurrentSection(perspective, page).filter((item) => item.divider || menuItemAvailable(item));",
-    to: "  const visibleMenu = menuForCurrentSection(perspective, page);",
-    expect: "只读项目账号看不到新建任务组"
+    from: "    return items.filter((item) => item.divider || !actionWorkspaces.has(item.workspace));",
+    to: "    return items;",
+    expect: "项目侧栏不把创建、注册和说明当成日常功能"
   },
   {
     name: "页面标题必须跟随具体功能菜单",
@@ -11926,12 +11926,36 @@ const MUTATIONS = [
     expect: "每类待办的处置按钮必须携带准确 workspace"
   },
   {
-    name: "说明 workspace 必须有生产菜单入口",
-    file: "apps/control-plane-ui/public/modules/navigation.js",
+    name: "说明 workspace 必须有统一顶栏入口",
+    file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '    leaf("sys-orgs", "help", "组织治理说明", "系统侧组织、配额和初始管理员职责"),',
+    from: '            ${helpAvailable ? `<button class="icon-button topbar-help${helpActive ? " active" : ""}" data-workspace-page="${esc(helpWorkspacePage)}" data-workspace="help" title="当前页面帮助" aria-label="当前页面帮助">?</button>` : ""}',
     to: "",
-    expect: "系统管理说明侧栏要有可直接进入的「组织治理说明」功能"
+    expect: "说明入口统一收进顶栏且不占侧栏"
+  },
+  {
+    name: "说明页不得恢复重复看板与流程堆叠",
+    file: "apps/control-plane-ui/public/modules/domain-overview-workspace.js",
+    gate: "console",
+    from: '    return h.panel("常用入口", `<div class="domain-overview">',
+    to: '    return h.panel("项目设置操作看板", `<div class="module-card domain-overview">',
+    expect: "说明页只保留一份功能索引"
+  },
+  {
+    name: "系统技术明细不得重新挤回概览",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "console",
+    from: 'pane("details", "技术状态", ["服务器信息", "资源占用", "能耗估算", "存储体量", "系统服务"]),',
+    to: 'pane("overview", "技术状态", ["服务器信息", "资源占用", "能耗估算", "存储体量", "系统服务"]),',
+    expect: "系统概览只显示健康与关键指标"
+  },
+  {
+    name: "任务组列表不得恢复多条平行跳转",
+    file: "apps/control-plane-ui/public/modules/task-group-workspace.js",
+    gate: "console",
+    from: '      `<div class="button-row"><button class="primary-button" data-action="tg-detail" data-task="${esc(group.id)}">进入任务组</button>${h.quickControl(group)}</div>`',
+    to: '      `<div class="button-row"><button class="primary-button" data-action="tg-detail" data-task="${esc(group.id)}">进入任务组</button>${h.quickControl(group)}${h.groupLink(group, "任务", "tasks")}${h.groupLink(group, "监控", "monitor")}</div>`',
+    expect: "任务组列表行只保留进入对象和必要状态控制"
   },
   {
     name: "看板跨叶子跳转必须进入浏览器历史",
@@ -12920,12 +12944,12 @@ const MUTATIONS = [
     expect: "默认组织登记的初始管理员不是本组织的 org_admin"
   },
   {
-    name: "项目 Agent 档案必须有独立创建菜单",
+    name: "项目 Agent 档案必须保留独立创建路由",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
     from: '    leaf("proj-agents", "create", "新建 Agent 档案", "创建当前项目专属逻辑角色", {requires: "agent:activate"}),',
     to: "",
-    expect: "项目管理侧栏要有可直接进入的「新建 Agent 档案」功能"
+    expect: "对象列表主按钮必须进入独立创建或注册页"
   },
   {
     name: "项目 Agent 档案列表不得混入创建表单",

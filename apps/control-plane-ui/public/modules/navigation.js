@@ -15,26 +15,24 @@
   const leaf = (id, workspace, label, description, options = {}) => ({id, workspace, label, description, ...options});
 
   const PROJECT_MENU_TAIL = [
-    {divider: "项目总览"},
+    {divider: "日常工作"},
     leaf("proj-overview", "overview", "项目概览", "总进度、健康度和当前下一步"),
     leaf("proj-overview", "activity", "最新执行", "近期执行事件与变化"),
     leaf("proj-overview", "outputs", "仓库产出", "项目 Git 产出归属"),
-    {divider: "成员与权限"},
-    leaf("proj-members", "list", "项目成员", "项目角色和成员详情"),
-    leaf("proj-members", "add", "添加项目成员", "把组织成员加入当前项目", {requires: "project:grant"}),
-    leaf("proj-members", "groups", "任务组权限", "按任务组分配控制、审核和观察"),
-    leaf("proj-members", "grant-group", "授予任务组权限", "给成员分配当前任务组角色", {requires: "project:grant"}),
-    {divider: "Agent"},
-    leaf("proj-agents", "profiles", "Agent 档案", "项目专属与组织共享逻辑角色"),
-    leaf("proj-agents", "create", "新建 Agent 档案", "创建当前项目专属逻辑角色", {requires: "agent:activate"}),
-    leaf("proj-agents", "nodes", "运行节点", "项目专属与组织共享运行载体"),
-    leaf("proj-agents", "register", "注册运行节点", "签发一次性令牌和安装脚本", {requires: "agent:activate"}),
-    {divider: "工作推进"},
     leaf("tg", "list", "任务组", "任务组列表、进度与状态"),
     leaf("tg", "create", "新建任务组", "定义目标、角色和初始状态", {requires: "task_group:control"}),
     leaf("tasks", "list", "任务", "按时间倒序查看任务和执行详情"),
     leaf("tasks", "create", "新建任务", "向任务组增加工作项", {requires: "task_group:control"}),
-    {divider: "执行跟踪"},
+    {divider: "团队与 Agent"},
+    leaf("proj-members", "list", "项目成员", "项目角色和成员详情"),
+    leaf("proj-members", "add", "添加项目成员", "把组织成员加入当前项目", {requires: "project:grant"}),
+    leaf("proj-members", "groups", "任务组权限", "按任务组分配控制、审核和观察"),
+    leaf("proj-members", "grant-group", "授予任务组权限", "给成员分配当前任务组角色", {requires: "project:grant"}),
+    leaf("proj-agents", "profiles", "Agent 档案", "项目专属与组织共享逻辑角色"),
+    leaf("proj-agents", "create", "新建 Agent 档案", "创建当前项目专属逻辑角色", {requires: "agent:activate"}),
+    leaf("proj-agents", "nodes", "运行节点", "项目专属与组织共享运行载体"),
+    leaf("proj-agents", "register", "注册运行节点", "签发一次性令牌和安装脚本", {requires: "agent:activate"}),
+    {divider: "执行监控"},
     leaf("monitor", "overview", "项目监控", "项目或任务组进度与异常"),
     leaf("monitor", "sessions", "工作会话", "持续多轮执行的会话状态"),
     leaf("monitor", "dispatches", "Agent 派发", "任务派发、进度、阻塞和结果"),
@@ -53,7 +51,7 @@
     leaf("monitor", "finalizations", "人工定稿", "收尾裁决、责任人、时间和理由"),
     leaf("monitor", "blockers", "阻塞处置", "评审计划、共享定义和卡住方案"),
     leaf("monitor", "close-gates", "关闭门禁", "任务组关闭条件与阻塞对象"),
-    {divider: "人工控制"},
+    {divider: "人工介入"},
     leaf("review", "pending", "待我审核", "执行方案与确认卡"),
     leaf("review", "permissions", "权限审批", "Agent 请求的临时权限与作用范围"),
     leaf("review", "approvals", "操作审批", "危险操作、阶段门和多方审批"),
@@ -62,7 +60,7 @@
     leaf("review", "inbox", "待办汇总", "当前账号可处理的全部待办"),
     leaf("directives", "compose", "下达指令", "向 AI 总控提交结构化控制输入", {requires: "task_group:control"}),
     leaf("directives", "history", "指令记录", "查看消费、拒绝和执行动作"),
-    {divider: "项目治理"},
+    {divider: "项目设置"},
     leaf("proj-settings", "repositories", "仓库凭据", "仓库地址、账号密码或 API Key"),
     leaf("proj-settings", "baseline", "基线资料", "任务可引用的稳定输入"),
     leaf("proj-settings", "default-roles", "默认角色", "任务组未指定时使用的角色回退"),
@@ -83,6 +81,7 @@
   const SYSTEM_MENU = [
     {divider: "平台运行"},
     leaf("sys-overview", "overview", "系统概览", "服务、资源和存储状态"),
+    leaf("sys-overview", "details", "技术状态", "服务器、资源、能耗、存储和服务明细"),
     leaf("sys-overview", "audit", "审计日志", "系统操作与归档链"),
     leaf("sys-overview", "maintenance", "维护操作", "初始化与受控维护"),
     {divider: "组织治理"},
@@ -101,14 +100,13 @@
   ];
 
   const ORG_MENU = [
-    {divider: "组织总览"},
+    {divider: "日常管理"},
     leaf("org-overview", "overview", "组织概览", "配额、成员、项目与共享资源"),
-    {divider: "成员与权限"},
+    leaf("org-projects", "list", "项目列表", "组织内项目状态和负责人"),
+    {divider: "成员与项目权限"},
     leaf("org-members", "list", "成员账户", "组织子账户和生命周期"),
     leaf("org-members", "create", "创建成员", "签发一次性登录凭据"),
     leaf("org-members", "grants", "权限矩阵", "成员的项目与任务组角色"),
-    {divider: "项目目录"},
-    leaf("org-projects", "list", "项目列表", "组织内项目状态和负责人"),
     leaf("org-projects", "create", "创建项目", "创建人自动成为项目负责人"),
     leaf("org-projects", "grants", "项目授权", "把组织成员加入项目"),
     {divider: "共享 Agent"},
@@ -249,6 +247,11 @@
     `;
   }
 
+  function primaryNavigationItems(items) {
+    const actionWorkspaces = new Set(["create", "add", "grant-group", "register", "help"]);
+    return items.filter((item) => item.divider || !actionWorkspaces.has(item.workspace));
+  }
+
   function menuGroups(items) {
     const groups = [];
     let current = {label: "功能", items: []};
@@ -263,10 +266,10 @@
   }
 
   function desktopMenuHtml(items, pageId, workspace, todoFor) {
-    return menuGroups(items).map((group) => {
+    return menuGroups(primaryNavigationItems(items)).map((group) => {
       const active = group.items.some((item) => item.id === pageId && item.workspace === workspace);
       return `<details class="nav-group"${active ? " open" : ""}>
-        <summary class="nav-group-summary"><span>${esc(group.label)}</span><span class="nav-group-count">${group.items.length}</span></summary>
+        <summary class="nav-group-summary"><span>${esc(group.label)}</span></summary>
         <div class="nav-group-items">${group.items.map((item) => menuItemHtml(item,
           item.id === pageId && item.workspace === workspace, todoFor(item))).join("")}</div>
       </details>`;
@@ -274,7 +277,7 @@
   }
 
   function mobileMenuHtml(items, pageId, workspace) {
-    const groups = menuGroups(items);
+    const groups = menuGroups(primaryNavigationItems(items));
     return `<label class="mobile-function-picker"><span>当前功能</span><select data-menu-select aria-label="当前功能">${groups.map((group) =>
       `<optgroup label="${esc(group.label)}">${group.items.map((item) => `<option value="${esc(`${item.id}|${item.workspace || ""}`)}"${item.id === pageId && item.workspace === workspace ? " selected" : ""}>${esc(item.label)}</option>`).join("")}</optgroup>`).join("")}</select></label>`;
   }
@@ -297,6 +300,7 @@
     sectionLabel,
     sectionSwitchHtml,
     menuItemHtml,
+    primaryNavigationItems,
     desktopMenuHtml,
     mobileMenuHtml
   };

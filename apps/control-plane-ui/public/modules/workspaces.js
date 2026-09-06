@@ -18,7 +18,7 @@
       pane("collaboration", "协作记录", ["协作记录*"], "控制与追溯"),
       pane("help", "详情说明", [], "控制与追溯")
     ],
-    "sys-overview": [pane("overview", "运行状态"), pane("audit", "审计日志", ["审计日志"]), pane("maintenance", "维护操作", ["维护操作"])],
+    "sys-overview": [pane("overview", "运行状态"), pane("details", "技术状态", ["服务器信息", "资源占用", "能耗估算", "存储体量", "系统服务"]), pane("audit", "审计日志", ["审计日志"]), pane("maintenance", "维护操作", ["维护操作"])],
     "sys-orgs": [pane("list", "组织列表", ["组织列表"]), pane("create", "开通组织", ["创建组织"]), pane("help", "职责与配额说明")],
     "sys-settings": [pane("runtime", "运行参数", ["运行参数（只读）"]), pane("models", "模型能力", ["模型能力注册（只读）"]), pane("skills", "技能源", ["技能源"]), pane("instruction-efficiency", "指令效率", ["指令压缩指标"]), pane("envelopes", "指令信封", ["指令信封"]), pane("definitions", "共享定义", ["共享定义归属"]), pane("help", "能力说明", ["系统设置总览"])],
     "org-overview": [pane("overview", "组织概况"), pane("help", "组织操作说明", ["组织操作路径"])],
@@ -95,7 +95,9 @@
   function showHub() { return !context || ["overview", "list"].includes(current(context.page)?.id || "overview"); }
 
   function navigation(page, mobile = false, options = {}) {
-    const entries = (catalog[page] || []).filter((entry) => options.canCreate !== false || !["create", "register"].includes(entry.id));
+    const entries = (catalog[page] || []).filter((entry) => entry.id !== "help"
+      && !["create", "add", "grant-group", "register"].includes(entry.id)
+      && (options.canCreate !== false || !["create", "register"].includes(entry.id)));
     if (!entries.length) return "";
     if (mobile === true) {
       return `<label class="workspace-mobile-picker"><span>当前栏目</span><select data-workspace-select data-workspace-page="${esc(page)}">${entries.map((entry) =>
@@ -106,7 +108,9 @@
   }
 
   function objectNavigation(page, options = {}) {
-    const entries = (catalog[page] || []).filter((entry) => options.canCreate !== false || !["create", "register"].includes(entry.id));
+    const entries = (catalog[page] || []).filter((entry) => entry.id !== "help"
+      && !["create", "add", "grant-group", "register"].includes(entry.id)
+      && (options.canCreate !== false || !["create", "register"].includes(entry.id)));
     if (!entries.length) return "";
     const item = (entry) => `<button class="object-section-nav-item${current(page)?.id === entry.id ? " active" : ""}" data-workspace-page="${esc(page)}" data-workspace="${esc(entry.id)}" aria-current="${current(page)?.id === entry.id ? "page" : "false"}">${esc(entry.label)}</button>`;
     const groups = [];

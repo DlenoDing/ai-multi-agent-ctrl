@@ -1928,6 +1928,9 @@ function render() {
   const visibleMenu = menuForCurrentSection(perspective, page).filter((item) => item.divider || menuItemAvailable(item));
   const menuHtml = desktopMenuHtml(visibleMenu, page, activeWorkspace, (item) => menuTodoFor(item, menuTodoCounts));
   const sidebarContext = sidebarContextHtml(perspective);
+  const helpWorkspacePage = page === "tg" && expandedTaskGroupId ? "group-detail" : page;
+  const helpAvailable = (workspaces.catalog[helpWorkspacePage] || []).some((entry) => entry.id === "help");
+  const helpActive = workspaces.current(helpWorkspacePage)?.id === "help";
   const canCreateProject = currentAccount.accountType === "user_account"
     && (state.accountCapabilities?.canCreateProject ?? (currentAccount.permissions || []).includes("project:create"));
 
@@ -1962,6 +1965,7 @@ function render() {
                   看到的是"修改密码"，弹窗里还写着"当前密码（首次设置可留空）"—— 让他去想自己是不是忘了什么。
                   系统知道他有没有设过，就该直接说对。 */""}
             <button class="secondary-button" data-action="open-change-password">${(currentAccount?.passwordSet ?? currentAccount?.authPolicy?.passwordSet) ? "修改密码" : "设置密码"}</button>
+            ${helpAvailable ? `<button class="icon-button topbar-help${helpActive ? " active" : ""}" data-workspace-page="${esc(helpWorkspacePage)}" data-workspace="help" title="当前页面帮助" aria-label="当前页面帮助">?</button>` : ""}
             <button class="icon-button" data-action="refresh" title="刷新" aria-label="刷新">↻</button>
             <button class="secondary-button" data-action="logout">退出登录</button>
           </div>
@@ -2024,7 +2028,20 @@ function renderContent() {
   const groupDetail = page === "tg" && expandedTaskGroupId;
   const activeWorkspace = groupDetail ? "list" : workspaces.current(page)?.id || "";
   const functionalMenu = menuForCurrentSection(perspective, page).filter((item) => item.divider || menuItemAvailable(item));
-  const pageBody = managementScopeBar() + workspaces.run(page, renderPageContent);
+  const helpPage = groupDetail ? "group-detail" : page;
+  const helpActive = workspaces.current(helpPage)?.id === "help";
+  const helpItems = groupDetail
+    ? (workspaces.catalog["group-detail"] || []).map((entry) => ({pageId: "group-detail", workspace: entry.id, label: entry.label, description: ""}))
+    : functionalMenu.filter((item) => !item.divider && item.id === page)
+      .map((item) => ({pageId: item.id, workspace: item.workspace, label: item.label, description: item.description || ""}));
+  const pageBody = helpActive
+    ? window.AIMAC_DOMAIN_OVERVIEW_WORKSPACE.render({
+        pageId: helpPage,
+        title: PAGE_META[page]?.[0] || functionalPageLabel,
+        items: helpItems,
+        helpers: {panel: renderPanel, esc}
+      })
+    : managementScopeBar() + workspaces.run(page, renderPageContent);
   if (groupDetail) return context + `<div class="object-detail-layout"><aside class="object-section-rail">${workspaces.objectNavigation("group-detail", workspaceOptions())}</aside><div class="object-detail-content">${pageBody}</div></div>`;
   return context + mobileMenuHtml(functionalMenu, page, activeWorkspace) + pageBody;
 }
@@ -2090,7 +2107,8 @@ function renderTaskWorkbench() {
     disclosure: taskRunDisclosure,
     helpers: {badge, t, explainCoded, fmtTime, progressLine, humanTraceHtml, workItemExitHint, workItemResultHtml, repositoryFailureAction, dispatchRuleSummaries, ruleSummaryHtml,
       isTerminalDispatch: (status) => terminalDispatchStatuses.has(status)}
-  }), {wide: true});
+  }), {wide: true, headerSide: !selectedWork && hasPerm("task_group:control")
+    ? `<button class="primary-button" data-workspace-page="tasks" data-workspace="create">新建任务</button>` : ""});
 }
 
 async function loadTaskWorkbenchData() {
@@ -2563,7 +2581,8 @@ function renderSysOrgs() {
     renderSysOrgsActionBoard({orgs: organizations, activeOrgs, suspendedOrgs, quotaPressure}),
     renderSysOrgsLifecycleGuide({orgs: organizations, activeOrgs, suspendedOrgs, quotaPressure}),
     panel("组织列表", `<div class="organization-table">` + table(["组织", "初始管理员", "状态", "配额用量", "创建时间", "操作"], orgRows,
-      {emptyText: listEmptyText("组织列表")}) + "</div>", {wide: true, headerSide: filterInput("按组织名过滤…", "orgs")}),
+      {emptyText: listEmptyText("组织列表")}) + "</div>", {wide: true, headerSide: `${filterInput("按组织名过滤…", "orgs")}
+        <button class="primary-button" data-menu="sys-orgs" data-menu-workspace="create">开通组织</button>`}),
     panel("创建组织", `
       <form class="form-grid" data-form="org-create">
         <div class="form-row"><label>组织名称</label><input name="name" required placeholder="示例：华东研发中心"></div>
@@ -4044,7 +4063,8 @@ function renderOrgAgents() {
     `, {wide: true, headerSide: `${filterInput("按档案、角色、模型过滤…", "org-agent-profiles")}${hasPerm("agent:activate")
       ? `<button class="primary-button" data-menu="org-agents" data-menu-workspace="create">新建共享 Agent 档案</button>` : ""}`}),
     panel("创建组织级 Agent 档案", renderAgentProfileForm({title: "创建组织级 Agent 档案", readOnly: !hasPerm("agent:activate")}), {wide: true}),
-    panel("agent 节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "org-nodes")}${toggle}`}),
+    panel("agent 节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "org-nodes")}${toggle}
+      <button class="primary-button" data-menu="org-agents" data-menu-workspace="register">注册共享运行节点</button>`}),
     panel("加入令牌审计", renderJoinTokenSection({auditOnly: true, context: "org"}), {wide: true})
   ].join("");
 }
@@ -4234,7 +4254,8 @@ function renderProjectAgents() {
       ? `<button class="primary-button" data-menu="proj-agents" data-menu-workspace="create">新建 Agent 档案</button>` : ""}`}),
     panel("创建项目级 Agent 档案", renderAgentProfileForm({projectId: project.id, title: "创建项目级 Agent 档案", readOnly: !hasPerm("agent:activate")}), {wide: true}),
     panel("项目 agent 节点", `<div class="stack">${nodeNotice}${bodyHtml}</div>`,
-      {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "project-nodes")}${toggle}`}),
+      {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "project-nodes")}${toggle}${hasPerm("agent:activate")
+        ? `<button class="primary-button" data-menu="proj-agents" data-menu-workspace="register">注册运行节点</button>` : ""}`}),
     panel("注册运行节点", renderJoinTokenSection({projectId: project.id, context: "project"}), {wide: true})
   ].join("");
 }
@@ -4389,7 +4410,8 @@ function renderOrgProjects() {
     `, {wide: true}),
     renderOrgProjectsActionBoard({projects, activeProjects, archivedProjects, unhealthyProjects, memberLinks}),
     renderOrgProjectsLifecycleGuide({projects, activeProjects, archivedProjects, unhealthyProjects, memberLinks}),
-    panel("项目列表", table(["项目", "状态", "进度", "阶段", "健康度", "成员", "操作"], projectRows), {wide: true}),
+    panel("项目列表", table(["项目", "状态", "进度", "阶段", "健康度", "成员", "操作"], projectRows), {wide: true,
+      headerSide: `<button class="primary-button" data-menu="org-projects" data-menu-workspace="create">创建项目</button>`}),
     panel("创建项目", `
       <form class="form-grid" data-form="org-project-create">
         <div class="form-row"><label>项目名称</label><input name="name" required></div>
@@ -4746,7 +4768,7 @@ function renderProjectOverview() {
         .filter((item) => item.taskGroupId === taskGroup.id && item.status === "blocked").length;
       return stuck ? `${blocked} <span class="warn-text">· 派发被挡 ${stuck}</span>` : String(blocked);
     })(), c: "num"},
-    `<div class="button-row">${window.AIMAC_OBJECT_WORKSPACE.groupLink(taskGroup, "任务", "tasks")}${window.AIMAC_OBJECT_WORKSPACE.groupLink(taskGroup, "监控", "monitor")}</div>`
+    window.AIMAC_OBJECT_WORKSPACE.groupLink(taskGroup, "进入任务组", "tg", true)
   ])).join("");
   const repoTargets = (state.repositoryOutputs || []).filter((target) => target.projectId === project.id);
   const repoRows = repoTargets.map((target) => row([
@@ -5122,7 +5144,8 @@ function renderTaskGroups() {
     return notices + window.AIMAC_TASK_GROUP_WORKSPACE.detail(taskGroup, renderTaskGroupDetail(taskGroup), helpers);
   }
   return notices + panel("任务组列表", window.AIMAC_TASK_GROUP_WORKSPACE.list(groups, helpers), {wide: true,
-    headerSide: filterInput("按任务组名称、状态或语言筛选…", "task-group-list")});
+    headerSide: `${filterInput("按任务组名称、状态或语言筛选…", "task-group-list")}${hasProjectPermission("task_group:control")
+      ? `<button class="primary-button" data-workspace-page="tg" data-workspace="create">新建任务组</button>` : ""}`});
 }
 
 function taskGroupControls(taskGroup) {
