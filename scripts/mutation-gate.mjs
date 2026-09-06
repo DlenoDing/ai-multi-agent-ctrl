@@ -12039,9 +12039,25 @@ const MUTATIONS = [
     name: "项目当前主操作必须先解决仓库落点",
     file: "apps/control-plane-ui/public/modules/project-command-center.js",
     gate: "console",
-    from: "    if (!repositories.length || credentialMissing) return {title: credentialMissing ? \"补全仓库凭证\" : \"配置项目仓库\",",
-    to: "    if (false && (!repositories.length || credentialMissing)) return {title: credentialMissing ? \"补全仓库凭证\" : \"配置项目仓库\",",
+    from: "    if ((!repositories.length || credentialMissing) && canConfigureRepository) return {title: credentialMissing ? \"补全仓库凭证\" : \"配置项目仓库\",",
+    to: "    if (false && ((!repositories.length || credentialMissing) && canConfigureRepository)) return {title: credentialMissing ? \"补全仓库凭证\" : \"配置项目仓库\",",
     expect: "项目主操作必须随真实执行阶段切换"
+  },
+  {
+    name: "项目主操作不得向无权限成员推荐仓库设置",
+    file: "apps/control-plane-ui/public/modules/project-command-center.js",
+    gate: "console",
+    from: "    if ((!repositories.length || credentialMissing) && canConfigureRepository) return {title:",
+    to: "    if (!repositories.length || credentialMissing) return {title:",
+    expect: "不得收到必然被拒的项目主操作"
+  },
+  {
+    name: "项目主操作不得向无权限成员推荐 Agent 注册",
+    file: "apps/control-plane-ui/public/modules/project-command-center.js",
+    gate: "console",
+    from: '    if (!Number(fleet.total || 0) && canManageAgents) return {title: "注册 Agent 节点",',
+    to: '    if (!Number(fleet.total || 0)) return {title: "注册 Agent 节点",',
+    expect: "不得收到必然被拒的项目主操作"
   },
   {
     name: "项目概览只能给出一个当前主操作",

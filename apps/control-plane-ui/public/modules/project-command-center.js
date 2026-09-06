@@ -15,7 +15,8 @@
     return `<button class="primary-button" data-action="open-project-page" data-project="${esc(project.id)}" data-target-menu="${esc(action.page)}"${action.workspace ? ` data-target-workspace="${esc(action.workspace)}"` : ""}>${esc(action.label)}</button>`;
   }
 
-  function decide({project, groups = [], fleet = {}, repositories = [], todos = {}, statsFor, canControl = false} = {}) {
+  function decide({project, groups = [], fleet = {}, repositories = [], todos = {}, statsFor,
+    canControl = false, canConfigureRepository = true, canManageAgents = true} = {}) {
     const activeGroups = groups.filter((group) => !["closed", "aborted", "archived", "cancelled", "superseded"].includes(group.status));
     const groupStats = activeGroups.map((group) => ({group, stats: statsFor(group)}));
     const tasks = groupStats.reduce((sum, item) => sum + Number(item.stats.tasks || 0), 0);
@@ -33,12 +34,12 @@
     });
     if (project.status === "archived") return {title: "查看归档结果", detail: "项目已归档，只保留任务、执行记录和 Git 证据。",
       action: {kind: "page", page: "tasks", label: "查看任务结果"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
-    if (!repositories.length || credentialMissing) return {title: credentialMissing ? "补全仓库凭证" : "配置项目仓库",
+    if ((!repositories.length || credentialMissing) && canConfigureRepository) return {title: credentialMissing ? "补全仓库凭证" : "配置项目仓库",
       detail: credentialMissing ? "已有仓库选择了凭证模式，但密钥尚未保存。" : "Agent 产出必须写入项目 Git 仓库。",
       action: {kind: "page", page: "proj-settings", workspace: "repositories", label: "打开仓库设置"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
-    if (!Number(fleet.total || 0)) return {title: "注册 Agent 节点", detail: "当前项目没有可执行任务的运行节点。",
+    if (!Number(fleet.total || 0) && canManageAgents) return {title: "注册 Agent 节点", detail: "当前项目没有可执行任务的运行节点。",
       action: {kind: "page", page: "proj-agents", workspace: "register", label: "生成注册命令"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
-    if (!Number(fleet.online || 0)) return {title: "恢复 Agent 节点", detail: `已登记 ${Number(fleet.total || 0)} 台节点，但当前没有在线容量。`,
+    if (!Number(fleet.online || 0) && canManageAgents) return {title: "恢复 Agent 节点", detail: `已登记 ${Number(fleet.total || 0)} 台节点，但当前没有在线容量。`,
       action: {kind: "page", page: "proj-agents", workspace: "nodes", label: "检查运行节点"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
     if (!groups.length) return {title: canControl ? "创建任务组" : "等待任务组权限", detail: canControl
       ? "用任务组定义目标、统一语言、角色和执行边界。" : "当前账号没有创建任务组的权限，可先查看项目现状或联系项目负责人。",

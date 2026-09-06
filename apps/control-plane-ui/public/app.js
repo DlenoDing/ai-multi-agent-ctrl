@@ -4637,7 +4637,9 @@ function projectCommandCenterHtml(project, groups) {
     repositories: projectRepositoryConfigs(project),
     todos: todoCountsByPage(),
     statsFor: taskGroupOperationalStats,
-    canControl: hasProjectPermission("task_group:control") || groups.some((group) => hasGroupPerm(group.id, "task_group:control"))
+    canControl: hasProjectPermission("task_group:control") || groups.some((group) => hasGroupPerm(group.id, "task_group:control")),
+    canConfigureRepository: hasProjectPermission("project:update"),
+    canManageAgents: hasProjectPermission("agent:activate")
   });
   return window.AIMAC_PROJECT_COMMAND_CENTER.render(project, decision);
 }

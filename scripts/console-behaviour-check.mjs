@@ -3010,6 +3010,16 @@ async function runErrorGuidanceCase() {
       && !/data-workspace="create"/u.test(readOnlyActions)
       && /data-target-workspace="list"|data-focus-page="tg"/u.test(readOnlyActions),
     "按钮写着查看，实际却进入无权限账号看不到的创建栏目");
+  const restrictedOperator = objectProbe.projectCommandDecision({project: commandProject,
+    groups: [{id: "tg", name: "运行中的任务组", status: "active", stats: {tasks: 1, runs: 2, reviews: 0, blocked: 0}}],
+    fleet: {total: 0, online: 0}, repositories: [], todos: {}, canControl: false,
+    canConfigureRepository: false, canManageAgents: false});
+  const restrictedAction = objectProbe.projectCommandHtml(commandProject, restrictedOperator);
+  check("无仓库或 Agent 管理权的成员不得收到必然被拒的项目主操作",
+    restrictedOperator.title === "查看实时执行"
+      && /data-focus-page="monitor"/u.test(restrictedAction)
+      && !/proj-settings|proj-agents|生成注册命令|打开仓库设置/u.test(restrictedAction),
+    `观察者仍被指向无权动作：${restrictedOperator.title} / ${restrictedAction}`);
   const statsSources = objectProbe.operationalStatsSources();
   check("项目与任务组运行统计必须一次建索引后复用",
     /if \(cachedState === state && cachedIndex\) return cachedIndex;/u.test(statsSources.index)
