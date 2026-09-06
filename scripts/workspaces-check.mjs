@@ -47,6 +47,7 @@ function loadPublicModules() {
     "modules/object-workspace.js",
     "modules/task-group-workspace.js",
     "modules/task-workbench.js",
+    "modules/project-settings-workspace.js",
     "modules/execution-object-workspace.js",
     "modules/monitor-workspace.js",
     "modules/runtime-node-workspace.js"
@@ -72,6 +73,14 @@ const workspaces = context.AIMAC_WORKSPACES || context.window.AIMAC_WORKSPACES;
 const taskWorkbench = context.AIMAC_TASK_WORKBENCH || context.window.AIMAC_TASK_WORKBENCH;
 const uiConfig = context.AIMAC_CONSOLE_UI_CONFIG || context.window.AIMAC_CONSOLE_UI_CONFIG;
 const locations = context.AIMAC_WORKSPACE_LOCATION;
+
+{
+  const indexSource = readPublic("index.html");
+  const moduleAt = indexSource.indexOf('/modules/project-settings-workspace.js');
+  const appAt = indexSource.indexOf('/app.js');
+  check("project settings workspace loads before app.js", moduleAt >= 0 && appAt > moduleAt,
+    `moduleAt=${moduleAt}; appAt=${appAt}`);
+}
 {
   const longCursor = "c".repeat(4096);
   const snapshot = {version: 1, accountId: "a1", projectId: "p1", page: "tasks", groupId: "g1", workId: "w1", workspace: "list", cursor: longCursor, stack: Array.from({length: 100}, (_, index) => `cursor-${index}`), token: "DO_NOT_STORE_TOKEN", objective: "DO_NOT_STORE_BODY"};

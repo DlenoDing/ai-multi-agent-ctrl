@@ -791,10 +791,10 @@ const MUTATIONS = [
   },
   {
     name: "项目设置看板的基线卡必须直达基线页",
-    file: "apps/control-plane-ui/public/app.js",
+    file: "apps/control-plane-ui/public/modules/project-settings-workspace.js",
     gate: "console",
-    from: '        title: "基线数据",\n        metric: `${baselineData.length}`,\n        detail: baselineData.length ? "agent 可引用的现状材料" : "可选；空着不阻塞执行",\n        panelTitle: "基线资料",',
-    to: '        title: "基线数据",\n        metric: `${baselineData.length}`,\n        detail: baselineData.length ? "agent 可引用的现状材料" : "可选；空着不阻塞执行",\n        panelTitle: "项目基础配置",',
+    from: '          title: "基线数据", metric: `${data.baselineData.length}`,\n          detail: data.baselineData.length ? "Agent 可引用的现状材料" : "可选；空着不阻塞执行",\n          panelTitle: "基线资料", tone: data.baselineData.length ? "blue" : "gray", action: "管理基线"',
+    to: '          title: "基线数据", metric: `${data.baselineData.length}`,\n          detail: data.baselineData.length ? "Agent 可引用的现状材料" : "可选；空着不阻塞执行",\n          panelTitle: "项目基础配置", tone: data.baselineData.length ? "blue" : "gray", action: "管理基线"',
     expect: "项目设置看板仍把基线、默认角色或规则卡错误地送到仓库页"
   },
   {
@@ -804,6 +804,14 @@ const MUTATIONS = [
     from: '      : panel("业务规则", ruleLoadStateHtml, {wide: true})',
     to: '      : panel("规则配置", ruleLoadStateHtml, {wide: true})',
     expect: "业务规则页为空，或配置失败仍只显示在别的设置栏目"
+  },
+  {
+    name: "项目设置工作区模块必须先于主程序加载",
+    file: "apps/control-plane-ui/public/index.html",
+    gate: "workspace",
+    from: '    <script src="/modules/project-settings-workspace.js"></script>\n',
+    to: "",
+    expect: "project settings workspace loads before app.js"
   },
   {
     name: "只读身份不许渲染禁用的角色 Skill 定制表单",
