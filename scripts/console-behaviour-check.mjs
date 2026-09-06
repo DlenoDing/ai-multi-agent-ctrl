@@ -2711,6 +2711,7 @@ async function runErrorGuidanceCase() {
     ["monitor", "events", "实时事件"], ["monitor", "node-control", "运行节点"], ["monitor", "commands", "控制命令"],
     ["monitor", "dlq", "死信队列"], ["monitor", "checkpoints", "检查点证据"], ["monitor", "quality", "质量门禁"],
     ["monitor", "finalizations", "人工定稿"], ["monitor", "barriers", "阻塞与门禁"], ["review", "pending", "待我审核"],
+    ["review", "permissions", "权限审批"], ["review", "approvals", "操作审批"], ["review", "findings", "发现处置"],
     ["directives", "compose", "下达指令"], ["proj-settings", "repositories", "仓库凭据"]];
   assertMenuLeaves("项目管理", projectNav, projectMenuOrder);
   assertMenuLeaves("项目管理说明", projectNav, [["proj-overview", "help", "项目操作说明"], ["proj-members", "help", "项目授权说明"],
@@ -2989,31 +2990,31 @@ async function runErrorGuidanceCase() {
   const commandGroup = {id: "tg", projectId: "p_cmd", status: "active", stats: {tasks: 1, runs: 0, reviews: 1, blocked: 0}};
   const commandInput = {project: commandProject, groups: [commandGroup], fleet: {total: 2, online: 1}, repositories: repo, canControl: true};
   const decisionOnly = objectProbe.projectCommandDecision({...commandInput,
-    todos: {review: {count: 2}, "review|decisions": {count: 2}}});
+    todos: {review: {count: 2}, "review|permissions": {count: 2}}});
   const confirmationOnly = objectProbe.projectCommandDecision({...commandInput,
     todos: {review: {count: 1}, "review|pending": {count: 1}}});
   const mixedReview = objectProbe.projectCommandDecision({...commandInput,
-    todos: {review: {count: 3}, "review|pending": {count: 1}, "review|decisions": {count: 2}}});
+    todos: {review: {count: 3}, "review|pending": {count: 1}, "review|permissions": {count: 2}}});
   const qualityOnly = objectProbe.projectCommandDecision({...commandInput,
     groups: [{...commandGroup, stats: {...commandGroup.stats, reviews: 0}}],
-    todos: {monitor: {count: 1}, "monitor|evidence": {count: 1}}});
+    todos: {monitor: {count: 1}, "monitor|quality": {count: 1}}});
   check("项目当前主操作必须直达准确待办叶子",
-    decisionOnly.action.workspace === "decisions" && confirmationOnly.action.workspace === "pending"
+    decisionOnly.action.workspace === "permissions" && confirmationOnly.action.workspace === "pending"
       && mixedReview.action.workspace === "inbox" && qualityOnly.action.workspace === "quality",
     `主操作仍只按父页面跳转：${JSON.stringify({decisionOnly: decisionOnly.action, confirmationOnly: confirmationOnly.action, mixedReview: mixedReview.action, qualityOnly: qualityOnly.action})}`);
   const exactActionHtml = [decisionOnly, confirmationOnly, mixedReview, qualityOnly]
     .map((decision) => objectProbe.projectCommandHtml(commandProject, decision)).join("");
   check("项目当前主操作按钮必须携带精确 workspace",
-    ["decisions", "pending", "inbox", "quality"].every((workspace) => exactActionHtml.includes(`data-focus-workspace="${workspace}"`)),
+    ["permissions", "pending", "inbox", "quality"].every((workspace) => exactActionHtml.includes(`data-focus-workspace="${workspace}"`)),
     "项目首页 CTA 没有把精确待办叶子传给任务组导航");
   const commandClickProbe = loadConsole(el("div"), {realI18n: true});
   commandClickProbe.renderFullPageWith({projects: [{...commandProject, organizationId: "org_default"}], taskGroups: [commandGroup],
     organizations: [{orgId: "org_default", status: "active"}], truncatedCollections: []},
   {accountId: "sys", accountType: "system_admin", organizationId: "org_default"}, "p_cmd", "proj-overview");
   commandClickProbe.stubNavigation();
-  await commandClickProbe.click({target: el("button", {dataset: {focusGroup: "tg", focusPage: "review", focusWorkspace: "decisions"}}), preventDefault: () => {}});
+  await commandClickProbe.click({target: el("button", {dataset: {focusGroup: "tg", focusPage: "review", focusWorkspace: "permissions"}}), preventDefault: () => {}});
   check("项目当前主操作点击后必须真正选中精确叶子",
-    commandClickProbe.sessionState().page === "review" && commandClickProbe.workspaceCurrent("review") === "decisions"
+    commandClickProbe.sessionState().page === "review" && commandClickProbe.workspaceCurrent("review") === "permissions"
       && commandClickProbe.sessionState().managementGroupId === "tg",
     `CTA 点击后的状态错误：${JSON.stringify(commandClickProbe.sessionState())}`);
   const commandHtml = objectProbe.projectCommandHtml(commandProject, commandResults[0].decision);
@@ -4377,7 +4378,7 @@ function runNoVisibleProjectCase() {
       permissionRequests: [], humanDirectives: [], agentDispatches: [], workSessions: [],
       executionTopologies: [], closeBarriers: [], qualityGates: [], truncatedCollections: []
     };
-    const reviewText = ["pending", "decisions"].map((pane) => renderAs({accountId: "u_rev", accountType: "member", displayName: "评审员",
+    const reviewText = ["pending", "approvals", "findings"].map((pane) => renderAs({accountId: "u_rev", accountType: "member", displayName: "评审员",
       organizationId: "org_default", effectivePermissions: ["project:view", "task_group:read", "task_group:review"]},
       reviewScopeState, "review", "p1", undefined, pane)).join(" ");
     // 夹具没造出想测的情形也要能自报：两张卡都得渲染出来，断言才有意义。
@@ -6279,20 +6280,24 @@ async function runPendingTruncationCase() {
       permissionRequests: [{requestId: "p1", taskGroupId: "tg1", status: "pending_approval"}],
       approvalRequests: [{approvalId: "a1", taskGroupId: "tg1", status: "requested"},
         {approvalId: "a2", taskGroupId: "tg1", status: "quorum_collecting"}],
-      findings: [], qualityGates: [{gateId: "q1", taskGroupId: "tg1", status: "failed"}],
+      findings: [{findingId: "f1", taskGroupId: "tg1", status: "open", summary: "发现一"}], qualityGates: [{gateId: "q1", taskGroupId: "tg1", status: "failed"}],
       reviewPlans: [], reviewBundles: [], ruleSourceResolutions: [], systemUpgradeCandidates: [],
       executionTopologies: [], humanDirectives: [], sharedDefinitions: [], truncatedCollections: []
     };
     const counts = probe.todoCountsWith(routed, admin);
-    check("确认、授权审批和质量门必须拆到三个准确叶子",
-      counts["review|pending"]?.count === 1 && counts["review|decisions"]?.count === 3
+    check("确认、权限审批、操作审批和质量门必须拆到四个准确叶子",
+      counts["review|pending"]?.count === 1 && counts["review|permissions"]?.count === 1
+        && counts["review|approvals"]?.count === 2
+        && counts["review|findings"]?.count === 1
         && counts["monitor|quality"]?.count === 1 && !counts["monitor|barriers"]
-        && counts.__all?.count === 5,
+        && counts.__all?.count === 6,
       `父页面聚合仍污染叶子红点：${JSON.stringify(counts)}`);
     const pendingHtml = probe.renderPendingPanelWith(routed, admin);
     check("每类待办的处置按钮必须携带准确 workspace",
       /data-menu="review" data-menu-workspace="pending"/u.test(pendingHtml)
-        && /data-menu="review" data-menu-workspace="decisions"/u.test(pendingHtml)
+        && /data-menu="review" data-menu-workspace="permissions"/u.test(pendingHtml)
+        && /data-menu="review" data-menu-workspace="approvals"/u.test(pendingHtml)
+        && /data-menu="review" data-menu-workspace="findings"/u.test(pendingHtml)
         && /data-menu="monitor" data-menu-workspace="quality"/u.test(pendingHtml),
       "待办按钮仍会进入父页面的第一个叶子，而不是记录所在功能");
     const menuRoot = el("div");
@@ -6304,11 +6309,23 @@ async function runPendingTruncationCase() {
     };
     check("菜单叶子红点必须与各自页面记录数一致",
       /nav-badge">1</u.test(leafButton("review", "pending"))
-        && /nav-badge">3</u.test(leafButton("review", "decisions"))
-        && /nav-badge">5</u.test(leafButton("review", "inbox"))
+        && /nav-badge">1</u.test(leafButton("review", "permissions"))
+        && /nav-badge">2</u.test(leafButton("review", "approvals"))
+        && /nav-badge">1</u.test(leafButton("review", "findings"))
+        && /nav-badge">6</u.test(leafButton("review", "inbox"))
         && /nav-badge">1</u.test(leafButton("monitor", "quality"))
         && !/nav-badge/u.test(leafButton("monitor", "barriers")),
       "父页面总数仍被复制到多个叶子菜单，或质量门红点落错功能");
+    const reviewDispositionPanes = [
+      ["permissions", "权限审批", "授权请求：", ["审批请求：", "发现："]],
+      ["approvals", "操作审批", "审批请求：", ["授权请求：", "发现："]],
+      ["findings", "发现处置", "发现：", ["授权请求：", "审批请求："]]
+    ].map(([pane, title, own, foreign]) => ({pane, title, own, foreign,
+      html: probe.renderReviewInventoryWith(routed, admin, "p1", [pane])}));
+    check("权限请求、操作审批和发现项必须是三个独立审核页面",
+      reviewDispositionPanes.every((item) => item.html.includes(`<h2>${item.title}</h2>`)
+        && item.html.includes(item.own) && item.foreign.every((text) => !item.html.includes(text))),
+      reviewDispositionPanes.map((item) => `${item.pane}:${String(item.html).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 100)}`).join(" | "));
   }
 
   const scopeCapped = probe.renderPendingPanelWith(stateWith(["taskGroups"]), admin);
@@ -7169,7 +7186,7 @@ function runPermissionCardNamesTheSubjectCase() {
     approvalRequests: [], findings: [], humanConfirmationRequests: [], accessGrants: [], agents: [],
     agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [], truncatedCollections: []};
   const root = el("div");
-  loadConsole(root, {realI18n: true}).renderFullPagePaneWith(state, admin, "p1", "review", "decisions");
+  loadConsole(root, {realI18n: true}).renderFullPagePaneWith(state, admin, "p1", "review", "permissions");
   const text = String(root.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
   check("授权请求卡上「主体」要显示人名，不是账号 id（批准的是「给谁」）",
     /主体：外包小李/u.test(text),

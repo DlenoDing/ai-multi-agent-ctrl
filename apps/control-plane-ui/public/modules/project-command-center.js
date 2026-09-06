@@ -23,9 +23,12 @@
     const runs = groupStats.reduce((sum, item) => sum + Number(item.stats.runs || 0), 0);
     const blocked = groupStats.reduce((sum, item) => sum + Number(item.stats.blocked || 0), 0);
     const reviewPending = Number(todos["review|pending"]?.count || 0);
-    const reviewDecisions = Number(todos["review|decisions"]?.count || 0);
+    const reviewPermissions = Number(todos["review|permissions"]?.count || 0);
+    const reviewApprovals = Number(todos["review|approvals"]?.count || 0);
+    const reviewFindings = Number(todos["review|findings"]?.count || 0);
+    const reviewDecisions = reviewPermissions + reviewApprovals + reviewFindings;
     const reviews = reviewPending + reviewDecisions || Number(todos.review?.count || 0);
-    const evidenceRechecks = Number(todos["monitor|evidence"]?.count || 0);
+    const evidenceRechecks = Number(todos["monitor|quality"]?.count || 0);
     const barrierRechecks = Number(todos["monitor|barriers"]?.count || 0);
     const rechecks = evidenceRechecks + barrierRechecks || Number(todos.monitor?.count || 0);
     const credentialMissing = repositories.some((repo) => {
@@ -56,7 +59,11 @@
         : {kind: "group", page: "tg", groupId: paused.group.id, label: "查看任务组"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
     if (reviews) {
       const target = groupStats.find((item) => item.stats.reviews)?.group || activeGroups[0];
-      const workspace = reviewPending && reviewDecisions ? "inbox" : reviewDecisions ? "decisions" : reviewPending ? "pending" : "inbox";
+      const decisionWorkspaces = [["permissions", reviewPermissions], ["approvals", reviewApprovals], ["findings", reviewFindings]]
+        .filter(([, count]) => count > 0).map(([workspace]) => workspace);
+      const workspace = reviewPending && reviewDecisions
+        ? "inbox"
+        : reviewPending ? "pending" : decisionWorkspaces.length === 1 ? decisionWorkspaces[0] : "inbox";
       return {title: "处理人工审核", detail: `${reviews} 项定稿、授权或审批正在等待当前账号处理。`,
         action: {kind: "group", page: "review", workspace, groupId: target?.id || "", label: "进入审核"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
     }

@@ -12079,7 +12079,7 @@ const MUTATIONS = [
     name: "项目当前主操作必须按待办类型选择准确叶子",
     file: "apps/control-plane-ui/public/modules/project-command-center.js",
     gate: "console",
-    from: '      const workspace = reviewPending && reviewDecisions ? "inbox" : reviewDecisions ? "decisions" : reviewPending ? "pending" : "inbox";',
+    from: '      const workspace = reviewPending && reviewDecisions\n        ? "inbox"\n        : reviewPending ? "pending" : decisionWorkspaces.length === 1 ? decisionWorkspaces[0] : "inbox";',
     to: '      const workspace = "pending";',
     expect: "项目当前主操作必须直达准确待办叶子"
   },
@@ -13159,6 +13159,38 @@ const MUTATIONS = [
     from: '  add("qualityGates", "未通过、可由你豁免的质量门", "monitor", "quality",',
     to: '  add("qualityGates", "未通过、可由你豁免的质量门", "monitor", "checkpoints",',
     expect: "父页面聚合仍污染叶子红点"
+  },
+  {
+    name: "权限请求、操作审批和发现项必须拆成三个审核页面",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "console",
+    from: 'pane("permissions", "权限审批", ["权限审批"]), pane("approvals", "操作审批", ["操作审批"]), pane("findings", "发现处置", ["发现处置"])',
+    to: 'pane("decisions", "授权与复核", ["权限审批", "操作审批", "发现处置"])',
+    expect: "必须是三个独立审核页面"
+  },
+  {
+    name: "操作审批必须有独立审核菜单入口",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    leaf("review", "approvals", "操作审批", "危险操作、阶段门和多方审批"),',
+    to: "",
+    expect: "操作审批"
+  },
+  {
+    name: "旧授权复核地址必须迁移到权限审批",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "workspace",
+    from: '"monitor:evidence": "checkpoints", "review:decisions": "permissions"',
+    to: '"monitor:evidence": "checkpoints"',
+    expect: "legacy review decisions pane migrates"
+  },
+  {
+    name: "项目主操作的质量待办必须读取质量门叶子计数",
+    file: "apps/control-plane-ui/public/modules/project-command-center.js",
+    gate: "console",
+    from: '    const evidenceRechecks = Number(todos["monitor|quality"]?.count || 0);',
+    to: '    const evidenceRechecks = Number(todos["monitor|checkpoints"]?.count || 0);',
+    expect: "项目当前主操作必须直达准确待办叶子"
   },
 ];
 

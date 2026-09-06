@@ -348,11 +348,11 @@ function pendingForMe() {
   };
   add("confirmations", "待你定稿的核心决策", "review", "pending",
     (state.humanConfirmationRequests || []).filter((item) => inScope(item) && item.status === "pending"), canReviewGroup, "humanConfirmationRequests");
-  add("permissions", "待你批准的授权请求", "review", "decisions",
+  add("permissions", "待你批准的授权请求", "review", "permissions",
     (state.permissionRequests || []).filter((item) => inScope(item) && item.status === "pending_approval"), canGrant, "permissionRequests");
-  add("approvals", "待你处理的审批请求", "review", "decisions",
+  add("approvals", "待你处理的审批请求", "review", "approvals",
     (state.approvalRequests || []).filter((item) => inScope(item) && ["requested", "quorum_collecting"].includes(item.status)), canReviewGroup, "approvalRequests");
-  add("findings", "待你处置的发现项", "review", "decisions",
+  add("findings", "待你处置的发现项", "review", "findings",
     (state.findings || []).filter((item) => inScope(item) && !["resolved", "closed", "dismissed", "wontfix"].includes(item.status)), canReviewGroup, "findings");
   add("qualityGates", "未通过、可由你豁免的质量门", "monitor", "quality",
     (state.qualityGates || []).filter((item) => inScope(item) && !["passed", "waived"].includes(item.status)), canReviewGroup, "qualityGates");
@@ -6381,7 +6381,7 @@ function renderReviewSummary({pending, pendingPermissions, pendingApprovals, ope
       ${summaryMetric("已答历史", answered.length, "已定稿或已作废的确认")}
       ${summaryMetric("最近定稿", finalizations.length, "真人收尾记录")}
     </div>
-    <div class="small muted">查看顺序：先看“待你处理”，再处理“待人工确认”和“授权与处置”；历史结论在“已答历史”和“最近的人工定稿”里追溯。</div>
+    <div class="small muted">查看顺序：先看“待你处理”，再分别进入“待人工确认、权限审批、操作审批、发现处置”；历史结论在“已答历史”和“最近的人工定稿”里追溯。</div>
   `, {wide: true});
 }
 
@@ -6414,19 +6414,15 @@ function renderReviewActionBoard({pending, pendingPermissions, pendingApprovals,
         tone: stats.majorDecisions ? "red" : "green",
         action: "定稿"
       })}
-      ${jumpModuleCard({
-        title: "授权与审批",
-        metric: `${pendingPermissions.length + pendingApprovals.length}`,
-        detail: `授权 ${pendingPermissions.length} / 审批 ${pendingApprovals.length}`,
-        panelTitle: "授权与处置",
-        tone: pendingPermissions.length + pendingApprovals.length ? "orange" : "green",
-        action: "处理授权"
-      })}
+      ${jumpModuleCard({title: "权限审批", metric: `${pendingPermissions.length}`, detail: "核对主体、权限和资源作用域",
+        panelTitle: "权限审批", tone: pendingPermissions.length ? "orange" : "green", action: "处理权限"})}
+      ${jumpModuleCard({title: "操作审批", metric: `${pendingApprovals.length}`, detail: "处理危险操作、阶段门和多方审批",
+        panelTitle: "操作审批", tone: pendingApprovals.length ? "orange" : "green", action: "处理审批"})}
       ${jumpModuleCard({
         title: "待处置发现",
         metric: `${openFindings.length}`,
         detail: "发现项会影响关闭门禁",
-        panelTitle: "授权与处置",
+        panelTitle: "发现处置",
         tone: openFindings.length ? "orange" : "green",
         action: "处置发现"
       })}
@@ -6464,32 +6460,30 @@ function renderReviewLifecycleGuide({pending, pendingPermissions, pendingApprova
         tone: stats.blockingConfirmations ? "red" : pending.length ? "orange" : "green",
         action: "处理确认"
       })}
+      ${jumpModuleCard({title: "3 权限审批", metric: pendingPermissions.length,
+        detail: "先核对主体、权限和资源作用域再批准或驳回", panelTitle: "权限审批",
+        tone: pendingPermissions.length ? "orange" : "green", action: "处理权限"})}
+      ${jumpModuleCard({title: "4 操作审批", metric: pendingApprovals.length,
+        detail: "危险操作、阶段门和多方审批与普通权限申请分开处理", panelTitle: "操作审批",
+        tone: pendingApprovals.length ? "orange" : "green", action: "处理审批"})}
       ${jumpModuleCard({
-        title: "3 授权审批",
-        metric: pendingPermissions.length + pendingApprovals.length,
-        detail: "涉及权限、危险操作或阶段门放行时，先看资源范围再批准或驳回",
-        panelTitle: "授权与处置",
-        tone: pendingPermissions.length + pendingApprovals.length ? "orange" : "green",
-        action: "处理授权"
-      })}
-      ${jumpModuleCard({
-        title: "4 发现项处置",
+        title: "5 发现项处置",
         metric: openFindings.length,
         detail: "发现项会阻塞关闭门；处置时要补齐结论、状态和必要证据",
-        panelTitle: "授权与处置",
+        panelTitle: "发现处置",
         tone: openFindings.length ? "orange" : "green",
         action: "处置发现"
       })}
       ${projectModuleCard({
         pageId: "monitor",
-        title: "5 执行回看",
+        title: "6 执行回看",
         metric: stats.affectedTaskGroups || "回看",
         detail: "提交定稿、授权或处置后，回执行监控看派发继续、控制 ACK 和关闭门变化",
         tone: stats.affectedTaskGroups ? "blue" : "gray",
         action: "看监控"
       })}
       ${jumpModuleCard({
-        title: "6 历史追溯",
+        title: "7 历史追溯",
         metric: answered.length + finalizations.length,
         detail: "已答确认和最近定稿用于追责、复盘和后续系统外升级依据",
         panelTitle: "已答历史",
@@ -6647,11 +6641,17 @@ function renderReview() {
   // 默认选中它等于替人做了最重的判断。
   const dispositionSelectHtml = decisionSelect("dispositionClass",
     ["fixed_verified", "not_applicable", "scope_adjusted"].map((cls) => [cls, t(cls)]), "请选择处置类别…");
+  const reviewDecisionWorkspace = workspaces.current("review")?.id || "permissions";
+  const reviewDecisionCount = reviewDecisionWorkspace === "permissions"
+    ? pendingPermissions.length : reviewDecisionWorkspace === "approvals" ? pendingApprovals.length : openFindings.length;
+  const reviewDecisionLabel = reviewDecisionWorkspace === "permissions"
+    ? "权限请求" : reviewDecisionWorkspace === "approvals" ? "操作审批" : "待处置发现";
+  const reviewDecisionAllowed = reviewDecisionWorkspace === "permissions" ? canGrant : canReview;
   const authDispositionHtml = `
     <div class="stack">
-      <div class="record-meta"><span>授权请求 ${pendingPermissions.length} · 审批请求 ${pendingApprovals.length} · 待处置发现 ${openFindings.length}（均阻塞关闭门禁）</span></div>
-      ${!canReview && !canGrant ? `<div class="notice warn-notice">当前账号无“人工审核 / 授权”权限，仅可查看。</div>` : ""}
-      ${pendingPermissions.map((item) => `
+      <div class="record-meta"><span>${reviewDecisionLabel} ${reviewDecisionCount} 项（未处置项会继续阻塞对应阶段门或关闭门禁）</span></div>
+      ${!reviewDecisionAllowed ? `<div class="notice warn-notice">当前账号没有处理本页记录所需的权限，仅可查看。</div>` : ""}
+      ${reviewDecisionWorkspace === "permissions" ? pendingPermissions.map((item) => `
         <div class="record">
           <div class="record-title"><strong>授权请求：${esc(item.permission || "-")}</strong>${badge(item.status)}</div>
           <div class="record-meta"><span>任务组：${esc(taskGroupNameOf(item.taskGroupId))}</span><span>主体：${esc(accountName(item.subjectId))}</span><span>原因：${esc(item.reason || "-")}</span><span>${fmtTime(item.createdAt)}</span></div>
@@ -6663,16 +6663,16 @@ function renderReview() {
           ${canGrant ? `<form class="form-grid" data-form="perm-resolve" data-request="${esc(item.requestId)}" style="margin-top:8px;">
             <div class="button-row"><button class="primary-button" type="submit" name="status" value="approved">批准</button><button class="secondary-button" type="submit" name="status" value="rejected">拒绝</button></div>
           </form>` : `<div class="notice">需“授权(project:grant)”权限处理。</div>`}
-        </div>`).join("")}
-      ${pendingApprovals.map((item) => `
+        </div>`).join("") : ""}
+      ${reviewDecisionWorkspace === "approvals" ? pendingApprovals.map((item) => `
         <div class="record">
           <div class="record-title"><strong>审批请求：${esc(item.summary || item.action || "-")}</strong>${badge(item.status)}</div>
           <div class="record-meta"><span>任务组：${esc(taskGroupNameOf(item.taskGroupId))}</span><span>${fmtTime(item.createdAt)}</span></div>
           ${hasGroupPerm(item.taskGroupId, "task_group:review") ? `<form class="form-grid" data-form="approval-resolve" data-request="${esc(item.approvalId)}" style="margin-top:8px;">
             <div class="btn-row"><button class="primary-button" type="submit" name="status" value="approved">批准</button><button class="ghost-button" type="submit" name="status" value="rejected">驳回</button></div>
           </form>` : noRightOnThisGroup(item.taskGroupId, "人工审核（审批）")}
-        </div>`).join("")}
-      ${openFindings.map((item) => `
+        </div>`).join("") : ""}
+      ${reviewDecisionWorkspace === "findings" ? openFindings.map((item) => `
         <div class="record">
           <div class="record-title"><strong>发现：${esc(item.summary || item.title || item.findingId)}</strong>${badge(item.status)}${item.severity ? customBadge(t(item.severity), "orange") : ""}</div>
           <div class="record-meta"><span>任务组：${esc(taskGroupNameOf(item.taskGroupId))}</span><span>${fmtTime(item.createdAt)}</span></div>
@@ -6685,8 +6685,8 @@ function renderReview() {
             <div class="form-row"><label>证据引用（可选，逗号分隔）</label><input name="evidenceRefs" placeholder="evidence:..."></div>
             <button class="primary-button" type="submit">提交处置</button>
           </form>` : noRightOnThisGroup(item.taskGroupId, "人工审核（处置发现项）")}
-        </div>`).join("")}
-      ${!pendingPermissions.length && !pendingApprovals.length && !openFindings.length ? `<div class="notice">当前项目没有待处置的授权 / 审批 / 发现。</div>` : ""}
+        </div>`).join("") : ""}
+      ${reviewDecisionCount === 0 ? `<div class="notice">当前范围没有待处理的${reviewDecisionLabel}。</div>` : ""}
     </div>`;
 
   const todoPanel = renderPendingForMePanel();
@@ -6703,7 +6703,9 @@ function renderReview() {
         ${pendingHtml}
       </div>
     `, {wide: true}),
-    panel("授权与处置", authDispositionHtml, {wide: true}),
+    panel("权限审批", authDispositionHtml, {wide: true}),
+    panel("操作审批", authDispositionHtml, {wide: true}),
+    panel("发现处置", authDispositionHtml, {wide: true}),
     panel("已答历史", table([{label: "问题", c: "text-clip"}, "状态", "所选选项", {label: "确认内容", c: "text-clip"}, "确认人", {label: "确认时间", c: "nowrap"}], answeredRows), {wide: true})
   ].join("");
 }
