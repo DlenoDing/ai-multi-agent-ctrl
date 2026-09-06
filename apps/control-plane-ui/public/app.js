@@ -5133,8 +5133,6 @@ function renderTaskGroups() {
 
   if (hasNoVisibleProject()) return panel("任务组", noVisibleProjectNotice(), {wide: true});
   const notices = cellsWaitingWithNoAgentNotice(groups) + wipCapacityNotice(groups);
-  if (!workspaces.allows("任务组列表")) return notices + renderTaskGroupsSummary(groups)
-    + renderTaskGroupAttentionBoard(groups) + renderTaskGroupLifecycleGuide(groups) + createPanels.join("");
   const helpers = {row, table, badge, progressLine, fmtTime, languageLabel, t, controls: taskGroupControls, quickControl: taskGroupLifecycleControl,
     stats: taskGroupOperationalStats,
     project: currentProject(), projectLink: window.AIMAC_OBJECT_WORKSPACE.projectLink, groupLink: window.AIMAC_OBJECT_WORKSPACE.groupLink};
@@ -5143,6 +5141,8 @@ function renderTaskGroups() {
     if (!taskGroup) return panel("任务组详情", `<button class="secondary-button" data-action="tg-list">返回任务组列表</button><div class="notice">该任务组未能加载或已不在可见范围内。</div>`, {wide: true});
     return notices + window.AIMAC_TASK_GROUP_WORKSPACE.detail(taskGroup, renderTaskGroupDetail(taskGroup), helpers);
   }
+  if (!workspaces.allows("任务组列表")) return notices + renderTaskGroupsSummary(groups)
+    + renderTaskGroupAttentionBoard(groups) + renderTaskGroupLifecycleGuide(groups) + createPanels.join("");
   return notices + panel("任务组列表", window.AIMAC_TASK_GROUP_WORKSPACE.list(groups, helpers), {wide: true,
     headerSide: `${filterInput("按任务组名称、状态或语言筛选…", "task-group-list")}${hasProjectPermission("task_group:control")
       ? `<button class="primary-button" data-workspace-page="tg" data-workspace="create">新建任务组</button>` : ""}`});

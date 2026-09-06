@@ -11958,6 +11958,14 @@ const MUTATIONS = [
     expect: "任务组列表行只保留进入对象和必要状态控制"
   },
   {
+    name: "任务组详情必须压过父页面创建状态",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (expandedTaskGroupId) {\n    const taskGroup = groups.find((group) => group.id === expandedTaskGroupId);",
+    to: "  if (expandedTaskGroupId && workspaces.allows(\"任务组列表\")) {\n    const taskGroup = groups.find((group) => group.id === expandedTaskGroupId);",
+    expect: "任务组对象必须压过父页面上次停留的创建状态"
+  },
+  {
     name: "窄屏宽表不得把名称压成逐字竖排",
     file: "apps/control-plane-ui/public/human-centered.css",
     gate: "console",

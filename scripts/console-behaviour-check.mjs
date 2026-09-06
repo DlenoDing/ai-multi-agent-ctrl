@@ -2982,6 +2982,13 @@ async function runErrorGuidanceCase() {
   check("任务组对象页头必须与任务组列表区分",
     /<h1>任务组详情<\/h1>/u.test(groupObjectTopbar),
     "打开任务组对象后页头仍写“任务组”，列表和详情无法从页面名称区分");
+  objectProbe.workspaceSelect("tg", "create");
+  const detailAfterCreate = objectProbe.renderObjectShellWith(objectState,
+    {accountId: "sys", accountType: "system_admin", permissions: ["system:*"], organizationId: null},
+    {page: "tg", projectId: "p1", groupId: group.id, workspace: "tasks"});
+  check("任务组对象必须压过父页面上次停留的创建状态",
+    /class="task-group-object\b/u.test(detailAfterCreate) && !/data-form="task-group-create"/u.test(detailAfterCreate),
+    "从新建任务组进入对象详情后，左侧已选任务列表但正文仍显示创建表单");
 
   const taskRoute = objectProbe.routeBuild({page: "tasks", projectId: "prj_a", groupId: "tg_a", workId: "work_a", workspace: "list", token: "secret"});
   const parsedTaskRoute = objectProbe.routeParse(taskRoute);
