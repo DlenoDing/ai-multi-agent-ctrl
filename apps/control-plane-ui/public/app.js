@@ -1829,7 +1829,7 @@ function renderLogin() {
         ${!loginHint.tokenHintsExposed && loginHint.bootstrapTokenConfigured ? `<div class="small muted">系统管理员账号和初始化令牌请看 <span class="mono">npm run init</span> 输出。生产环境不会在登录页显示账号或令牌。</div>` : ""}
         ${loginHint.tokenHintsExposed && loginHint.systemAdminLogin ? `<div>系统管理员登录账号：<span class="mono">${esc(loginHint.systemAdminLogin)}</span>（填在上面的「登录账号」处，令牌填初始化令牌）</div>` : ""}
         ${loginHint.tokenHintsExposed && loginHint.tokenHint ? `<div>本机令牌提示：<span class="mono">${esc(loginHint.tokenHint)}</span></div>` : ""}
-        ${loginHint.tokenHintsExposed && loginHint.localAccountTokenHints ? Object.entries(loginHint.localAccountTokenHints).map(([accountId, hint]) => `<div>${esc(accountId)}：<span class="mono">${esc(hint)}</span></div>`).join("") : ""}
+        ${loginHint.tokenHintsExposed && loginHint.localAccountLoginHints ? loginHint.localAccountLoginHints.map((item) => `<div><strong>${esc(item.displayName)}</strong> · 登录账号 <span class="mono">${esc(item.email || item.accountId)}</span> · 令牌 <span class="mono">${esc(item.tokenHint)}</span></div>`).join("") : ""}
       </div>
     `
     : "";

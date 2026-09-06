@@ -12877,6 +12877,23 @@ const MUTATIONS = [
     expect: "Agent 档案列表与创建页面必须分开"
   },
   {
+    name: "本机登录提示必须给默认组织管理员登录账号",
+    file: "apps/control-plane-ui/lib/bootstrap-hints.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '      email: account?.email || accountId,',
+    to: '      email: accountId,',
+    expect: "本机默认组织管理员提示没有同时给登录账号、用途和脱敏令牌"
+  },
+  {
+    name: "登录页不得只显示种子账号内部 ID",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '${esc(item.email || item.accountId)}</span> · 令牌',
+    to: '${esc(item.accountId)}</span> · 令牌',
+    expect: "本机登录页只显示内部账号 ID 和令牌"
+  },
+  {
     name: "旧默认组织管理员错误映射必须自动迁移",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

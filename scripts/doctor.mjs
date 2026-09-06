@@ -4337,6 +4337,12 @@ try {
       throw new Error(`本机来源也拿不到引导提示（${JSON.stringify(hintFromLocalHost).slice(0, 160)}）——`
         + " 那上面那条就不作数了：那时任何来源都拿不到，守卫删掉也不会红");
     }
+    const orgAdminHint = (hintFromLocalHost.localAccountLoginHints || [])
+      .find((item) => item.accountId === "acct_default_org_admin");
+    if (orgAdminHint && (orgAdminHint.email !== "org.admin@local" || !/^.{4}\.\.\..{4}$/u.test(orgAdminHint.tokenHint || "")
+      || "token" in orgAdminHint)) {
+      throw new Error(`本机默认组织管理员提示没有同时给登录账号和脱敏令牌：${JSON.stringify(orgAdminHint)}`);
+    }
   }
 
   // 「这条派发还算不算活的」原先在 6 个文件里内联抄了 15 遍，现已收成 lib/lifecycle-states.mjs

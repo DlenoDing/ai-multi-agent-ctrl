@@ -25,6 +25,7 @@ import { assertStateStoreConfig, ensureStoredState, isStateStoreConflict, readSt
 import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, digestProjectShardPayload, canonicalJson } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps/control-plane-ui/lib/pg-sync-store.mjs";
 import { clampEnvNumber } from "../apps/control-plane-ui/lib/env-number.mjs";
+import { localAccountLoginHints } from "../apps/control-plane-ui/lib/bootstrap-hints.mjs";
 import { removeGlobalRemoteMcpClients, gitAuthEnvFor } from "../apps/agent-runtime/runtime.mjs";
 import { buildExecutionContentBundle as buildBundleForCheck, isSafeGitRemoteUrl, dispatchRepositoryCredential } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { classifyGitRemoteFailure, scrubConnectionDetail, testRepositoryConnection, REPOSITORY_CONNECTION_REASONS } from "../apps/control-plane-ui/lib/git-connection-test.mjs";
@@ -1651,6 +1652,12 @@ function verifyHumanAndOrganizationContracts(output) {
   }
   if (!(state.accounts || []).every((account) => ["system_admin", "service_account"].includes(account.accountType) ? true : account.organizationId)) {
     output.push("Organization migration left an org-scoped account without organizationId");
+  }
+  const loginHints = localAccountLoginHints(state, {acct_default_org_admin: "abcd1234wxyz"});
+  const defaultAdminHint = loginHints.find((item) => item.accountId === "acct_default_org_admin");
+  if (defaultAdminHint?.email !== "org.admin@local" || defaultAdminHint?.displayName !== "Default Organization Admin"
+    || defaultAdminHint?.tokenHint !== "abcd...wxyz" || "token" in (defaultAdminHint || {})) {
+    output.push("本机默认组织管理员提示没有同时给登录账号、用途和脱敏令牌");
   }
 
   // Quota enforcement returns quota + usage detail.

@@ -6529,10 +6529,16 @@ function runFirstRunGuidanceCase() {
   check("但要告诉人去哪儿找账号",
     prod.includes("npm run init"),
     "只说令牌已配置却不说登录账号从哪来 —— 第一次上手的人拿着令牌面对输入框无从下手");
-  const dev = probe.renderLoginWith({bootstrapTokenConfigured: true, tokenHintsExposed: true, systemAdminLogin: "system.admin@local"});
+  const dev = probe.renderLoginWith({bootstrapTokenConfigured: true, tokenHintsExposed: true, systemAdminLogin: "system.admin@local",
+    localAccountLoginHints: [{accountId: "acct_default_org_admin", email: "org.admin@local", displayName: "默认组织管理员",
+      accountType: "org_admin", tokenHint: "abcd...wxyz"}]});
   check("开发模式下直接给出账号",
     dev.includes("system.admin@local") && !dev.includes("npm run init"),
     "本机开发时既不显示账号也不给指引，等于两头落空");
+  check("开发模式下种子账号提示要显示用途、登录账号和令牌摘要",
+    dev.includes("默认组织管理员") && dev.includes("org.admin@local") && dev.includes("abcd...wxyz")
+      && !dev.includes("acct_default_org_admin："),
+    "本机登录页只显示内部账号 ID 和令牌，普通用户不知道该把哪个值填进登录账号");
 }
 
 function runOrchestratorVisibilityCase() {

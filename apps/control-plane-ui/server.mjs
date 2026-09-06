@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { clampEnvNumber } from "./lib/env-number.mjs";
+import { localAccountLoginHints } from "./lib/bootstrap-hints.mjs";
 import { WebSocketServer } from "ws";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
@@ -3607,7 +3608,7 @@ async function handleApi(req, res) {
       // 而这个值只写在 .env.example 与种子数据里。放在这条已有的门内（仅回环 + 非生产）：
       // 在公开的登录页上说出管理员账号叫什么，等于把凭据的一半送出去。
       systemAdminLogin: (state.accounts || []).find((item) => item.accountType === "system_admin")?.email || null,
-      localAccountTokenHints: Object.fromEntries(Object.entries(config.localAccountTokens || {}).map(([accountId, token]) => [accountId, `${token.slice(0, 4)}...${token.slice(-4)}`]))
+      localAccountLoginHints: localAccountLoginHints(state, config.localAccountTokens)
     });
     return;
   }
