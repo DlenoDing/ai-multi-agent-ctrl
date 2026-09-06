@@ -207,6 +207,8 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
     && workspaces.current("review")?.id === "permissions");
   check("legacy project roles pane migrates to default roles", workspaces.select("proj-settings", "roles") === true
     && workspaces.current("proj-settings")?.id === "default-roles");
+  check("legacy system protocol pane migrates to instruction efficiency", workspaces.select("sys-settings", "protocol") === true
+    && workspaces.current("sys-settings")?.id === "instruction-efficiency");
   workspaces.select("monitor", "overview");
 }
 

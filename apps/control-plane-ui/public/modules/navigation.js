@@ -89,7 +89,8 @@
     leaf("sys-settings", "runtime", "运行参数", "服务器运行参数和状态"),
     leaf("sys-settings", "models", "模型能力", "可调度模型能力目录"),
     leaf("sys-settings", "skills", "技能源", "服务端 Skill 源与同步状态"),
-    leaf("sys-settings", "protocol", "调度协议", "指令压缩和共享定义归属"),
+    leaf("sys-settings", "instruction-efficiency", "指令效率", "token、压缩比例和缓存命中"),
+    leaf("sys-settings", "definitions", "共享定义", "跨子系统公共语义与归属角色"),
     {divider: "使用说明"},
     leaf("sys-orgs", "help", "组织治理说明", "系统侧组织、配额和初始管理员职责"),
     leaf("sys-settings", "help", "平台能力说明", "运行参数、模型、Skill 和协议边界")

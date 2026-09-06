@@ -13216,6 +13216,30 @@ const MUTATIONS = [
     to: '"review:decisions": "permissions"',
     expect: "legacy project roles pane migrates"
   },
+  {
+    name: "指令效率与共享定义必须拆成两个系统能力页面",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "console",
+    from: 'pane("instruction-efficiency", "指令效率", ["指令压缩指标", "指令信封"]), pane("definitions", "共享定义", ["共享定义归属"])',
+    to: 'pane("protocol", "调度协议", ["指令压缩指标", "指令信封", "共享定义归属"])',
+    expect: "必须是两个独立系统能力页面"
+  },
+  {
+    name: "共享定义必须有独立系统菜单入口",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    leaf("sys-settings", "definitions", "共享定义", "跨子系统公共语义与归属角色"),',
+    to: "",
+    expect: "共享定义"
+  },
+  {
+    name: "旧调度协议地址必须迁移到指令效率",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "workspace",
+    from: '"proj-settings:roles": "default-roles", "sys-settings:protocol": "instruction-efficiency"',
+    to: '"proj-settings:roles": "default-roles"',
+    expect: "legacy system protocol pane migrates"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

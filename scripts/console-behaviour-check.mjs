@@ -2671,7 +2671,8 @@ async function runErrorGuidanceCase() {
     accountType: "system_admin", roles: ["system_owner"], permissions: ["system:*"], organizationId: null};
   const systemNav = renderedNav(systemAccount, null, "sys-overview");
   assertMenuLeaves("系统管理", systemNav, [["sys-overview", "overview", "系统概览"], ["sys-overview", "audit", "审计日志"],
-    ["sys-orgs", "list", "组织列表"], ["sys-orgs", "create", "开通组织"], ["sys-settings", "models", "模型能力"]]);
+    ["sys-orgs", "list", "组织列表"], ["sys-orgs", "create", "开通组织"], ["sys-settings", "models", "模型能力"],
+    ["sys-settings", "instruction-efficiency", "指令效率"], ["sys-settings", "definitions", "共享定义"]]);
   assertMenuLeaves("系统管理说明", systemNav, [["sys-orgs", "help", "组织治理说明"], ["sys-settings", "help", "平台能力说明"]]);
   const systemOnlyShell = renderedNav({...systemAccount, consoleScopes: ["system"]}, "p1", "proj-overview");
   const systemOnlyAside = systemOnlyShell.split("</aside>")[0] || "";
@@ -6150,6 +6151,19 @@ async function runPendingTruncationCase() {
     check("没有叠加时明说 agent 用的是原始规则",
       /没有生效中的叠加/.test(probe.renderSysSettingsWith(noOverlay)),
       "空态什么都不说，人分不清是没有叠加、还是这一页没加载出来");
+    const instructionState = {
+      instructionMetrics: {stablePrefixTokens: 1000, deltaMessageTargetTokens: 200, cacheHitTarget: 0.8,
+        envelopes: [{envelopeId: "env1", recipientRole: "reviewer", cacheKey: "cache-1", status: "active", tokenBudget: {targetDeltaTokens: 200}}]},
+      sharedDefinitions: [{contractId: "def1", definitionType: "api_contract", canonicalOwnerRole: "orchestrator", producerRole: "agent-runtime", status: "active"}]
+    };
+    const efficiencyPane = probe.renderSysSettingsInventoryWith(withOverlay, instructionState, ["instruction-efficiency"]);
+    const definitionsPane = probe.renderSysSettingsInventoryWith(withOverlay, instructionState, ["definitions"]);
+    check("指令效率和共享定义归属必须是两个独立系统能力页面",
+      /指令压缩指标/u.test(efficiencyPane) && /指令信封/u.test(efficiencyPane) && /env1/u.test(efficiencyPane)
+        && !/共享定义归属|def1/u.test(efficiencyPane)
+        && /共享定义归属/u.test(definitionsPane) && /def1/u.test(definitionsPane)
+        && !/指令压缩指标|env1/u.test(definitionsPane),
+      `${String(efficiencyPane).replace(/<[^>]+>/gu, " ").slice(0, 180)} | ${String(definitionsPane).replace(/<[^>]+>/gu, " ").slice(0, 180)}`);
   }
 
   // 自治循环连续失败＝此刻没有任何东西在自行推进，而人正在等系统往下走。
