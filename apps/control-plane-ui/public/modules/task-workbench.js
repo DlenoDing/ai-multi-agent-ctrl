@@ -109,7 +109,7 @@
       ${String(group.goalExecutionStatus || "").startsWith("active_paused") ? `<div class="notice warn-notice">任务组处于暂停状态。${group.canControl ? `<button class="primary-button" data-action="task-control" data-task="${esc(group.id)}" data-task-action="resume">启动任务组</button>` : "需要任务组负责人启动。"}</div>` : ""}
       ${work.blockedReason ? `<div class="notice warn-notice">${esc(h.explainCoded(work.blockedReason))}</div>` : ""}
       ${h.workItemExitHint(work)}${h.humanTraceHtml(work)}
-      <section class="task-result-section"><h3>当前执行结果</h3>${h.workItemResultHtml(group.id, work.id)}</section>
+      <section class="task-result-section"><h3>当前执行结果</h3>${h.workItemResultHtml(group.id, work.id, work.status)}</section>
       <details><summary>执行要求（${(work.requirements || []).length} 项）</summary><ul class="task-requirements">${(work.requirements || []).map((requirement) => `<li>${esc(requirement)}</li>`).join("")}</ul></details>
       ${group.canReview && group.status !== "closed" && group.status !== "aborted" ? `<details><summary>执行方案定稿要求：${work.requiresPlanFinalization ? "必须人工定稿" : "按系统判断"}</summary>
         <form class="form-grid" data-form="plan-finalization" data-task="${esc(group.id)}" data-work="${esc(work.id)}">

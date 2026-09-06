@@ -1025,6 +1025,14 @@ const MUTATIONS = [
     expect: "任务列表必须直接显示每项任务的结果状态"
   },
   {
+    name: "已验证任务详情必须提示结果证据缺失",
+    file: APP,
+    gate: "console",
+    from: '  if (!target && !points.length) return ["verified", "completed"].includes(workStatus)\n    ? `<div class="notice warn-notice"><strong>结果证据缺失：</strong>任务已标记为${esc(t(workStatus))}，但没有仓库产出或检查点，当前无法核验具体执行结果。</div>`',
+    to: '  if (!target && !points.length) return false\n    ? `<div class="notice warn-notice"><strong>结果证据缺失：</strong>任务已标记为${esc(t(workStatus))}，但没有仓库产出或检查点，当前无法核验具体执行结果。</div>`',
+    expect: "已验证任务缺少结果时详情必须明确告警"
+  },
+  {
     // 项目设置的配置行（仓库/基线/角色）对只读成员必须收起「删除」：cfg-del 是本地暂存，保存已禁用，
     // 只读成员点了删本地行却存不下＝按了看不到效果的死动作。去掉 cfgRepoRow 的 readOnly 门即让删除对只读成员出现。
     name: "只读成员的配置行不许摆删除按钮",
@@ -12345,7 +12353,7 @@ const MUTATIONS = [
     name: "任务详情必须按结果要求过程排序",
     file: "apps/control-plane-ui/public/modules/task-workbench.js",
     gate: "console",
-    from: '      <section class="task-result-section"><h3>当前执行结果</h3>${h.workItemResultHtml(group.id, work.id)}</section>\n      <details><summary>执行要求',
+    from: '      <section class="task-result-section"><h3>当前执行结果</h3>${h.workItemResultHtml(group.id, work.id, work.status)}</section>\n      <details><summary>执行要求',
     to: '      <details><summary>执行要求',
     expect: "任务详情必须先展示结果，再展示要求和执行过程"
   },

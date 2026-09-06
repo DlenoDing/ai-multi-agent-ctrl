@@ -2316,6 +2316,12 @@ function runWorkItemResultCase() {
   const detail = {taskGroupId: "tg_r", progress: {}, config: null, roomMessages: []};
   const none = probe.renderTaskGroupDetail(detail, group, baseState);
   check("工作项卡：没有产出时要如实说还没有", /结果：还没有产出/u.test(none), "没有任何产出的任务，卡上一个字都不提结果");
+  const verifiedMissing = probe.renderTaskGroupDetail(detail,
+    {...group, workItems: [{...group.workItems[0], status: "verified", progress: 100}]}, baseState);
+  check("已验证任务缺少结果时详情必须明确告警",
+    /结果证据缺失/u.test(verifiedMissing) && /当前无法核验具体执行结果/u.test(verifiedMissing)
+      && !/结果：还没有产出/u.test(verifiedMissing),
+    "任务已标为已验证但详情只说还没有产出，没有指出状态与证据不一致");
   const pushed = probe.renderTaskGroupDetail(detail, group, {...baseState,
     repositoryOutputs: [{taskGroupId: "tg_r", workItemId: "w_r", repositoryId: "repo_x", branch: "feat/x", status: "pushed",
       changedPaths: ["apps/api.js", "docs/result.md"], artifactManifestPath: "docs/artifact-manifest.json", updatedAt: "2026-09-07T00:00:00Z"}],

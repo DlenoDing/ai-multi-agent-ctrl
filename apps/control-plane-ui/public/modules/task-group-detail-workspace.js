@@ -184,7 +184,7 @@ function render(taskGroup, context, helpers) {
               ${dispatchRuleSummaries[item.dispatchId] ? ruleSummaryHtml(dispatchRuleSummaries[item.dispatchId]) : ""}`).join("")}
           </div>`;
         })()}
-        ${workItemResultHtml(taskGroup.id, workItem.id)}
+        ${workItemResultHtml(taskGroup.id, workItem.id, workItem.status)}
       </details>
     `;
   }).join("");
@@ -310,4 +310,3 @@ function render(taskGroup, context, helpers) {
 
   global.AIMAC_TASK_GROUP_DETAIL_WORKSPACE = {render};
 })(window);
-
