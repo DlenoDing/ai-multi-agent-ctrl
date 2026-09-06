@@ -12041,8 +12041,8 @@ const MUTATIONS = [
     name: "窄屏对象上下文必须隐藏重复操作",
     file: "apps/control-plane-ui/public/workspaces.css",
     gate: "console",
-    from: ".sidebar-object-card > .sidebar-progress, .sidebar-object-counts, .sidebar-object-actions { display: none; }",
-    to: ".sidebar-object-card > .sidebar-progress { display: block; }",
+    from: ".sidebar-object-card > .sidebar-progress, .sidebar-object-card > .sidebar-object-counts, .sidebar-object-card > .sidebar-object-actions { display: none; }",
+    to: ".sidebar-object-card > .sidebar-progress, .sidebar-object-counts, .sidebar-object-actions { display: none; }",
     expect: "窄屏对象上下文不得重复统计和快捷菜单"
   },
   {

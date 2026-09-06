@@ -2864,9 +2864,9 @@ async function runErrorGuidanceCase() {
       && clarityMainStyles.includes('.form-grid:not([data-form="login"]) > button[type="submit"] { align-self: stretch; width: 100%; }'),
     "桌面宽表单把一个提交动作拉成整页横幅，或窄屏没有恢复方便点击的整行按钮");
   check("窄屏对象上下文不得重复统计和快捷菜单",
-    clarityWorkspaceStyles.includes('.sidebar-object-card > .sidebar-progress, .sidebar-object-counts, .sidebar-object-actions { display: none; }')
+    clarityWorkspaceStyles.includes('.sidebar-object-card > .sidebar-progress, .sidebar-object-card > .sidebar-object-counts, .sidebar-object-card > .sidebar-object-actions { display: none; }')
       && clarityWorkspaceStyles.includes('grid-template-columns: auto minmax(0, 1fr) auto'),
-    "移动端在正文前重复展示任务组统计和四个快捷按钮，当前对象头占掉过多首屏");
+    "移动端在正文前重复展示任务组统计和四个快捷按钮，或隐藏规则泄漏到对象卡片外部");
   check("说明页只保留一份功能索引",
     /class="domain-overview"/u.test(helpHtml)
       && !/class="module-card|项目设置操作看板|项目设置职责分区|项目配置生效流程|规则治理概览/u.test(helpHtml),

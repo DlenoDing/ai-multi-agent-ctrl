@@ -89,7 +89,7 @@
   .sidebar-object-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 5px 8px; }
   .sidebar-object-card .sidebar-eyebrow { margin: 0; }
   .sidebar-object-card .sidebar-project-state { margin: 0; }
-  .sidebar-object-card > .sidebar-progress, .sidebar-object-counts, .sidebar-object-actions { display: none; }
+  .sidebar-object-card > .sidebar-progress, .sidebar-object-card > .sidebar-object-counts, .sidebar-object-card > .sidebar-object-actions { display: none; }
   .sidebar-work-card { padding-bottom: 0; }
   .execution-stages { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
