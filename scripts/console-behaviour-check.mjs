@@ -2339,6 +2339,15 @@ function runWorkItemResultCase() {
   check("工作项卡：有提交没推送时要说未推送",
     /有提交/u.test(unpushed) && /未推送/u.test(unpushed) && !/已推送/u.test(unpushed),
     "没推送却说已推送：人会以为改动已经到远端了");
+  const pushedList = probe.renderTaskWorkbenchModule({groups: [group], nextState: {...baseState,
+    repositoryOutputs: [{taskGroupId: "tg_r", workItemId: "w_r", repositoryId: "repo_x", branch: "feat/x", status: "pushed"}]}});
+  const emptyList = probe.renderTaskWorkbenchModule({groups: [group], nextState: baseState});
+  const verifiedWithoutResult = probe.renderTaskWorkbenchModule({groups: [{...group, workItems: [{...group.workItems[0], status: "verified", progress: 100}]}], nextState: baseState});
+  check("任务列表必须直接显示每项任务的结果状态",
+    /task-result-state green[^>]*>结果已推送/u.test(pushedList)
+      && /task-result-state gray[^>]*>暂无执行结果/u.test(emptyList)
+      && /task-result-state red[^>]*>未记录结果/u.test(verifiedWithoutResult),
+    "任务列表只有任务状态和进度，用户必须逐个打开任务才能知道是否已有可用结果");
 }
 
 

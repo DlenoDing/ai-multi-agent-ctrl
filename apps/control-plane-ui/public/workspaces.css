@@ -50,6 +50,12 @@
 .task-list-row:last-child { border-bottom: 0; }
 .task-list-title { font-size: 14px; color: var(--text-main); overflow-wrap: anywhere; }
 .task-list-meta { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--text-sub); margin-top: 6px; }
+.task-result-state { font-weight: 600; }
+.task-result-state.green { color: var(--green); }
+.task-result-state.blue { color: var(--blue); }
+.task-result-state.orange { color: var(--orange); }
+.task-result-state.red { color: var(--red); }
+.task-result-state.gray { color: var(--text-sub); }
 .task-detail-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .task-result-section { padding: 4px 0 14px; border-bottom: 1px solid var(--card-border); }
 .task-result-summary { padding: 12px 0 2px; }

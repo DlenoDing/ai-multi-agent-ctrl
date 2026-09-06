@@ -9,6 +9,19 @@
     }).sort((a, b) => String(b.work.createdAt || "").localeCompare(String(a.work.createdAt || "")) || String(b.work.id).localeCompare(String(a.work.id)));
   }
 
+  function taskResultState(state, taskGroupId, workItemId, workStatus = "") {
+    const target = (state.repositoryOutputs || []).find((item) => item.taskGroupId === taskGroupId
+      && item.workItemId === workItemId && item.status !== "superseded");
+    const checkpoints = (state.checkpoints || []).filter((item) => item.taskGroupId === taskGroupId && item.workId === workItemId);
+    const pushed = checkpoints.some((item) => (item.pushRefs || []).length) || target?.status === "pushed";
+    const committed = checkpoints.some((item) => (item.commitRefs || []).length) || target?.status === "committed";
+    if (pushed) return {label: "结果已推送", tone: "green"};
+    if (committed) return {label: "结果已提交", tone: "blue"};
+    if (target) return {label: "产出生成中", tone: "orange"};
+    if (["verified", "completed"].includes(workStatus)) return {label: "未记录结果", tone: "red"};
+    return {label: "暂无执行结果", tone: "gray"};
+  }
+
   function render({groups, detail, state, selected, pageData, workDetail, pageNumber = 1, eventHistory = false, eventPage = 1, loading = false, query = "", status = "", disclosure = {}, helpers: h}) {
     const all = pageData ? (pageData.workItems || []).map((work) => ({work,
       group: groups.find((item) => item.id === work.taskGroupId) || {id: work.taskGroupId, name: work.taskGroupName}})) : itemsFor(groups, detail);
@@ -19,12 +32,15 @@
     const needle = query.trim().toLocaleLowerCase();
     const visible = pageData ? all : all.filter(({group, work}) => (!status || work.status === status)
       && (!needle || [work.title, work.id, group.name, work.ownerRole].join(" ").toLocaleLowerCase().includes(needle)));
-    const rows = visible.map(({group, work}) => `<div class="task-list-row">
+    const rows = visible.map(({group, work}) => {
+      const result = taskResultState(state, group.id, work.id, work.status);
+      return `<div class="task-list-row">
       <div><strong class="task-list-title">${esc(work.title || work.id)}</strong> ${h.badge(work.status)}
-        <div class="task-list-meta"><span>${esc(group.name || group.id)}</span><span>${esc(h.t(work.ownerRole))}</span><span>${h.fmtTime(work.createdAt)}</span><span>${esc(work.progress ?? 0)}%</span></div>
+        <div class="task-list-meta"><span>${esc(group.name || group.id)}</span><span>${esc(h.t(work.ownerRole))}</span><span>${h.fmtTime(work.createdAt)}</span><span>${esc(work.progress ?? 0)}%</span><span class="task-result-state ${esc(result.tone)}">${esc(result.label)}</span></div>
         ${work.blockedReason ? `<div class="small warn-text">${esc(h.explainCoded(work.blockedReason))}</div>` : ""}</div>
       <button class="secondary-button" data-open-work="${esc(work.id)}" data-work-group="${esc(group.id)}">查看任务</button>
-    </div>`).join("");
+    </div>`;
+    }).join("");
     const truncated = pageData ? [] : groups.filter((group) => group.workItemsTruncated && detail?.taskGroupId !== group.id);
     return `<div class="stack"><div class="button-row">
       <input aria-label="搜索任务" data-work-search value="${esc(query)}" placeholder="任务名称、编号、执行角色">
@@ -107,5 +123,5 @@
         ${eventHistory ? `<div class="button-row"><button class="secondary-button" data-work-event-page="previous"${eventPage <= 1 ? " disabled" : ""}>上一页</button><span class="small muted">第 ${eventPage} 页</span><button class="secondary-button" data-work-event-page="next"${eventInfo.hasMoreEvents ? "" : " disabled"}>下一页</button></div>` : ""}</section></div>`;
   }
 
-  window.AIMAC_TASK_WORKBENCH = {itemsFor, render};
+  window.AIMAC_TASK_WORKBENCH = {itemsFor, taskResultState, render};
 })();

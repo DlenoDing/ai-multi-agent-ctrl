@@ -1009,6 +1009,22 @@ const MUTATIONS = [
     expect: "工作项结果必须显示可核验的提交、变更文件和产出清单"
   },
   {
+    name: "任务列表必须显示结果状态",
+    file: "apps/control-plane-ui/public/modules/task-workbench.js",
+    gate: "console",
+    from: '<span class="task-result-state ${esc(result.tone)}">${esc(result.label)}</span>',
+    to: "",
+    expect: "任务列表必须直接显示每项任务的结果状态"
+  },
+  {
+    name: "已验证任务缺少结果必须明确告警",
+    file: "apps/control-plane-ui/public/modules/task-workbench.js",
+    gate: "console",
+    from: '    if (["verified", "completed"].includes(workStatus)) return {label: "未记录结果", tone: "red"};',
+    to: "",
+    expect: "任务列表必须直接显示每项任务的结果状态"
+  },
+  {
     // 项目设置的配置行（仓库/基线/角色）对只读成员必须收起「删除」：cfg-del 是本地暂存，保存已禁用，
     // 只读成员点了删本地行却存不下＝按了看不到效果的死动作。去掉 cfgRepoRow 的 readOnly 门即让删除对只读成员出现。
     name: "只读成员的配置行不许摆删除按钮",
