@@ -7908,7 +7908,7 @@ function renderProjectSettingsActionBoard(project, repos, baselineData, defaultR
         title: "基线数据",
         metric: `${baselineData.length}`,
         detail: baselineData.length ? "agent 可引用的现状材料" : "可选；空着不阻塞执行",
-        panelTitle: "项目基础配置",
+        panelTitle: "基线资料",
         tone: baselineData.length ? "blue" : "gray",
         action: "管理基线"
       })}
@@ -7916,7 +7916,7 @@ function renderProjectSettingsActionBoard(project, repos, baselineData, defaultR
         title: "默认角色",
         metric: `${defaultRoles.length}`,
         detail: defaultRoles.length ? "任务组未指定时的角色回退" : "空着时回退到系统内置角色",
-        panelTitle: "项目基础配置",
+        panelTitle: "项目默认角色",
         tone: defaultRoles.length ? "blue" : "gray",
         action: "管理角色"
       })}
@@ -7940,7 +7940,7 @@ function renderProjectSettingsActionBoard(project, repos, baselineData, defaultR
         title: "系统规则",
         metric: `${systemRuleCount}`,
         detail: rulesLoaded ? "项目层可停用或改写默认系统规则" : "规则配置未就绪或本次读取失败",
-        panelTitle: rulesLoaded ? "系统规则" : "规则配置",
+        panelTitle: "系统规则",
         tone: ruleTone,
         action: "查看规则"
       })}
@@ -7948,7 +7948,7 @@ function renderProjectSettingsActionBoard(project, repos, baselineData, defaultR
         title: "业务规则",
         metric: `${businessRuleCount}`,
         detail: rulesLoaded ? "项目自己的业务约束，可被任务组覆盖" : "规则配置未就绪或本次读取失败",
-        panelTitle: rulesLoaded ? "业务规则" : "规则配置",
+        panelTitle: "业务规则",
         tone: ruleTone,
         action: "查看规则"
       })}
@@ -7976,7 +7976,7 @@ function renderProjectSettingsBoundaryGuide(project, repos, baselineData, defaul
         title: "角色回退",
         metric: defaultRoles.length,
         detail: "任务组未指定角色时使用项目默认角色或系统内置角色",
-        panelTitle: "项目基础配置",
+        panelTitle: "项目默认角色",
         tone: defaultRoles.length ? "blue" : "gray",
         action: "看角色"
       })}
@@ -7992,7 +7992,7 @@ function renderProjectSettingsBoundaryGuide(project, repos, baselineData, defaul
         title: "执行规则",
         metric: `${systemRuleCount}/${businessRuleCount}`,
         detail: "系统规则管安全和流程边界，业务规则管项目约束",
-        panelTitle: rulesLoaded ? "系统规则" : "规则配置",
+        panelTitle: "系统规则",
         tone: rulesLoaded ? "blue" : "orange",
         action: "看规则"
       })}
@@ -8039,7 +8039,7 @@ function renderProjectSettingsLifecycleGuide(project, repos, baselineData, defau
         detail: rulesLoaded
           ? "系统规则守执行边界，业务规则守项目约束，任务组可继续覆盖"
           : "规则配置未加载，先不要提交覆盖",
-        panelTitle: rulesLoaded ? "系统规则" : "规则配置",
+        panelTitle: "系统规则",
         tone: rulesLoaded ? "blue" : "orange",
         action: "看规则"
       })}
@@ -8149,6 +8149,9 @@ function renderProjectSettings() {
   const repos = Array.isArray(cfgSource.repositories) ? cfgSource.repositories : [];
   const baselineData = Array.isArray(cfgSource.baselineData) ? cfgSource.baselineData : [];
   const defaultRoles = Array.isArray(cfgSource.defaultRoles) ? cfgSource.defaultRoles : [];
+  const ruleLoadStateHtml = projConfigStatus === "failed"
+    ? `<div class="notice warn-notice">暂时无法读取项目规则配置（配置接口这一次没取到：${esc(projConfigError || "原因未记下")}），已隐藏规则编辑器以避免误保存清空规则。请点击右上角刷新重试。</div>`
+    : `<div class="notice">正在加载项目规则配置…</div>`;
 
   return [
     renderProjectSettingsSummary(project, repos, baselineData, defaultRoles, resolved, rulesLoaded),
@@ -8206,12 +8209,8 @@ function renderProjectSettings() {
       ${roleSkillOverlayForm({scope: "project", projectId: project.id, readOnly: !canEdit || archived})}
     `, {wide: true}),
     rulesLoaded ? renderProjectRuleGovernanceOverview(resolved) : "",
-    !rulesLoaded
-      ? panel("规则配置", projConfigStatus === "failed"
-        ? `<div class="notice warn-notice">暂时无法读取项目规则配置（配置接口这一次没取到：${esc(projConfigError || "原因未记下")}），已隐藏规则编辑器以避免误保存清空规则。请点击右上角刷新重试。</div>`
-        : `<div class="notice">正在加载项目规则配置…</div>`, {wide: true})
-      : [
-        panel("系统规则", ruleEditorForm({
+    rulesLoaded
+      ? panel("系统规则", ruleEditorForm({
           rules: resolved.systemRules || [],
           listId: "proj-system-rules",
           category: "system",
@@ -8219,8 +8218,10 @@ function renderProjectSettings() {
           project: project.id,
           readOnly: !canEdit,
           note: "内置默认系统规则可在项目层“停用”或“改写内容”，也可新增自定义系统规则。徽标标明来源：默认、项目。"
-        }), {wide: true}),
-        panel("业务规则", ruleEditorForm({
+        }), {wide: true})
+      : panel("系统规则", ruleLoadStateHtml, {wide: true}),
+    rulesLoaded
+      ? panel("业务规则", ruleEditorForm({
           rules: resolved.businessRules || [],
           listId: "proj-business-rules",
           category: "business",
@@ -8229,7 +8230,7 @@ function renderProjectSettings() {
           readOnly: !canEdit,
           note: "业务规则通常在项目层定义，可新增、停用或改写。任务组可进一步覆盖。"
         }), {wide: true})
-      ].join("")
+      : panel("业务规则", ruleLoadStateHtml, {wide: true})
   ].join("");
 }
 

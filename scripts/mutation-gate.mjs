@@ -790,6 +790,22 @@ const MUTATIONS = [
     expect: "任务组详情卡仍按父级 tg 页面找目标"
   },
   {
+    name: "项目设置看板的基线卡必须直达基线页",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '        title: "基线数据",\n        metric: `${baselineData.length}`,\n        detail: baselineData.length ? "agent 可引用的现状材料" : "可选；空着不阻塞执行",\n        panelTitle: "基线资料",',
+    to: '        title: "基线数据",\n        metric: `${baselineData.length}`,\n        detail: baselineData.length ? "agent 可引用的现状材料" : "可选；空着不阻塞执行",\n        panelTitle: "项目基础配置",',
+    expect: "项目设置看板仍把基线、默认角色或规则卡错误地送到仓库页"
+  },
+  {
+    name: "业务规则配置读取失败必须在业务规则页显示",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      : panel("业务规则", ruleLoadStateHtml, {wide: true})',
+    to: '      : panel("规则配置", ruleLoadStateHtml, {wide: true})',
+    expect: "业务规则页为空，或配置失败仍只显示在别的设置栏目"
+  },
+  {
     name: "只读身份不许渲染禁用的角色 Skill 定制表单",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

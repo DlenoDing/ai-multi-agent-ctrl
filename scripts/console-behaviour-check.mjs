@@ -1894,28 +1894,37 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
 }
 
   const admin = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
-  const settingsText = (status, error) => {
+  const settingsText = (status, error, paneId) => {
     settingsProbe.setProjConfigStatus(status, error);
+    settingsProbe.selectWorkspace("proj-settings", paneId);
     i18nScanStates.push(["新建项目", withProject, admin, "p1"]);
     settingsProbe.renderFullPageWith(withProject, admin, "p1", "proj-settings");
     return String(settingsRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
   };
-  const unloaded = settingsText("unloaded");
+  const unloaded = settingsText("unloaded", "", "system-rules");
   check("配置还没取到时说的是'正在加载'，不是'加载失败'",
     /正在加载项目规则配置/.test(unloaded) && !/加载失败/.test(unloaded),
-    `未加载时显示：${(unloaded.match(/规则配置 [^ ]*/u) || ["（没有规则配置面板）"])[0]}`);
-  const failed = settingsText("failed", "503 project_config_unavailable");
+    `未加载时显示：${(unloaded.match(/系统规则 [^ ]*/u) || ["（没有系统规则面板）"])[0]}`);
+  const failed = settingsText("failed", "503 project_config_unavailable", "system-rules");
   check("真的取失败时仍要说清失败、并说明为什么把编辑器藏了",
     /这一次没取到/.test(failed) && /误保存清空规则/.test(failed),
-    `失败时显示：${(failed.match(/规则配置 [^ ]*/u) || ["（没有规则配置面板）"])[0]}`);
+    `失败时显示：${(failed.match(/系统规则 [^ ]*/u) || ["（没有系统规则面板）"])[0]}`);
+  const failedBusinessRules = settingsText("failed", "503 project_config_unavailable", "business-rules");
+  check("系统规则和业务规则页分别显示自己的配置读取失败",
+    /业务规则/.test(failedBusinessRules) && /这一次没取到/.test(failedBusinessRules)
+      && /误保存清空规则/.test(failedBusinessRules),
+    "业务规则页为空，或配置失败仍只显示在别的设置栏目");
   // 原先这一段的 catch 是 .catch(() => null)：原因被整个吞掉，界面只能说一句笼统的"加载失败"，
   // 而三块空态又把人指去看一条并不存在的横幅。原因必须被留下来并出现在屏幕上。
   check("配置取失败时要把服务端给的原因原样摆出来（不能吞掉只说一句「加载失败」）",
     failed.includes("503 project_config_unavailable"),
     `失败原因在屏幕上${failed.includes("503") ? "有" : "没有"}`);
-  check("配置没取过与取失败要分开说，且都不许说「还没有配置」",
-    /配置还没取回来/.test(unloaded) && !/还没有配置仓库/.test(unloaded) && !/还没有配置仓库/.test(failed),
-    `未取过时三块空态说的是：${(unloaded.match(/仓库与访问凭据[^添]*/u) || ["（没渲染出来）"])[0].slice(0, 60)}`);
+  const unloadedRepository = settingsText("unloaded", "", "repositories");
+  const failedRepository = settingsText("failed", "503 project_config_unavailable", "repositories");
+  check("配置没取过与取失败时仓库页都不许说「还没有配置」",
+    /配置还没取回来/.test(unloadedRepository)
+      && !/还没有配置仓库/.test(unloadedRepository) && !/还没有配置仓库/.test(failedRepository),
+    `未取过时仓库空态说的是：${(unloadedRepository.match(/仓库与访问凭据[^添]*/u) || ["（没渲染出来）"])[0].slice(0, 60)}`);
   // 上面两条是【渲染分支】：它们直接设置状态，因此证明不了"真失败时真的会置成 failed"。
   // 少了这一条，把置位逻辑改成永远 unloaded 也照样全绿（变异验出来的）。
   // 接线只能从源码看：取配置那一段之后必须有一处把状态置成 failed。按语句边界切，不按行数猜。
@@ -5533,6 +5542,7 @@ async function runPendingTruncationCase() {
     const skillsPane = probe.renderProjectSettingsInventoryWith(overviewState, systemAdmin, "p1", projectConfig, ["skills"]);
     const systemRulesPane = probe.renderProjectSettingsInventoryWith(overviewState, systemAdmin, "p1", projectConfig, ["system-rules"]);
     const businessRulesPane = probe.renderProjectSettingsInventoryWith(overviewState, systemAdmin, "p1", projectConfig, ["business-rules"]);
+    const settingsHelpPane = probe.renderProjectSettingsInventoryWith(overviewState, systemAdmin, "p1", projectConfig, ["help"]);
     check("项目设置 split panes 覆盖仓库、基线、默认角色、Skill 和规则",
       /data-config-fields="repositories"/u.test(repoPane)
         && /data-config-fields="baselineData"/u.test(baselinePane)
@@ -5541,6 +5551,12 @@ async function runPendingTruncationCase() {
         && /data-form="project-rules"[\s\S]*data-category="system"/u.test(systemRulesPane)
         && /data-form="project-rules"[\s\S]*data-category="business"/u.test(businessRulesPane),
       "仓库、基线、默认角色、系统规则、业务规则没有在各自 pane 中独立可达");
+    check("项目设置说明卡分别直达仓库、基线、默认角色、Skill 和两类规则",
+      ["项目基础配置", "基线资料", "项目默认角色", "角色 Skill 定制", "系统规则", "业务规则"]
+        .every((title) => settingsHelpPane.includes(`data-jump-panel="${title}"`))
+        && probe.workspaceOwner("proj-settings", "基线资料") === "baseline"
+        && probe.workspaceOwner("proj-settings", "项目默认角色") === "default-roles",
+      "项目设置看板仍把基线、默认角色或规则卡错误地送到仓库页");
     check("基线配置 pane 保留名称、定位和摘要字段",
       /name="blName"[\s\S]*value="现状"/u.test(baselinePane)
         && /name="blLocator"[\s\S]*value="git:docs\/baseline\.md"/u.test(baselinePane)
