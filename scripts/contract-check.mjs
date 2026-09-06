@@ -293,7 +293,7 @@ const AGENT_RUNTIME_CLI_THROWS = new Set([
   "加入令牌文件是空的：",
   "agent self-check failed: ${check.missingChecks.join(\",\")}",
   // 只给在这台机器上敲命令的人看：没注册就没有控制面可报，说清"还没注册"和下一步跑什么。
-  "这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <加入令牌文件>，令牌由项目管理员在目标项目「项目管理」→「项目 Agent」→「注册项目节点」签发",
+  "这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <加入令牌文件>，令牌由项目管理员在目标项目「项目管理」→「注册运行节点」签发",
   "agent config is not valid JSON: ${configPath}（开头：${jsonHead(text)}）—— 重新跑一次安装命令即可重建",
   "public Agent Gateway requires HTTPS; set AIMAC_AGENT_ALLOW_INSECURE_HTTP=true only for isolated"
 ]);
@@ -10951,7 +10951,7 @@ function verifyFirstScreenPointsAtRealPlaces(output) {
   const names = [...new Set([...init.matchAll(/「([^」]{2,20})」/gu)].map((match) => match[1]))];
   if (/「项目设置」→「智能体接入」/u.test(init)) {
     output.push("首屏指引仍指向旧入口「项目设置」→「智能体接入」—— "
-      + "常规 agent 注册入口在「项目管理」→「项目 Agent」→「注册项目节点」");
+      + "常规 agent 注册入口在「项目管理」→「注册运行节点」");
   }
   if (names.length < 3) {
     output.push(`首屏指引里只找到 ${names.length} 个界面名（应至少 3）—— 提取脱节或指引被删了，本条在空转`);
@@ -17459,7 +17459,7 @@ function verifyAgentctlUnknownCommandListsCommands(output) {
     const run = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "bootstrap", "--server", "http://127.0.0.1:9", "--join-token-file", join(tokDir, file)],
       {cwd: root, encoding: "utf8", timeout: 60000, env: {...process.env, AIMAC_AGENT_WORK_DIR: tokDir, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true"}});
     const said = `${run.stdout || ""}${run.stderr || ""}`;
-    if (run.status === 0 || !want.test(said) || !/项目 Agent/u.test(said)) {
+    if (run.status === 0 || !want.test(said) || !/注册运行节点/u.test(said)) {
       output.push(`bootstrap 的令牌文件${label}时没说清是哪个文件、令牌从哪来（exit ${run.status}）：${said.slice(0, 160).replace(/\n/g, " ")}`);
     }
   }

@@ -6655,7 +6655,7 @@ const MUTATIONS = [
     name: "刚装完的指路要指这个账号点得到的那一页",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '    system: "先打开「项目管理」→「注册 Agent」",',
+    from: '    system: "先打开「项目管理」→「注册运行节点」",',
     to: '    system: "先打开「项目管理」→「项目设置」→「智能体接入」",',
     expect: "而这一屏的导航里没有这几页"
   },
@@ -9996,7 +9996,7 @@ const MUTATIONS = [
     name: "agentctl 指的入口要写成页+面板+按钮（否则判据看不见它）",
     file: "scripts/agentctl.mjs",
     check: "verifyGuidanceNamesRealPages",
-    from: "到目标项目的「项目管理」→「项目 Agent」→「注册项目节点」面板点「签发一次性加入令牌」，",
+    from: "到目标项目的「项目管理」→「注册运行节点」面板点「签发一次性加入令牌」，",
     to: "项目管理界面上点「发加入令牌」，",
     expect: "没有这个按钮"
   },
@@ -10182,7 +10182,7 @@ const MUTATIONS = [
     name: "首屏指引不得点名界面上没有的页（我第一版就写错了这句）",
     file: "scripts/init-control-plane.mjs",
     check: "verifyFirstScreenPointsAtRealPlaces",
-    from: "「项目管理」→「项目 Agent」→「注册项目节点」",
+    from: "「项目管理」→「注册运行节点」",
     to: "「项目设置」→「智能体接入」",
     expect: "仍指向旧入口"
   },
@@ -12819,6 +12819,30 @@ const MUTATIONS = [
     from: '      initialAdminAccountId: "acct_default_org_admin",',
     to: '      initialAdminAccountId: "acct_workspace_owner",',
     expect: "默认组织登记的初始管理员不是本组织的 org_admin"
+  },
+  {
+    name: "项目 Agent 档案必须有独立创建菜单",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    leaf("proj-agents", "create", "新建 Agent 档案", "创建当前项目专属逻辑角色", {requires: "agent:activate"}),',
+    to: "",
+    expect: "项目管理侧栏要有可直接进入的「新建 Agent 档案」功能"
+  },
+  {
+    name: "项目 Agent 档案列表不得混入创建表单",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '          agentProfileRows(scopedAgents), {emptyText: "当前项目还没有可调配 Agent 档案。可从“新建 Agent 档案”创建项目专属角色，或由组织管理员创建共享档案。"})}</div>\n      </div>',
+    to: '          agentProfileRows(scopedAgents), {emptyText: "当前项目还没有可调配 Agent 档案。可从“新建 Agent 档案”创建项目专属角色，或由组织管理员创建共享档案。"})}</div>\n        ${renderAgentProfileForm({projectId: project.id, title: "创建项目级 Agent 档案"})}\n      </div>',
+    expect: "Agent 档案列表与创建页面必须分开"
+  },
+  {
+    name: "组织共享 Agent 档案必须有独立创建 workspace",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "console",
+    from: 'pane("create", "新建共享 Agent 档案", ["创建组织级 Agent 档案"]),',
+    to: "",
+    expect: "组织共享 Agent 档案列表与创建页面必须分开"
   },
   {
     name: "旧默认组织管理员错误映射必须自动迁移",

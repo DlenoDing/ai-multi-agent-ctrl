@@ -2673,13 +2673,14 @@ async function runErrorGuidanceCase() {
     accountType: "org_admin", roles: ["org_admin"], permissions: ["org:*", "project:create", "member:invite", "agent:activate"], organizationId: "org_default"}, "p1", "org-overview");
   assertMenuLeaves("组织管理", orgNav, [["org-members", "list", "成员账户"], ["org-members", "create", "创建成员"],
     ["org-members", "grants", "权限矩阵"], ["org-projects", "list", "项目列表"], ["org-agents", "profiles", "共享 Agent 档案"],
-    ["org-agents", "nodes", "共享运行节点"], ["org-agents", "register", "注册共享节点"]]);
+    ["org-agents", "create", "新建共享 Agent 档案"], ["org-agents", "nodes", "共享运行节点"],
+    ["org-agents", "register", "注册共享运行节点"]]);
   assertMenuLeaves("组织管理说明", orgNav, [["org-overview", "help", "组织操作说明"], ["org-members", "help", "成员授权说明"],
     ["org-projects", "help", "项目治理说明"], ["org-agents", "help", "共享 Agent 说明"]]);
   const projectNav = renderedNav({accountId: "user", email: "user@local", displayName: "项目成员",
-    accountType: "user_account", roles: ["workspace_owner"], permissions: ["project:view", "project:update", "task_group:control", "task_group:review"], organizationId: "org_default"}, "p1", "proj-overview");
+    accountType: "user_account", roles: ["workspace_owner"], permissions: ["project:view", "project:update", "agent:activate", "task_group:control", "task_group:review"], organizationId: "org_default"}, "p1", "proj-overview");
   const projectMenuOrder = [["proj-overview", "overview", "项目概览"], ["proj-members", "list", "项目成员"],
-    ["proj-agents", "profiles", "Agent 档案"], ["tg", "list", "任务组"], ["tasks", "list", "任务"],
+    ["proj-agents", "profiles", "Agent 档案"], ["proj-agents", "create", "新建 Agent 档案"], ["tg", "list", "任务组"], ["tasks", "list", "任务"],
     ["monitor", "overview", "项目监控"], ["monitor", "runs", "执行会话"], ["review", "pending", "待我审核"],
     ["directives", "compose", "下达指令"], ["proj-settings", "repositories", "仓库凭据"]];
   assertMenuLeaves("项目管理", projectNav, projectMenuOrder);
@@ -3806,7 +3807,7 @@ function runNoVisibleProjectCase() {
           + "照着做的人会在自己的菜单里找一个不存在的入口");
       if (who === "系统管理员") {
         check("系统管理员：刚装完的指路要指向项目级智能体注册入口",
-          /项目管理」→「注册 Agent/.test(banner)
+          /项目管理」→「注册运行节点/.test(banner)
             && !/项目设置」→「智能体接入/.test(banner),
           `它让人去旧入口而这一屏的导航里没有这几页 —— 横幅是：${banner}`);
       }
@@ -5003,7 +5004,7 @@ async function runPendingTruncationCase() {
     noRegistered.fleet = {online: 0, total: 0};
     const noRegisteredView = probe.renderMonitorWith(noRegistered, admin, "p1");
     check("一个 agent 都没注册时，监控页出口要直接指向项目注册脚本",
-      /注册 Agent/.test(noRegisteredView)
+      /注册运行节点/.test(noRegisteredView)
         && /加入令牌/.test(noRegisteredView)
         && !/接入或恢复节点/.test(noRegisteredView),
       "没有注册节点时还说恢复节点，项目负责人不知道安装脚本从哪里来");
@@ -5529,6 +5530,7 @@ async function runPendingTruncationCase() {
         && agentGuideBundles.every((match) => !match[2].includes("<h2>注册与脚本操作台</h2>")),
       "操作台或节点列表被收进折叠块，或 Agent 阅读指引没有默认收起");
     const projectProfiles = probe.renderProjectAgentsInventoryWith(overviewState, systemAdmin, "p1", "table", ["profiles"]);
+    const projectProfileCreate = probe.renderProjectAgentsInventoryWith(overviewState, systemAdmin, "p1", "table", ["create"]);
     const profileRowAt = projectProfiles.indexOf("agent_1");
     const profileRow = profileRowAt < 0 ? "" : projectProfiles.slice(profileRowAt, profileRowAt + 900);
     check("逻辑 Agent 默认模型预设显示中文标签",
@@ -5540,8 +5542,14 @@ async function runPendingTruncationCase() {
       "角色多时不能要求操作者逐行统计作用域和活动状态");
     const namedOrgProfiles = probe.renderProjectAgentsInventoryWith({...overviewState, organizationContext: {id: "org_default", name: "研发组织"}}, systemAdmin, "p1", "table", ["profiles"]);
     check("项目 Agent 页用组织名称说明共享档案范围并解释模型预设",
-      /组织级：研发组织/u.test(namedOrgProfiles) && /自动最优（auto_best）/u.test(namedOrgProfiles)
-        && /实际模型 ID/u.test(namedOrgProfiles), textOf(namedOrgProfiles).slice(0, 320));
+      /组织级：研发组织/u.test(namedOrgProfiles) && /自动最优（auto_best）/u.test(projectProfileCreate)
+        && /实际模型 ID/u.test(projectProfileCreate), `${textOf(namedOrgProfiles).slice(0, 180)} | ${textOf(projectProfileCreate).slice(0, 180)}`);
+    check("Agent 档案列表与创建页面必须分开",
+      !/data-form="agent-create"/u.test(projectProfiles)
+        && /data-menu="proj-agents" data-menu-workspace="create"/u.test(projectProfiles)
+        && /data-form="agent-create"/u.test(projectProfileCreate)
+        && /name="projectId" value="p1"/u.test(projectProfileCreate),
+      "项目 Agent 档案列表仍混着创建表单，或新建页面没有绑定当前项目");
     const projectRegisterText = textOf(projectRegister);
     check("项目注册 pane 说明加入令牌和安装命令只显示一次",
       /只在[\s\S]{0,40}显示一次/u.test(projectRegisterText)
@@ -5589,6 +5597,14 @@ async function runPendingTruncationCase() {
 
     const orgProjectNodes = probe.renderProjectAgentsInventoryWith(overviewState, orgAdmin, "p1", "table", ["nodes"]);
     const orgNodes = probe.renderOrgAgentsInventoryWith(overviewState, orgAdmin, overviewState.agentRuntimeNodes, ["nodes"]);
+    const orgProfiles = probe.renderOrgAgentsInventoryWith(overviewState, orgAdmin, overviewState.agentRuntimeNodes, ["profiles"]);
+    const orgProfileCreate = probe.renderOrgAgentsInventoryWith(overviewState, orgAdmin, overviewState.agentRuntimeNodes, ["create"]);
+    check("组织共享 Agent 档案列表与创建页面必须分开",
+      !/data-form="agent-create"/u.test(orgProfiles)
+        && /data-menu="org-agents" data-menu-workspace="create"/u.test(orgProfiles)
+        && /data-form="agent-create"/u.test(orgProfileCreate)
+        && !/name="projectId"/u.test(orgProfileCreate),
+      "组织共享档案列表仍混着创建表单，或创建页面错误绑定了单个项目");
     check("系统管理员在项目节点 pane 够得到危险治理操作",
       /data-action="force-revoke-agent-node"/u.test(projectNodesTable)
         && /data-action="revoke-agent-node"/u.test(projectNodesTable),
@@ -6040,7 +6056,7 @@ async function runPendingTruncationCase() {
     const freshBanner = freshView.slice(freshView.indexOf("还没有任何执行记录"), freshView.indexOf("还没有任何执行记录") + 260);
     check("一件执行记录都没有时，监控页要说清这是正常的以及下一步",
       /还没有任何执行记录/.test(freshBanner)
-        && /项目管理」→「注册 Agent/.test(freshBanner)
+        && /项目管理」→「注册运行节点/.test(freshBanner)
         && !/项目设置」→「智能体接入/.test(freshBanner)
         && /签发一次性加入令牌/.test(freshBanner),
       "十一张「暂无数据」并排，人分不清「还没开始跑」和「跑了但没取回来」");
@@ -7170,7 +7186,7 @@ await runCodedApiErrorCase();
     "只说没节点，不说这对他意味着什么、下一步做什么");
   const neverRegistered = probe.renderTaskGroupsWith(withCells("assigned", {online: 0, total: 0}), account, "p1", null, {});
   check("一个 agent 都没注册时，任务组页出口要直接指向项目注册脚本",
-    /注册 Agent/.test(neverRegistered)
+    /注册运行节点/.test(neverRegistered)
       && /加入令牌/.test(neverRegistered)
       && !/接入或恢复节点/.test(neverRegistered),
     "单元已交出去但项目没有节点时还说恢复节点，项目负责人不知道先去哪儿拿脚本");
@@ -7234,7 +7250,7 @@ await runCodedApiErrorCase();
   check("要说清这是背压、会自己恢复，以及想更宽怎么做",
     /不需要你动手/.test(wipFull)
       && /运行节点|共享运行节点/.test(wipFull)
-      && /注册 Agent/.test(wipFull)
+      && /注册运行节点/.test(wipFull)
       && /刷新自检/.test(wipFull)
       && /准入/u.test(wipFull)
       && !/接入或恢复节点/.test(wipFull),

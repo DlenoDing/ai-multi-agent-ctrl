@@ -2180,7 +2180,7 @@ function menuTodoFor(item, counts) {
 function workspaceOptions() {
   return {canCreate: page === "tg" ? hasProjectPermission("task_group:control")
     : page === "tasks" ? hasPerm("task_group:control")
-      : page === "proj-agents" ? hasPerm("agent:activate") : true};
+      : ["proj-agents", "org-agents"].includes(page) ? hasPerm("agent:activate") : true};
 }
 
 function focusedTaskGroups() {
@@ -2805,7 +2805,7 @@ function renderSysSettingsActionBoard(runtime, metrics) {
         action: "看归属"
       })}
     </div>
-    <div class="small muted">系统设置只做全局能力查看和治理，不签发项目 Agent 脚本；项目级注册直接进入「项目管理」→「注册 Agent」。</div>
+    <div class="small muted">系统设置只做全局能力查看和治理，不签发项目 Agent 脚本；项目级注册直接进入「项目管理」→「注册运行节点」。</div>
   `, {wide: true});
 }
 
@@ -2868,7 +2868,7 @@ function renderSysSettingsLifecycleGuide(runtime, metrics) {
         pageId: "proj-agents",
         title: "6 Agent 注册",
         metric: "项目",
-        detail: "系统设置不签发加入令牌；注册脚本只在项目的“注册 Agent”生成",
+        detail: "系统设置不签发加入令牌；注册脚本只在项目的“注册运行节点”生成",
         tone: "blue",
         action: "去注册"
       })}
@@ -3251,8 +3251,8 @@ function renderJoinTokenSection(options = {}) {
     .filter((token) => !scopedProjectId || token.projectId === scopedProjectId);
   const auditContext = options.context === "system" ? "system" : "org";
   const auditNotice = auditContext === "system"
-    ? "系统页只做跨项目令牌审计和撤销。常规注册请进入目标项目的「项目管理」→「注册 Agent」签发一次性令牌，并复制服务端安装脚本。"
-    : "此功能查看组织范围加入令牌与撤销记录。共享节点在组织“注册共享节点”接入；项目专属节点进入对应项目“注册 Agent”接入。";
+    ? "系统页只做跨项目令牌审计和撤销。常规注册请进入目标项目的「项目管理」→「注册运行节点」签发一次性令牌，并复制服务端安装脚本。"
+    : "此功能查看组织范围加入令牌与撤销记录。共享节点在组织“注册共享运行节点”接入；项目专属节点进入对应项目“注册运行节点”接入。";
   const tokens = scopedTokens.slice(0, 20).map((token) => {
     // 令牌过期只在【兑换时】才被标 expired（没人兑换就永停在 issued）。列表若按原始 status 显示，
     // 一张已过期的令牌会显示成「已签发」还带「撤销」按钮 —— 人以为它还在等 agent 来接，实际兑换必被拒。
@@ -3395,7 +3395,7 @@ function renderOrgOverview() {
         pageId: "org-agents",
         title: "2 agent 节点",
         metric: aliveNodes.length ? `${onlineNodes}/${aliveNodes.length}` : "无节点",
-        detail: aliveNodes.length ? "查看在线率、自检、加入令牌和吊销" : "组织注册共享节点，项目注册专属节点",
+        detail: aliveNodes.length ? "查看在线率、自检、加入令牌和吊销" : "组织注册共享运行节点，项目注册专属节点",
         action: "管理节点",
         tone: onlineNodes ? "green" : "orange"
       })}
@@ -3786,25 +3786,9 @@ function modelOptionsHtml() {
 }
 
 function renderAgentProfileForm({projectId = "", title = "创建 Agent 档案", readOnly = false} = {}) {
-  if (readOnly) return `<div class="notice warn-notice">当前账号没有智能体管理权限，只能查看 Agent 档案。</div>`;
-  return `
-    <form class="form-grid" data-form="agent-create">
-      ${projectId ? `<input type="hidden" name="projectId" value="${esc(projectId)}">` : ""}
-      <div class="form-row-inline">
-        <div class="form-row"><label>${esc(title)}名称</label><input name="name" placeholder="例如：后端实现 Agent"></div>
-        <div class="form-row"><label>执行角色</label><input name="role" list="agent-role-options" required placeholder="例如：agent-runtime">
-          <datalist id="agent-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
-        <div class="form-row"><label>模型偏好</label><input name="model" list="agent-model-options" value="auto_best" placeholder="auto_best 或实际模型 ID">
-          <datalist id="agent-model-options">${modelOptionsHtml()}</datalist>
-          <div class="small muted">自动最优（auto_best）· 自动快速（auto_fast）· 成本优先（cost_aware），或填写模型能力列表中的实际模型 ID。偏好只在满足任务硬约束和模型上限的候选中生效。</div></div>
-        <div class="form-row"><label>信任分</label><input name="trustScore" type="number" step="0.01" min="0" max="1" value="0.85"></div>
-      </div>
-      <div class="form-row"><label>角色 Skill 引用（可选）</label><input name="roleSkillRef" list="agent-role-skill-options" placeholder="默认使用技能源内匹配角色">
-        ${roleSkillChoiceList("agent-role-skill-options")}</div>
-      <div class="notice">${projectId ? "项目级 Agent 只服务当前项目；任务组派发时可同时调配当前项目级 Agent 和组织级 Agent。" : "组织级 Agent 可被本组织内项目调配；项目有特殊要求时再在项目页创建项目级 Agent。"}</div>
-      <button class="primary-button" type="submit">${esc(title)}</button>
-    </form>
-  `;
+  return window.AIMAC_AGENT_PROFILE_WORKSPACE.createForm({projectId, title, readOnly,
+    roleOptions: WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join(""),
+    modelOptions: modelOptionsHtml(), skillOptions: roleSkillChoiceList("agent-role-skill-options")});
 }
 
 function projectAgentCards(nodes, canControlNodes, options = {}) {
@@ -3829,7 +3813,7 @@ function projectAgentCards(nodes, canControlNodes, options = {}) {
         `;
       }).join("")}
     </div>
-  ` : `<div class="notice warn-notice">当前项目还没有任何 Agent 节点。要让任务实际执行，请直接进入“注册 Agent”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 Agent 主机执行。</div>`;
+  ` : `<div class="notice warn-notice">当前项目还没有任何 Agent 节点。要让任务实际执行，请直接进入“注册运行节点”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 Agent 主机执行。</div>`;
 }
 
 function renderOrgAgentsBoundaryGuide() {
@@ -3880,7 +3864,7 @@ function renderProjectAgentRegistrationFlow(project, nodes) {
         title: "1 选择项目",
         metric: "当前",
         detail: project.name || project.id,
-        panelTitle: "注册项目节点",
+        panelTitle: "注册运行节点",
         tone: "blue",
         action: "已定位"
       })}
@@ -3888,7 +3872,7 @@ function renderProjectAgentRegistrationFlow(project, nodes) {
         title: "2 签发令牌",
         metric: stats.liveTokens || "签发",
         detail: "一次性加入令牌绑定当前项目、角色和 MCP 作用范围",
-        panelTitle: "注册项目节点",
+        panelTitle: "注册运行节点",
         tone: stats.liveTokens ? "green" : "orange",
         action: "签发"
       })}
@@ -3896,7 +3880,7 @@ function renderProjectAgentRegistrationFlow(project, nodes) {
         title: "3 复制脚本",
         metric: "sh",
         detail: "弹窗返回 直接安装版和 SHA256 校验版安装命令",
-        panelTitle: "注册项目节点",
+        panelTitle: "注册运行节点",
         tone: "blue",
         action: "复制"
       })}
@@ -3931,8 +3915,8 @@ function renderProjectAgentExecutionLoop(project, nodes) {
       ${jumpModuleCard({
         title: "1 项目签发",
         metric: stats.liveTokens || "令牌",
-        detail: "只在「注册项目节点」签发一次性加入令牌，脚本由服务端按当前项目生成",
-        panelTitle: "注册项目节点",
+        detail: "只在「注册运行节点」签发一次性加入令牌，脚本由服务端按当前项目生成",
+        panelTitle: "注册运行节点",
         tone: stats.liveTokens ? "blue" : "orange",
         action: "签发令牌"
       })}
@@ -4042,7 +4026,7 @@ function renderOrgAgentsSummary(nodes) {
       ${summaryMetric("待用加入令牌", stats.liveTokens, "可注册到本组织项目的令牌")}
       ${summaryMetric("异常节点", stats.abnormalNodes, "离线、非健康或需排查的节点")}
     </div>
-    <div class="small muted">组织共享节点在“注册共享节点”接入，项目专属节点从目标项目的“注册 Agent”接入。两种节点的控制、运行状态和加入令牌均按各自作用域管理。</div>
+    <div class="small muted">组织共享节点在“注册共享运行节点”接入，项目专属节点从目标项目的“注册运行节点”接入。两种节点的控制、运行状态和加入令牌均按各自作用域管理。</div>
   `, {wide: true});
 }
 
@@ -4094,7 +4078,7 @@ function renderOrgAgentsActionBoard(nodes) {
         pageId: "proj-agents",
         title: "当前项目接入入口",
         metric: "项目",
-        detail: "进入后先在侧栏确认目标项目，再直接打开「项目管理」→「注册 Agent」签发脚本",
+        detail: "进入后先在侧栏确认目标项目，再直接打开「项目管理」→「注册运行节点」签发脚本",
         tone: "blue",
         action: "确认后注册"
       })}
@@ -4215,19 +4199,20 @@ function renderOrgAgents() {
   }
 
   return [
-    panel("注册组织 agent", renderOrgNodeRegistration(), {wide: true}),
+    panel("注册共享运行节点", renderOrgNodeRegistration(), {wide: true}),
     renderOrgAgentsSummary(nodes),
     renderOrgAgentsActionBoard(nodes),
     renderOrgAgentsBoundaryGuide(),
     renderOrgAgentsLifecycleGuide(nodes),
     panel("组织级 Agent 档案", `
       <div class="stack">
-        <div class="notice">角色档案定义可承担的工作。组织共享节点在“注册共享节点”接入，项目专属节点在对应项目接入，两类节点可使用本组织的角色档案。</div>
+        <div class="notice">角色档案定义可承担的工作。组织共享运行节点在“注册共享运行节点”接入，项目专属运行节点在对应项目接入，两类节点可使用本组织的角色档案。</div>
         <div class="agent-profile-table">${table(["档案", "角色", "模型偏好", "作用域", "状态", {label: "信任分", c: "num"}, "Skill", "操作"],
-          agentProfileRows(scopedAgents), {emptyText: "当前组织还没有组织级 Agent 档案。可先创建通用角色档案，项目特殊角色再到项目页创建。"})}</div>
-        ${renderAgentProfileForm({title: "创建组织级 Agent 档案", readOnly: !hasPerm("agent:activate")})}
+          agentProfileRows(scopedAgents), {emptyText: "当前组织还没有共享 Agent 档案。可从“新建共享 Agent 档案”创建通用逻辑角色。"})}</div>
       </div>
-    `, {wide: true, headerSide: filterInput("按档案、角色、模型过滤…", "org-agent-profiles")}),
+    `, {wide: true, headerSide: `${filterInput("按档案、角色、模型过滤…", "org-agent-profiles")}${hasPerm("agent:activate")
+      ? `<button class="primary-button" data-menu="org-agents" data-menu-workspace="create">新建共享 Agent 档案</button>` : ""}`}),
+    panel("创建组织级 Agent 档案", renderAgentProfileForm({title: "创建组织级 Agent 档案", readOnly: !hasPerm("agent:activate")}), {wide: true}),
     panel("agent 节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "org-nodes")}${toggle}`}),
     panel("加入令牌审计", renderJoinTokenSection({auditOnly: true, context: "org"}), {wide: true})
   ].join("");
@@ -4253,7 +4238,7 @@ function renderProjectAgentsSummary(project, nodes) {
       ${summaryMetric("待用加入令牌", stats.liveTokens, "可注册到当前项目的一次性令牌")}
       ${summaryMetric("异常节点", stats.abnormalNodes, "离线、非健康或需排查的节点")}
     </div>
-    <div class="small muted">查看顺序：先看在线率、异常节点和待用令牌；新机器从“注册 Agent”签发一次性加入令牌，脚本由服务端生成。</div>
+    <div class="small muted">查看顺序：先看在线率、异常节点和待用令牌；新机器从“注册运行节点”签发一次性加入令牌，脚本由服务端生成。</div>
   `, {wide: true});
 }
 
@@ -4278,7 +4263,7 @@ function renderProjectAgentsActionBoard(project, nodes) {
         title: "注册新 agent",
         metric: stats.liveTokens ? `${stats.liveTokens}` : "签发",
         detail: stats.liveTokens ? "已有待用令牌，可继续复制注册脚本" : "生成一次性令牌和服务端安装脚本",
-        panelTitle: "注册项目节点",
+        panelTitle: "注册运行节点",
         tone: stats.liveTokens ? "blue" : "orange",
         action: "签发令牌"
       })}
@@ -4319,7 +4304,7 @@ function renderProjectAgentScriptHub(project, nodes) {
         title: "1 签发加入令牌",
         metric: stats.liveTokens ? `${stats.liveTokens}` : "签发",
         detail: "在当前项目生成一次性加入令牌",
-        panelTitle: "注册项目节点",
+        panelTitle: "注册运行节点",
         tone: stats.liveTokens ? "blue" : "orange",
         action: "去签发"
       })}
@@ -4327,7 +4312,7 @@ function renderProjectAgentScriptHub(project, nodes) {
         title: "2 获取安装脚本",
         metric: "签发后",
         detail: "签发成功弹窗给出 直接安装版和 SHA256 校验版 sh 命令，只显示一次",
-        panelTitle: "注册项目节点",
+        panelTitle: "注册运行节点",
         tone: "blue",
         action: "看入口"
       })}
@@ -4394,7 +4379,7 @@ function renderProjectAgents() {
     ? `<div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>`
     : agentViewMode === "cards"
       ? ""
-      : `<div class="notice warn-notice">当前项目还没有任何 Agent 节点。要让任务实际执行，请直接进入“注册 Agent”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 Agent 主机执行。</div>`;
+      : `<div class="notice warn-notice">当前项目还没有任何 Agent 节点。要让任务实际执行，请直接进入“注册运行节点”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 Agent 主机执行。</div>`;
   const bodyHtml = agentViewMode === "cards"
     ? projectAgentCards(nodes, canControlNodes, {showDanger: !preferOrgGovernance})
     : table(["名称", "运行状态", "准入", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"], nodeRows, {emptyText: "当前项目暂无 agent 节点"});
@@ -4412,13 +4397,14 @@ function renderProjectAgents() {
         ${renderProjectAgentProfileSummary(project, scopedAgents)}
         <div class="notice">任务组执行时，总控可在当前项目级 Agent 和本组织级 Agent 中选择合适角色；项目级档案只服务当前项目，组织级档案可跨本组织项目复用。</div>
         <div class="agent-profile-table">${table(["档案", "角色", "模型偏好", "作用域", "状态", {label: "信任分", c: "num"}, "Skill", "操作"],
-          agentProfileRows(scopedAgents), {emptyText: "当前项目还没有可调配 Agent 档案。可在这里创建项目级档案，或到组织页创建组织级档案。"})}</div>
-        ${renderAgentProfileForm({projectId: project.id, title: "创建项目级 Agent 档案", readOnly: !hasPerm("agent:activate")})}
+          agentProfileRows(scopedAgents), {emptyText: "当前项目还没有可调配 Agent 档案。可从“新建 Agent 档案”创建项目专属角色，或由组织管理员创建共享档案。"})}</div>
       </div>
-    `, {wide: true, headerSide: filterInput("按档案、角色、模型过滤…", "project-agent-profiles")}),
+    `, {wide: true, headerSide: `${filterInput("按档案、角色、模型过滤…", "project-agent-profiles")}${hasPerm("agent:activate")
+      ? `<button class="primary-button" data-menu="proj-agents" data-menu-workspace="create">新建 Agent 档案</button>` : ""}`}),
+    panel("创建项目级 Agent 档案", renderAgentProfileForm({projectId: project.id, title: "创建项目级 Agent 档案", readOnly: !hasPerm("agent:activate")}), {wide: true}),
     panel("项目 agent 节点", `<div class="stack">${nodeNotice}${bodyHtml}</div>`,
       {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "project-nodes")}${toggle}`}),
-    panel("注册项目节点", renderJoinTokenSection({projectId: project.id, context: "project"}), {wide: true})
+    panel("注册运行节点", renderJoinTokenSection({projectId: project.id, context: "project"}), {wide: true})
   ].join("");
 }
 
@@ -4431,7 +4417,7 @@ function renderOrgProjectsActionBoard({projects, activeProjects, archivedProject
       ${jumpModuleCard({
         title: "在用项目",
         metric: `${activeProjects.length}`,
-        detail: activeProjects.length ? "可继续创建任务组，并在「项目管理」→「注册 Agent」接入执行节点" : "当前没有可继续推进的项目",
+        detail: activeProjects.length ? "可继续创建任务组，并在「项目管理」→「注册运行节点」接入执行节点" : "当前没有可继续推进的项目",
         panelTitle: "项目列表",
         tone: activeProjects.length ? "blue" : "orange",
         action: "查看项目"
@@ -4513,7 +4499,7 @@ function renderOrgProjectsLifecycleGuide({projects, activeProjects, archivedProj
         pageId: "proj-agents",
         title: "4 Agent 接入",
         metric: "注册",
-        detail: "一次性加入令牌和 sh 安装命令只在目标项目的“注册 Agent”生成",
+        detail: "一次性加入令牌和 sh 安装命令只在目标项目的“注册运行节点”生成",
         tone: activeProjects.length ? "green" : "gray",
         action: "去注册"
       })}
@@ -4536,7 +4522,7 @@ function renderOrgProjectsLifecycleGuide({projects, activeProjects, archivedProj
         action: "看项目"
       })}
     </div>
-    <div class="small muted">组织项目页负责项目生命周期治理；项目内部执行分别进入仓库凭据、Agent 档案、运行节点、任务组和项目监控。不要在组织项目页寻找 Agent 注册脚本，脚本必须在具体项目的“注册 Agent”签发。</div>
+    <div class="small muted">组织项目页负责项目生命周期治理；项目内部执行分别进入仓库凭据、Agent 档案、运行节点、任务组和项目监控。不要在组织项目页寻找 Agent 注册脚本，脚本必须在具体项目的“注册运行节点”签发。</div>
     <div class="small muted">当前可授权在用项目：${esc(assignableCount)} 个；在用项目：${esc(activeProjects.length)} 个；健康异常：${esc(unhealthyProjects)} 个。</div>
   `, {wide: true});
 }
@@ -5189,7 +5175,7 @@ function renderTaskGroupLifecycleGuide(groups) {
         pageId: "proj-agents",
         title: "3 确认 Agent",
         metric: "注册",
-        detail: "注册入口在「项目管理」→「注册 Agent」；没有准入节点时，工作项不会真正执行",
+        detail: "注册入口在「项目管理」→「注册运行节点」；没有准入节点时，工作项不会真正执行",
         tone: "blue",
         action: "看智能体"
       })}
@@ -6327,7 +6313,7 @@ function agentNodeManagementPath({needMoreCapacity = false, registeredNodeCount 
   const canManageProjectAgents = hasPerm("agent:activate");
   const projectAgentPage = "「项目管理」→「运行节点」";
   const orgAgentPage = "「组织管理」→「共享运行节点」";
-  const registerPath = "「项目管理」→「注册 Agent」";
+  const registerPath = "「项目管理」→「注册运行节点」";
   const registerAction = needMoreCapacity
     ? `${registerPath}接入更多已通过自检的节点`
     : `${registerPath}签发当前项目的加入令牌`;
@@ -7293,7 +7279,7 @@ function renderMonitorActionBoard({
     ? (abnormalNodes
       ? "存在离线、心跳过旧、自检缺项或运行时过旧节点；先恢复 Agent 主机和 Runtime 心跳，能力修好后到「项目管理」→「运行节点」点「刷新自检」"
       : "可见节点当前正常")
-    : "当前项目没有可见 Agent 节点；先到「项目管理」→「注册 Agent」签发加入令牌并复制服务端安装脚本";
+    : "当前项目没有可见 Agent 节点；先到「项目管理」→「注册运行节点」签发加入令牌并复制服务端安装脚本";
   const nodeTone = nodes.length ? (abnormalNodes ? "orange" : "green") : "gray";
   const orchestrator = state.runtime?.autonomousOrchestrator || {};
   const orchestratorIssues = Number(orchestrator.consecutiveErrors || 0);
@@ -7745,8 +7731,8 @@ function renderMonitor() {
   // 项目空间已经和系统/组织空间拆开，跨空间指路不能再写成"去某某页"：
   // 人在当前左侧菜单里看不到那一项，会以为功能丢了。先点空间，再说面板名。
   const JOIN_TOKEN_ENTRY_BY_PERSPECTIVE = {
-    system: "先打开「项目管理」→「注册 Agent」",
-    org: "先打开「项目管理」→「注册 Agent」；也可以在「组织管理」→「共享运行节点」统一管理节点"
+    system: "先打开「项目管理」→「注册运行节点」",
+    org: "先打开「项目管理」→「注册运行节点」；也可以在「组织管理」→「共享运行节点」统一管理节点"
   };
   const joinTokenWhere = JOIN_TOKEN_ENTRY_BY_PERSPECTIVE[perspectiveOf(currentAccount)];
   const nothingRanYetNotice = nothingRanYet
@@ -8175,7 +8161,7 @@ function renderProjectSettingsSummary(project, repos, baselineData, defaultRoles
       ${summaryMetric("仓库", repos.length, "代码与文档产出的 Git 落点")}
       ${summaryMetric("基线", baselineData.length, "agent 可引用的现状材料")}
       ${summaryMetric("默认角色", defaultRoles.length, "任务组未指定时的角色回退")}
-      ${summaryMetric("待用加入令牌", liveJoinTokenCount(project.id), "在「项目管理」→「注册 Agent」签发和使用")}
+      ${summaryMetric("待用加入令牌", liveJoinTokenCount(project.id), "在「项目管理」→「注册运行节点」签发和使用")}
       ${summaryMetric("角色定制", roleOverlayCount, "项目/任务组级 Skill 覆盖")}
       ${summaryMetric("系统规则", systemRuleCount, "项目层生效的系统规则")}
       ${summaryMetric("业务规则", businessRuleCount, "项目层生效的业务规则")}
@@ -8221,7 +8207,7 @@ function renderProjectSettingsActionBoard(project, repos, baselineData, defaultR
         pageId: "proj-agents",
         title: "智能体入网",
         metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : `${liveTokens}`,
-        detail: liveTokens ? "有待用加入令牌；注册脚本只在签发成功弹窗显示" : "需要新节点时进入“注册 Agent”签发",
+        detail: liveTokens ? "有待用加入令牌；注册脚本只在签发成功弹窗显示" : "需要新节点时进入“注册运行节点”签发",
         tone: agentStats.onlineNodes ? "green" : liveTokens ? "blue" : "orange",
         action: "去接入页"
       })}
@@ -8250,7 +8236,7 @@ function renderProjectSettingsActionBoard(project, repos, baselineData, defaultR
         action: "查看规则"
       })}
     </div>
-    <div class="small muted">处理顺序：先确认仓库凭据、默认角色与规则；Agent 节点到“运行节点”，注册脚本到“注册 Agent”。看板只使用本页已加载数据，不额外请求接口。</div>
+    <div class="small muted">处理顺序：先确认仓库凭据、默认角色与规则；Agent 节点到“运行节点”，注册脚本到“注册运行节点”。看板只使用本页已加载数据，不额外请求接口。</div>
   `, {wide: true});
 }
 
@@ -8297,12 +8283,12 @@ function renderProjectSettingsBoundaryGuide(project, repos, baselineData, defaul
         pageId: "proj-agents",
         title: "Agent 接入",
         metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : "项目页",
-        detail: "Agent 节点和远程 MCP 状态进入“运行节点”，注册脚本进入“注册 Agent”",
+        detail: "Agent 节点和远程 MCP 状态进入“运行节点”，注册脚本进入“注册运行节点”",
         tone: agentStats.onlineNodes ? "green" : "orange",
         action: "去注册"
       })}
     </div>
-    <div class="small muted">职责分区：项目治理只维护影响派发和产出的配置；Agent 节点、一次性加入令牌、安装脚本、远程 MCP 和 Skill 工作集分别进入“运行节点”和“注册 Agent”。</div>
+    <div class="small muted">职责分区：项目治理只维护影响派发和产出的配置；Agent 节点、一次性加入令牌、安装脚本、远程 MCP 和 Skill 工作集分别进入“运行节点”和“注册运行节点”。</div>
   `, {wide: true});
 }
 
@@ -8352,7 +8338,7 @@ function renderProjectSettingsLifecycleGuide(project, repos, baselineData, defau
         pageId: "proj-agents",
         title: "5 Agent 执行",
         metric: agentStats.aliveNodes.length ? `${agentStats.onlineNodes}/${agentStats.aliveNodes.length}` : "注册",
-        detail: "Agent 注册在“注册 Agent”，远程 MCP 和 Skill 工作集状态在“运行节点”",
+        detail: "Agent 注册在“注册运行节点”，远程 MCP 和 Skill 工作集状态在“运行节点”",
         tone: agentStats.onlineNodes ? "green" : "orange",
         action: "看智能体"
       })}
