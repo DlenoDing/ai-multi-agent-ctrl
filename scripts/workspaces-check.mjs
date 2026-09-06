@@ -498,6 +498,7 @@ const helpers = {
 {
   const app = readPublic("app.js");
   const taskWorkbenchSource = readPublic("modules/task-workbench.js");
+  const contextNavigationSource = readPublic("modules/context-navigation.js");
   const apiBlock = sourceBlock(app, "async function api(path, options = {})", "async function getState");
   const saveSessionBlock = sourceBlock(app, "function saveSession(sessionToken, account)", "const EXPIRED_DRAFT_KEY");
   const clearSessionBlock = sourceBlock(app, "function clearSession()", "function renderLogin");
@@ -505,6 +506,7 @@ const helpers = {
   const resetTasksBlock = sourceBlock(app, "function resetTaskWorkbench()", "function renderPageContent");
   const renderContentBlock = sourceBlock(app, "function renderContent()", "function workspaceOptions()");
   const renderBlock = sourceBlock(app, "function render()", "function renderContent()");
+  const sidebarContextBlock = sourceBlock(app, "function sidebarContextHtml(perspective)", "function workspaceRouteSnapshot()");
   const workspaceOptionsBlock = sourceBlock(app, "function workspaceOptions()", "function focusedTaskGroups()");
   const projectSwitchBlock = sourceBlock(app, "if (target.id === \"project-switcher\")", "if (target.dataset.ruleScope");
   const openProjectBlock = sourceBlock(app, "if (action === \"open-project-page\")", "if (action === \"focus-group\")");
@@ -561,8 +563,11 @@ const helpers = {
       && /permissionCheckboxes\(member\.permissions \|\| \[\]\)/u.test(memberPermsClickBlock),
     "member permission modal should not imply it edits project or task-group role grants");
   check("user-account project-create sidebar entry prefers state capability with direct-permission fallback",
-    /currentAccount\.accountType === "user_account"\s*&& \(state\.accountCapabilities\?\.canCreateProject \?\? \(currentAccount\.permissions \|\| \[\]\)\.includes\("project:create"\)\)/u.test(renderBlock)
-      && /data-action="open-create-project"/u.test(renderBlock),
+    /currentAccount\.accountType === "user_account"\s*&& \(state\.accountCapabilities\?\.canCreateProject \?\? \(currentAccount\.permissions \|\| \[\]\)\.includes\("project:create"\)\)/u.test(sidebarContextBlock)
+      && /canCreateProject/u.test(sidebarContextBlock)
+      && /!sidebarContext\.project && sidebarContext\.canCreateProject/u.test(renderBlock)
+      && /data-action="open-create-project"/u.test(renderBlock)
+      && /canCreateProject[\s\S]*data-action="open-create-project"/u.test(contextNavigationSource),
     "sidebar project creation entry must use fresh server accountCapabilities when present and only fall back to cached account permissions when absent");
   check("open-create-project modal is short and has no owner selection",
     /currentAccount\?\.accountType !== "user_account" \|\| !\(state\.accountCapabilities\?\.canCreateProject \?\? \(currentAccount\.permissions \|\| \[\]\)\.includes\("project:create"\)\)/u.test(openCreateProjectBlock)

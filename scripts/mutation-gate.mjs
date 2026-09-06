@@ -11854,6 +11854,14 @@ const MUTATIONS = [
     expect: "创建项目入口属于项目选择区而不是每个任务页顶栏"
   },
   {
+    name: "创建项目权限必须优先使用服务端新鲜能力值",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "workspace",
+    from: '  const canCreateProject = currentAccount.accountType === "user_account"\n    && (state.accountCapabilities?.canCreateProject ?? (currentAccount.permissions || []).includes("project:create"));',
+    to: '  const canCreateProject = currentAccount.accountType === "user_account"\n    && (currentAccount.permissions || []).includes("project:create");',
+    expect: "user-account project-create sidebar entry prefers state capability with direct-permission fallback"
+  },
+  {
     name: "无项目时必须保留醒目的创建入口",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
