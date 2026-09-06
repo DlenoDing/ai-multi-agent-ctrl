@@ -2888,11 +2888,13 @@ async function runErrorGuidanceCase() {
     JSON.stringify(menuActionProbe.sessionState()));
   await menuActionProbe.navigateMenuTarget("tg", "create");
   const taskGroupCreateReached = menuActionProbe.sessionState().page === "tg" && menuActionProbe.workspaceCurrent("tg") === "create";
+  await menuActionProbe.navigateMenuTarget("proj-members", "add");
+  const memberAddReached = menuActionProbe.sessionState().page === "proj-members" && menuActionProbe.workspaceCurrent("proj-members") === "add";
   await menuActionProbe.navigateMenuTarget("proj-agents", "create");
   const agentCreateReached = menuActionProbe.sessionState().page === "proj-agents" && menuActionProbe.workspaceCurrent("proj-agents") === "create";
   await menuActionProbe.navigateMenuTarget("proj-agents", "register");
   check("对象列表主按钮必须进入独立创建或注册页",
-    taskGroupCreateReached && agentCreateReached
+    taskGroupCreateReached && memberAddReached && agentCreateReached
       && menuActionProbe.sessionState().page === "proj-agents" && menuActionProbe.workspaceCurrent("proj-agents") === "register",
     "创建动作虽从侧栏收起，但对应列表主按钮的稳定目标不可达");
   menuActionProbe.setObjectLocation({page: "monitor", projectId: "p1", groupId: "tg_old"});

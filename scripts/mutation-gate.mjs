@@ -13211,12 +13211,12 @@ const MUTATIONS = [
     expect: "必须是四个独立页面"
   },
   {
-    name: "项目成员授权必须有独立侧栏入口",
+    name: "项目成员授权必须保留独立稳定路由",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
     from: '    leaf("proj-members", "add", "添加项目成员", "把组织成员加入当前项目", {requires: "project:grant"}),',
     to: "",
-    expect: "添加项目成员"
+    expect: "对象列表主按钮必须进入独立创建或注册页"
   },
   {
     name: "成员列表的添加按钮必须进入独立授权页面",
