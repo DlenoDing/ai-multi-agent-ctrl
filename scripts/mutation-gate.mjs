@@ -11801,16 +11801,16 @@ const MUTATIONS = [
     name: "当前项目选择和进度必须与模块导航同处侧栏",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "        ${sidebarContext.project}\n        ${canCreateProject ? `<div class=\"sidebar-project-create\"><button class=\"secondary-button\" data-action=\"open-create-project\">创建项目</button></div>` : \"\"}\n        <nav class=\"nav\"",
-    to: "        ${canCreateProject ? `<div class=\"sidebar-project-create\"><button class=\"secondary-button\" data-action=\"open-create-project\">创建项目</button></div>` : \"\"}\n        <nav class=\"nav\"",
+    from: "        ${sidebarContext.project}\n        ${!sidebarContext.project && sidebarContext.canCreateProject ? `<div class=\"sidebar-project-create\"><button class=\"secondary-button\" data-action=\"open-create-project\">创建项目</button></div>` : \"\"}\n        <nav class=\"nav\"",
+    to: "        ${!sidebarContext.project && sidebarContext.canCreateProject ? `<div class=\"sidebar-project-create\"><button class=\"secondary-button\" data-action=\"open-create-project\">创建项目</button></div>` : \"\"}\n        <nav class=\"nav\"",
     expect: "当前项目选择和进度必须与项目模块同处侧栏"
   },
   {
     name: "任务组对象上下文不得在跨页时丢失",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '  const project = currentProject();\n  if (!project) return {spaces, project: ""};\n  const groupId = managementGroupId || (page === "tg" ? expandedTaskGroupId : "");',
-    to: '  const project = currentProject();\n  if (!project) return {spaces, project: ""};\n  const groupId = "";',
+    from: '  const project = currentProject();\n  if (!project) return {spaces, project: "", canCreateProject};\n  const groupId = managementGroupId || (page === "tg" ? expandedTaskGroupId : "");',
+    to: '  const project = currentProject();\n  if (!project) return {spaces, project: "", canCreateProject};\n  const groupId = "";',
     expect: "任务组和任务对象上下文必须跨页面持续显示"
   },
   {
@@ -11849,9 +11849,17 @@ const MUTATIONS = [
     name: "创建项目入口必须留在项目选择区",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '        ${canCreateProject ? `<div class="sidebar-project-create"><button class="secondary-button" data-action="open-create-project">创建项目</button></div>` : ""}',
-    to: "",
+    from: "    stats,\n    canCreateProject,\n    labels:",
+    to: "    stats,\n    canCreateProject: false,\n    labels:",
     expect: "创建项目入口属于项目选择区而不是每个任务页顶栏"
+  },
+  {
+    name: "无项目时必须保留醒目的创建入口",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '        ${!sidebarContext.project && sidebarContext.canCreateProject ? `<div class="sidebar-project-create"><button class="secondary-button" data-action="open-create-project">创建项目</button></div>` : ""}',
+    to: "",
+    expect: "没有项目时创建入口保持醒目而不是只剩图标"
   },
   {
     name: "创建、注册和说明入口不得挤进日常侧栏",
@@ -11862,20 +11870,36 @@ const MUTATIONS = [
     expect: "项目侧栏不把创建、注册和说明当成日常功能"
   },
   {
-    name: "低频执行诊断不得挤进日常侧栏",
+    name: "低频页面不得挤进日常侧栏",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
-    from: '    const advancedMonitorWorkspaces = new Set(["lanes", "models", "placements", "admissions", "commands", "dlq", "checkpoints", "finalizations"]);',
-    to: "    const advancedMonitorWorkspaces = new Set([]);",
-    expect: "低频执行诊断只在功能概览按需展开"
+    from: '      monitor: new Set(["sessions", "lanes", "models", "placements", "admissions", "events", "node-control", "commands", "dlq", "checkpoints", "finalizations"]),',
+    to: "      monitor: new Set([]),",
+    expect: "低频页面只在功能概览按需展开"
   },
   {
-    name: "低频执行诊断必须保留功能概览入口",
+    name: "项目历史不得挤进日常侧栏",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '      "proj-overview": new Set(["activity", "outputs"]),',
+    to: '      "proj-overview": new Set([]),',
+    expect: "低频页面只在功能概览按需展开"
+  },
+  {
+    name: "审核明细不得挤进日常侧栏",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '      review: new Set(["pending", "permissions", "approvals", "findings", "history"])',
+    to: "      review: new Set([])",
+    expect: "低频页面只在功能概览按需展开"
+  },
+  {
+    name: "低频页面必须保留功能概览入口",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
     from: '    : functionalMenu.filter((item) => !item.divider && item.id === page)',
-    to: '    : functionalMenu.filter((item) => !item.divider && item.id === page && item.workspace !== "models")',
-    expect: "低频诊断虽不常驻侧栏但仍可从功能概览进入"
+    to: '    : functionalMenu.filter((item) => !item.divider && item.id === page && !["models", "activity", "pending"].includes(item.workspace))',
+    expect: "低频页面虽不常驻侧栏但仍可从功能概览进入"
   },
   {
     name: "日常侧栏仍必须按账号权限过滤",
@@ -11884,6 +11908,14 @@ const MUTATIONS = [
     from: "  const visibleMenu = menuForCurrentSection(perspective, page).filter((item) => item.divider || menuItemAvailable(item));",
     to: "  const visibleMenu = menuForCurrentSection(perspective, page);",
     expect: "无任务组控制权账号的侧栏不得显示下达指令"
+  },
+  {
+    name: "低频页面的移动选择器必须显示真实当前位置",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: "    const currentIsSecondary = currentItem && !primaryItems.includes(currentItem);",
+    to: "    const currentIsSecondary = false;",
+    expect: "切换功能后自动展开新的业务分组并收起旧分组"
   },
   {
     name: "页面标题必须跟随具体功能菜单",
@@ -11939,7 +11971,7 @@ const MUTATIONS = [
     gate: "console",
     from: '  return counts[`${item.id}|${item.workspace || ""}`] || {count: 0, capped: false};',
     to: "  return counts[item.id] || {count: 0, capped: false};",
-    expect: "菜单叶子红点必须与各自页面记录数一致"
+    expect: "日常菜单只在汇总入口显示准确待办红点"
   },
   {
     name: "待办处置按钮必须携带叶子 workspace",
@@ -11953,7 +11985,7 @@ const MUTATIONS = [
     name: "说明 workspace 必须有统一顶栏入口",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '            ${helpAvailable ? `<button class="icon-button topbar-help${helpActive ? " active" : ""}" data-workspace-page="${esc(helpWorkspacePage)}" data-workspace="help" title="当前页面帮助" aria-label="当前页面帮助">?</button>` : ""}',
+    from: '            ${helpAvailable ? `<button class="icon-button topbar-help${helpActive ? " active" : ""}" data-workspace-page="${esc(helpWorkspacePage)}" data-workspace="help" title="当前模块全部功能" aria-label="当前模块全部功能">⋯</button>` : ""}',
     to: "",
     expect: "说明入口统一收进顶栏且不占侧栏"
   },
@@ -12004,6 +12036,38 @@ const MUTATIONS = [
     from: '  const notices = creating ? "" : cellsWaitingWithNoAgentNotice(groups) + wipCapacityNotice(groups);',
     to: "  const notices = cellsWaitingWithNoAgentNotice(groups) + wipCapacityNotice(groups);",
     expect: "创建任务页只显示一条简短离线提示"
+  },
+  {
+    name: "项目监控不得重复展示第二层运行摘要",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
+    gate: "console",
+    from: "    fleetOfflineNotice(),\n    renderMonitorActionBoard({",
+    to: "    fleetOfflineNotice(),\n    renderMonitorSummary({eventsShown, sessionsAll, dispatchesAll, lanesAll, nodes: monitorNodes, barriersInScope}),\n    renderMonitorActionBoard({",
+    expect: "项目监控只保留一层运行摘要"
+  },
+  {
+    name: "项目关键指标必须使用完整内容宽度",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      </div>\n    `, {wide: true}),\n    panel("任务组一览"',
+    to: '      </div>\n    `),\n    panel("任务组一览"',
+    expect: "项目关键指标必须占满内容宽度"
+  },
+  {
+    name: "工作会话长原因必须使用摘要列",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
+    gate: "console",
+    from: '    {v: esc(explainCoded(session.blockedReason)) + repositoryFailureAction(session), c: "text-clip"},',
+    to: "    esc(explainCoded(session.blockedReason)) + repositoryFailureAction(session),",
+    expect: "会话和派发长原因必须使用摘要列，避免窄屏整行被撑高"
+  },
+  {
+    name: "Agent 派发长原因必须使用摘要列",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
+    gate: "console",
+    from: '    ].filter(Boolean).join(""), c: "text-clip"},\n    controls',
+    to: '    ].filter(Boolean).join(""), c: "nowrap"},\n    controls',
+    expect: "会话和派发长原因必须使用摘要列，避免窄屏整行被撑高"
   },
   {
     name: "窄屏宽表不得把名称压成逐字竖排",
@@ -13288,7 +13352,7 @@ const MUTATIONS = [
     gate: "console",
     from: '    leaf("monitor", "models", "模型决策", "实际模型、Agent 偏好和选型理由"),',
     to: "",
-    expect: "低频诊断虽不常驻侧栏但仍可从功能概览进入"
+    expect: "低频页面虽不常驻侧栏但仍可从功能概览进入"
   },
   {
     name: "旧执行会话地址必须迁移到工作会话",
@@ -13320,7 +13384,7 @@ const MUTATIONS = [
     gate: "console",
     from: '    leaf("monitor", "commands", "控制命令", "暂停、恢复、取消和节点 ACK"),',
     to: "",
-    expect: "低频诊断虽不常驻侧栏但仍可从功能概览进入"
+    expect: "低频页面虽不常驻侧栏但仍可从功能概览进入"
   },
   {
     name: "旧节点控制地址必须迁移到运行节点",

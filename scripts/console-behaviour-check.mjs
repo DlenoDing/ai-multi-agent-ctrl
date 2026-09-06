@@ -2030,10 +2030,14 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     const overviewRoot2 = el("div");
     const overviewProbe2 = loadConsole(overviewRoot2);
     overviewProbe2.renderFullPageWith(twoNumbers, admin, "p1", "proj-overview");
-    const text = String(overviewRoot2.innerHTML || "").replace(/<[^>]+>/gu, " ");
+    const overviewHtml = String(overviewRoot2.innerHTML || "");
+    const text = overviewHtml.replace(/<[^>]+>/gu, " ");
     check("并排的两个百分比要各自说清是怎么算的",
       /任务组平均进度/.test(text) && /按工作项平均/.test(text) && !/事项完成度/.test(text),
       "顶上 73%、下面 75%，标签却都读作「完成度」—— 人只能以为其中一个错了");
+    check("项目关键指标必须占满内容宽度",
+      /<article class="panel wide">[\s\S]*?<h2>关键指标<\/h2>/u.test(overviewHtml),
+      "关键指标被塞在半宽区块里，四项信息拥挤且右侧留下整块空白");
   }
 
   check("项目概览也要说出'没有在线 agent，这些活不会动'（它是被盯得最久的一页）",
@@ -2794,14 +2798,12 @@ async function runErrorGuidanceCase() {
   const projectAccount = {accountId: "user", email: "user@local", displayName: "项目成员",
     accountType: "user_account", roles: ["workspace_owner"], permissions: ["project:view", "project:update", "project:grant", "agent:activate", "task_group:control", "task_group:review"], organizationId: "org_default"};
   const projectNav = renderedNav(projectAccount, "p1", "proj-overview");
-  const projectMenuOrder = [["proj-overview", "overview", "项目概览"], ["proj-overview", "activity", "最新执行"], ["proj-overview", "outputs", "仓库产出"],
-    ["tg", "list", "任务组"], ["tasks", "list", "任务"], ["proj-members", "list", "项目成员"], ["proj-members", "groups", "任务组权限"],
+  const projectMenuOrder = [["proj-overview", "overview", "项目概览"], ["tg", "list", "任务组"], ["tasks", "list", "任务"],
+    ["proj-members", "list", "项目成员"], ["proj-members", "groups", "任务组权限"],
     ["proj-agents", "profiles", "Agent 档案"], ["proj-agents", "nodes", "运行节点"],
-    ["monitor", "overview", "项目监控"], ["monitor", "sessions", "工作会话"], ["monitor", "dispatches", "Agent 派发"],
-    ["monitor", "events", "实时事件"], ["monitor", "node-control", "运行节点"], ["monitor", "quality", "质量门禁"],
-    ["monitor", "blockers", "阻塞处置"], ["monitor", "close-gates", "关闭门禁"], ["review", "pending", "待我审核"],
-    ["review", "permissions", "权限审批"], ["review", "approvals", "操作审批"], ["review", "findings", "发现处置"],
-    ["directives", "compose", "下达指令"], ["proj-settings", "repositories", "仓库凭据"],
+    ["monitor", "overview", "项目监控"], ["monitor", "dispatches", "Agent 派发"], ["monitor", "quality", "质量门禁"],
+    ["monitor", "blockers", "阻塞处置"], ["monitor", "close-gates", "关闭门禁"], ["review", "inbox", "待办汇总"],
+    ["directives", "compose", "下达指令"], ["directives", "history", "指令记录"], ["proj-settings", "repositories", "仓库凭据"],
     ["proj-settings", "baseline", "基线资料"], ["proj-settings", "default-roles", "默认角色"],
     ["proj-settings", "skills", "Skill 定制"], ["proj-settings", "system-rules", "系统规则"],
     ["proj-settings", "business-rules", "业务规则"]];
@@ -2809,24 +2811,22 @@ async function runErrorGuidanceCase() {
   check("项目侧栏不把创建、注册和说明当成日常功能",
     !/data-menu-workspace="create"|data-menu-workspace="add"|data-menu-workspace="grant-group"|data-menu-workspace="register"|data-menu-workspace="help"/u.test(projectNav),
     "项目侧栏仍同时铺开低频动作和说明入口");
-  check("低频执行诊断只在功能概览按需展开",
-    !/data-menu="monitor" data-menu-workspace="(?:lanes|models|placements|admissions|commands|dlq|checkpoints|finalizations)"/u.test(projectNav),
-    "模型、放置、准入、死信等低频诊断仍常驻侧栏");
+  check("低频页面只在功能概览按需展开",
+    !/data-menu="(?:proj-overview|monitor|review)" data-menu-workspace="(?:activity|outputs|sessions|lanes|models|placements|admissions|events|node-control|commands|dlq|checkpoints|finalizations|pending|permissions|approvals|findings|history)"/u.test(projectNav),
+    "历史、事件、模型、准入或审核明细等低频页面仍常驻侧栏");
   check("项目管理侧栏顺序要贴合执行路径",
     projectMenuOrder.every(([pageId, workspace], index) => index === 0
       || projectNav.indexOf(`data-menu="${pageId}" data-menu-workspace="${workspace}"`)
         > projectNav.indexOf(`data-menu="${projectMenuOrder[index - 1][0]}" data-menu-workspace="${projectMenuOrder[index - 1][1]}"`)),
     "项目菜单顺序没有按日常工作、团队资源、执行监控、人工介入和设置排列");
   check("项目管理侧栏要按普通管理动作分栏目",
-    ["日常工作", "团队与 Agent", "执行监控", "节点与控制", "验收与收口", "人工介入", "项目设置"]
+    ["日常工作", "团队与 Agent", "执行监控", "验收与收口", "人工介入", "项目设置"]
       .every((label) => projectNav.includes(`<span>${label}</span>`))
       && projectNav.indexOf("日常工作") < projectNav.indexOf('data-menu="proj-overview"')
       && projectNav.indexOf("团队与 Agent") < projectNav.indexOf('data-menu="proj-members"')
       && projectNav.indexOf("执行监控") < projectNav.indexOf('data-menu="monitor" data-menu-workspace="overview"')
-      && projectNav.indexOf("节点与控制") < projectNav.indexOf('data-menu="monitor" data-menu-workspace="node-control"')
-      && projectNav.indexOf("节点与控制") > projectNav.indexOf('data-menu="monitor" data-menu-workspace="events"')
       && projectNav.indexOf("验收与收口") < projectNav.indexOf('data-menu="monitor" data-menu-workspace="quality"')
-      && projectNav.indexOf("验收与收口") > projectNav.indexOf('data-menu="monitor" data-menu-workspace="node-control"')
+      && projectNav.indexOf("验收与收口") > projectNav.indexOf('data-menu="monitor" data-menu-workspace="dispatches"')
       && projectNav.indexOf("人工介入") < projectNav.indexOf('data-menu="review"')
       && projectNav.indexOf("人工介入") < projectNav.indexOf('data-menu="directives"')
       && projectNav.indexOf("人工介入") > projectNav.indexOf('data-menu="monitor" data-menu-workspace="close-gates"')
@@ -2844,6 +2844,7 @@ async function runErrorGuidanceCase() {
   const helpTopbar = String(helpHtml.split('<header class="topbar">')[1] || "").split("</header>")[0] || "";
   check("说明入口统一收进顶栏且不占侧栏",
     /data-workspace-page="proj-settings" data-workspace="help"/u.test(helpTopbar)
+      && /aria-label="当前模块全部功能">⋯<\/button>/u.test(helpTopbar)
       && !/data-menu-workspace="help"/u.test(helpAside)
       && !/class="mobile-function-picker"/u.test(helpHtml),
     "说明入口仍占一整组侧栏，或当前页面没有统一帮助入口");
@@ -2868,10 +2869,16 @@ async function runErrorGuidanceCase() {
   const monitorHelpRoot = el("div");
   loadConsole(monitorHelpRoot, {realI18n: true}).renderFullPagePaneWith(navState, projectAccount, "p1", "monitor", "help");
   const monitorHelpHtml = String(monitorHelpRoot.innerHTML || "");
-  check("低频诊断虽不常驻侧栏但仍可从功能概览进入",
-    ["lanes", "models", "placements", "admissions", "commands", "dlq", "checkpoints", "finalizations"]
-      .every((workspace) => monitorHelpHtml.includes(`data-menu="monitor" data-menu-workspace="${workspace}"`)),
-    "侧栏变短的同时把低频诊断页面也变成了不可达死路");
+  const overviewMoreRoot = el("div");
+  loadConsole(overviewMoreRoot, {realI18n: true}).renderFullPagePaneWith(navState, projectAccount, "p1", "proj-overview", "help");
+  const reviewMoreRoot = el("div");
+  loadConsole(reviewMoreRoot, {realI18n: true}).renderFullPagePaneWith(navState, projectAccount, "p1", "review", "help");
+  check("低频页面虽不常驻侧栏但仍可从功能概览进入",
+    ["sessions", "lanes", "models", "placements", "admissions", "events", "node-control", "commands", "dlq", "checkpoints", "finalizations"]
+      .every((workspace) => monitorHelpHtml.includes(`data-menu="monitor" data-menu-workspace="${workspace}"`))
+      && ["activity", "outputs"].every((workspace) => String(overviewMoreRoot.innerHTML || "").includes(`data-menu="proj-overview" data-menu-workspace="${workspace}"`))
+      && ["pending", "permissions", "approvals", "findings", "history"].every((workspace) => String(reviewMoreRoot.innerHTML || "").includes(`data-menu="review" data-menu-workspace="${workspace}"`)),
+    "侧栏变短的同时把历史、事件、诊断或审核明细变成了不可达死路");
   const runPageRoot = el("div");
   loadConsole(runPageRoot, {realI18n: true}).renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "sessions");
   const runPageTopbar = String(runPageRoot.innerHTML || "").split('<header class="topbar">')[1]?.split("</header>")[0] || "";
@@ -2882,7 +2889,9 @@ async function runErrorGuidanceCase() {
     "打开执行会话后页头仍写父页面“执行监控”，用户无法确认当前位置");
   check("切换功能后自动展开新的业务分组并收起旧分组",
     (runPageAside.match(/<details class="nav-group" open>/gu) || []).length === 1
-      && /<details class="nav-group" open>[\s\S]*?<span>执行监控<\/span>[\s\S]*?data-menu="monitor" data-menu-workspace="sessions"/u.test(runPageAside),
+      && /<details class="nav-group" open>[\s\S]*?<span>执行监控<\/span>[\s\S]*?data-menu="monitor" data-menu-workspace="overview"/u.test(runPageAside)
+      && !/data-menu="monitor" data-menu-workspace="sessions"/u.test(runPageAside)
+      && /工作会话（更多功能）/u.test(String(runPageRoot.innerHTML || "")),
     "进入工作会话后侧栏没有把焦点收敛到执行监控组");
   const menuActionProbe = loadConsole(el("div"), {realI18n: true});
   menuActionProbe.renderFullPageWith(navState, projectAccount, "p1", "proj-overview");
@@ -2940,7 +2949,7 @@ async function runErrorGuidanceCase() {
       && !/class="project-switch"/u.test(projectTopbar),
     "项目选择器、项目状态和项目模块仍散落在顶栏与内容区");
   check("桌面侧栏直接列功能，不在选中父菜单后临时展开 workspace 子导航",
-    !/class="workspace-nav"/u.test(projectAside) && /data-menu="monitor" data-menu-workspace="sessions"/u.test(projectAside)
+    !/class="workspace-nav"/u.test(projectAside) && /data-menu="monitor" data-menu-workspace="dispatches"/u.test(projectAside)
       && /data-menu="proj-agents" data-menu-workspace="profiles"/u.test(projectAside),
     "侧栏仍把日常执行或 Agent 查阅藏在父页面下面的临时栏目里");
   const creatorShell = renderedNav({accountId: "creator", email: "creator@local", displayName: "项目创建者",
@@ -2948,9 +2957,15 @@ async function runErrorGuidanceCase() {
   const creatorAside = creatorShell.split("</aside>")[0] || "";
   const creatorTopbar = String(creatorShell.split('<header class="topbar">')[1] || "").split("</header>")[0] || "";
   check("创建项目入口属于项目选择区而不是每个任务页顶栏",
-    /class="sidebar-project-create"[\s\S]*data-action="open-create-project"/u.test(creatorAside)
+    /class="sidebar-object-context"[\s\S]*class="sidebar-create-project"[^>]*data-action="open-create-project"/u.test(creatorAside)
       && !/data-action="open-create-project"/u.test(creatorTopbar),
     "创建项目仍常驻任务/监控顶栏，混淆组织动作与当前任务动作");
+  const noProjectCreatorRoot = el("div");
+  loadConsole(noProjectCreatorRoot, {realI18n: true}).renderFullPageWith({...navState, projects: []},
+    {accountId: "creator-empty", accountType: "user_account", permissions: ["project:create"], organizationId: "org_default"}, null, "proj-overview");
+  check("没有项目时创建入口保持醒目而不是只剩图标",
+    /class="sidebar-project-create"[\s\S]*data-action="open-create-project"[^>]*>创建项目<\/button>/u.test(String(noProjectCreatorRoot.innerHTML || "")),
+    "账号能创建项目但当前一个项目都没有，侧栏没有给出可理解的首要动作");
   const jumpProbe = loadConsole(el("div"), {realI18n: true});
   jumpProbe.renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "overview");
   jumpProbe.stubNavigation();
@@ -5225,20 +5240,24 @@ async function runPendingTruncationCase() {
       "一个能干活的节点都没有，界面却只显示'执行中' —— 人会一直等一件永远不会发生的事");
     check("提示要说清已注册几个、以及该去哪儿看",
       /已注册 2 个/.test(offlineView)
-        && /运行节点|共享运行节点/.test(offlineView)
-        && /刷新自检/.test(offlineView)
-        && /恢复目标 Agent 主机|Runtime 心跳|恢复目标 agent 主机\/进程心跳/.test(offlineView)
-        && !/项目设置」→「智能体接入/.test(offlineView)
-        && !/接入或恢复节点/.test(offlineView)
-        && /「项目管理」|「组织管理」|联系项目管理员|联系组织管理员/u.test(offlineView),
+        && /data-menu="proj-agents" data-menu-workspace="nodes"/.test(offlineView)
+        && /检查运行节点/.test(offlineView),
       "只说没有在线节点，不说是一台都没装还是装了都挂了，人不知道下一步做什么");
+    check("项目监控只保留一层运行摘要",
+      /class="monitor-scope-header/u.test(offlineView) && !/执行监控总览/u.test(offlineView),
+      "顶部范围摘要已经显示会话、派发、待审核和受阻数，下方又重复一组相同指标");
+    const monitorDashboardSource = readConsoleSource("modules/monitor-dashboard-workspace.js");
+    check("会话和派发长原因必须使用摘要列，避免窄屏整行被撑高",
+      monitorDashboardSource.includes('{v: esc(explainCoded(session.blockedReason)) + repositoryFailureAction(session), c: "text-clip"},')
+        && monitorDashboardSource.includes('].filter(Boolean).join(""), c: "text-clip"},\n    controls'),
+      "会话或派发原因未使用可展开的摘要列，窄屏列表会被长原因逐行撑高");
 
     const noRegistered = structuredClone(base);
     noRegistered.fleet = {online: 0, total: 0};
     const noRegisteredView = probe.renderMonitorWith(noRegistered, admin, "p1");
     check("一个 agent 都没注册时，监控页出口要直接指向项目注册脚本",
       /注册运行节点/.test(noRegisteredView)
-        && /加入令牌/.test(noRegisteredView)
+        && /data-menu="proj-agents" data-menu-workspace="register"/.test(noRegisteredView)
         && !/接入或恢复节点/.test(noRegisteredView),
       "没有注册节点时还说恢复节点，项目负责人不知道安装脚本从哪里来");
 
@@ -6143,11 +6162,11 @@ async function runPendingTruncationCase() {
         resource: {resourceType: "project", resourceId: "p1"}, role: "project_admin", permissions: ["project:*"]}]};
     const freshCanCreateState = {...overviewState, accountCapabilities: {canCreateProject: true}};
     const freshCannotCreateState = {...overviewState, accountCapabilities: {canCreateProject: false}};
-    check("有直接 project:create 的普通成员顶栏显示创建项目入口（兼容旧 state）",
-      /data-action="open-create-project"[\s\S]*>创建项目</u.test(topbarFor(overviewState, projectCreateUser)),
+    check("有直接 project:create 的普通成员在项目选择区显示创建入口（兼容旧 state）",
+      /data-action="open-create-project"[^>]*aria-label="创建项目"/u.test(topbarFor(overviewState, projectCreateUser)),
       "普通成员有直接 project:create，却没有任何组织菜单外的创建项目入口");
     check("stateView canCreateProject=true 会覆盖缓存里旧的无创建权限账号",
-      /data-action="open-create-project"[\s\S]*>创建项目</u.test(topbarFor(freshCanCreateState, noCreateUser)),
+      /data-action="open-create-project"[^>]*aria-label="创建项目"/u.test(topbarFor(freshCanCreateState, noCreateUser)),
       "服务端 fresh accountCapabilities 说可创建，但 UI 仍按 sessionStorage 旧账号权限把入口藏了");
     check("stateView canCreateProject=false 会覆盖缓存里旧的 project:create",
       !/data-action="open-create-project"/u.test(topbarFor(freshCannotCreateState, projectCreateUser)),
@@ -6534,19 +6553,20 @@ async function runPendingTruncationCase() {
     const menuRoot = el("div");
     loadConsole(menuRoot, {realI18n: true}).renderFullPagePaneWith(routed, admin, "p1", "review", "inbox");
     const menuHtml = String(menuRoot.innerHTML || "");
+    const menuAside = menuHtml.split("</aside>")[0] || "";
     const leafButton = (pageId, workspace) => {
-      const start = menuHtml.indexOf(`data-menu="${pageId}" data-menu-workspace="${workspace}"`);
-      return start < 0 ? "" : menuHtml.slice(start, menuHtml.indexOf("</button>", start));
+      const start = menuAside.indexOf(`data-menu="${pageId}" data-menu-workspace="${workspace}"`);
+      return start < 0 ? "" : menuAside.slice(start, menuAside.indexOf("</button>", start));
     };
-    check("菜单叶子红点必须与各自页面记录数一致",
-      /nav-badge">1</u.test(leafButton("review", "pending"))
-        && /nav-badge">1</u.test(leafButton("review", "permissions"))
-        && /nav-badge">2</u.test(leafButton("review", "approvals"))
-        && /nav-badge">1</u.test(leafButton("review", "findings"))
+    check("日常菜单只在汇总入口显示准确待办红点",
+      !leafButton("review", "pending")
+        && !leafButton("review", "permissions")
+        && !leafButton("review", "approvals")
+        && !leafButton("review", "findings")
         && /nav-badge">6</u.test(leafButton("review", "inbox"))
         && /nav-badge">1</u.test(leafButton("monitor", "quality"))
         && !/nav-badge/u.test(leafButton("monitor", "blockers")),
-      "父页面总数仍被复制到多个叶子菜单，或质量门红点落错功能");
+      "隐藏的审核明细仍占侧栏红点，或待办汇总与质量门计数不准确");
     const reviewDispositionPanes = [
       ["permissions", "权限审批", "授权请求：", ["审批请求：", "发现："]],
       ["approvals", "操作审批", "审批请求：", ["授权请求：", "发现："]],

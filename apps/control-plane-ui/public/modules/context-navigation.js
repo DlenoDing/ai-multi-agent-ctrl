@@ -30,10 +30,11 @@
     return `<div class="sidebar-progress" aria-label="进度 ${percent}%"><span style="width:${percent}%"></span></div>`;
   }
 
-  function projectContext({project, projects = [], group = null, work = null, stats = {}, labels = {}} = {}) {
+  function projectContext({project, projects = [], group = null, work = null, stats = {}, labels = {}, canCreateProject = false} = {}) {
     if (!project) return "";
     return `<section class="sidebar-object-context" aria-label="当前对象">
-      <span class="sidebar-eyebrow">当前项目</span>
+      <div class="sidebar-context-head"><span class="sidebar-eyebrow">当前项目</span>${canCreateProject
+        ? `<button class="sidebar-create-project" data-action="open-create-project" title="创建项目" aria-label="创建项目">＋</button>` : ""}</div>
       <select id="project-switcher" aria-label="当前项目">${projects.map((item) =>
         `<option value="${esc(item.id)}"${item.id === project.id ? " selected" : ""}>${esc(item.name || item.id)}${item.status === "archived" ? "（已归档 · 只读）" : ""}</option>`).join("")}</select>
       <div class="sidebar-project-state"><span>${esc(labels.projectStatus || project.status || "-")}</span><strong>${esc(project.progress?.percent ?? 0)}%</strong></div>

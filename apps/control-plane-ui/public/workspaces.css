@@ -10,6 +10,10 @@
 .management-space-option span { margin-top: 2px; color: rgba(174, 184, 204, 0.76); font-size: 10px; }
 .management-space-option.active { border-color: #6da4ff; background: #2f4262; }
 .sidebar-object-context { padding: 12px 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+.sidebar-context-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+.sidebar-context-head .sidebar-eyebrow { margin: 0; }
+.sidebar-create-project { width: 26px; height: 26px; padding: 0; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; background: rgba(255, 255, 255, 0.06); color: #fff; cursor: pointer; font-size: 17px; line-height: 1; }
+.sidebar-create-project:hover { background: rgba(255, 255, 255, 0.12); }
 .sidebar-object-context select { width: 100%; min-width: 0; height: 34px; border-color: rgba(255, 255, 255, 0.14); background: #252f42; color: #fff; }
 .sidebar-project-state { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; color: #c6cedc; font-size: 11px; }
 .sidebar-project-state strong { color: #fff; font-size: 12px; }
@@ -79,7 +83,7 @@
   .management-space-option { flex: 1 0 130px; }
   .management-space-option span { display: none; }
   .sidebar-object-context { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 8px; padding: 8px 10px; }
-  .sidebar-object-context > .sidebar-eyebrow { align-self: center; margin: 0; }
+  .sidebar-context-head { margin: 0; }
   .sidebar-object-context > .sidebar-project-state, .sidebar-object-context > .sidebar-progress { display: none; }
   .sidebar-object-card { grid-column: 1 / -1; margin-top: 2px; padding: 7px 0 0; }
   .sidebar-object-counts { grid-template-columns: repeat(4, auto); justify-content: start; }

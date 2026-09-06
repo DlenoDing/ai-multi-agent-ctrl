@@ -75,7 +75,7 @@ function render(context, helpers) {
     session.laneId ? {v: `<span class="mono">${esc(session.laneId)}</span>`, c: "nowrap"} : "-",
     badge(session.status),
     // 会话的阻塞原因此前只写在记录里、从不渲染：人看到一个 needs_decision 的徽标，看不出为什么。
-    esc(explainCoded(session.blockedReason)) + repositoryFailureAction(session),
+    {v: esc(explainCoded(session.blockedReason)) + repositoryFailureAction(session), c: "text-clip"},
     `<button class="primary-button" data-action="open-execution-object" data-execution-type="session" data-execution-id="${esc(session.sessionId)}" data-task="${esc(session.taskGroupId)}">查看详情</button>`
   ])).join("");
 
@@ -101,7 +101,7 @@ function render(context, helpers) {
     // 这两个标记控制面早就在写了（写它们的注释里明写着"必须留痕并让人看到"），而控制台从来没有
     // 渲染过它们 —— 于是人只看到"认领超时重新入队"，看不到最要紧的那句：上一任可能已经把提交推上去了。
     // 新持有者的 reset --hard origin/<branch> 会把那些提交当作基线继续往上做，而没有任何人复核过它们。
-    [
+    {v: [
       esc(explainCoded(dispatch.blockedReason || dispatch.failureReason)),
       repositoryFailureAction(dispatch),
       // 卡在人工确认上时，控制面【知道】是哪一张卡挡住的（dispatch.humanConfirmationRef），
@@ -116,7 +116,7 @@ function render(context, helpers) {
       dispatch.rulesChangedAfterContract
         ? `<div class="small warn-text">⚠ 契约签发之后规则发生过变更：这次执行遵循的可能不是当前生效的规则</div>`
         : ""
-    ].filter(Boolean).join(""),
+    ].filter(Boolean).join(""), c: "text-clip"},
     controls
   ]);
   }).join("");
@@ -348,7 +348,6 @@ function render(context, helpers) {
     nothingRanYetNotice,
     orchestratorStalledNotice(),
     fleetOfflineNotice(),
-    renderMonitorSummary({eventsShown, sessionsAll, dispatchesAll, lanesAll, nodes: monitorNodes, barriersInScope}),
     renderMonitorActionBoard({
       dispatchesAll,
       sessionsAll,

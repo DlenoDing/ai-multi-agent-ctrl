@@ -1734,9 +1734,11 @@ function sidebarContextHtml(perspective) {
     projectCount: selectableProjects().length,
     projectConsoleAvailable: projectConsoleAvailable()
   });
-  if (currentSection !== "project") return {spaces, project: ""};
+  if (currentSection !== "project") return {spaces, project: "", canCreateProject: false};
+  const canCreateProject = currentAccount.accountType === "user_account"
+    && (state.accountCapabilities?.canCreateProject ?? (currentAccount.permissions || []).includes("project:create"));
   const project = currentProject();
-  if (!project) return {spaces, project: ""};
+  if (!project) return {spaces, project: "", canCreateProject};
   const groupId = managementGroupId || (page === "tg" ? expandedTaskGroupId : "");
   const group = projectTaskGroups().find((item) => item.id === groupId)
     || (taskWorkDetail?.taskGroup?.projectId === project.id && taskWorkDetail.taskGroup.id === groupId ? taskWorkDetail.taskGroup : null);
@@ -1754,8 +1756,9 @@ function sidebarContextHtml(perspective) {
     group,
     work,
     stats,
+    canCreateProject,
     labels: {projectStatus: t(project.status), groupStatus: t(group?.goalExecutionStatus || group?.status), workStatus: t(work?.status)}
-  })};
+  }), canCreateProject};
 }
 
 function workspaceRouteSnapshot() {
@@ -1931,8 +1934,6 @@ function render() {
   const helpWorkspacePage = page === "tg" && expandedTaskGroupId ? "group-detail" : page;
   const helpAvailable = (workspaces.catalog[helpWorkspacePage] || []).some((entry) => entry.id === "help");
   const helpActive = workspaces.current(helpWorkspacePage)?.id === "help";
-  const canCreateProject = currentAccount.accountType === "user_account"
-    && (state.accountCapabilities?.canCreateProject ?? (currentAccount.permissions || []).includes("project:create"));
 
   const html = `
     <div class="app-shell">
@@ -1946,7 +1947,7 @@ function render() {
         </div>
         ${sidebarContext.spaces}
         ${sidebarContext.project}
-        ${canCreateProject ? `<div class="sidebar-project-create"><button class="secondary-button" data-action="open-create-project">创建项目</button></div>` : ""}
+        ${!sidebarContext.project && sidebarContext.canCreateProject ? `<div class="sidebar-project-create"><button class="secondary-button" data-action="open-create-project">创建项目</button></div>` : ""}
         <nav class="nav" aria-label="管理菜单">${menuHtml}</nav>
       </aside>
       <main class="workspace">
@@ -1965,7 +1966,7 @@ function render() {
                   看到的是"修改密码"，弹窗里还写着"当前密码（首次设置可留空）"—— 让他去想自己是不是忘了什么。
                   系统知道他有没有设过，就该直接说对。 */""}
             <button class="secondary-button" data-action="open-change-password">${(currentAccount?.passwordSet ?? currentAccount?.authPolicy?.passwordSet) ? "修改密码" : "设置密码"}</button>
-            ${helpAvailable ? `<button class="icon-button topbar-help${helpActive ? " active" : ""}" data-workspace-page="${esc(helpWorkspacePage)}" data-workspace="help" title="当前页面帮助" aria-label="当前页面帮助">?</button>` : ""}
+            ${helpAvailable ? `<button class="icon-button topbar-help${helpActive ? " active" : ""}" data-workspace-page="${esc(helpWorkspacePage)}" data-workspace="help" title="当前模块全部功能" aria-label="当前模块全部功能">⋯</button>` : ""}
             <button class="icon-button" data-action="refresh" title="刷新" aria-label="刷新">↻</button>
             <button class="secondary-button" data-action="logout">退出登录</button>
           </div>
@@ -4831,7 +4832,7 @@ function renderProjectOverview() {
               + `（评审计划、发现项、授权请求…）—— 到「人工审核」页看汇总</div>`;
           })()}</div>
       </div>
-    `),
+    `, {wide: true}),
     panel("任务组一览", table(["任务组", "状态", "阶段", "进度", "健康度", {label: "受阻数", c: "num"}, "操作"], groupRows), {wide: true,
       headerSide: `${window.AIMAC_OBJECT_WORKSPACE.projectLink(project, "全部任务组", {page: "tg", workspace: "list"})}${hasProjectPermission("task_group:control") && project.status !== "archived" ? `<button class="primary-button" data-workspace-page="tg" data-workspace="create">创建任务组</button>` : ""}`}),
     panel("最新执行事件", table([{label: "时间", c: "nowrap"}, "事件", "状态", {label: "摘要", c: "text-clip"}], events,
@@ -5680,10 +5681,9 @@ function fleetOfflineNotice() {
     inScope(item) && !terminalDispatchStatuses.has(item.status)).length;
   if (!waiting) return "";                     // 没有活在等，就不必吓人
   const total = Number(fleet.total || 0);
-  return `<div class="notice warn-notice">这个项目有 ${esc(waiting)} 个派发在排队或执行中，`
-    + `但【没有任何在线的 agent 节点】${total ? `（已注册 ${esc(total)} 个，此刻都不在线或已降级）` : "（一个都还没注册）"}：`
-    + `这些活现在不会有任何进展，界面上的"执行中"只是挂着。`
-    + `${esc(agentNodeManagementPath({registeredNodeCount: total}))}。</div>`;
+  return `<div class="notice warn-notice compact-notice"><strong>执行已停住：</strong>${esc(waiting)} 个派发正在等待，但【没有任何在线的 agent 节点】，当前不会有任何进展。`
+    + `${total ? `已注册 ${esc(total)} 个节点，请先恢复并刷新自检。` : "请先注册运行节点。"}`
+    + `<div class="button-row"><button type="button" class="secondary-button" data-menu="proj-agents" data-menu-workspace="${total ? "nodes" : "register"}">${total ? "检查运行节点" : "注册运行节点"}</button></div></div>`;
 }
 
 // 人把方案「交回 AI 再分析」之后，卡片会停在 awaitingAiAnalysis 等着 agent 来回答。

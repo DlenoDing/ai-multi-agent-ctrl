@@ -249,10 +249,14 @@
 
   function primaryNavigationItems(items) {
     const actionWorkspaces = new Set(["create", "add", "grant-group", "register", "help"]);
-    const advancedMonitorWorkspaces = new Set(["lanes", "models", "placements", "admissions", "commands", "dlq", "checkpoints", "finalizations"]);
+    const secondaryWorkspaces = {
+      "proj-overview": new Set(["activity", "outputs"]),
+      monitor: new Set(["sessions", "lanes", "models", "placements", "admissions", "events", "node-control", "commands", "dlq", "checkpoints", "finalizations"]),
+      review: new Set(["pending", "permissions", "approvals", "findings", "history"])
+    };
     return items.filter((item) => item.divider
       || (!actionWorkspaces.has(item.workspace)
-        && !(item.id === "monitor" && advancedMonitorWorkspaces.has(item.workspace))));
+        && !secondaryWorkspaces[item.id]?.has(item.workspace)));
   }
 
   function menuGroups(items) {
@@ -269,8 +273,9 @@
   }
 
   function desktopMenuHtml(items, pageId, workspace, todoFor) {
+    const activeGroup = menuGroups(items).find((group) => group.items.some((item) => item.id === pageId && item.workspace === workspace))?.label;
     return menuGroups(primaryNavigationItems(items)).map((group) => {
-      const active = group.items.some((item) => item.id === pageId && item.workspace === workspace);
+      const active = group.label === activeGroup;
       return `<details class="nav-group"${active ? " open" : ""}>
         <summary class="nav-group-summary"><span>${esc(group.label)}</span></summary>
         <div class="nav-group-items">${group.items.map((item) => menuItemHtml(item,
@@ -280,8 +285,12 @@
   }
 
   function mobileMenuHtml(items, pageId, workspace) {
-    const groups = menuGroups(primaryNavigationItems(items));
-    return `<label class="mobile-function-picker"><span>当前功能</span><select data-menu-select aria-label="当前功能">${groups.map((group) =>
+    const primaryItems = primaryNavigationItems(items);
+    const groups = menuGroups(primaryItems);
+    const currentItem = items.find((item) => !item.divider && item.id === pageId && item.workspace === workspace);
+    const currentIsSecondary = currentItem && !primaryItems.includes(currentItem);
+    return `<label class="mobile-function-picker"><span>当前功能</span><select data-menu-select aria-label="当前功能">${currentIsSecondary
+      ? `<optgroup label="更多功能"><option value="${esc(`${currentItem.id}|${currentItem.workspace || ""}`)}" selected>${esc(currentItem.label)}（更多功能）</option></optgroup>` : ""}${groups.map((group) =>
       `<optgroup label="${esc(group.label)}">${group.items.map((item) => `<option value="${esc(`${item.id}|${item.workspace || ""}`)}"${item.id === pageId && item.workspace === workspace ? " selected" : ""}>${esc(item.label)}</option>`).join("")}</optgroup>`).join("")}</select></label>`;
   }
 
