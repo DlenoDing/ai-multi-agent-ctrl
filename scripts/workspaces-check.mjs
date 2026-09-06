@@ -50,6 +50,7 @@ function loadPublicModules() {
     "modules/task-group-detail-workspace.js",
     "modules/task-workbench.js",
     "modules/project-settings-workspace.js",
+    "modules/domain-overview-workspace.js",
     "modules/execution-object-workspace.js",
     "modules/monitor-workspace.js",
     "modules/monitor-dashboard-workspace.js",
@@ -82,6 +83,7 @@ const locations = context.AIMAC_WORKSPACE_LOCATION;
   const moduleAt = indexSource.indexOf('/modules/project-settings-workspace.js');
   const taskGroupDetailAt = indexSource.indexOf('/modules/task-group-detail-workspace.js');
   const monitorDashboardAt = indexSource.indexOf('/modules/monitor-dashboard-workspace.js');
+  const domainOverviewAt = indexSource.indexOf('/modules/domain-overview-workspace.js');
   const appAt = indexSource.indexOf('/app.js');
   check("project settings workspace loads before app.js", moduleAt >= 0 && appAt > moduleAt,
     `moduleAt=${moduleAt}; appAt=${appAt}`);
@@ -89,6 +91,8 @@ const locations = context.AIMAC_WORKSPACE_LOCATION;
     `taskGroupDetailAt=${taskGroupDetailAt}; appAt=${appAt}`);
   check("monitor dashboard workspace loads before app.js", monitorDashboardAt >= 0 && appAt > monitorDashboardAt,
     `monitorDashboardAt=${monitorDashboardAt}; appAt=${appAt}`);
+  check("domain overview workspace loads before app.js", domainOverviewAt >= 0 && appAt > domainOverviewAt,
+    `domainOverviewAt=${domainOverviewAt}; appAt=${appAt}`);
 }
 
 {
@@ -307,14 +311,21 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
 }
 
 {
+  const hiddenFromPrimaryNavigation = new Set(["create", "add", "grant-group", "register", "help"]);
   for (const [page, panes] of Object.entries(workspaces.catalog)) {
     for (const pane of panes) {
       workspaces.select(page, pane.id);
       const html = workspaces.run(page, () => workspaces.navigation(page));
       const activeMatches = String(html).match(/class="workspace-nav-item active"/gu) || [];
-      check(`${page}/${pane.id} renders one active workspace tab`, activeMatches.length === 1,
-        `active tab count=${activeMatches.length}`);
-      check(`${page}/${pane.id} navigation keeps the pane label`, String(html).includes(pane.label));
+      if (hiddenFromPrimaryNavigation.has(pane.id)) {
+        check(`${page}/${pane.id} remains selectable without occupying primary navigation`,
+          workspaces.current(page)?.id === pane.id && activeMatches.length === 0 && !String(html).includes(`data-workspace="${pane.id}"`),
+          `current=${workspaces.current(page)?.id}; nav=${html}`);
+      } else {
+        check(`${page}/${pane.id} renders one active primary navigation item`, activeMatches.length === 1,
+          `active item count=${activeMatches.length}`);
+        check(`${page}/${pane.id} primary navigation keeps the pane label`, String(html).includes(pane.label));
+      }
     }
   }
 }
@@ -330,10 +341,11 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
       !String(hiddenNav).includes(`data-workspace="${createPane}"`)
         && !String(hiddenHeading).includes("data-workspace"),
       `nav=${hiddenNav}; heading=${hiddenHeading}`);
-    check(`${page} keeps create/register workspace affordances when canCreate is true`,
-      String(shownNav).includes(`data-workspace="${createPane}"`)
+    check(`${page} keeps create/register workspace selectable but outside primary navigation`,
+      !String(shownNav).includes(`data-workspace="${createPane}"`)
+        && workspaces.select(page, createPane) === true && workspaces.current(page)?.id === createPane
         && !String(shownHeading).includes("data-workspace"),
-      `nav=${shownNav}; heading=${shownHeading}`);
+      `nav=${shownNav}; heading=${shownHeading}; current=${workspaces.current(page)?.id}`);
   }
 }
 
