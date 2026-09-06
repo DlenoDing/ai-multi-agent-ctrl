@@ -2600,7 +2600,6 @@ function renderSysSettingsSummary(runtime, metrics) {
     && Number(roleSkillCount[source.sourceId] || 0) > 0).length;
   const availableModels = modelCapabilities.filter((profile) =>
     !["unavailable", "disabled", "retired"].includes(profile.availability)).length;
-  const activeOverlays = (state.roleSkillOverlays || []).filter((item) => item.status === "active").length;
   const sharedDefinitions = instructionState?.sharedDefinitions || [];
   return panel("系统设置总览", `
     <div class="metric-grid">
@@ -2610,7 +2609,6 @@ function renderSysSettingsSummary(runtime, metrics) {
       ${summaryMetric("可用模型", availableModels, "未被标记为不可用的模型")}
       ${summaryMetric("技能源", skillSources.length, "可同步角色 skill 的来源")}
       ${summaryMetric("可用技能源", usableSkillSources, "已经同步到角色 skill 的来源")}
-      ${summaryMetric("角色叠加", activeOverlays, "项目或任务组级生效定制")}
       ${summaryMetric("共享定义", sharedDefinitions.length, "公共语义和契约归属")}
     </div>
     <div class="small muted">查看顺序：先看“技能源”和“模型能力注册”，再看“指令压缩指标”和“共享定义归属”；异常时优先处理 stale 技能源或不可用模型。</div>
@@ -2625,7 +2623,6 @@ function renderSysSettingsActionBoard(runtime, metrics) {
     && Number(roleSkillCount[source.sourceId] || 0) > 0).length;
   const unavailableModels = modelCapabilities.filter((profile) =>
     ["unavailable", "disabled", "retired"].includes(profile.availability)).length;
-  const activeOverlays = (state.roleSkillOverlays || []).filter((item) => item.status === "active").length;
   const sharedDefinitions = instructionState?.sharedDefinitions || [];
   const envelopeCount = (metrics.envelopes || []).length;
   return panel("系统设置操作看板", `
@@ -2655,20 +2652,20 @@ function renderSysSettingsActionBoard(runtime, metrics) {
         action: "看模型"
       })}
       ${jumpModuleCard({
-        title: "角色叠加",
-        metric: `${activeOverlays}`,
-        detail: "项目/任务组级 role skill 定制追踪",
-        panelTitle: "角色技能叠加（改动 agent 能力，只读）",
-        tone: activeOverlays ? "orange" : "gray",
-        action: "看叠加"
-      })}
-      ${jumpModuleCard({
         title: "指令压缩",
-        metric: `${envelopeCount}`,
+        metric: `${metrics.stablePrefixTokens || 0}`,
         detail: "稳定前缀、增量消息和缓存命中目标",
         panelTitle: "指令压缩指标",
         tone: envelopeCount ? "blue" : "gray",
         action: "看指标"
+      })}
+      ${jumpModuleCard({
+        title: "指令信封",
+        metric: `${envelopeCount}`,
+        detail: "接收角色、缓存键、状态与目标 token",
+        panelTitle: "指令信封",
+        tone: envelopeCount ? "blue" : "gray",
+        action: "看信封"
       })}
       ${jumpModuleCard({
         title: "共享定义",
@@ -2691,7 +2688,6 @@ function renderSysSettingsLifecycleGuide(runtime, metrics) {
     && Number(roleSkillCount[source.sourceId] || 0) > 0).length;
   const unavailableModels = modelCapabilities.filter((profile) =>
     ["unavailable", "disabled", "retired"].includes(profile.availability)).length;
-  const activeOverlays = (state.roleSkillOverlays || []).filter((item) => item.status === "active").length;
   const sharedDefinitions = instructionState?.sharedDefinitions || [];
   const envelopeCount = (metrics.envelopes || []).length;
   return panel("系统能力治理流程", `
@@ -2723,36 +2719,28 @@ function renderSysSettingsLifecycleGuide(runtime, metrics) {
         action: "看模型"
       })}
       ${jumpModuleCard({
-        title: "4 角色叠加追踪",
-        metric: `${activeOverlays}`,
-        detail: "系统页只追踪项目/任务组叠加，创建入口回项目设置或任务组详情",
-        panelTitle: "角色技能叠加（改动 agent 能力，只读）",
-        tone: activeOverlays ? "orange" : "gray",
-        action: "看叠加"
-      })}
-      ${projectModuleCard({
-        pageId: "proj-settings",
-        title: "5 项目级定制",
-        metric: "项目",
-        detail: "仓库、规则、角色 Skill 定制和任务组覆盖回项目空间处理",
-        tone: "blue",
-        action: "去项目设置"
-      })}
-      ${projectModuleCard({
-        pageId: "proj-agents",
-        title: "6 Agent 注册",
-        metric: "项目",
-        detail: "系统设置不签发加入令牌；注册脚本只在项目的“注册运行节点”生成",
-        tone: "blue",
-        action: "去注册"
+        title: "4 指令效率",
+        metric: `${metrics.stablePrefixTokens || 0}`,
+        detail: "稳定前缀、增量消息和缓存命中目标",
+        panelTitle: "指令压缩指标",
+        tone: metrics.stablePrefixTokens ? "blue" : "gray",
+        action: "看指标"
       })}
       ${jumpModuleCard({
-        title: "7 压缩与定义",
-        metric: `${envelopeCount}/${sharedDefinitions.length}`,
-        detail: "指令压缩指标和共享定义用于控制 token、缓存命中和公共语义归属",
-        panelTitle: "指令压缩指标",
-        tone: envelopeCount || sharedDefinitions.length ? "blue" : "gray",
-        action: "看指标"
+        title: "5 指令信封",
+        metric: `${envelopeCount}`,
+        detail: "固定 DISPATCH 信封、接收角色、缓存键和目标 token",
+        panelTitle: "指令信封",
+        tone: envelopeCount ? "blue" : "gray",
+        action: "看信封"
+      })}
+      ${jumpModuleCard({
+        title: "6 共享定义",
+        metric: `${sharedDefinitions.length}`,
+        detail: "跨子系统公共语义、契约和产出归属",
+        panelTitle: "共享定义归属",
+        tone: sharedDefinitions.length ? "blue" : "gray",
+        action: "看定义"
       })}
     </div>
     <div class="small muted">系统设置是全局能力治理面板：集中 MCP、模型能力、技能源和公共定义在服务端统一维护；项目执行分别进入仓库凭据、Agent 档案、运行节点、任务组和项目监控。</div>

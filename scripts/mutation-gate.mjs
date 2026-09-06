@@ -13241,12 +13241,20 @@ const MUTATIONS = [
     expect: "legacy project roles pane migrates"
   },
   {
-    name: "指令效率与共享定义必须拆成两个系统能力页面",
+    name: "指令效率、指令信封与共享定义必须拆成三个系统能力页面",
     file: "apps/control-plane-ui/public/modules/workspaces.js",
     gate: "console",
-    from: 'pane("instruction-efficiency", "指令效率", ["指令压缩指标", "指令信封"]), pane("definitions", "共享定义", ["共享定义归属"])',
+    from: 'pane("instruction-efficiency", "指令效率", ["指令压缩指标"]), pane("envelopes", "指令信封", ["指令信封"]), pane("definitions", "共享定义", ["共享定义归属"])',
     to: 'pane("protocol", "调度协议", ["指令压缩指标", "指令信封", "共享定义归属"])',
-    expect: "必须是两个独立系统能力页面"
+    expect: "必须是三个独立系统能力页面"
+  },
+  {
+    name: "指令信封必须有独立系统菜单入口",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    leaf("sys-settings", "envelopes", "指令信封", "稳定派发信封、缓存键和目标 token"),',
+    to: "",
+    expect: "指令信封"
   },
   {
     name: "共享定义必须有独立系统菜单入口",
@@ -13302,6 +13310,14 @@ const MUTATIONS = [
     gate: "console",
     from: "  return [\n    renderSysSettingsSummary(runtime, metrics),",
     to: "  return [\n    ...(state.roleSkillOverlays || []).map((item) => `<div>${item.roleSkillRef} 禁掉 ${(item.patch?.forbiddenCapabilityAdds || []).join('、')}</div>`),\n    renderSysSettingsSummary(runtime, metrics),",
+    expect: "不得跨项目展示用户侧角色 Skill 叠加"
+  },
+  {
+    name: "系统设置不得汇总项目级角色 Skill 叠加数量",
+    file: APP,
+    gate: "console",
+    from: '      ${summaryMetric("可用技能源", usableSkillSources, "已经同步到角色 skill 的来源")}\n      ${summaryMetric("共享定义", sharedDefinitions.length, "公共语义和契约归属")}',
+    to: '      ${summaryMetric("可用技能源", usableSkillSources, "已经同步到角色 skill 的来源")}\n      ${summaryMetric("角色叠加", (state.roleSkillOverlays || []).length, "项目或任务组级生效定制")}\n      ${summaryMetric("共享定义", sharedDefinitions.length, "公共语义和契约归属")}',
     expect: "不得跨项目展示用户侧角色 Skill 叠加"
   },
   {

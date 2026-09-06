@@ -2683,7 +2683,8 @@ async function runErrorGuidanceCase() {
   const systemNav = renderedNav(systemAccount, null, "sys-overview");
   assertMenuLeaves("系统管理", systemNav, [["sys-overview", "overview", "系统概览"], ["sys-overview", "audit", "审计日志"],
     ["sys-orgs", "list", "组织列表"], ["sys-orgs", "create", "开通组织"], ["sys-settings", "models", "模型能力"],
-    ["sys-settings", "instruction-efficiency", "指令效率"], ["sys-settings", "definitions", "共享定义"]]);
+    ["sys-settings", "instruction-efficiency", "指令效率"], ["sys-settings", "envelopes", "指令信封"],
+    ["sys-settings", "definitions", "共享定义"]]);
   assertMenuLeaves("系统管理说明", systemNav, [["sys-orgs", "help", "组织治理说明"], ["sys-settings", "help", "平台能力说明"]]);
   const systemOnlyShell = renderedNav({...systemAccount, consoleScopes: ["system"]}, "p1", "proj-overview");
   const systemOnlyAside = systemOnlyShell.split("</aside>")[0] || "";
@@ -6171,8 +6172,7 @@ async function runPendingTruncationCase() {
       "没有截断却仍提示这不是全部 —— 常亮的提示等于没有提示");
   }
 
-  // 角色技能叠加会改掉 agent 实际拥有的能力（含禁用某些能力），数据一直下发到系统设置页，
-  // 却从没被渲染过 —— 人看不到某个项目/任务组的角色规则被谁改过、改成了什么。
+  // 角色技能叠加属于项目与任务组治理，系统管理员不应跨组织读取其明细或汇总。
   {
     const withOverlay = {
       schemaVersion: "runtime-state/v1", stateVersion: 1,
@@ -6189,7 +6189,8 @@ async function runPendingTruncationCase() {
     };
     const view = probe.renderSysSettingsWith(withOverlay);
     check("系统设置不得跨项目展示用户侧角色 Skill 叠加",
-      !view.includes("rsk_reviewer") && !view.includes("rsk_old") && !/禁掉 repo_write/u.test(view),
+      !view.includes("rsk_reviewer") && !view.includes("rsk_old") && !/禁掉 repo_write|角色叠加/u.test(view)
+        && !/data-target-menu="proj-settings"|data-target-menu="proj-agents"/u.test(view),
       "系统管理员界面仍在读取项目／任务组 Agent 能力覆盖，系统管理和用户项目管理没有真正分开");
     const instructionState = {
       instructionMetrics: {stablePrefixTokens: 1000, deltaMessageTargetTokens: 200, cacheHitTarget: 0.8,
@@ -6197,13 +6198,15 @@ async function runPendingTruncationCase() {
       sharedDefinitions: [{contractId: "def1", definitionType: "api_contract", canonicalOwnerRole: "orchestrator", producerRole: "agent-runtime", status: "active"}]
     };
     const efficiencyPane = probe.renderSysSettingsInventoryWith(withOverlay, instructionState, ["instruction-efficiency"]);
+    const envelopesPane = probe.renderSysSettingsInventoryWith(withOverlay, instructionState, ["envelopes"]);
     const definitionsPane = probe.renderSysSettingsInventoryWith(withOverlay, instructionState, ["definitions"]);
-    check("指令效率和共享定义归属必须是两个独立系统能力页面",
-      /指令压缩指标/u.test(efficiencyPane) && /指令信封/u.test(efficiencyPane) && /env1/u.test(efficiencyPane)
-        && !/共享定义归属|def1/u.test(efficiencyPane)
+    check("指令效率、指令信封和共享定义必须是三个独立系统能力页面",
+      /指令压缩指标/u.test(efficiencyPane) && !/指令信封|env1|共享定义归属|def1/u.test(efficiencyPane)
+        && /指令信封/u.test(envelopesPane) && /env1/u.test(envelopesPane)
+        && !/指令压缩指标|共享定义归属|def1/u.test(envelopesPane)
         && /共享定义归属/u.test(definitionsPane) && /def1/u.test(definitionsPane)
         && !/指令压缩指标|env1/u.test(definitionsPane),
-      `${String(efficiencyPane).replace(/<[^>]+>/gu, " ").slice(0, 180)} | ${String(definitionsPane).replace(/<[^>]+>/gu, " ").slice(0, 180)}`);
+      `${String(efficiencyPane).replace(/<[^>]+>/gu, " ").slice(0, 150)} | ${String(envelopesPane).replace(/<[^>]+>/gu, " ").slice(0, 150)} | ${String(definitionsPane).replace(/<[^>]+>/gu, " ").slice(0, 150)}`);
   }
 
   // 自治循环连续失败＝此刻没有任何东西在自行推进，而人正在等系统往下走。
