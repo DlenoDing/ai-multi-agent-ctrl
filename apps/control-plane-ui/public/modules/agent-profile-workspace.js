@@ -21,13 +21,13 @@
     return `<form class="form-grid" data-form="agent-create">
       ${projectId ? `<input type="hidden" name="projectId" value="${esc(projectId)}">` : ""}
       <div class="form-row-inline">
-        <div class="form-row"><label>${esc(title)}名称</label><input name="name" placeholder="例如：后端实现 Agent"></div>
-        <div class="form-row"><label>执行角色</label><input name="role" list="agent-role-options" required placeholder="例如：agent-runtime"><datalist id="agent-role-options">${roleOptions}</datalist></div>
-        <div class="form-row"><label>模型偏好</label><input name="model" list="agent-model-options" value="auto_best" placeholder="auto_best 或实际模型 ID"><datalist id="agent-model-options">${modelOptions}</datalist>
+        <div class="form-row"><label>档案名称</label><input name="name" required placeholder="例如：后端实现 Agent"></div>
+        <div class="form-row"><label>执行角色</label><select name="role" required><option value="" selected disabled>请选择执行角色…</option>${roleOptions}</select></div>
+        <div class="form-row"><label>模型偏好</label><select name="model" required>${modelOptions}</select>
           <div class="small muted">自动最优（auto_best）· 自动快速（auto_fast）· 成本优先（cost_aware），或填写模型能力列表中的实际模型 ID。偏好只在满足任务硬约束和模型上限的候选中生效。</div></div>
         <div class="form-row"><label>信任分</label><input name="trustScore" type="number" step="0.01" min="0" max="1" value="0.85"></div>
       </div>
-      <div class="form-row"><label>角色 Skill 引用（可选）</label><input name="roleSkillRef" list="agent-role-skill-options" placeholder="默认使用技能源内匹配角色">${skillOptions}</div>
+      <div class="form-row"><label>角色 Skill 引用（可选）</label><select name="roleSkillRef"><option value="">按执行角色集中解析</option>${skillOptions}</select></div>
       <div class="notice">${projectId ? "项目级 Agent 只服务当前项目；任务组派发时可同时调配当前项目级 Agent 和组织级 Agent。" : "组织级 Agent 可被本组织内项目调配；项目有特殊要求时再在项目页创建项目级 Agent。"}</div>
       <button class="primary-button" type="submit">${esc(title)}</button>
     </form>`;

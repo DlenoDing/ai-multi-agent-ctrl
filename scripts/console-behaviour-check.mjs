@@ -5566,7 +5566,10 @@ async function runPendingTruncationCase() {
       !/data-form="agent-create"/u.test(projectProfiles)
         && /data-menu="proj-agents" data-menu-workspace="create"/u.test(projectProfiles)
         && /data-form="agent-create"/u.test(projectProfileCreate)
-        && /name="projectId" value="p1"/u.test(projectProfileCreate),
+        && /name="projectId" value="p1"/u.test(projectProfileCreate)
+        && /<select name="role" required>/u.test(projectProfileCreate)
+        && /<select name="model" required>/u.test(projectProfileCreate)
+        && /<select name="roleSkillRef">/u.test(projectProfileCreate),
       "项目 Agent 档案列表仍混着创建表单，或新建页面没有绑定当前项目");
     const projectRegisterText = textOf(projectRegister);
     check("项目注册 pane 说明加入令牌和安装命令只显示一次",

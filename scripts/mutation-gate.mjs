@@ -12869,6 +12869,14 @@ const MUTATIONS = [
     expect: "任务组对象页头必须与任务组列表区分"
   },
   {
+    name: "新建 Agent 档案必须使用登记值选择器",
+    file: "apps/control-plane-ui/public/modules/agent-profile-workspace.js",
+    gate: "console",
+    from: '<div class="form-row"><label>执行角色</label><select name="role" required><option value="" selected disabled>请选择执行角色…</option>${roleOptions}</select></div>',
+    to: '<div class="form-row"><label>执行角色</label><input name="role" required></div>',
+    expect: "Agent 档案列表与创建页面必须分开"
+  },
+  {
     name: "旧默认组织管理员错误映射必须自动迁移",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

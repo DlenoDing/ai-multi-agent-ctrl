@@ -3812,7 +3812,7 @@ function modelOptionsHtml() {
 function renderAgentProfileForm({projectId = "", title = "创建 Agent 档案", readOnly = false} = {}) {
   return window.AIMAC_AGENT_PROFILE_WORKSPACE.createForm({projectId, title, readOnly,
     roleOptions: WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join(""),
-    modelOptions: modelOptionsHtml(), skillOptions: roleSkillChoiceList("agent-role-skill-options")});
+    modelOptions: modelOptionsHtml(), skillOptions: roleSkillOptionsHtml()});
 }
 
 function projectAgentCards(nodes, canControlNodes, options = {}) {
@@ -8090,12 +8090,15 @@ function splitHumanList(value) {
   return String(value || "").split(/[,\n，、]/u).map((item) => item.trim()).filter(Boolean);
 }
 
-function roleSkillChoiceList(id = "role-skill-options") {
+function roleSkillOptionsHtml() {
   const skills = state.roleSkillIndex || [];
-  if (!skills.length) return `<datalist id="${esc(id)}"></datalist>`;
-  return `<datalist id="${esc(id)}">${skills.slice(0, 500).map((skill) => `
+  return skills.slice(0, 500).map((skill) => `
     <option value="${esc(skill.roleSkillId)}">${esc([skill.name, skill.category, skill.sourceId].filter(Boolean).join(" · "))}</option>
-  `).join("")}</datalist>`;
+  `).join("");
+}
+
+function roleSkillChoiceList(id = "role-skill-options") {
+  return `<datalist id="${esc(id)}">${roleSkillOptionsHtml()}</datalist>`;
 }
 
 function roleSkillOverlaySummary(overlay) {
