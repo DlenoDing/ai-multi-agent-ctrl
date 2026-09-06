@@ -12006,6 +12006,46 @@ const MUTATIONS = [
     expect: "说明入口统一收进顶栏且不占侧栏"
   },
   {
+    name: "全部功能页必须使用模块标题",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    if (workspace === "help" && !context.taskGroupScope) {\n      const parent = PAGE_META[pageId] || base;\n      return [`${parent[0]}全部功能`, parent[1]];\n    }',
+    to: "",
+    expect: "全部功能页必须使用模块名并展开所属分组"
+  },
+  {
+    name: "全部功能页必须展开所属业务分组",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    const activeGroup = workspace === "help"\n      ? primaryGroups.find((group) => group.items.some((item) => item.id === pageId))?.label\n      : menuGroups(items).find((group) => group.items.some((item) => item.id === pageId && item.workspace === workspace))?.label;',
+    to: '    const activeGroup = menuGroups(items).find((group) => group.items.some((item) => item.id === pageId && item.workspace === workspace))?.label;',
+    expect: "全部功能页必须使用模块名并展开所属分组"
+  },
+  {
+    name: "功能概览操作必须使用定向箭头",
+    file: "apps/control-plane-ui/public/modules/domain-overview-workspace.js",
+    gate: "console",
+    from: '      <button class="icon-button domain-action-open${primary ? " primary" : ""}" ${attributes} title="打开${h.esc(item.label)}" aria-label="打开${h.esc(item.label)}">→</button>',
+    to: '      <button class="${primary ? "primary-button" : "secondary-button"}" ${attributes}>打开</button>',
+    expect: "功能概览操作必须使用有目标名称的箭头"
+  },
+  {
+    name: "桌面宽表单提交按钮必须保持操作尺寸",
+    file: "apps/control-plane-ui/public/styles.css",
+    gate: "console",
+    from: '.form-grid:not([data-form="login"]) > button[type="submit"] { align-self: flex-start; min-width: 168px; }',
+    to: ".form-grid > button[type=\"submit\"] { align-self: stretch; }",
+    expect: "宽表单提交按钮不得拉成整行横幅"
+  },
+  {
+    name: "窄屏对象上下文必须隐藏重复操作",
+    file: "apps/control-plane-ui/public/workspaces.css",
+    gate: "console",
+    from: ".sidebar-object-card > .sidebar-progress, .sidebar-object-counts, .sidebar-object-actions { display: none; }",
+    to: ".sidebar-object-card > .sidebar-progress { display: block; }",
+    expect: "窄屏对象上下文不得重复统计和快捷菜单"
+  },
+  {
     name: "说明页不得恢复重复看板与流程堆叠",
     file: "apps/control-plane-ui/public/modules/domain-overview-workspace.js",
     gate: "console",

@@ -27,6 +27,8 @@
 .domain-action-row > div { display: grid; gap: 2px; min-width: 0; }
 .domain-action-row strong { font-size: 14px; }
 .domain-action-row span { color: var(--text-sub); font-size: 12px; overflow-wrap: anywhere; }
+.domain-action-open { width: 34px; height: 34px; padding: 0; flex: 0 0 34px; font-size: 16px; }
+.domain-action-open.primary { border-color: var(--brand-accent); background: var(--brand-accent); color: #fff; }
 .domain-more { border-top: 1px solid var(--card-border); padding-top: 10px; }
 .domain-more > summary { cursor: pointer; color: var(--text-sub); font-size: 13px; }
 .domain-notes { padding: 12px 14px; border-left: 3px solid #9aa7bd; background: #f7f8fb; color: var(--text-sub); }

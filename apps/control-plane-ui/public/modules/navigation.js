@@ -154,6 +154,10 @@
 
   function contextualMenuMeta(perspective, pageId, workspace, context = {}) {
     const base = menuMeta(perspective, pageId, workspace);
+    if (workspace === "help" && !context.taskGroupScope) {
+      const parent = PAGE_META[pageId] || base;
+      return [`${parent[0]}全部功能`, parent[1]];
+    }
     if (pageId === "sys-orgs" && context.organization) return ["组织详情", "组织状态、初始管理员、配额与子账户构成"];
     if (pageId === "org-members" && context.orgMember) return ["成员详情", "账号生命周期、项目角色和任务组角色"];
     if (pageId === "proj-members" && context.projectMember) return ["项目成员详情", "项目角色、任务组权限和成员移出"];
@@ -166,9 +170,9 @@
     if (!context.taskGroupScope) return base;
     const scopedTitles = {
       tasks: {list: "任务组任务", create: "任务组新建任务"},
-      monitor: {overview: "任务组监控", sessions: "任务组工作会话", dispatches: "任务组 Agent 派发", lanes: "任务组执行载体", models: "任务组模型决策", placements: "任务组会话放置", admissions: "任务组准入决策", events: "任务组实时事件", "node-control": "任务组运行节点", commands: "任务组控制命令", dlq: "任务组死信队列", checkpoints: "任务组检查点证据", quality: "任务组质量门禁", finalizations: "任务组人工定稿", blockers: "任务组阻塞处置", "close-gates": "任务组关闭门禁", help: "任务组监控说明"},
-      review: {pending: "任务组待审核", permissions: "任务组权限审批", approvals: "任务组操作审批", findings: "任务组发现处置", history: "任务组审核历史", inbox: "任务组待办汇总", help: "任务组审核说明"},
-      directives: {compose: "任务组下达指令", history: "任务组指令记录", help: "任务组指令说明"}
+      monitor: {overview: "任务组监控", sessions: "任务组工作会话", dispatches: "任务组 Agent 派发", lanes: "任务组执行载体", models: "任务组模型决策", placements: "任务组会话放置", admissions: "任务组准入决策", events: "任务组实时事件", "node-control": "任务组运行节点", commands: "任务组控制命令", dlq: "任务组死信队列", checkpoints: "任务组检查点证据", quality: "任务组质量门禁", finalizations: "任务组人工定稿", blockers: "任务组阻塞处置", "close-gates": "任务组关闭门禁", help: "任务组监控全部功能"},
+      review: {pending: "任务组待审核", permissions: "任务组权限审批", approvals: "任务组操作审批", findings: "任务组发现处置", history: "任务组审核历史", inbox: "任务组待办汇总", help: "任务组审核全部功能"},
+      directives: {compose: "任务组下达指令", history: "任务组指令记录", help: "任务组指令全部功能"}
     };
     const title = scopedTitles[pageId]?.[workspace];
     return title ? [title, `当前任务组范围 · ${base[1]}`] : base;
@@ -272,8 +276,11 @@
   }
 
   function desktopMenuHtml(items, pageId, workspace, todoFor) {
-    const activeGroup = menuGroups(items).find((group) => group.items.some((item) => item.id === pageId && item.workspace === workspace))?.label;
-    return menuGroups(primaryNavigationItems(items)).map((group) => {
+    const primaryGroups = menuGroups(primaryNavigationItems(items));
+    const activeGroup = workspace === "help"
+      ? primaryGroups.find((group) => group.items.some((item) => item.id === pageId))?.label
+      : menuGroups(items).find((group) => group.items.some((item) => item.id === pageId && item.workspace === workspace))?.label;
+    return primaryGroups.map((group) => {
       const active = group.label === activeGroup;
       return `<details class="nav-group"${active ? " open" : ""}>
         <summary class="nav-group-summary"><span>${esc(group.label)}</span></summary>

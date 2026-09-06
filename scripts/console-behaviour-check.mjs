@@ -2848,6 +2848,25 @@ async function runErrorGuidanceCase() {
       && !/data-menu-workspace="help"/u.test(helpAside)
       && !/class="mobile-function-picker"/u.test(helpHtml),
     "说明入口仍占一整组侧栏，或当前页面没有统一帮助入口");
+  check("全部功能页必须使用模块名并展开所属分组",
+    /<h1>项目设置全部功能<\/h1>/u.test(helpTopbar)
+      && (helpAside.match(/<details class="nav-group" open>/gu) || []).length === 1
+      && /<details class="nav-group" open>[\s\S]*?<span>项目设置<\/span>/u.test(helpAside),
+    "点击当前模块全部功能后标题仍像说明文档，或左侧没有展开用户刚才所在的业务分组");
+  check("功能概览操作必须使用有目标名称的箭头",
+    /class="icon-button domain-action-open primary"[^>]*aria-label="打开仓库凭据"[^>]*>→<\/button>/u.test(helpHtml)
+      && !/>打开<\/button>/u.test(helpHtml),
+    "每一行都重复一个无法区分目标的“打开”按钮，扫描噪声高且辅助技术不知道要打开什么");
+  const clarityMainStyles = readConsoleSource("styles.css");
+  const clarityWorkspaceStyles = readConsoleSource("workspaces.css");
+  check("宽表单提交按钮不得拉成整行横幅",
+    clarityMainStyles.includes('.form-grid:not([data-form="login"]) > button[type="submit"] { align-self: flex-start; min-width: 168px; }')
+      && clarityMainStyles.includes('.form-grid:not([data-form="login"]) > button[type="submit"] { align-self: stretch; width: 100%; }'),
+    "桌面宽表单把一个提交动作拉成整页横幅，或窄屏没有恢复方便点击的整行按钮");
+  check("窄屏对象上下文不得重复统计和快捷菜单",
+    clarityWorkspaceStyles.includes('.sidebar-object-card > .sidebar-progress, .sidebar-object-counts, .sidebar-object-actions { display: none; }')
+      && clarityWorkspaceStyles.includes('grid-template-columns: auto minmax(0, 1fr) auto'),
+    "移动端在正文前重复展示任务组统计和四个快捷按钮，当前对象头占掉过多首屏");
   check("说明页只保留一份功能索引",
     /class="domain-overview"/u.test(helpHtml)
       && !/class="module-card|项目设置操作看板|项目设置职责分区|项目配置生效流程|规则治理概览/u.test(helpHtml),

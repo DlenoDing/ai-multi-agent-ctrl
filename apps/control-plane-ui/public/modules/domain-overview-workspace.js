@@ -62,7 +62,7 @@
       : `data-menu="${h.esc(item.pageId)}" data-menu-workspace="${h.esc(item.workspace)}"`;
     return `<div class="domain-action-row">
       <div><strong>${h.esc(item.label)}</strong>${item.description ? `<span>${h.esc(item.description)}</span>` : ""}</div>
-      <button class="${primary ? "primary-button" : "secondary-button"}" ${attributes}>打开</button>
+      <button class="icon-button domain-action-open${primary ? " primary" : ""}" ${attributes} title="打开${h.esc(item.label)}" aria-label="打开${h.esc(item.label)}">→</button>
     </div>`;
   }
 

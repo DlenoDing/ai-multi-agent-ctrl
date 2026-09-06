@@ -462,6 +462,7 @@ html, body {
 .form-row label { font-size: 13px; color: var(--text-sub); }
 .form-row-inline { display: flex; gap: 10px; flex-wrap: wrap; }
 .form-row-inline .form-row { flex: 1; min-width: 130px; }
+.form-grid:not([data-form="login"]) > button[type="submit"] { align-self: flex-start; min-width: 168px; }
 
 input, select, textarea {
   font-family: inherit;
@@ -762,6 +763,7 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   .topbar-actions > .small.muted { white-space: nowrap; }
   .topbar-actions > .small.warn-text { grid-column: 1 / -1; }
   .topbar-actions button { padding: 6px 8px; }
+  .form-grid:not([data-form="login"]) > button[type="submit"] { align-self: stretch; width: 100%; }
   .project-switch {
     width: 100%;
     display: grid;

@@ -86,7 +86,10 @@
   .sidebar-context-head { margin: 0; }
   .sidebar-object-context > .sidebar-project-state, .sidebar-object-context > .sidebar-progress { display: none; }
   .sidebar-object-card { grid-column: 1 / -1; margin-top: 2px; padding: 7px 0 0; }
-  .sidebar-object-counts { grid-template-columns: repeat(4, auto); justify-content: start; }
+  .sidebar-object-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 5px 8px; }
+  .sidebar-object-card .sidebar-eyebrow { margin: 0; }
+  .sidebar-object-card .sidebar-project-state { margin: 0; }
+  .sidebar-object-card > .sidebar-progress, .sidebar-object-counts, .sidebar-object-actions { display: none; }
   .sidebar-work-card { padding-bottom: 0; }
   .execution-stages { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
