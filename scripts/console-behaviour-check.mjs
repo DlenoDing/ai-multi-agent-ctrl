@@ -2758,8 +2758,8 @@ async function runErrorGuidanceCase() {
   const systemOverviewMain = systemSplitProbe.renderSysOverviewInventoryWith(navState, systemAccount, technicalOverview, ["overview"]);
   const systemDetailsHtml = systemSplitProbe.renderSysOverviewInventoryWith(navState, systemAccount, technicalOverview, ["details"]);
   check("系统概览只显示健康与关键指标，技术明细独立查看",
-    !/服务器信息|资源占用|能耗估算|存储体量|系统服务/u.test(systemOverviewMain)
-      && /服务器信息/u.test(systemDetailsHtml) && /资源占用/u.test(systemDetailsHtml)
+    !/运行指标|服务器信息|资源占用|能耗估算|存储体量|系统服务/u.test(systemOverviewMain)
+      && /运行指标/u.test(systemDetailsHtml) && /服务器信息/u.test(systemDetailsHtml) && /资源占用/u.test(systemDetailsHtml)
       && /存储体量/u.test(systemDetailsHtml) && /系统服务/u.test(systemDetailsHtml),
     "系统概览仍平铺全部技术明细，或技术状态页面没有保留完整信息");
   const systemOnlyShell = renderedNav({...systemAccount, consoleScopes: ["system"]}, "p1", "proj-overview");
@@ -2774,7 +2774,7 @@ async function runErrorGuidanceCase() {
   const systemHub = loadConsole(el("div"), {realI18n: true}).renderSystemManagementHubWith(navState,
     {runtime: {organizations: 1, projects: 1, stateVersion: 1}, at: "2026-09-06T00:00:00Z"});
   check("系统概览聚合卡不得残留进入具体项目的旁路",
-    /租户资源规模/u.test(systemHub) && !/data-menu="proj-overview"|进入项目/u.test(systemHub),
+    /执行节点/u.test(systemHub) && /活跃任务组/u.test(systemHub) && !/data-menu="proj-overview"|进入项目/u.test(systemHub),
     "系统侧栏已隔离项目空间，但系统概览卡仍能绕过边界进入具体项目");
   const joinInstructionSource = loadConsole(el("div"), {realI18n: true}).handlerSource("submit");
   check("节点注册弹窗必须说明远程 MCP 客户端由安装器持续维护",
@@ -2798,10 +2798,8 @@ async function runErrorGuidanceCase() {
     ["tg", "list", "任务组"], ["tasks", "list", "任务"], ["proj-members", "list", "项目成员"], ["proj-members", "groups", "任务组权限"],
     ["proj-agents", "profiles", "Agent 档案"], ["proj-agents", "nodes", "运行节点"],
     ["monitor", "overview", "项目监控"], ["monitor", "sessions", "工作会话"], ["monitor", "dispatches", "Agent 派发"],
-    ["monitor", "lanes", "执行载体"], ["monitor", "models", "模型决策"], ["monitor", "placements", "会话放置"], ["monitor", "admissions", "准入决策"],
-    ["monitor", "events", "实时事件"], ["monitor", "node-control", "运行节点"], ["monitor", "commands", "控制命令"],
-    ["monitor", "dlq", "死信队列"], ["monitor", "checkpoints", "检查点证据"], ["monitor", "quality", "质量门禁"],
-    ["monitor", "finalizations", "人工定稿"], ["monitor", "blockers", "阻塞处置"], ["monitor", "close-gates", "关闭门禁"], ["review", "pending", "待我审核"],
+    ["monitor", "events", "实时事件"], ["monitor", "node-control", "运行节点"], ["monitor", "quality", "质量门禁"],
+    ["monitor", "blockers", "阻塞处置"], ["monitor", "close-gates", "关闭门禁"], ["review", "pending", "待我审核"],
     ["review", "permissions", "权限审批"], ["review", "approvals", "操作审批"], ["review", "findings", "发现处置"],
     ["directives", "compose", "下达指令"], ["proj-settings", "repositories", "仓库凭据"],
     ["proj-settings", "baseline", "基线资料"], ["proj-settings", "default-roles", "默认角色"],
@@ -2811,6 +2809,9 @@ async function runErrorGuidanceCase() {
   check("项目侧栏不把创建、注册和说明当成日常功能",
     !/data-menu-workspace="create"|data-menu-workspace="add"|data-menu-workspace="grant-group"|data-menu-workspace="register"|data-menu-workspace="help"/u.test(projectNav),
     "项目侧栏仍同时铺开低频动作和说明入口");
+  check("低频执行诊断只在功能概览按需展开",
+    !/data-menu="monitor" data-menu-workspace="(?:lanes|models|placements|admissions|commands|dlq|checkpoints|finalizations)"/u.test(projectNav),
+    "模型、放置、准入、死信等低频诊断仍常驻侧栏");
   check("项目管理侧栏顺序要贴合执行路径",
     projectMenuOrder.every(([pageId, workspace], index) => index === 0
       || projectNav.indexOf(`data-menu="${pageId}" data-menu-workspace="${workspace}"`)
@@ -2824,8 +2825,8 @@ async function runErrorGuidanceCase() {
       && projectNav.indexOf("执行监控") < projectNav.indexOf('data-menu="monitor" data-menu-workspace="overview"')
       && projectNav.indexOf("节点与控制") < projectNav.indexOf('data-menu="monitor" data-menu-workspace="node-control"')
       && projectNav.indexOf("节点与控制") > projectNav.indexOf('data-menu="monitor" data-menu-workspace="events"')
-      && projectNav.indexOf("验收与收口") < projectNav.indexOf('data-menu="monitor" data-menu-workspace="checkpoints"')
-      && projectNav.indexOf("验收与收口") > projectNav.indexOf('data-menu="monitor" data-menu-workspace="dlq"')
+      && projectNav.indexOf("验收与收口") < projectNav.indexOf('data-menu="monitor" data-menu-workspace="quality"')
+      && projectNav.indexOf("验收与收口") > projectNav.indexOf('data-menu="monitor" data-menu-workspace="node-control"')
       && projectNav.indexOf("人工介入") < projectNav.indexOf('data-menu="review"')
       && projectNav.indexOf("人工介入") < projectNav.indexOf('data-menu="directives"')
       && projectNav.indexOf("人工介入") > projectNav.indexOf('data-menu="monitor" data-menu-workspace="close-gates"')
@@ -2864,6 +2865,13 @@ async function runErrorGuidanceCase() {
         return expected.test(String(root.innerHTML || ""));
       }),
     "说明页虽然变短，但关键权限边界、安全限制或 AI-native 作用域信息也被一起删掉");
+  const monitorHelpRoot = el("div");
+  loadConsole(monitorHelpRoot, {realI18n: true}).renderFullPagePaneWith(navState, projectAccount, "p1", "monitor", "help");
+  const monitorHelpHtml = String(monitorHelpRoot.innerHTML || "");
+  check("低频诊断虽不常驻侧栏但仍可从功能概览进入",
+    ["lanes", "models", "placements", "admissions", "commands", "dlq", "checkpoints", "finalizations"]
+      .every((workspace) => monitorHelpHtml.includes(`data-menu="monitor" data-menu-workspace="${workspace}"`)),
+    "侧栏变短的同时把低频诊断页面也变成了不可达死路");
   const runPageRoot = el("div");
   loadConsole(runPageRoot, {realI18n: true}).renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "sessions");
   const runPageTopbar = String(runPageRoot.innerHTML || "").split('<header class="topbar">')[1]?.split("</header>")[0] || "";
@@ -3271,6 +3279,9 @@ async function runErrorGuidanceCase() {
   check("桌面侧栏宽度要克制且 width 与 flex-basis 一致",
     sidebarWidth >= 232 && sidebarWidth <= 248 && sidebarWidth === sidebarBasis,
     `侧栏宽度 ${sidebarWidth}px / flex-basis ${sidebarBasis}px：过窄会换行，过宽会挤占主工作区`);
+  check("总览摘要使用页面信息带而不是悬浮大卡片",
+    /\.project-hub\s*\{[\s\S]*background:\s*transparent;[\s\S]*border:\s*0;[\s\S]*border-bottom:\s*1px solid/u.test(styles),
+    "系统、组织和项目总览仍用大白卡包住另一组卡片，视觉层级被重复边框主导");
   check("移动端侧栏仍要覆盖为 100%，不能把桌面宽度带到窄屏",
     /@media \(max-width: 860px\)[\s\S]*\.sidebar \{ width: 100%; flex: none;/u.test(styles),
     "桌面侧栏加宽后，移动端没有明确改回 100%，390px 首屏可能被固定宽度撑开");
@@ -7533,19 +7544,23 @@ await runCodedApiErrorCase();
     "进度条不会再动，而这一页一个字都不说 —— 人会一直等，并且会以为是 agent 在慢慢做");
   check("要说清它们不会有进展、以及去哪儿看",
     /不会有任何进展/.test(stalled)
-      && /运行节点|共享运行节点/.test(stalled)
-      && /刷新自检/.test(stalled)
-      && /恢复目标 Agent 主机|Runtime 心跳|恢复目标 agent 主机\/进程心跳/.test(stalled)
-      && !/项目设置」→「智能体接入/.test(stalled)
-      && !/接入或恢复节点/.test(stalled)
-      && /「项目管理」|联系项目管理员/u.test(stalled),
+      && /data-menu="proj-agents" data-menu-workspace="nodes"/.test(stalled)
+      && /检查运行节点/.test(stalled),
     "只说没节点，不说这对他意味着什么、下一步做什么");
   const neverRegistered = probe.renderTaskGroupsWith(withCells("assigned", {online: 0, total: 0}), account, "p1", null, {});
   check("一个 agent 都没注册时，任务组页出口要直接指向项目注册脚本",
     /注册运行节点/.test(neverRegistered)
-      && /加入令牌/.test(neverRegistered)
+      && /data-menu="proj-agents" data-menu-workspace="register"/.test(neverRegistered)
       && !/接入或恢复节点/.test(neverRegistered),
     "单元已交出去但项目没有节点时还说恢复节点，项目负责人不知道先去哪儿拿脚本");
+  const createRoot = el("div");
+  loadConsole(createRoot, {realI18n: true}).renderFullPagePaneWith(withCells("assigned", {online: 0, total: 2}), account, "p1", "tasks", "create");
+  const createHtml = String(createRoot.innerHTML || "");
+  check("创建任务页只显示一条简短离线提示",
+    (createHtml.match(/当前没有在线 Agent 节点/gu) || []).length === 1
+      && !/执行已停住/u.test(createHtml)
+      && /data-menu="proj-agents" data-menu-workspace="nodes"/u.test(createHtml),
+    "创建表单旁和页面顶部重复显示同一段离线告警，主表单被挤到侧面或下方");
   check("有在线 agent 时不挂这条提示",
     !/没有任何在线的 agent 节点/.test(probe.renderTaskGroupsWith(withCells("assigned", {online: 1, total: 2}), account, "p1", null, {})),
     "有节点在线还提示 —— 常亮的告警等于没有告警");
@@ -8511,7 +8526,7 @@ await runCodedApiErrorCase();
   const overviewHtml = String(overviewRoot.innerHTML || "");
   // 同一屏上另一处分母：「在线 agent 节点 X/Y」原先把已吊销的也算进 Y，
   // 而旁边那格明说"已吊销不计入配额" —— 两个分母各算各的。
-  const fleetCell = overviewHtml.slice(overviewHtml.indexOf("在线 agent 节点"), overviewHtml.indexOf("在线 agent 节点") + 220);
+  const fleetCell = /class="project-score"[\s\S]*?<\/div>/u.exec(overviewHtml)?.[0] || "";
   check("在线节点的分母不含已吊销的（与旁边那格配额同口径）",
     fleetCell.includes(">1/1<") || /1\/1/.test(fleetCell.replace(/<[^>]+>/gu, "")),
     fleetCell.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 120));

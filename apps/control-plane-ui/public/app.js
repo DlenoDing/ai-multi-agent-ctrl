@@ -2249,9 +2249,6 @@ function renderSystemManagementHub(overview) {
   const services = state.runtime?.services || [];
   const healthyServices = services.filter(isServiceHealthy).length;
   const orgCount = overview?.runtime?.organizations ?? (organizations.length || (state.organizations || []).length);
-  const projectCount = overview?.runtime?.projects ?? (state.projects || []).length;
-  const orgAdmins = (state.accounts || []).filter((account) =>
-    account.accountType === "org_admin" && !["retired", "suspended", "disabled"].includes(account.status)).length;
   const mcpToolCount = state.runtime?.mcp?.toolCount ?? "—";
   return spaceHubHtml({
     title: "系统管理总览",
@@ -2265,9 +2262,9 @@ function renderSystemManagementHub(overview) {
     ],
     modules: [
       {pageId: "sys-orgs", title: "组织与配额", metric: `${orgCount}`, detail: "创建组织、调整配额、启停组织", action: "管理组织", tone: "blue"},
-      {pageId: "sys-orgs", title: "默认组织管理员", metric: `${orgAdmins}`, detail: "组织创建时签发初始管理员账号；子账户由组织管理员维护", action: "查看管理员", tone: orgAdmins ? "blue" : "orange"},
-      {pageId: "sys-settings", title: "模型与技能源", metric: `${mcpToolCount}`, detail: "模型能力、技能源同步、指令压缩指标", action: "查看设置", tone: "blue"},
-      {pageId: "sys-orgs", title: "租户资源规模", metric: `${projectCount}`, detail: "各组织项目总量，仅用于平台容量与配额观察", action: "查看组织", tone: projectCount ? "blue" : "gray"}
+      {pageId: "sys-settings", title: "执行节点", metric: `${overview?.runtime?.onlineNodes ?? 0}/${overview?.runtime?.totalNodes ?? 0}`, detail: "当前在线且可见的 Agent 节点", action: "查看运行参数", tone: Number(overview?.runtime?.onlineNodes || 0) ? "green" : "orange"},
+      {pageId: "sys-orgs", title: "活跃任务组", metric: `${overview?.runtime?.activeTaskGroups ?? 0}`, detail: "各组织当前仍在执行的任务组", action: "查看组织", tone: Number(overview?.runtime?.activeTaskGroups || 0) ? "blue" : "gray"},
+      {pageId: "sys-settings", title: "模型与技能源", metric: `${mcpToolCount}`, detail: "模型能力、技能源同步、指令压缩指标", action: "查看设置", tone: "blue"}
     ]
   });
 }
@@ -2288,7 +2285,8 @@ function renderOrgManagementHub(org, projects, openTaskGroups) {
     meta: [
       `组织状态 ${statusBadge("organization", org?.status)}`,
       `项目配额 ${esc(quotaStatus)}`,
-      `活跃任务组 ${esc(openTaskGroups.length)}`
+      `活跃任务组 ${esc(openTaskGroups.length)}`,
+      `受阻 ${esc((openTaskGroups || []).flatMap((taskGroup) => taskGroup.blockers || []).length)}`
     ],
     modules: [
       {pageId: "org-members", title: "成员管理", metric: `${memberCount}`, detail: "启用及待接受邀请的成员；创建、邀请与账号管理", action: "管理成员", tone: memberCount ? "blue" : "gray"},
@@ -3231,7 +3229,10 @@ function renderOrgOverview() {
     ? panel(`配额用量 · ${esc(org.name)}`, `
         <div class="stack">
           <div><div class="small muted">成员</div>${quotaLine(org.usage?.members, org.quotas?.maxMembers)}</div>
-          <div><div class="small muted">项目</div>${quotaLine(org.usage?.projects, org.quotas?.maxProjects)}</div>
+          <div><div class="small muted">项目</div>${quotaLine(org.usage?.projects, org.quotas?.maxProjects)}${(() => {
+            const archived = projects.filter((project) => project.status === "archived").length;
+            return archived ? `<div class="small muted">另有 ${archived} 个已归档，不计入配额</div>` : "";
+          })()}</div>
           <div><div class="small muted">任务组</div>${quotaLine(org.usage?.taskGroups, org.quotas?.maxTaskGroups)}</div>
           <div><div class="small muted">Agent 节点</div>${quotaLine(org.usage?.agents, org.quotas?.maxAgents, org.usage?.agentsReserved)}${(() => {
             // 配额只数没被吊销的，而智能体那张表把已吊销的也列着 —— 不说清楚，人会拿表里的行数
@@ -3296,25 +3297,6 @@ function renderOrgOverview() {
     renderOrgManagementHub(org, projects, openTaskGroups),
     actionPath,
     quotaPanel,
-    panel("组织运行统计", `
-      <div class="metric-grid">
-        <div class="metric"><span>项目总数</span><strong>${projects.length}${countSuffix("projects")}</strong>${(() => {
-          // 这一格数的是全部项目，而同一屏上那格配额排除了已归档的 —— 两个数并排却不同口径，
-          // 人只能以为其中一个错了。与上面"已吊销节点"同一处理：只在真有已归档项目时说一句。
-          const archived = projects.filter((project) => project.status === "archived").length;
-          return archived ? `<div class="small muted">另有 ${archived} 个已归档，不计入配额</div>` : "";
-        })()}</div>
-        <div class="metric"><span>进行中的任务组</span><strong>${openTaskGroups.length}${countSuffix("taskGroups")}</strong></div>
-        <div class="metric"><span>在线 agent 节点</span><strong>${(() => {
-          // 分母原先是"表里所有行"，把已吊销的也算了进去 —— 同一屏上配额那格明说了
-          // "已吊销不计入配额"，两个分母各算各的，人对不上。已吊销的节点不再参与任何事，
-          // 它不该出现在"在线 X/Y"的 Y 里。
-          const alive = (orgAgentNodes || []).filter((node) => node.status !== "revoked");
-          return `${alive.filter((node) => node.status === "online").length}/${alive.length}`;
-        })()}</strong></div>
-        <div class="metric"><span>受阻项</span><strong>${(state.taskGroups || []).flatMap((taskGroup) => taskGroup.blockers || []).length}</strong></div>
-      </div>
-    `),
     panel("项目一览", table(["项目", "状态", "进度", "阶段", "健康度", "操作"], projectRows), {wide: true})
   ].join("");
 }
@@ -5142,7 +5124,8 @@ function renderTaskGroups() {
   ];
 
   if (hasNoVisibleProject()) return panel("任务组", noVisibleProjectNotice(), {wide: true});
-  const notices = cellsWaitingWithNoAgentNotice(groups) + wipCapacityNotice(groups);
+  const creating = workspaces.current("tg")?.id === "create" || (page === "tasks" && workspaces.current("tasks")?.id === "create");
+  const notices = creating ? "" : cellsWaitingWithNoAgentNotice(groups) + wipCapacityNotice(groups);
   const helpers = {row, table, badge, progressLine, fmtTime, languageLabel, t, controls: taskGroupControls, quickControl: taskGroupLifecycleControl,
     stats: taskGroupOperationalStats,
     project: currentProject(), projectLink: window.AIMAC_OBJECT_WORKSPACE.projectLink, groupLink: window.AIMAC_OBJECT_WORKSPACE.groupLink};
@@ -5717,9 +5700,9 @@ function noOnlineAgentCreateNotice() {
   const fleet = (state || {}).fleet;
   if (!fleet || Number(fleet.online || 0) > 0) return "";
   const total = Number(fleet.total || 0);
-  // 措辞刻意与顶部「没有任何在线的 agent 节点」那条区分：那条只在单元已交出去时挂，门按短语分别核。
-  return `<div class="small warn-text">此刻没有 agent 节点在线${total ? `（已注册 ${esc(total)} 个，都不在线或已降级）` : "（一个都还没注册）"}：`
-    + `可以先建，但建好后不会被领走，直到有节点接入并通过自检。${esc(agentNodeManagementPath({registeredNodeCount: total}))}。</div>`;
+  return `<div class="notice warn-notice compact-notice"><strong>当前没有在线 Agent 节点。</strong> 可以先创建，但任务不会被领走。`
+    + `${total ? `已注册 ${esc(total)} 个节点，请先恢复并刷新自检。` : "请先注册运行节点。"}`
+    + `<div class="button-row"><button type="button" class="secondary-button" data-menu="proj-agents" data-menu-workspace="${total ? "nodes" : "register"}">${total ? "检查运行节点" : "注册运行节点"}</button></div></div>`;
 }
 
 function cellsWaitingWithNoAgentNotice(groups) {
@@ -5730,9 +5713,9 @@ function cellsWaitingWithNoAgentNotice(groups) {
     .filter((item) => waitingStatuses.has(item.status)).length;
   if (!waiting) return "";
   const total = Number(fleet.total || 0);
-  return `<div class="notice warn-notice">这个项目有 ${esc(waiting)} 个单元已经交给执行方，`
-    + `而当前【没有任何在线的 agent 节点】${total ? `（已注册 ${esc(total)} 个，此刻都不在线或已降级）` : "（一个都还没注册）"}：`
-    + `它们不会有任何进展，进度条也不会再动。${esc(agentNodeManagementPath({registeredNodeCount: total}))}。</div>`;
+  return `<div class="notice warn-notice compact-notice"><strong>执行已停住：</strong>${esc(waiting)} 个任务正在等待，但【没有任何在线的 agent 节点】，当前不会有任何进展。`
+    + `${total ? `已注册 ${esc(total)} 个节点，请先恢复并刷新自检。` : "请先注册运行节点。"}`
+    + `<div class="button-row"><button type="button" class="secondary-button" data-menu="proj-agents" data-menu-workspace="${total ? "nodes" : "register"}">${total ? "检查运行节点" : "注册运行节点"}</button></div></div>`;
 }
 
 // 在制品额度用满时的出口。这条与"没有在线 agent"那条是两回事，不能合并：

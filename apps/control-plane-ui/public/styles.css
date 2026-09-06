@@ -321,11 +321,12 @@ html, body {
 .metric small { display: block; margin-top: 4px; color: var(--text-sub); line-height: 1.45; }
 
 .project-hub {
-  background: var(--card-bg);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 16px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--card-border);
+  border-radius: 0;
+  box-shadow: none;
+  padding: 4px 0 18px;
   display: grid;
   grid-template-columns: minmax(260px, 0.75fr) minmax(0, 1.25fr);
   gap: 16px;
@@ -512,6 +513,8 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 }
 .notice.error-notice { background: var(--red-bg); color: var(--red); }
 .notice.warn-notice { background: var(--orange-bg); color: var(--orange); }
+.compact-notice { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
+.compact-notice .button-row { margin-left: auto; }
 .danger-summary { margin: 6px 0 0; padding-left: 18px; }
 .danger-summary li { margin: 2px 0; }
 /* 用于正文里需要人停下来看一眼的短句（如"没有任何一方考察过替代路径"）。 */

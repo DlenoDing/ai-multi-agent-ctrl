@@ -18,7 +18,7 @@
       pane("collaboration", "协作记录", ["协作记录*"], "控制与追溯"),
       pane("help", "详情说明", [], "控制与追溯")
     ],
-    "sys-overview": [pane("overview", "运行状态"), pane("details", "技术状态", ["服务器信息", "资源占用", "能耗估算", "存储体量", "系统服务"]), pane("audit", "审计日志", ["审计日志"]), pane("maintenance", "维护操作", ["维护操作"])],
+    "sys-overview": [pane("overview", "运行状态"), pane("details", "技术状态", ["运行指标", "服务器信息", "资源占用", "能耗估算", "存储体量", "系统服务"]), pane("audit", "审计日志", ["审计日志"]), pane("maintenance", "维护操作", ["维护操作"])],
     "sys-orgs": [pane("list", "组织列表", ["组织列表"]), pane("create", "开通组织", ["创建组织"]), pane("help", "职责与配额说明")],
     "sys-settings": [pane("runtime", "运行参数", ["运行参数（只读）"]), pane("models", "模型能力", ["模型能力注册（只读）"]), pane("skills", "技能源", ["技能源"]), pane("instruction-efficiency", "指令效率", ["指令压缩指标"]), pane("envelopes", "指令信封", ["指令信封"]), pane("definitions", "共享定义", ["共享定义归属"]), pane("help", "能力说明", ["系统设置总览"])],
     "org-overview": [pane("overview", "组织概况"), pane("help", "组织操作说明", ["组织操作路径"])],

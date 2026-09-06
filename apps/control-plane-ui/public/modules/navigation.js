@@ -249,7 +249,10 @@
 
   function primaryNavigationItems(items) {
     const actionWorkspaces = new Set(["create", "add", "grant-group", "register", "help"]);
-    return items.filter((item) => item.divider || !actionWorkspaces.has(item.workspace));
+    const advancedMonitorWorkspaces = new Set(["lanes", "models", "placements", "admissions", "commands", "dlq", "checkpoints", "finalizations"]);
+    return items.filter((item) => item.divider
+      || (!actionWorkspaces.has(item.workspace)
+        && !(item.id === "monitor" && advancedMonitorWorkspaces.has(item.workspace))));
   }
 
   function menuGroups(items) {

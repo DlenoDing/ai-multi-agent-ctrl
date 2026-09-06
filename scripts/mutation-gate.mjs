@@ -10151,8 +10151,8 @@ const MUTATIONS = [
     name: "在线节点的分母不许把已吊销的算进去（同屏两个分母各算各的）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: 'const alive = (orgAgentNodes || []).filter((node) => node.status !== "revoked");',
-    to: "const alive = (orgAgentNodes || []);",
+    from: '  const aliveNodes = (orgAgentNodes || []).filter((node) => node.status !== "revoked");\n  const onlineNodes = aliveNodes.filter((node) => node.status === "online").length;\n  const activeProjects = (projects || []).filter((project) => project.status !== "archived").length;',
+    to: '  const aliveNodes = (orgAgentNodes || []);\n  const onlineNodes = aliveNodes.filter((node) => node.status === "online").length;\n  const activeProjects = (projects || []).filter((project) => project.status !== "archived").length;',
     expect: "在线节点的分母不含已吊销的"
   },
   {
@@ -11857,9 +11857,25 @@ const MUTATIONS = [
     name: "创建、注册和说明入口不得挤进日常侧栏",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
-    from: "    return items.filter((item) => item.divider || !actionWorkspaces.has(item.workspace));",
-    to: "    return items;",
+    from: '    const actionWorkspaces = new Set(["create", "add", "grant-group", "register", "help"]);',
+    to: "    const actionWorkspaces = new Set([]);",
     expect: "项目侧栏不把创建、注册和说明当成日常功能"
+  },
+  {
+    name: "低频执行诊断不得挤进日常侧栏",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    const advancedMonitorWorkspaces = new Set(["lanes", "models", "placements", "admissions", "commands", "dlq", "checkpoints", "finalizations"]);',
+    to: "    const advancedMonitorWorkspaces = new Set([]);",
+    expect: "低频执行诊断只在功能概览按需展开"
+  },
+  {
+    name: "低频执行诊断必须保留功能概览入口",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '    : functionalMenu.filter((item) => !item.divider && item.id === page)',
+    to: '    : functionalMenu.filter((item) => !item.divider && item.id === page && item.workspace !== "models")',
+    expect: "低频诊断虽不常驻侧栏但仍可从功能概览进入"
   },
   {
     name: "日常侧栏仍必须按账号权限过滤",
@@ -11961,8 +11977,8 @@ const MUTATIONS = [
     name: "系统技术明细不得重新挤回概览",
     file: "apps/control-plane-ui/public/modules/workspaces.js",
     gate: "console",
-    from: 'pane("details", "技术状态", ["服务器信息", "资源占用", "能耗估算", "存储体量", "系统服务"]),',
-    to: 'pane("overview", "技术状态", ["服务器信息", "资源占用", "能耗估算", "存储体量", "系统服务"]),',
+    from: 'pane("details", "技术状态", ["运行指标", "服务器信息", "资源占用", "能耗估算", "存储体量", "系统服务"]),',
+    to: 'pane("overview", "技术状态", ["运行指标", "服务器信息", "资源占用", "能耗估算", "存储体量", "系统服务"]),',
     expect: "系统概览只显示健康与关键指标"
   },
   {
@@ -11982,12 +11998,28 @@ const MUTATIONS = [
     expect: "任务组对象必须压过父页面上次停留的创建状态"
   },
   {
+    name: "创建任务页不得重复展示全局离线告警",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  const notices = creating ? "" : cellsWaitingWithNoAgentNotice(groups) + wipCapacityNotice(groups);',
+    to: "  const notices = cellsWaitingWithNoAgentNotice(groups) + wipCapacityNotice(groups);",
+    expect: "创建任务页只显示一条简短离线提示"
+  },
+  {
     name: "窄屏宽表不得把名称压成逐字竖排",
     file: "apps/control-plane-ui/public/human-centered.css",
     gate: "console",
     from: "  .data-table { min-width: 760px; table-layout: auto; }",
     to: "  .data-table { min-width: 100px; table-layout: fixed; }",
     expect: "移动端宽表必须在表内滚动"
+  },
+  {
+    name: "总览摘要不得恢复成嵌套悬浮卡片",
+    file: "apps/control-plane-ui/public/styles.css",
+    gate: "console",
+    from: "  background: transparent;\n  border: 0;\n  border-bottom: 1px solid var(--card-border);",
+    to: "  background: var(--card-bg);\n  border: 1px solid var(--card-border);\n  border-bottom: 1px solid var(--card-border);",
+    expect: "总览摘要使用页面信息带而不是悬浮大卡片"
   },
   {
     name: "规则列表必须保留即时筛选入口",
@@ -13134,8 +13166,8 @@ const MUTATIONS = [
     name: "系统概览不得残留绕过边界的项目快捷入口",
     file: APP,
     gate: "console",
-    from: '{pageId: "sys-orgs", title: "租户资源规模", metric: `${projectCount}`, detail: "各组织项目总量，仅用于平台容量与配额观察", action: "查看组织", tone: projectCount ? "blue" : "gray"}',
-    to: '{pageId: "proj-overview", title: "项目空间", metric: `${projectCount}`, detail: "进入当前项目", action: "进入项目", tone: "blue"}',
+    from: '{pageId: "sys-orgs", title: "活跃任务组", metric: `${overview?.runtime?.activeTaskGroups ?? 0}`, detail: "各组织当前仍在执行的任务组", action: "查看组织", tone: Number(overview?.runtime?.activeTaskGroups || 0) ? "blue" : "gray"}',
+    to: '{pageId: "proj-overview", title: "项目空间", metric: `${overview?.runtime?.activeTaskGroups ?? 0}`, detail: "进入当前项目", action: "进入项目", tone: "blue"}',
     expect: "系统概览聚合卡不得残留进入具体项目的旁路"
   },
   {
