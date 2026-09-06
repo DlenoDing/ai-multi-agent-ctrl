@@ -777,7 +777,7 @@ const MUTATIONS = [
     name: "任务组配置继承、Skill 和两类规则必须拆成独立对象栏目",
     file: "apps/control-plane-ui/public/modules/workspaces.js",
     gate: "console",
-    from: '      pane("inheritance", "项目默认值", ["配置继承"], "任务组配置"),\n      pane("skills", "任务组 Skill", ["角色 Skill 定制"], "任务组配置"),\n      pane("system-rules", "任务组系统规则", ["系统规则"], "任务组配置"),\n      pane("business-rules", "任务组业务规则", ["业务规则"], "任务组配置"),',
+    from: '      pane("inheritance", "继承与覆盖", ["配置继承"], "任务组配置"),\n      pane("skills", "任务组 Skill", ["角色 Skill 定制"], "任务组配置"),\n      pane("system-rules", "任务组系统规则", ["系统规则"], "任务组配置"),\n      pane("business-rules", "任务组业务规则", ["业务规则"], "任务组配置"),',
     to: '      pane("config", "任务组角色与规则", ["配置继承", "角色 Skill 定制", "系统规则", "业务规则"], "任务组配置"),',
     expect: "配置继承、Skill、系统规则或业务规则仍混在同一任务组页面"
   },

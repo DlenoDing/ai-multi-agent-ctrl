@@ -8,7 +8,7 @@
       pane("progress", "事项拆解", ["事项清单"], "工作推进"),
       pane("timeline", "执行时间线", ["任务执行时间线"], "工作推进"),
       pane("roles", "任务组角色", ["角色列表"], "任务组配置"),
-      pane("inheritance", "项目默认值", ["配置继承"], "任务组配置"),
+      pane("inheritance", "继承与覆盖", ["配置继承"], "任务组配置"),
       pane("skills", "任务组 Skill", ["角色 Skill 定制"], "任务组配置"),
       pane("system-rules", "任务组系统规则", ["系统规则"], "任务组配置"),
       pane("business-rules", "任务组业务规则", ["业务规则"], "任务组配置"),
