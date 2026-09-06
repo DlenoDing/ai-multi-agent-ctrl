@@ -777,8 +777,8 @@ const MUTATIONS = [
     name: "任务组配置继承、Skill 和两类规则必须拆成独立对象栏目",
     file: "apps/control-plane-ui/public/modules/workspaces.js",
     gate: "console",
-    from: '      pane("inheritance", "配置继承", ["配置继承"], "执行配置"),\n      pane("skills", "Skill 定制", ["角色 Skill 定制"], "执行配置"),\n      pane("system-rules", "系统规则", ["系统规则"], "执行配置"),\n      pane("business-rules", "业务规则", ["业务规则"], "执行配置"),',
-    to: '      pane("config", "角色与规则", ["配置继承", "角色 Skill 定制", "系统规则", "业务规则"], "执行配置"),',
+    from: '      pane("inheritance", "项目默认值", ["配置继承"], "任务组配置"),\n      pane("skills", "任务组 Skill", ["角色 Skill 定制"], "任务组配置"),\n      pane("system-rules", "任务组系统规则", ["系统规则"], "任务组配置"),\n      pane("business-rules", "任务组业务规则", ["业务规则"], "任务组配置"),',
+    to: '      pane("config", "任务组角色与规则", ["配置继承", "角色 Skill 定制", "系统规则", "业务规则"], "任务组配置"),',
     expect: "配置继承、Skill、系统规则或业务规则仍混在同一任务组页面"
   },
   {
@@ -13566,17 +13566,49 @@ const MUTATIONS = [
     name: "项目默认角色与 Skill 定制必须拆成两个治理页面",
     file: "apps/control-plane-ui/public/modules/workspaces.js",
     gate: "console",
-    from: 'pane("default-roles", "默认角色", ["项目默认角色"]), pane("skills", "Skill 定制", ["角色 Skill 定制"])',
-    to: 'pane("roles", "角色与 Skill", ["项目默认角色", "角色 Skill 定制"])',
+    from: 'pane("default-roles", "项目默认角色", ["项目默认角色"]), pane("skills", "项目默认 Skill", ["角色 Skill 定制"])',
+    to: 'pane("roles", "项目默认角色与 Skill", ["项目默认角色", "角色 Skill 定制"])',
     expect: "必须分属两个 pane"
   },
   {
     name: "Skill 定制必须有独立项目治理菜单入口",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
-    from: '    leaf("proj-settings", "skills", "Skill 定制", "项目与任务组的角色能力覆盖"),',
+    from: '    leaf("proj-settings", "skills", "项目默认 Skill", "任务组未覆盖时继承的角色能力"),',
     to: "",
-    expect: "Skill 定制"
+    expect: "项目默认 Skill"
+  },
+  {
+    name: "项目成员与 Agent 必须归入明确资源分组",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    {divider: "成员与 Agent"},',
+    to: '    {divider: "团队与 Agent"},',
+    expect: "项目管理侧栏要按普通管理动作分栏目"
+  },
+  {
+    name: "项目默认配置分组必须明确层级",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    {divider: "项目默认配置"},',
+    to: '    {divider: "项目设置"},',
+    expect: "项目管理侧栏要按普通管理动作分栏目"
+  },
+  {
+    name: "人工审核与指令必须统一归组",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    {divider: "人工审核与指令"},',
+    to: '    {divider: "人工介入"},',
+    expect: "项目管理侧栏要按普通管理动作分栏目"
+  },
+  {
+    name: "任务组快捷入口必须点明当前作用域",
+    file: "apps/control-plane-ui/public/modules/context-navigation.js",
+    gate: "console",
+    from: '          <button data-focus-group="${esc(group.id)}" data-focus-page="tasks">本组任务</button>\n          <button data-focus-group="${esc(group.id)}" data-focus-page="monitor">本组监控</button>\n          <button data-focus-group="${esc(group.id)}" data-focus-page="review">本组审核</button>\n          <button data-focus-group="${esc(group.id)}" data-focus-page="directives">本组指令</button>',
+    to: '          <button data-focus-group="${esc(group.id)}" data-focus-page="tasks">任务</button>\n          <button data-focus-group="${esc(group.id)}" data-focus-page="monitor">监控</button>\n          <button data-focus-group="${esc(group.id)}" data-focus-page="review">审核</button>\n          <button data-focus-group="${esc(group.id)}" data-focus-page="directives">指令</button>',
+    expect: "当前任务组快捷入口必须明确标注本组作用域"
   },
   {
     name: "旧角色与 Skill 地址必须迁移到默认角色",

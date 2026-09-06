@@ -2812,13 +2812,13 @@ async function runErrorGuidanceCase() {
   const projectNav = renderedNav(projectAccount, "p1", "proj-overview");
   const projectMenuOrder = [["proj-overview", "overview", "项目概览"], ["tg", "list", "任务组"], ["tasks", "list", "任务"],
     ["proj-members", "list", "项目成员"], ["proj-members", "groups", "任务组权限"],
-    ["proj-agents", "profiles", "Agent 档案"], ["proj-agents", "nodes", "运行节点"],
+    ["proj-agents", "profiles", "项目 Agent"], ["proj-agents", "nodes", "项目运行节点"],
     ["monitor", "overview", "项目监控"], ["monitor", "dispatches", "Agent 派发"], ["monitor", "quality", "质量门禁"],
     ["monitor", "blockers", "阻塞处置"], ["monitor", "close-gates", "关闭门禁"], ["review", "inbox", "待办汇总"],
-    ["directives", "compose", "下达指令"], ["directives", "history", "指令记录"], ["proj-settings", "repositories", "仓库凭据"],
-    ["proj-settings", "baseline", "基线资料"], ["proj-settings", "default-roles", "默认角色"],
-    ["proj-settings", "skills", "Skill 定制"], ["proj-settings", "system-rules", "系统规则"],
-    ["proj-settings", "business-rules", "业务规则"]];
+    ["directives", "compose", "下达指令"], ["directives", "history", "指令记录"], ["proj-settings", "repositories", "项目仓库"],
+    ["proj-settings", "baseline", "项目基线"], ["proj-settings", "default-roles", "项目默认角色"],
+    ["proj-settings", "skills", "项目默认 Skill"], ["proj-settings", "system-rules", "项目系统规则"],
+    ["proj-settings", "business-rules", "项目业务规则"]];
   assertMenuLeaves("项目管理", projectNav, projectMenuOrder);
   check("项目侧栏不把创建、注册和说明当成日常功能",
     !/data-menu-workspace="create"|data-menu-workspace="add"|data-menu-workspace="grant-group"|data-menu-workspace="register"|data-menu-workspace="help"/u.test(projectNav),
@@ -2830,20 +2830,20 @@ async function runErrorGuidanceCase() {
     projectMenuOrder.every(([pageId, workspace], index) => index === 0
       || projectNav.indexOf(`data-menu="${pageId}" data-menu-workspace="${workspace}"`)
         > projectNav.indexOf(`data-menu="${projectMenuOrder[index - 1][0]}" data-menu-workspace="${projectMenuOrder[index - 1][1]}"`)),
-    "项目菜单顺序没有按日常工作、团队资源、执行监控、人工介入和设置排列");
+    "项目菜单顺序没有按日常工作、成员资源、执行监控、人工审核与项目默认配置排列");
   check("项目管理侧栏要按普通管理动作分栏目",
-    ["日常工作", "团队与 Agent", "执行监控", "验收与收口", "人工介入", "项目设置"]
+    ["日常工作", "成员与 Agent", "执行监控", "验收与收口", "人工审核与指令", "项目默认配置"]
       .every((label) => projectNav.includes(`<span>${label}</span>`))
       && projectNav.indexOf("日常工作") < projectNav.indexOf('data-menu="proj-overview"')
-      && projectNav.indexOf("团队与 Agent") < projectNav.indexOf('data-menu="proj-members"')
+      && projectNav.indexOf("成员与 Agent") < projectNav.indexOf('data-menu="proj-members"')
       && projectNav.indexOf("执行监控") < projectNav.indexOf('data-menu="monitor" data-menu-workspace="overview"')
       && projectNav.indexOf("验收与收口") < projectNav.indexOf('data-menu="monitor" data-menu-workspace="quality"')
       && projectNav.indexOf("验收与收口") > projectNav.indexOf('data-menu="monitor" data-menu-workspace="dispatches"')
-      && projectNav.indexOf("人工介入") < projectNav.indexOf('data-menu="review"')
-      && projectNav.indexOf("人工介入") < projectNav.indexOf('data-menu="directives"')
-      && projectNav.indexOf("人工介入") > projectNav.indexOf('data-menu="monitor" data-menu-workspace="close-gates"')
-      && projectNav.indexOf("项目设置") < projectNav.indexOf('data-menu="proj-settings"')
-      && projectNav.indexOf("项目设置") > projectNav.indexOf('data-menu="directives"'),
+      && projectNav.indexOf("人工审核与指令") < projectNav.indexOf('data-menu="review"')
+      && projectNav.indexOf("人工审核与指令") < projectNav.indexOf('data-menu="directives"')
+      && projectNav.indexOf("人工审核与指令") > projectNav.indexOf('data-menu="monitor" data-menu-workspace="close-gates"')
+      && projectNav.indexOf("项目默认配置") < projectNav.indexOf('data-menu="proj-settings"')
+      && projectNav.indexOf("项目默认配置") > projectNav.indexOf('data-menu="directives"'),
     "项目管理侧栏仍是平铺功能清单，没有把项目总览、准备接入、执行推进、人工控制和治理配置分开");
   check("桌面菜单只展开当前功能所属分组",
     (projectNav.match(/<details class="nav-group" open>/gu) || []).length === 1
@@ -2861,12 +2861,12 @@ async function runErrorGuidanceCase() {
       && !/class="mobile-function-picker"/u.test(helpHtml),
     "说明入口仍占一整组侧栏，或当前页面没有统一帮助入口");
   check("全部功能页必须使用模块名并展开所属分组",
-    /<h1>项目设置全部功能<\/h1>/u.test(helpTopbar)
+    /<h1>项目默认配置全部功能<\/h1>/u.test(helpTopbar)
       && (helpAside.match(/<details class="nav-group" open>/gu) || []).length === 1
-      && /<details class="nav-group" open>[\s\S]*?<span>项目设置<\/span>/u.test(helpAside),
+      && /<details class="nav-group" open>[\s\S]*?<span>项目默认配置<\/span>/u.test(helpAside),
     "点击当前模块全部功能后标题仍像说明文档，或左侧没有展开用户刚才所在的业务分组");
   check("功能概览操作必须使用有目标名称的箭头",
-    /class="icon-button domain-action-open primary"[^>]*aria-label="打开仓库凭据"[^>]*>→<\/button>/u.test(helpHtml)
+    /class="icon-button domain-action-open primary"[^>]*aria-label="打开项目仓库"[^>]*>→<\/button>/u.test(helpHtml)
       && !/>打开<\/button>/u.test(helpHtml),
     "每一行都重复一个无法区分目标的“打开”按钮，扫描噪声高且辅助技术不知道要打开什么");
   const clarityMainStyles = readConsoleSource("styles.css");
@@ -3052,6 +3052,9 @@ async function runErrorGuidanceCase() {
       && /data-focus-page="tasks"/u.test(objectAside) && /data-focus-page="monitor"/u.test(objectAside)
       && /data-focus-page="review"/u.test(objectAside) && /data-focus-page="directives"/u.test(objectAside),
     "进入任务后侧栏没有持续显示上级任务组、当前任务、运行/待审状态和上下文动作");
+  check("当前任务组快捷入口必须明确标注本组作用域",
+    ["本组任务", "本组监控", "本组审核", "本组指令"].every((label) => objectAside.includes(label)),
+    "任务组上下文按钮只写任务、监控、审核、指令，用户无法预判点击后是项目汇总还是当前任务组");
   check("任务详情不重复渲染侧栏已有的任务组跳转",
     !/>任务组监控</u.test(objectHtml) && !/>任务组审核</u.test(objectHtml) && !/>任务指令</u.test(objectHtml),
     "任务组监控、审核和指令已经固定在对象侧栏，任务详情头再次堆一遍会形成两个导航源");
@@ -5409,8 +5412,8 @@ async function runPendingTruncationCase() {
         {taskGroupId: "tg1", progress: {taskGroup: objectGroups.taskGroups[0], workItems: []}, config: {}, roomMessages: []});
       check("任务组详情使用对象局部功能栏而不是丢失入口或恢复横向 Tab",
         /class="object-detail-layout"/u.test(groupShell) && /class="object-section-nav"/u.test(groupShell)
-          && /工作推进/u.test(groupShell) && /执行配置/u.test(groupShell) && /控制与追溯/u.test(groupShell)
-          && /任务列表/u.test(groupShell) && /Skill 定制/u.test(groupShell) && /执行控制/u.test(groupShell),
+          && /工作推进/u.test(groupShell) && /任务组配置/u.test(groupShell) && /执行与审计/u.test(groupShell)
+          && /任务列表/u.test(groupShell) && /任务组 Skill/u.test(groupShell) && /执行控制/u.test(groupShell),
         textOf(groupShell).slice(0, 420));
       const stalePermissionProbe = loadConsole(el("div"), {realI18n: true});
       stalePermissionProbe.renderTaskGroupsWith(objectGroups, orgAdmin, "p1", "tg1", {taskGroupId: "tg1", progress: {taskGroup: {...objectGroups.taskGroups[0], canControl: true}, workItems: []}, config: {}, roomMessages: []}, ["list"]);

@@ -46,10 +46,10 @@
         ${progress(group.progress)}
         <div class="sidebar-object-counts"><span>任务 ${esc(stats.tasks ?? 0)}</span><span>运行 ${esc(stats.runs ?? 0)}</span><span>待审 ${esc(stats.reviews ?? 0)}</span><span>受阻 ${esc(stats.blocked ?? 0)}</span></div>
         <div class="sidebar-object-actions">
-          <button data-focus-group="${esc(group.id)}" data-focus-page="tasks">任务</button>
-          <button data-focus-group="${esc(group.id)}" data-focus-page="monitor">监控</button>
-          <button data-focus-group="${esc(group.id)}" data-focus-page="review">审核</button>
-          <button data-focus-group="${esc(group.id)}" data-focus-page="directives">指令</button>
+          <button data-focus-group="${esc(group.id)}" data-focus-page="tasks">本组任务</button>
+          <button data-focus-group="${esc(group.id)}" data-focus-page="monitor">本组监控</button>
+          <button data-focus-group="${esc(group.id)}" data-focus-page="review">本组审核</button>
+          <button data-focus-group="${esc(group.id)}" data-focus-page="directives">本组指令</button>
         </div>
       </div>` : ""}
       ${work && group ? `<div class="sidebar-object-card sidebar-work-card">
