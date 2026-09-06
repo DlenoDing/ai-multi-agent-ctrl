@@ -354,7 +354,7 @@ function pendingForMe() {
     (state.approvalRequests || []).filter((item) => inScope(item) && ["requested", "quorum_collecting"].includes(item.status)), canReviewGroup, "approvalRequests");
   add("findings", "待你处置的发现项", "review", "decisions",
     (state.findings || []).filter((item) => inScope(item) && !["resolved", "closed", "dismissed", "wontfix"].includes(item.status)), canReviewGroup, "findings");
-  add("qualityGates", "未通过、可由你豁免的质量门", "monitor", "evidence",
+  add("qualityGates", "未通过、可由你豁免的质量门", "monitor", "quality",
     (state.qualityGates || []).filter((item) => inScope(item) && !["passed", "waived"].includes(item.status)), canReviewGroup, "qualityGates");
   add("reviewPlans", "待你收尾的评审计划", "monitor", "barriers",
     (state.reviewPlans || []).filter((item) => inScope(item) && !["closed", "rejected", "superseded"].includes(item.status)), canReviewGroup, "reviewPlans");
@@ -5957,7 +5957,7 @@ function topologyBlockerText(blocker) {
 const CLOSE_GATE_GUIDE = {
   all_required_work_closed: "还有工作项没收口：到任务组页看它们卡在哪，或取消不再需要的那些",
   all_findings_terminal: "到「人工审核」页把未处置的发现项处置掉",
-  all_quality_gates_passed: "到“产出验收”处理未通过的质量门（可豁免，需填理由）",
+  all_quality_gates_passed: "到“质量门禁”处理未通过的质量门（可豁免，需填理由）",
   all_changes_integrated: "还有改动没合入：等执行方推完，或终止对应的执行方案",
   no_pending_permissions: "到「人工审核」页批准或驳回待处理的授权申请",
   no_pending_approvals: "到「人工审核」页处理待处理的审批请求",

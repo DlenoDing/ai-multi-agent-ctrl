@@ -62,7 +62,7 @@
     }
     if (blocked || rechecks) {
       const target = groupStats.find((item) => item.stats.blocked)?.group || activeGroups[0];
-      const workspace = !blocked && evidenceRechecks && !barrierRechecks ? "evidence" : "barriers";
+      const workspace = !blocked && evidenceRechecks && !barrierRechecks ? "quality" : "barriers";
       return {title: "处理执行阻塞", detail: `${blocked + rechecks} 项执行、复核或关闭门问题尚未收口。`,
         action: {kind: "group", page: "monitor", workspace, groupId: target?.id || "", label: "查看阻塞"}, metrics: {groups: groups.length, tasks, runs, reviews: reviews + rechecks}};
     }

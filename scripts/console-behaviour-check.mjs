@@ -2709,7 +2709,8 @@ async function runErrorGuidanceCase() {
     ["monitor", "overview", "项目监控"], ["monitor", "sessions", "工作会话"], ["monitor", "dispatches", "Agent 派发"],
     ["monitor", "lanes", "执行载体"], ["monitor", "models", "模型决策"], ["monitor", "placements", "会话放置"],
     ["monitor", "events", "实时事件"], ["monitor", "node-control", "运行节点"], ["monitor", "commands", "控制命令"],
-    ["monitor", "dlq", "死信队列"], ["monitor", "evidence", "产出验收"], ["monitor", "barriers", "阻塞与门禁"], ["review", "pending", "待我审核"],
+    ["monitor", "dlq", "死信队列"], ["monitor", "checkpoints", "检查点证据"], ["monitor", "quality", "质量门禁"],
+    ["monitor", "finalizations", "人工定稿"], ["monitor", "barriers", "阻塞与门禁"], ["review", "pending", "待我审核"],
     ["directives", "compose", "下达指令"], ["proj-settings", "repositories", "仓库凭据"]];
   assertMenuLeaves("项目管理", projectNav, projectMenuOrder);
   assertMenuLeaves("项目管理说明", projectNav, [["proj-overview", "help", "项目操作说明"], ["proj-members", "help", "项目授权说明"],
@@ -2851,11 +2852,11 @@ async function runErrorGuidanceCase() {
     "移动端仍同时存在横向主菜单和页面栏目选择器，或缺少稳定功能选择器");
   const scopedMonitorHtml = objectProbe.renderObjectShellWith(objectState,
     {accountId: "sys", accountType: "system_admin", permissions: ["system:*"], organizationId: null},
-    {page: "monitor", projectId: "p1", groupId: group.id, workspace: "evidence"});
+    {page: "monitor", projectId: "p1", groupId: group.id, workspace: "quality"});
   const scopedMonitorTopbar = String(scopedMonitorHtml).split('<header class="topbar">')[1]?.split("</header>")[0] || "";
   check("任务组范围的监控页头必须直接显示范围",
-    /<h1>任务组产出验收<\/h1>/u.test(scopedMonitorTopbar) && /当前任务组范围/u.test(scopedMonitorTopbar),
-    "任务组范围仍显示项目级“产出验收”，审核者必须再找范围选择器才能确认对象");
+    /<h1>任务组质量门禁<\/h1>/u.test(scopedMonitorTopbar) && /当前任务组范围/u.test(scopedMonitorTopbar),
+    "任务组范围仍显示项目级“质量门禁”，审核者必须再找范围选择器才能确认对象");
   const groupObjectHtml = objectProbe.renderObjectShellWith(objectState,
     {accountId: "sys", accountType: "system_admin", permissions: ["system:*"], organizationId: null},
     {page: "tg", projectId: "p1", groupId: group.id, workspace: "tasks"});
@@ -2998,12 +2999,12 @@ async function runErrorGuidanceCase() {
     todos: {monitor: {count: 1}, "monitor|evidence": {count: 1}}});
   check("项目当前主操作必须直达准确待办叶子",
     decisionOnly.action.workspace === "decisions" && confirmationOnly.action.workspace === "pending"
-      && mixedReview.action.workspace === "inbox" && qualityOnly.action.workspace === "evidence",
+      && mixedReview.action.workspace === "inbox" && qualityOnly.action.workspace === "quality",
     `主操作仍只按父页面跳转：${JSON.stringify({decisionOnly: decisionOnly.action, confirmationOnly: confirmationOnly.action, mixedReview: mixedReview.action, qualityOnly: qualityOnly.action})}`);
   const exactActionHtml = [decisionOnly, confirmationOnly, mixedReview, qualityOnly]
     .map((decision) => objectProbe.projectCommandHtml(commandProject, decision)).join("");
   check("项目当前主操作按钮必须携带精确 workspace",
-    ["decisions", "pending", "inbox", "evidence"].every((workspace) => exactActionHtml.includes(`data-focus-workspace="${workspace}"`)),
+    ["decisions", "pending", "inbox", "quality"].every((workspace) => exactActionHtml.includes(`data-focus-workspace="${workspace}"`)),
     "项目首页 CTA 没有把精确待办叶子传给任务组导航");
   const commandClickProbe = loadConsole(el("div"), {realI18n: true});
   commandClickProbe.renderFullPageWith({projects: [{...commandProject, organizationId: "org_default"}], taskGroups: [commandGroup],
@@ -3928,7 +3929,7 @@ function runNoVisibleProjectCase() {
       status: "active", settledBy: "u1", settlementJustification: "与本项目现行规范不冲突，采纳为项目规则",
       updatedAt: "2026-08-12T00:00:00.000Z"}];
     const finalizedText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
-      organizationId: "org_default"}, finalizedState, "monitor", "p1", undefined, "evidence");
+      organizationId: "org_default"}, finalizedState, "monitor", "p1", undefined, "finalizations");
     check("人工定稿的理由要看得见（写了没人读＝没留痕）",
       /外部评审方不再参与/u.test(finalizedText) && /与本项目现行规范不冲突/u.test(finalizedText),
       "定稿理由在界面上一个字都找不到 —— 后来的人无从判断当时为什么这么定");
@@ -4067,14 +4068,14 @@ function runNoVisibleProjectCase() {
     finalizedState.findings = [{findingId: "fd1", taskGroupId: "tg1", status: "resolved",
       dispositionClass: "fixed_verified", dispositionedBy: "u1", updatedAt: "2026-08-13T00:00:00.000Z"}];
     const withFindingText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
-      organizationId: "org_default"}, finalizedState, "monitor", "p1", undefined, "evidence");
+      organizationId: "org_default"}, finalizedState, "monitor", "p1", undefined, "finalizations");
     // 抬头写着"这些收尾只能由真人做"。AI 自己处置掉的发现项（没有 dispositionedBy）混进来，
     // 这一屏就在说假话 —— 真实运行态里第一行正是这样：定稿人一栏是个「-」。
     finalizedState.findings = [...finalizedState.findings,
       {findingId: "fd_ai", taskGroupId: "tg1", status: "resolved", dispositionClass: "fixed_verified",
         updatedAt: "2026-08-14T00:00:00.000Z"}];
     const mixedText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
-      organizationId: "org_default"}, finalizedState, "monitor", "p1", undefined, "evidence");
+      organizationId: "org_default"}, finalizedState, "monitor", "p1", undefined, "finalizations");
     check("没有真人在上面的处置不许列进「人工定稿」（那一屏抬头就是这么承诺的）",
       !/fd_ai/u.test(mixedText),
       "AI 自己处置的记录也被列成了人工定稿，定稿人一栏是个「-」");
@@ -5216,6 +5217,19 @@ async function runPendingTruncationCase() {
         monitorControlPanes.every((current) => current.html.includes(`<h2>${current.title}</h2>`)
           && monitorControlPanes.filter((other) => other.pane !== current.pane).every((other) => !current.html.includes(`<h2>${other.title}</h2>`))),
         monitorControlPanes.map((item) => `${item.pane}:${textOf(item.html).slice(0, 80)}`).join(" | "));
+      const evidenceState = {...multiState,
+        checkpoints: [{checkpointId: "cp1", taskGroupId: "tg1", workId: "w1", commitRefs: [], pushRefs: [], artifactManifestRefs: []}],
+        qualityGates: [{gateId: "qg1", taskGroupId: "tg1", workItemId: "w1", gateType: "tests_passed", status: "passed"}],
+        reviewPlans: [{reviewPlanId: "rp1", taskGroupId: "tg1", status: "closed", resolvedBy: "org", resolutionJustification: "复验完成"}]};
+      const monitorEvidencePanes = [
+        ["checkpoints", "检查点（Git 证据）"],
+        ["quality", "质量门禁 / 测试证据"],
+        ["finalizations", "最近的人工定稿"]
+      ].map(([pane, title]) => ({pane, title, html: objectProbe.renderMonitorInventoryWith(evidenceState, orgAdmin, "p1", [pane])}));
+      check("检查点、质量门禁和人工定稿必须是三个独立监控页面",
+        monitorEvidencePanes.every((current) => current.html.includes(`<h2>${current.title}</h2>`)
+          && monitorEvidencePanes.filter((other) => other.pane !== current.pane).every((other) => !current.html.includes(`<h2>${other.title}</h2>`))),
+        monitorEvidencePanes.map((item) => `${item.pane}:${textOf(item.html).slice(0, 80)}`).join(" | "));
       const executionDetailBase = {
         objectType: "dispatch", objectId: "run1", settled: false,
         taskGroup: {id: "tg1", name: "任务组一"}, workItem: {id: "w1", title: "执行任务"},
@@ -6271,14 +6285,14 @@ async function runPendingTruncationCase() {
     const counts = probe.todoCountsWith(routed, admin);
     check("确认、授权审批和质量门必须拆到三个准确叶子",
       counts["review|pending"]?.count === 1 && counts["review|decisions"]?.count === 3
-        && counts["monitor|evidence"]?.count === 1 && !counts["monitor|barriers"]
+        && counts["monitor|quality"]?.count === 1 && !counts["monitor|barriers"]
         && counts.__all?.count === 5,
       `父页面聚合仍污染叶子红点：${JSON.stringify(counts)}`);
     const pendingHtml = probe.renderPendingPanelWith(routed, admin);
     check("每类待办的处置按钮必须携带准确 workspace",
       /data-menu="review" data-menu-workspace="pending"/u.test(pendingHtml)
         && /data-menu="review" data-menu-workspace="decisions"/u.test(pendingHtml)
-        && /data-menu="monitor" data-menu-workspace="evidence"/u.test(pendingHtml),
+        && /data-menu="monitor" data-menu-workspace="quality"/u.test(pendingHtml),
       "待办按钮仍会进入父页面的第一个叶子，而不是记录所在功能");
     const menuRoot = el("div");
     loadConsole(menuRoot, {realI18n: true}).renderFullPagePaneWith(routed, admin, "p1", "review", "inbox");
@@ -6291,7 +6305,7 @@ async function runPendingTruncationCase() {
       /nav-badge">1</u.test(leafButton("review", "pending"))
         && /nav-badge">3</u.test(leafButton("review", "decisions"))
         && /nav-badge">5</u.test(leafButton("review", "inbox"))
-        && /nav-badge">1</u.test(leafButton("monitor", "evidence"))
+        && /nav-badge">1</u.test(leafButton("monitor", "quality"))
         && !/nav-badge/u.test(leafButton("monitor", "barriers")),
       "父页面总数仍被复制到多个叶子菜单，或质量门红点落错功能");
   }

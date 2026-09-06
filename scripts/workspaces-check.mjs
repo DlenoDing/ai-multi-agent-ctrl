@@ -201,6 +201,8 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
     && workspaces.current("monitor")?.id === "sessions");
   check("legacy monitor nodes pane migrates to the runtime-node page", workspaces.select("monitor", "nodes") === true
     && workspaces.current("monitor")?.id === "node-control");
+  check("legacy monitor evidence pane migrates to the checkpoint page", workspaces.select("monitor", "evidence") === true
+    && workspaces.current("monitor")?.id === "checkpoints");
   workspaces.select("monitor", "overview");
 }
 

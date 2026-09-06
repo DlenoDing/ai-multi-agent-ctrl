@@ -13128,6 +13128,38 @@ const MUTATIONS = [
     to: '"monitor:runs": "sessions"',
     expect: "legacy monitor nodes pane migrates"
   },
+  {
+    name: "检查点、质量门和人工定稿必须拆成三个监控页面",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "console",
+    from: 'pane("checkpoints", "检查点证据", ["检查点（Git 证据）"]), pane("quality", "质量门禁", ["质量门禁 / 测试证据"]), pane("finalizations", "人工定稿", ["最近的人工定稿"])',
+    to: 'pane("evidence", "产出验收", ["检查点（Git 证据）", "质量门禁 / 测试证据", "最近的人工定稿"])',
+    expect: "必须是三个独立监控页面"
+  },
+  {
+    name: "质量门禁必须有独立监控菜单入口",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    leaf("monitor", "quality", "质量门禁", "测试结果、质量门和人工豁免"),',
+    to: "",
+    expect: "质量门禁"
+  },
+  {
+    name: "旧产出验收地址必须迁移到检查点证据",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "workspace",
+    from: '"monitor:nodes": "node-control", "monitor:evidence": "checkpoints"',
+    to: '"monitor:nodes": "node-control"',
+    expect: "legacy monitor evidence pane migrates"
+  },
+  {
+    name: "质量门待办必须直达质量门禁页面",
+    file: APP,
+    gate: "console",
+    from: '  add("qualityGates", "未通过、可由你豁免的质量门", "monitor", "quality",',
+    to: '  add("qualityGates", "未通过、可由你豁免的质量门", "monitor", "checkpoints",',
+    expect: "父页面聚合仍污染叶子红点"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

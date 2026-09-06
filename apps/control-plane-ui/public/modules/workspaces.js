@@ -17,12 +17,12 @@
     "proj-settings": [pane("repositories", "仓库与凭据", ["项目基础配置", "规则配置"]), pane("baseline", "基线资料", ["基线资料"]), pane("roles", "角色与 Skill", ["项目默认角色", "角色 Skill 定制"]), pane("system-rules", "系统规则", ["系统规则"]), pane("business-rules", "业务规则", ["业务规则"]), pane("help", "配置说明")],
     tg: [pane("list", "任务组列表", ["任务组列表", "任务组详情"]), pane("create", "创建任务组", ["创建任务组"]), pane("help", "任务组说明", ["任务组总览", "任务组处置看板", "任务组生命周期", "创建工作项"])],
     tasks: [pane("list", "任务工作台", ["任务工作台", "任务详情"]), pane("create", "创建任务", ["创建工作项"])],
-    monitor: [pane("overview", "进度总览", ["执行监控", "执行监控总览", "任务组监控矩阵", "自治控制"]), pane("sessions", "工作会话", ["工作会话"]), pane("dispatches", "Agent 派发", ["智能体派发"]), pane("lanes", "执行载体", ["可复用执行载体（Worker Lane）"]), pane("models", "模型决策", ["模型选择记录"]), pane("placements", "会话放置", ["会话放置记录", "准入决策"]), pane("events", "实时事件", ["实时事件流"]), pane("node-control", "运行节点", ["agent 节点"]), pane("commands", "控制命令", ["控制通道"]), pane("dlq", "死信队列", ["死信队列"]), pane("evidence", "产出与验收", ["检查点（Git 证据）", "质量门禁 / 测试证据", "最近的人工定稿"]), pane("barriers", "阻塞与复核"), pane("help", "监控说明", ["监控处置看板", "实时回送链路"])],
+    monitor: [pane("overview", "进度总览", ["执行监控", "执行监控总览", "任务组监控矩阵", "自治控制"]), pane("sessions", "工作会话", ["工作会话"]), pane("dispatches", "Agent 派发", ["智能体派发"]), pane("lanes", "执行载体", ["可复用执行载体（Worker Lane）"]), pane("models", "模型决策", ["模型选择记录"]), pane("placements", "会话放置", ["会话放置记录", "准入决策"]), pane("events", "实时事件", ["实时事件流"]), pane("node-control", "运行节点", ["agent 节点"]), pane("commands", "控制命令", ["控制通道"]), pane("dlq", "死信队列", ["死信队列"]), pane("checkpoints", "检查点证据", ["检查点（Git 证据）"]), pane("quality", "质量门禁", ["质量门禁 / 测试证据"]), pane("finalizations", "人工定稿", ["最近的人工定稿"]), pane("barriers", "阻塞与复核"), pane("help", "监控说明", ["监控处置看板", "实时回送链路"])],
     review: [pane("pending", "待我审核", ["人工审核", "待人工确认"]), pane("decisions", "授权与复核", ["授权与处置"]), pane("history", "审核历史", ["已答历史"]), pane("inbox", "待办汇总", ["待你处理*"]), pane("help", "审核说明")],
     directives: [pane("compose", "下达指令", ["下达人工指令", "人工指令"]), pane("history", "指令流水", ["指令流水"]), pane("help", "指令说明")]
   };
   const fallback = {"sys-orgs": "help", "sys-settings": "help", "org-members": "help", "org-projects": "help", "org-agents": "help", "proj-agents": "help", "proj-members": "help", "proj-settings": "help", tasks: "discard", monitor: "barriers", review: "help", directives: "help"};
-  const legacyPaneAliases = {"monitor:runs": "sessions", "monitor:nodes": "node-control"};
+  const legacyPaneAliases = {"monitor:runs": "sessions", "monitor:nodes": "node-control", "monitor:evidence": "checkpoints"};
   const storagePrefix = "aimac.workspaces";
   let accountId = "";
   let selections = {};
