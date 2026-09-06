@@ -3040,6 +3040,11 @@ async function runErrorGuidanceCase() {
     /data-action="open-execution-object"[^>]*>查看执行详情<\/button>/u.test(objectHtml)
       && !/历史执行记录|本次执行规则|查看本次执行/u.test(objectHtml),
     "同一次执行仍提供事件、规则和详情三个交叉跳转入口，用户无法预判按钮会跳到哪里");
+  check("任务详情必须把最新执行放在前面并折叠较早历史",
+    /<details class="task-run" open><summary data-run-disclosure="adp_context"/u.test(objectHtml)
+      || /<details class="task-run" open><summary data-run-disclosure=/u.test(objectHtml)
+        && /<details class="task-run-archive"><summary>较早执行尝试/u.test(objectHtml),
+    "执行尝试仍按最早到最新纵向铺满页面，用户必须滚到底部才能看到当前执行");
   check("任务组和任务对象上下文必须跨页面持续显示",
     /当前任务组/u.test(objectAside) && /支付链路任务组/u.test(objectAside)
       && /任务 1/u.test(objectAside) && /运行 1/u.test(objectAside) && /待审 1/u.test(objectAside)

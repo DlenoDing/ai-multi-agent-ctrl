@@ -450,9 +450,21 @@ const helpers = {
     {dispatchId: "first", taskGroupId: "g1", workItemId: "w_new", status: "completed", createdAt: "2026-09-04T00:00:00Z", roleId: "agent-runtime", model: "model-a"}
   ], agentExecutionEvents: [], agents: [], workSessions: []};
   const runHtml = taskWorkbench.render({groups, state: runState, selected: {taskGroupId: "g1", workItemId: "w_new"}, disclosure: {first: true, second: false}, helpers});
-  check("execution trace is chronological and each attempt remains independently addressable", runHtml.indexOf('data-run-disclosure="first"') < runHtml.indexOf('data-run-disclosure="second"'));
-  check("execution trace retains explicit expand/collapse choices", /<details class="task-run" open><summary data-run-disclosure="first"/u.test(runHtml) && /<details class="task-run"><summary data-run-disclosure="second"/u.test(runHtml));
-  const failedRun = runHtml.slice(runHtml.indexOf('data-run-disclosure="second"'));
+  const defaultRunHtml = taskWorkbench.render({groups, state: runState, selected: {taskGroupId: "g1", workItemId: "w_new"}, helpers});
+  check("execution trace shows the latest attempt first while keeping older attempts addressable",
+    runHtml.indexOf('data-run-disclosure="second"') < runHtml.indexOf('class="task-run-archive"')
+      && runHtml.indexOf('class="task-run-archive"') < runHtml.indexOf('data-run-disclosure="first"')
+      && /data-execution-id="first"/u.test(runHtml) && /data-execution-id="second"/u.test(runHtml));
+  check("execution trace opens the latest attempt and folds settled history by default",
+    /<details class="task-run" open><summary data-run-disclosure="second"/u.test(defaultRunHtml)
+      && /<details class="task-run-archive"><summary>较早执行尝试（1 次）<\/summary>/u.test(defaultRunHtml)
+      && /<details class="task-run"><summary data-run-disclosure="first"/u.test(defaultRunHtml), defaultRunHtml.slice(0, 1800));
+  check("execution trace preserves explicit expand and collapse choices inside folded history",
+    /<details class="task-run"><summary data-run-disclosure="second"/u.test(runHtml)
+      && /<details class="task-run-archive" open><summary>较早执行尝试（1 次）<\/summary>/u.test(runHtml)
+      && /<details class="task-run" open><summary data-run-disclosure="first"/u.test(runHtml), runHtml.slice(0, 1800));
+  const latestStart = runHtml.indexOf('data-run-disclosure="second"');
+  const failedRun = runHtml.slice(latestStart, runHtml.indexOf('class="task-run-archive"', latestStart));
   check("a failed-before-start attempt is not marked as executed", !/<li class="done">执行任务<\/li>/u.test(failedRun));
   const queuedRun = taskWorkbench.render({groups, state: {...runState, agentDispatches: [runState.agentDispatches[0]], agentExecutionEvents: [{dispatchId: "second", eventType: "executor_started", sequence: 2, createdAt: "2026-09-05T01:00:00Z"}]}, selected: {taskGroupId: "g1", workItemId: "w_new"}, helpers});
   check("executor evidence marks the execution stage reached even when the run fails later", /<li class="done">执行任务<\/li>/u.test(queuedRun));

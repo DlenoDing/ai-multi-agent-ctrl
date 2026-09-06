@@ -64,6 +64,9 @@
 .task-run { padding: 16px 0; border-top: 1px solid var(--card-border); }
 .task-run:first-child { border-top: 0; }
 .task-run h3 { margin: 0 0 8px; font-size: 14px; }
+.task-run-archive { margin-top: 12px; border-top: 1px solid var(--card-border); padding-top: 12px; }
+.task-run-archive > summary { cursor: pointer; color: var(--text-sub); font-size: 13px; font-weight: 600; }
+.task-run-archive > div { margin-top: 8px; }
 .task-requirements { padding-left: 22px; overflow-wrap: anywhere; }
 .organization-table .data-table { min-width: 840px; }
 .organization-table .org-name { min-width: 130px; }

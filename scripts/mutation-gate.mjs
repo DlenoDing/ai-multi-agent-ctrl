@@ -12342,6 +12342,22 @@ const MUTATIONS = [
     expect: "每次执行只保留一个统一详情入口"
   },
   {
+    name: "较早执行尝试必须保留在折叠历史",
+    file: "apps/control-plane-ui/public/modules/task-workbench.js",
+    gate: "workspace",
+    from: "    const settledEarlier = historyEntries.slice(0, -1).filter((entry) => entry.returned).reverse();",
+    to: "    const settledEarlier = [];",
+    expect: "execution trace shows the latest attempt first while keeping older attempts addressable"
+  },
+  {
+    name: "任务详情必须优先展示最新执行",
+    file: "apps/control-plane-ui/public/modules/task-workbench.js",
+    gate: "workspace",
+    from: '      latestEntry?.html || "",\n      ...activeEarlier.map((entry) => entry.html),\n      settledEarlier.length ? `<details class="task-run-archive"',
+    to: '      settledEarlier.length ? `<details class="task-run-archive"',
+    expect: "execution trace shows the latest attempt first while keeping older attempts addressable"
+  },
+  {
     name: "派发详情控制必须明确绑定当前派发状态",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

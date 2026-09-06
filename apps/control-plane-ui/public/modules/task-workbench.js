@@ -49,7 +49,7 @@
       if (!eventsByRun.has(event.dispatchId)) eventsByRun.set(event.dispatchId, []);
       eventsByRun.get(event.dispatchId).push(event);
     }
-    const histories = runs.map((run, index) => {
+    const historyEntries = runs.map((run, index) => {
       const session = sessions.get(run.sessionId);
       const logical = agents.get(session?.agentId);
       const events = (eventsByRun.get(run.dispatchId) || []).slice().sort((a, b) =>
@@ -58,7 +58,7 @@
       const executed = run.status === "completed" || events.some((event) => ["executor_started", "executor_output", "checkpoint_submitted"].includes(event.eventType));
       const stages = [["建立派发", true], ["节点认领", Boolean(run.assignedNodeId || run.claimedAt)], ["执行任务", executed], ["过程回送", Boolean(events.length || run.lastExecutionEventAt)], ["检查点", run.status === "completed"]];
       const open = disclosure[run.dispatchId] ?? (!returned || index === runs.length - 1);
-      return `<details class="task-run"${open ? " open" : ""}><summary data-run-disclosure="${esc(run.dispatchId)}"><strong>第 ${index + 1} 次执行</strong> ${h.badge(run.status)}
+      return {run, returned, html: `<details class="task-run"${open ? " open" : ""}><summary data-run-disclosure="${esc(run.dispatchId)}"><strong>第 ${index + 1} 次执行</strong> ${h.badge(run.status)}
         <span class="task-run-summary-meta"><span>${esc(h.t(run.roleId || work.ownerRole))}</span><span>${esc(nodeNames.get(run.assignedNodeId) || run.assignedNodeId || "等待认领")}</span><span>${esc(run.model || "未指定模型")}</span><span>${h.fmtTime(run.createdAt)}</span></span></summary>
         <div class="task-run-body"><ol class="execution-stages">${stages.map(([label, done]) => `<li class="${done ? "done" : returned ? "attention" : ""}">${esc(label)}</li>`).join("")}</ol>
         <dl class="kv-list"><dt>运行节点</dt><dd>${esc(nodeNames.get(run.assignedNodeId) || run.assignedNodeId || "等待认领")}</dd>
@@ -73,8 +73,17 @@
         <div class="button-row"><button class="primary-button" data-action="open-execution-object" data-execution-type="dispatch" data-execution-id="${esc(run.dispatchId)}" data-task="${esc(group.id)}">查看执行详情</button></div>
         ${h.dispatchRuleSummaries[run.dispatchId] ? h.ruleSummaryHtml(h.dispatchRuleSummaries[run.dispatchId]) : ""}
         ${events.length ? `<details class="task-run-events"${disclosure[`${run.dispatchId}:events`] ? " open" : ""}><summary data-run-disclosure="${esc(run.dispatchId)}:events">执行记录（${events.length} 条）</summary><ol class="task-requirements">${events.map((event) => `<li><span class="small muted">${h.fmtTime(event.createdAt)}</span> ${esc(h.t(event.eventType))}：${esc(event.summary || "")}</li>`).join("")}</ol></details>` : ""}
-      </div></details>`;
-    }).join("");
+      </div></details>`};
+    });
+    const latestEntry = historyEntries.at(-1) || null;
+    const activeEarlier = historyEntries.slice(0, -1).filter((entry) => !entry.returned).reverse();
+    const settledEarlier = historyEntries.slice(0, -1).filter((entry) => entry.returned).reverse();
+    const settledEarlierOpen = settledEarlier.some((entry) => disclosure[entry.run.dispatchId]);
+    const histories = [
+      latestEntry?.html || "",
+      ...activeEarlier.map((entry) => entry.html),
+      settledEarlier.length ? `<details class="task-run-archive"${settledEarlierOpen ? " open" : ""}><summary>较早执行尝试（${settledEarlier.length} 次）</summary><div>${settledEarlier.map((entry) => entry.html).join("")}</div></details>` : ""
+    ].join("");
     const runIds = new Set(runs.map((run) => run.dispatchId));
     const archivedEvents = (state.agentExecutionEvents || []).filter((event) => event.taskGroupId === group.id
       && event.workItemId === work.id && !runIds.has(event.dispatchId)).slice(-60);
