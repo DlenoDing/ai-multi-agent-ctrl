@@ -2828,7 +2828,8 @@ async function runErrorGuidanceCase() {
   const helpTopbar = String(helpHtml.split('<header class="topbar">')[1] || "").split("</header>")[0] || "";
   check("说明入口统一收进顶栏且不占侧栏",
     /data-workspace-page="proj-settings" data-workspace="help"/u.test(helpTopbar)
-      && !/data-menu-workspace="help"/u.test(helpAside),
+      && !/data-menu-workspace="help"/u.test(helpAside)
+      && !/class="mobile-function-picker"/u.test(helpHtml),
     "说明入口仍占一整组侧栏，或当前页面没有统一帮助入口");
   check("说明页只保留一份功能索引",
     /class="domain-overview"/u.test(helpHtml)
@@ -3215,6 +3216,7 @@ async function runErrorGuidanceCase() {
       && !/<select name="projectId">/u.test(projectMemberAddHtml),
     "项目内授权表单仍允许在同一页切到别的项目，用户以为在当前项目授权但实际可能提交到别处");
   const styles = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/styles.css"), "utf8");
+  const humanCenteredStyles = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/human-centered.css"), "utf8");
   const workspaceStyles = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/workspaces.css"), "utf8");
   check("侧栏空间名要有明确 brand-section 类，不许再靠 .brand span 误伤图形标识",
     /<span class="brand-section">/u.test(systemNav)
@@ -3237,6 +3239,10 @@ async function runErrorGuidanceCase() {
   check("移动端不得隐藏当前任务对象",
     !/@media \(max-width: 860px\)[\s\S]*\.sidebar-work-card \{ display: none; \}/u.test(workspaceStyles),
     "深链接恢复到了任务，但窄屏侧栏把当前任务整块隐藏，用户只看得到上级任务组");
+  check("移动端宽表必须在表内滚动，不能把长名称压成逐字竖排",
+    /@media \(max-width: 860px\)[\s\S]*\.table-scroll \{[^}]*overflow-x:\s*auto/u.test(humanCenteredStyles)
+      && /\.data-table \{\s*min-width:\s*760px/u.test(humanCenteredStyles),
+    "窄屏宽表没有稳定最小宽度或独立滚动容器");
   check("菜单待办徽标不可收缩，长标题或未来新增入口不能把数字压扁",
     /\.nav-badge \{[^}]*flex:\s*0\s+0\s+auto/u.test(styles),
     "待办徽标没有 flex: 0 0 auto，标题行空间紧张时计数可能被压缩");
@@ -6052,6 +6058,10 @@ async function runPendingTruncationCase() {
       /data-action="tg-detail"[^>]*>进入任务组/u.test(writableTg)
         && !/data-focus-page="tasks"|data-focus-page="monitor"/u.test(writableTg),
       "任务组列表行仍同时堆叠详情、任务和监控入口");
+    check("Agent 展示模式使用分段控件而不是第二组主按钮",
+      /class="segmented-control"[^>]*aria-label="节点展示方式"/u.test(writableAgents)
+        && /class="segment-button active"[^>]*data-mode="table"/u.test(writableAgents),
+      "列表/卡片模式仍与注册动作竞争主按钮层级");
 
     const topbarFor = (state, account, pageId = "proj-overview") => {
       const root = el("div");

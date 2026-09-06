@@ -11817,7 +11817,7 @@ const MUTATIONS = [
     name: "窄屏主要功能必须收敛成单一全局选择器",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "  return context + mobileMenuHtml(functionalMenu, page, activeWorkspace) + pageBody;",
+    from: "  return context + (helpActive ? \"\" : mobileMenuHtml(functionalMenu, page, activeWorkspace)) + pageBody;",
     to: "  return context + pageBody;",
     expect: "窄屏主要功能只使用一个全局选择器"
   },
@@ -11956,6 +11956,14 @@ const MUTATIONS = [
     from: '      `<div class="button-row"><button class="primary-button" data-action="tg-detail" data-task="${esc(group.id)}">进入任务组</button>${h.quickControl(group)}</div>`',
     to: '      `<div class="button-row"><button class="primary-button" data-action="tg-detail" data-task="${esc(group.id)}">进入任务组</button>${h.quickControl(group)}${h.groupLink(group, "任务", "tasks")}${h.groupLink(group, "监控", "monitor")}</div>`',
     expect: "任务组列表行只保留进入对象和必要状态控制"
+  },
+  {
+    name: "窄屏宽表不得把名称压成逐字竖排",
+    file: "apps/control-plane-ui/public/human-centered.css",
+    gate: "console",
+    from: "  .data-table { min-width: 760px; table-layout: auto; }",
+    to: "  .data-table { min-width: 100px; table-layout: fixed; }",
+    expect: "移动端宽表必须在表内滚动"
   },
   {
     name: "看板跨叶子跳转必须进入浏览器历史",

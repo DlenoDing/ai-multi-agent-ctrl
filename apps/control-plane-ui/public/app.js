@@ -2043,7 +2043,7 @@ function renderContent() {
       })
     : managementScopeBar() + workspaces.run(page, renderPageContent);
   if (groupDetail) return context + `<div class="object-detail-layout"><aside class="object-section-rail">${workspaces.objectNavigation("group-detail", workspaceOptions())}</aside><div class="object-detail-content">${pageBody}</div></div>`;
-  return context + mobileMenuHtml(functionalMenu, page, activeWorkspace) + pageBody;
+  return context + (helpActive ? "" : mobileMenuHtml(functionalMenu, page, activeWorkspace)) + pageBody;
 }
 
 function menuItemAvailable(item) {
@@ -4023,9 +4023,9 @@ function renderOrgAgents() {
       scopeLabel: `组织共享 · ${organization?.name || selectedProfile.organizationId || "当前组织"}`});
   }
   const toggle = `
-    <div class="button-row">
-      <button class="${agentViewMode === "table" ? "primary-button" : "secondary-button"}" data-action="agent-view-mode" data-mode="table">列表视图</button>
-      <button class="${agentViewMode === "cards" ? "primary-button" : "secondary-button"}" data-action="agent-view-mode" data-mode="cards">卡片视图</button>
+    <div class="segmented-control" role="group" aria-label="节点展示方式">
+      <button class="segment-button${agentViewMode === "table" ? " active" : ""}" data-action="agent-view-mode" data-mode="table">列表</button>
+      <button class="segment-button${agentViewMode === "cards" ? " active" : ""}" data-action="agent-view-mode" data-mode="cards">卡片</button>
     </div>
   `;
   let bodyHtml;
@@ -4206,9 +4206,9 @@ function renderProjectAgents() {
   const canControlNodes = hasPerm("agent:activate");
   const preferOrgGovernance = perspectiveOf(currentAccount) === "org";
   const toggle = `
-    <div class="button-row">
-      <button class="${agentViewMode === "table" ? "primary-button" : "secondary-button"}" data-action="agent-view-mode" data-mode="table">列表视图</button>
-      <button class="${agentViewMode === "cards" ? "primary-button" : "secondary-button"}" data-action="agent-view-mode" data-mode="cards">卡片视图</button>
+    <div class="segmented-control" role="group" aria-label="节点展示方式">
+      <button class="segment-button${agentViewMode === "table" ? " active" : ""}" data-action="agent-view-mode" data-mode="table">列表</button>
+      <button class="segment-button${agentViewMode === "cards" ? " active" : ""}" data-action="agent-view-mode" data-mode="cards">卡片</button>
     </div>
   `;
   const nodeRows = nodes.map((node) => {
