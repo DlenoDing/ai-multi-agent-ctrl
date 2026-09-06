@@ -5405,7 +5405,7 @@ function renderTaskGroupDetailBody(taskGroup) {
   const workItemCount = Number(progressData.workItemCount ?? taskGroup.workItemCount ?? (progressData.workItems || taskGroup.workItems || []).length);
   const blockerCount = barrierBlockers.length + advisoryBlockerItems.length + Number(taskGroup.blockersDroppedCount || 0);
   const roomCount = Array.isArray(roomMessages) ? roomMessages.length : null;
-  const detailPathHtml = renderTaskGroupDetailPath({
+  const detailPathHtml = window.AIMAC_TASK_GROUP_INSIGHTS.detailPath({
     analysisCount,
     roleCount,
     configLabel: config ? (config.configSource === "customized" ? "自定义" : "继承") : "未加载",
@@ -5417,7 +5417,7 @@ function renderTaskGroupDetailBody(taskGroup) {
     hasAdmission: Boolean(guard),
     blockerCount,
     roomCount
-  });
+  }, {jumpModuleCard, sectionBlock});
 
   return `
     <div class="stack" style="margin-top:8px;">
@@ -5442,112 +5442,6 @@ function renderTaskGroupDetailBody(taskGroup) {
       ${sectionBlock("协作记录（agent 之间的房间消息）", roomHtml)}
     </div>
   `;
-}
-
-function renderTaskGroupDetailPath(summary) {
-  const roomMetric = summary.roomCount === null ? "不可见" : String(summary.roomCount || 0);
-  const cards = [
-    jumpModuleCard({
-      title: "1 事项清单",
-      metric: String(summary.analysisCount || 0),
-      detail: "目标拆解、执行树和当前进度",
-      panelTitle: "事项清单",
-      tone: summary.analysisCount ? "blue" : "orange",
-      action: "查看"
-    }),
-    jumpModuleCard({
-      title: "2 角色列表",
-      metric: String(summary.roleCount || 0),
-      detail: "本任务组实际参与的 skill 角色",
-      panelTitle: "角色列表",
-      tone: summary.roleCount ? "blue" : "orange",
-      action: "查看"
-    }),
-    jumpModuleCard({
-      title: "3 配置继承",
-      metric: summary.configLabel || "未加载",
-      detail: "配置来源、默认角色、仓库与基线引用",
-      panelTitle: "配置继承",
-      tone: summary.configLabel === "自定义" ? "orange" : "green",
-      action: "查看"
-    }),
-    jumpModuleCard({
-      title: "4 Skill 定制",
-      metric: String(summary.skillCount || 0),
-      detail: "项目继承与任务组特殊角色能力",
-      panelTitle: "角色 Skill 定制",
-      tone: summary.skillCount ? "blue" : "gray",
-      action: "查看"
-    }),
-    jumpModuleCard({
-      title: "5 系统规则",
-      metric: String(summary.systemRuleCount || 0),
-      detail: "安全、流程、证据和 AI-native 纪律",
-      panelTitle: "系统规则",
-      tone: "blue",
-      action: "查看"
-    }),
-    jumpModuleCard({
-      title: "6 业务规则",
-      metric: String(summary.businessRuleCount || 0),
-      detail: "本项目与任务组业务约束",
-      panelTitle: "业务规则",
-      tone: "blue",
-      action: "查看"
-    }),
-    jumpModuleCard({
-      title: "7 执行控制",
-      metric: summary.canControl ? "可控" : "只读",
-      detail: "暂停、恢复、评审和统一语言策略",
-      panelTitle: "执行控制",
-      tone: summary.canControl ? "blue" : "gray",
-      action: "查看"
-    }),
-    jumpModuleCard({
-      title: "8 工作项",
-      metric: String(summary.workItemCount || 0),
-      detail: "执行单元、模型、派发和实时事件入口",
-      panelTitle: "工作项",
-      tone: summary.workItemCount ? "blue" : "orange",
-      action: "查看"
-    }),
-    jumpModuleCard({
-      title: "9 准入与阻断",
-      metric: summary.hasAdmission ? "已计算" : "待编排",
-      detail: "可执行、等待、真实阻断和整体阻断规则",
-      panelTitle: "准入与阻断分类",
-      tone: summary.hasAdmission ? "green" : "orange",
-      action: "查看"
-    }),
-    jumpModuleCard({
-      title: "10 阻塞",
-      metric: String(summary.blockerCount || 0),
-      detail: "关闭门禁、提示阻塞和下一步处置",
-      panelTitle: "阻塞",
-      tone: summary.blockerCount ? "red" : "green",
-      action: "查看"
-    }),
-    jumpModuleCard({
-      title: "11 任务时间线",
-      metric: "倒序",
-      detail: "任务、模型、会话、派发、事件和 Git 证据",
-      panelTitle: "任务执行时间线",
-      tone: "blue",
-      action: "查看"
-    }),
-    jumpModuleCard({
-      title: "12 协作记录",
-      metric: roomMetric,
-      detail: "agent 房间消息和过程追溯",
-      panelTitle: "协作记录（agent 之间的房间消息）",
-      tone: summary.roomCount === null ? "orange" : "blue",
-      action: "查看"
-    })
-  ].join("");
-  return sectionBlock("任务组详情阅读路径", `
-    <div class="module-grid action-grid">${cards}</div>
-    <div class="small muted">按实际问题进入对应栏目：先确认拆解和参与角色，再看继承、Skill、规则、控制、阻塞、任务时间线和协作过程。</div>
-  `);
 }
 
 // 决策类下拉：默认必须是"尚未选择"。
