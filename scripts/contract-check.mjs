@@ -6474,6 +6474,7 @@ function verifyAgentGatewayContracts(output) {
     output.push("Agent join token allowed maxUses greater than one");
   } catch {}
   if (!issued.installCommand.includes("curl -fsSL 'https://control.example.test/install-agent.sh' | sh -s --")) output.push("Agent join token did not return a server-hosted installer command");
+  if (!issued.installCommand.includes("--configure-global-clients") || !issued.verifiedInstallCommand.includes("--configure-global-clients")) output.push("Agent join token commands do not explicitly enable persistent remote MCP client configuration");
   if (issued.installCommand.includes("--join-token ") || issued.verifiedInstallCommand.includes("--join-token ") || !issued.installCommand.includes("--join-token-file") || !issued.verifiedInstallCommand.includes("--join-token-file")) {
     output.push("Agent join token installer command exposed token in argv instead of using --join-token-file");
   }

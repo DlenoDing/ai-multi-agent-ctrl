@@ -228,6 +228,7 @@ try {
     body: {projectId: "prj_control_plane", nodeName: "doctor-node", allowedRoles: ["*"], ttlSeconds: 1800, maxUses: 1}
   });
   if (!joinResult.installCommand.includes(`${baseUrl}/install-agent.sh`)) throw new Error("join token did not produce a server-hosted install command");
+  if (!joinResult.installCommand.includes("--configure-global-clients") || !joinResult.verifiedInstallCommand.includes("--configure-global-clients")) throw new Error("join token command did not explicitly enable persistent remote MCP client configuration");
   if (joinResult.installCommand.includes("--join-token ") || !joinResult.installCommand.includes("--join-token-file")) throw new Error("join token install command exposed token in argv");
   if (!joinResult.verifiedInstallCommand.includes("安装脚本校验失败")) throw new Error("带校验的安装命令在校验失败时没有一句人话 —— 人只看到 sha256sum 的 FAILED，不知道该不该继续");
   if (!joinResult.verifiedInstallCommand.includes("( if command -v sha256sum") || !joinResult.verifiedInstallCommand.includes("elif command -v shasum")) throw new Error("join token did not produce a portable checksum-verified install command");

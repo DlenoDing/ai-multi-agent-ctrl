@@ -12985,6 +12985,14 @@ const MUTATIONS = [
     expect: "configure remote MCP clients by default"
   },
   {
+    name: "Agent 加入命令必须显式启用持续远程 MCP 配置",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyAgentGatewayContracts",
+    from: '${nodeNameArg} --configure-global-clients`;\n  const verifiedTokenFileCommand',
+    to: '${nodeNameArg}`;\n  const verifiedTokenFileCommand',
+    expect: "do not explicitly enable persistent remote MCP client configuration"
+  },
+  {
     name: "Agent 节点档案必须探测 Cursor 客户端",
     file: "apps/agent-runtime/runtime.mjs",
     gate: "agent",
