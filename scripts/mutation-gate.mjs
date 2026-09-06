@@ -13283,12 +13283,12 @@ const MUTATIONS = [
     expect: "必须是六个独立监控页面"
   },
   {
-    name: "模型决策必须有独立监控菜单入口",
+    name: "模型决策必须保留独立监控入口",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
     from: '    leaf("monitor", "models", "模型决策", "实际模型、Agent 偏好和选型理由"),',
     to: "",
-    expect: "模型决策"
+    expect: "低频诊断虽不常驻侧栏但仍可从功能概览进入"
   },
   {
     name: "旧执行会话地址必须迁移到工作会话",
@@ -13315,12 +13315,12 @@ const MUTATIONS = [
     expect: "必须是三个独立监控页面"
   },
   {
-    name: "控制命令必须有独立监控菜单入口",
+    name: "控制命令必须保留独立监控入口",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
     from: '    leaf("monitor", "commands", "控制命令", "暂停、恢复、取消和节点 ACK"),',
     to: "",
-    expect: "控制命令"
+    expect: "低频诊断虽不常驻侧栏但仍可从功能概览进入"
   },
   {
     name: "旧节点控制地址必须迁移到运行节点",
