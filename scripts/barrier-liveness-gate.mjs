@@ -72,7 +72,8 @@ const COLLECTION_ENTITY = {
 };
 
 // 全仓被写入过的 status 字面量。与门检查共用同一份提取，避免两处各写一套而慢慢分叉。
-const PRODUCER_SOURCES = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
+const PRODUCER_SOURCES = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/command-bus.mjs",
+  "apps/control-plane-ui/lib/runtime-issue-tracker.mjs", "apps/control-plane-ui/server.mjs",
   "apps/mcp-server/server.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/agent-runtime/runtime.mjs"];
 
 function loadProducedStatuses() {
@@ -97,6 +98,7 @@ const VAR_MACHINES = {
   dispatch: ["AgentDispatch"], session: ["WorkSession"], command: ["Command"], effect: ["CommandEffect"],
   topology: ["ExecutionTopology"], node: ["AgentNode"], taskGroup: ["TaskGroup"], account: ["Account"],
   request: ["PermissionRequest", "ApprovalRequest", "HumanConfirmationRequest", "DerivedTaskRequest"],
+  derivedRequest: ["DerivedTaskRequest"],
   target: ["RepositoryOutputTarget"], repositoryTarget: ["RepositoryOutputTarget"],
   source: ["AgentSkillSource"], lease: ["Lease"], lane: ["WorkerLane"], guard: ["RoleDriftGuard"],
   entry: ["DLQEntry"], directive: ["HumanDirective"], overlay: ["RoleSkillOverlay"], grant: ["TempGrant", "AccessControlGrant"],
@@ -266,8 +268,13 @@ export function checkBarrierLiveness() {
   }
 
   // 全仓实际被写入过的 status 值（含 seed 与测试夹具外的生产代码）。
-  const producerSources = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
-    "apps/mcp-server/server.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/agent-runtime/runtime.mjs"];
+  const producerSources = [...new Set([
+    "apps/control-plane-ui/lib/control-plane-core.mjs",
+    ...[...source.matchAll(/from "\.\/([A-Za-z0-9._-]+\.mjs)"/gu)]
+      .map((match) => `apps/control-plane-ui/lib/${match[1]}`),
+    "apps/control-plane-ui/server.mjs", "apps/mcp-server/server.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/agent-runtime/runtime.mjs"
+  ])];
   const producedStatuses = new Set();
   for (const rel of producerSources) {
     let text = "";
@@ -513,8 +520,10 @@ export function checkNoDeadExports() {
     }
   }
   for (const name of Object.keys(DEAD_EXPORT_ACCEPTED)) {
-    const uses = corpus.match(new RegExp(`(^|[^A-Za-z0-9_.])${name}(?![A-Za-z0-9_])`, "gu")) || [];
-    if (uses.length > 1) {
+    // 工厂 return {fn} 与兼容门面 `export const {fn}` 只是暴露符号，不是产品路径真的调用了它。
+    // 例外只有在出现声明之外的 `fn(...)` 调用时才算过期。
+    const calls = corpus.match(new RegExp(`(^|[^A-Za-z0-9_.])${name}\\s*\\(`, "gu")) || [];
+    if (calls.length > 1) {
       failures.push(`死导出检查: ${name} 已经被接上了，但仍登记在 DEAD_EXPORT_ACCEPTED 里 —— 过期的例外会掩护掉下一个真的死导出`);
     }
   }

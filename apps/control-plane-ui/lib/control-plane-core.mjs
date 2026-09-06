@@ -2535,7 +2535,7 @@ function splitMixedWorkItemIfNeeded(state, taskGroup, workItem) {
   // Conforms to derived-task-request.schema.json. The mixed work item is absorbed in place into an
   // analysis->implementation split (a topology replan); the implementation is linked via its
   // dependsOnWorkItemRefs on the analysis item recorded in createdWorkItemRef.
-  state.derivedTaskRequests.unshift({
+  const derivedRequest = {
     schemaVersion: "derived-task-request/v1",
     requestId: createId("dtr"),
     projectId: taskGroup.projectId,
@@ -2547,14 +2547,30 @@ function splitMixedWorkItemIfNeeded(state, taskGroup, workItem) {
     summary: `混合分析/实现工作项 ${workItem.id} 拆分为分析与实现子项`,
     evidenceRef: `WorkItem:${workItem.id}`,
     actionBasisRef: `decision:mixed-split:${workItem.id}`,
-    status: "absorbed",
+    status: "candidate",
     // 指向真实的人工定稿确认单（原先是自己拼的 decision:mixed-split:<id> 假引用，没有任何外部权威）。
     decisionRecordRef: splitLock.confirmationRef || `decision:mixed-split:${workItem.id}`,
     createdWorkItemRef: analysis.id,
     auditRef: `audit:dtr:${workItem.id}`,
     createdAt: at,
     updatedAt: at
+  };
+  state.derivedTaskRequests.unshift(derivedRequest);
+  recordTransition(state, "DerivedTaskRequest", derivedRequest.requestId, "candidate", "strengthened", "orchestrator", {
+    source_evidence_ref: derivedRequest.evidenceRef,
+    action_basis_ref: derivedRequest.actionBasisRef
   });
+  derivedRequest.status = "strengthened";
+  recordTransition(state, "DerivedTaskRequest", derivedRequest.requestId, "strengthened", "classified", "orchestrator", {
+    classification_decision: "current_absorb",
+    topology_effect_recorded: derivedRequest.topologyEffect
+  });
+  derivedRequest.status = "classified";
+  recordTransition(state, "DerivedTaskRequest", derivedRequest.requestId, "classified", "absorbed", "orchestrator", {
+    current_work_absorbed: `WorkItem:${workItem.id}`,
+    audit_ref: derivedRequest.auditRef
+  });
+  derivedRequest.status = "absorbed";
   state.derivedTaskRequests = capRetainingPredicate(state.derivedTaskRequests, (item) => DERIVED_TASK_REQUEST_PENDING_STATUSES.includes(item.status), 2000);
   appendEvent(state, "derived_task_created", "WorkItem", workItem.id, "orchestrator", {derivedWorkItemRefs: [analysis.id, implementation.id], taskExecutionClass: taskExecution.taskExecutionClass});
   return {derivedWorkItemIds: [analysis.id, implementation.id]};

@@ -6836,6 +6836,14 @@ function verifyAgentGatewayContracts(output) {
     }
     const derived = (mixedState.derivedTaskRequests || []).find((item) => item.sourceRef === "WorkItem:work_mixed_model_split");
     if (derived && !String(derived.decisionRecordRef || "").startsWith("hcr_")) output.push("人工闸门: 拆分派生请求的 decisionRecordRef 未指向真实的人工定稿单");
+    const derivedTransitions = (mixedState.transitionEvidence || [])
+      .filter((item) => item.machine === "DerivedTaskRequest" && item.objectId === derived?.requestId)
+      .map((item) => `${item.from}->${item.to}`);
+    if (!derived || derived.status !== "absorbed"
+      || !["candidate->strengthened", "strengthened->classified", "classified->absorbed"]
+        .every((edge) => derivedTransitions.includes(edge))) {
+      output.push(`人工闸门: 拆分派生请求没有走完候选、强化、分类、吸收状态机（${derivedTransitions.join("、") || "无转移证据"}）`);
+    }
   }
   state.agentDispatches.unshift({
     schemaVersion: "agent-dispatch/v1",
@@ -7843,7 +7851,7 @@ function loadJson(path) {
 // 在这种时候加个 "+"，但它靠每个调用点自己记得传 —— 与 capNotice 当初一模一样的形状
 // （那次是 23 张表里只有 5 张接了）。这里按调用点全量核对。
 function verifyTableFootersAdmitTruncation(output) {
-  const appSource = readFileSync(resolve(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const appSource = consoleProductSource();
   const calls = [];
   let index = 0;
   while ((index = appSource.indexOf("moreText(", index)) !== -1) {
@@ -8801,7 +8809,7 @@ function verifyLockConflictAdmitsTheWreckage(output) {
 // 这类"每个使用点自己记得传"的机制迟早会漏（本仓 23 张表曾经只有 5 张接上）。
 // 今天 18 处全传了，正因为如此才要立刻立个门：没有门的规范一定会漂回去。
 function verifyTruncationHonestyIsWiredAtEveryCallSite(output) {
-  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const app = consoleProductSource();
   const calls = [];
   for (const match of app.matchAll(/moreText\(/gu)) {
     let depth = 0;

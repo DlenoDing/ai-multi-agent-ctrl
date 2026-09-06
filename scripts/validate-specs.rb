@@ -131,6 +131,12 @@ required_runtime_files.each do |path|
   errors << "runtime entrypoint missing: #{path}" unless File.exist?(File.join(ROOT, path))
 end
 
+console_index_text = File.read(File.join(ROOT, "apps/control-plane-ui/public/index.html"))
+console_product_paths = console_index_text.scan(/<script src="\/([^"?]+\.js)(?:\?[^\"]*)?"/).flatten
+  .map { |path| "apps/control-plane-ui/public/#{path}" }
+errors << "控制台产品脚本清单提取失败 —— index.html 与规范门脱节" if console_product_paths.length < 20
+console_product_source = combine_sources(*console_product_paths.map { |path| read_source(path) })
+
 required_npm_scripts = %w[init dev start shell:start mcp:start mcp:doctor agentctl agent:doctor skills:sync contract:check validate doctor docker:build docker:up docker:doctor]
 available_scripts = package_json.fetch("scripts", {})
 missing_npm_scripts = required_npm_scripts.reject { |script_name| available_scripts.key?(script_name) }
@@ -452,7 +458,7 @@ view_server_source = read_source("apps/control-plane-ui/server.mjs")
 dropped_block = view_server_source[/const viewDroppedFields = \{(.*?)\n  \};/m].to_s
 dropped_fields = dropped_block.scan(/"([a-zA-Z]+)"/).flatten.uniq - dropped_block.scan(/^\s{4}([a-zA-Z]+):/).flatten
 errors << "视图字段裁剪表是空的 —— 要么删掉这套机制，要么它已经失效" if dropped_fields.empty?
-console_for_dropped = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
+console_for_dropped = console_product_source
 # 少数字段控制台确实在读，但读的是【另一个来源】给的那份（专用接口），不是视图里这份。
 # 登记要可核：要求那些读取点【全部】带着声明的前缀，只写一句豁免不算数。
 READ_FROM_ANOTHER_SOURCE = {"taskAnalysis" => "progressData"}.freeze
@@ -475,7 +481,7 @@ end
 # moreText(total, shown, field) 的第三个参数决定了"数不全时要不要加 +"。漏传它，
 # 集合被视图截断之后界面照样报一个精确数字 —— 人处置完那几条会以为清空了。
 # 判据：凡是拿 state.<集合>.length 当 total 的调用，都必须把那个集合名传进去。
-console_more_text = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
+console_more_text = console_product_source
 more_text_calls = console_more_text.scan(/moreText\(\(?state\.(\w+)[^)]*\)?\.length,\s*\d+([^)]*)\)/)
 errors << "moreText 的调用一处都没提取到 —— 本条在空转" if more_text_calls.length < 2
 # 例外要登记并写明理由：auditLog 的 80 条是 audit() 自己的内存环（不是视图截断），
@@ -527,7 +533,7 @@ end
 view_block = File.read(File.join(ROOT, "apps/control-plane-ui/server.mjs"))[/const viewFields = \{(.*?)\n  \};/m].to_s
 view_collections = view_block.scan(/"([a-zA-Z]+)"/).flatten.uniq
 errors << "视图字段一个都没提取到 —— 本条在空转" if view_collections.length < 20
-console_source = read_source("apps/control-plane-ui/public/app.js")
+console_source = console_product_source
 unread_by_console = view_collections.reject { |name| console_source.include?("state.#{name}") || console_source.include?("#{name}:") }
 unless unread_by_console.empty?
   errors << "这些集合下发给了控制台却没有一处读：#{unread_by_console.sort.join(", ")} —— " \
@@ -558,6 +564,9 @@ end
 
 server_source = read_source("apps/control-plane-ui/server.mjs")
 core_source = read_source("apps/control-plane-ui/lib/control-plane-core.mjs")
+command_bus_source = read_source("apps/control-plane-ui/lib/command-bus.mjs")
+runtime_issue_tracker_source = read_source("apps/control-plane-ui/lib/runtime-issue-tracker.mjs")
+core_product_source = combine_sources(core_source, command_bus_source, runtime_issue_tracker_source)
 git_utils_source = read_source("apps/control-plane-ui/lib/git-utils.mjs")
 path_policy_source = read_source("apps/control-plane-ui/lib/path-policy.mjs")
 idempotency_records_source = read_source("apps/control-plane-ui/lib/idempotency-records.mjs")
@@ -594,12 +603,12 @@ mcp_source = read_source("apps/mcp-server/server.mjs")
 # Gap 2A lifted the pure (state,args) governance/room/lease mutators into control-plane-core.mjs so the
 # MCP surface and future HTTP/runtime/command-bus callers share one implementation. Source-presence
 # assertions for those mutators therefore accept the definition in either the MCP server or shared core.
-mcp_shared_governance_source = combine_sources(mcp_source, core_source)
+mcp_shared_governance_source = combine_sources(mcp_source, core_product_source)
 mcp_doctor_source = read_source("scripts/doctor-mcp.mjs")
 agent_doctor_source = read_source("scripts/doctor-agent-remote.mjs")
 agent_runtime_source = read_source("apps/agent-runtime/runtime.mjs")
 agent_gateway_source = read_source("apps/control-plane-ui/lib/agent-gateway.mjs")
-public_app_source = read_source("apps/control-plane-ui/public/app.js")
+public_app_source = console_product_source
 agent_installer_source = read_source("scripts/install-agent.sh")
 mcp_register_source = read_source("scripts/register-mcp-client.mjs")
 skill_sync_source = read_source("scripts/sync-agent-skills.mjs")
@@ -837,7 +846,7 @@ errors << "Task contracts of active dispatches must not be evicted" unless core_
 errors << "buildTaskContract must be idempotent against an existing active dispatch" unless core_source.include?("const existingDispatch = (state.agentDispatches || []).find(") && core_source.include?("if (existingContract) return existingContract;") && contract_check_source.include?("buildTaskContract idempotency")
 errors << "close-barrier all_commands_terminal must match the exact task-group subject" unless core_source.include?("command.subject === `TaskGroup:${taskGroupId}`")
 errors << "Postgres central+shards read must be transactionally consistent" unless pg_pool_worker_source.include?("readStateWithShards") && pg_pool_worker_source.include?("ISOLATION LEVEL REPEATABLE READ") && pg_sync_store_source.include?("pgReadStateWithShards") && state_store_source.include?("pgReadStateWithShards()")
-app_js_source = read_source("apps/control-plane-ui/public/app.js")
+app_js_source = console_product_source
 nav_module_source = read_source("apps/control-plane-ui/public/modules/navigation.js")
 label_module_source = read_source("apps/control-plane-ui/public/modules/labels.js")
 ui_config_source = read_source("apps/control-plane-ui/public/modules/ui-config.js")
@@ -1303,11 +1312,11 @@ errors << "runtime_json CAS must fail closed when the central state is absent" u
 # 这条原先把【旧写法的原文】写死在门里（state.X = state.X.slice(0, 2000)）——
 # 四处裁剪抽成一个通用助手之后它当场红了，而代码是变好了不是变坏了。
 # 改成认意图：这三个集合必须以 2000 为上限被裁，写法不限。
-errors << "non-barrier central collections must be bounded" unless ["runtimeIssueSamples", "runtimeIssuePatterns", "roleSkillOverlays"].all? { |c| core_source.match?(/state\.#{c} = state\.#{c}\.slice\(0, 2000\)/) || core_source.include?("capCentralCollection(state, \"#{c}\", 2000") }
+errors << "non-barrier central collections must be bounded" unless ["runtimeIssueSamples", "runtimeIssuePatterns", "roleSkillOverlays"].all? { |c| core_product_source.match?(/state\.#{c} = state\.#{c}\.slice\(0, 2000\)/) || core_product_source.include?("capCentralCollection(state, \"#{c}\", 2000") }
 # Round 6 correction: close/completion-barrier collections must be capped with capRetainingPredicate
 # (never drop an OPEN gating item), NOT a blind slice — a blind slice can evict a still-open item and
 # falsely satisfy a barrier, prematurely closing the task group.
-errors << "barrier collections must cap without dropping open gating items" unless core_source.include?("function capRetainingPredicate") && ["executionTopologies", "reviewPlans", "systemUpgradeCandidates", "ruleSourceResolutions", "derivedTaskRequests"].all? { |c| core_source.include?("state.#{c} = capRetainingPredicate(state.#{c}") } && !core_source.include?("state.executionTopologies = state.executionTopologies.slice")
+errors << "barrier collections must cap without dropping open gating items" unless core_product_source.include?("function capRetainingPredicate") && ["executionTopologies", "reviewPlans", "systemUpgradeCandidates", "ruleSourceResolutions", "derivedTaskRequests"].all? { |c| core_product_source.include?("state.#{c} = capRetainingPredicate(state.#{c}") } && !core_product_source.include?("state.executionTopologies = state.executionTopologies.slice")
 # reviewBundles is also a barrier collection: cap retaining non-terminal bundles (terminal = consumed/rejected
 # per the ReviewBundle state machine; the phantom "closed" was corrected in M3).
 errors << "reviewBundles must cap retaining open bundles (not a blind slice)" unless core_source.include?("capRetainingOpen(state.reviewBundles, [\"consumed\", \"rejected\"], 160)") && !core_source.include?("state.reviewBundles.slice(0, 160)")
@@ -1598,7 +1607,7 @@ MACHINE_FACING_ERRORS = {
 # runtime.mjs 也要扫：agent 侧抛出的原因会【原样】变成派发的阻塞/失败原因显示在控制台上，
 # 而这道门原先根本看不见那个文件 —— 于是那一族整体是英文自由文本（2026-08-22 一次补了 18 条）。
 # 它的写法是 `code:中文说明`（模板串居多），所以要按前缀取码，而不是整串等于码。
-error_codes = ([server_source, core_source, agent_gateway_source].flat_map do |src|
+error_codes = ([server_source, core_product_source, agent_gateway_source].flat_map do |src|
   src.scan(/error:\s*"([a-z_0-9]+)"/).flatten + src.scan(/new Error\("([a-z_0-9]+)"\)/).flatten
 end + agent_runtime_source.scan(/throw (?:new Error|permissionBlockedError)\([`"]([a-z_0-9]{6,})(?::|["`])/).flatten).uniq
 errors << "错误码本地化门: 只提取到 #{error_codes.size} 个错误码 —— 提取逻辑与代码脱节" if error_codes.size < 100
@@ -1984,7 +1993,7 @@ errors << "Console must offer a resolve_decision actuator for needs_decision cel
 i18n_key = ->(code) { i18n_zh_source.match?(/^\s*#{Regexp.escape(code)}:/) }
 # Scan core + gateway + MCP server: the MCP server also sets dispatch.blockedReason literals that the
 # console renders via t(), so it must be covered or a raw-English reason (e.g. mcp_session_paused) leaks.
-i18n_reason_sources = core_source + agent_gateway_source + mcp_source
+i18n_reason_sources = core_product_source + agent_gateway_source + mcp_source
 # 值表达式里的字面量都要看得见，不能只认紧跟冒号的那一个。
 # 三元与 || 兜底这两种写法在本仓库都真实存在，而只认字面量的提取【看不见它们】：
 # 实测有 21 个这样的字面量从未被这道门查过，其中"节点停机待停止"确实没有中文，
@@ -2051,8 +2060,12 @@ errors << "Room message sender must be derived from the authenticated principal,
 # 处置/授权类下拉一律经 decisionSelect：它的第一项恰好都是后果最重的那个（已解决 / 采纳为本项目规则 /
 # 激活为全局规范 / project_owner），而 select 默认选中第一项 —— 人不做选择直接提交就会拿到它。
 # 钉的是"没有绕过助手的裸下拉"这个结构，不是某一段具体文案。
-raw_decision_selects = public_app_source.scan(/<select name="(status|resolution|dispositionClass|role)"[^>]*>\s*<option/)
-errors << "console decision dropdowns must go through decisionSelect (found raw: #{raw_decision_selects.flatten.uniq.join(", ")})" unless raw_decision_selects.empty?
+raw_decision_selects = public_app_source.scan(/<select name="(status|resolution|dispositionClass|role)"[^>]*>(.*?)<\/select>/m)
+  .reject do |name, body|
+    body.include?('<option value="" selected disabled>') ||
+      (name == "role" && (body.include?("roleOptions") || body.include?("roleOptionsHtml")))
+  end
+errors << "console decision dropdowns must go through decisionSelect (found raw: #{raw_decision_selects.map(&:first).uniq.join(", ")})" unless raw_decision_selects.empty?
 errors << "console decisionSelect must render a disabled, selected, empty-valued placeholder and mark the select required" unless public_app_source.include?('<option value="" selected disabled>') && public_app_source.include?('<select name="${esc(name)}" required>')
 
 # 接线：禁区下限必须落在【判据处】与【每一个生产者】上。只在生产者补齐是不够的 —— 已经落库的
@@ -2113,8 +2126,8 @@ machine_facing_error_codes = %w[
 # 核心与网关抛出的错误码同样会到人眼前：respondApiError 把它们原样回给控制台，而失败原因还会
 # 落在派发记录上（监控页按 t(blockedReason || failureReason) 渲染）。只扫 server.mjs 会漏掉
 # 这一整片 —— 实测扩进来时有 114 个静态码没有中文。
-core_error_codes = (core_source.scan(/new Error\("([a-z0-9_]{5,})"\)/) +
-                    core_source.scan(/topologyError\("([a-z0-9_]{5,})"/) +
+core_error_codes = (core_product_source.scan(/new Error\("([a-z0-9_]{5,})"\)/) +
+                    core_product_source.scan(/topologyError\("([a-z0-9_]{5,})"/) +
                     agent_gateway_source.scan(/new Error\("([a-z0-9_]{5,})"\)/) +
                     agent_gateway_source.scan(/gatewayError\("([a-z0-9_]{5,})"/)).flatten.uniq
 # 错误码是【直接 t() 给人看】的，所以和原因码同规：三元 / || 兜底 / 一跳变量都要看得见。
@@ -2480,7 +2493,7 @@ end
 # 凡是【会改中央状态集合】的模块都要在这份扫描面里，否则把一段裁剪逻辑挪进新文件，
 # 本条就会把它报成"只增不减"（审计台账抽成共享模块时当场撞到）。
 state_sources = {
-  "core" => core_source, "gateway" => agent_gateway_source,
+  "core" => core_product_source, "gateway" => agent_gateway_source,
   "server" => server_source, "mcp" => mcp_source,
   "store" => File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")),
   "audit" => File.read(File.join(ROOT, "apps/control-plane-ui/lib/audit-ledger.mjs"))
@@ -2554,7 +2567,7 @@ end
 
 # 后端有归档而界面没入口＝归档不存在。审计归档只对系统账号开放，控制台必须给出那个入口，
 # 并且不能把内存里那 80 条说成全部。
-app_js = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
+app_js = console_product_source
 errors << "控制台没有审计归档的入口 —— 80 条之前的记录对人不可达" unless app_js.include?("/api/audit-archive")
 errors << "审计面板没有说清它只显示最近若干条 —— 人会把这一屏当成全部历史" unless app_js.include?("更早的记录在归档文件里")
 errors << "服务端没有把归档写失败暴露出来 —— 记录丢了没人知道" unless server_source.include?("auditArchiveFault")
@@ -2583,7 +2596,7 @@ errors << "自治循环正常推进的一拍没有走 finish()，连续失败数
   server_source.match?(/finish\(\{ran: true/)
 # 拓扑阻塞项挡得住 merge，却曾经在界面上一个字都不显示：人只看到"方案卡住了"，
 # 不知道卡在哪、更不知道是不是自己批准的验收项没证据。
-app_source = read_source("apps/control-plane-ui/public/app.js")
+app_source = console_product_source
 errors << "卡住的执行方案没有显示它卡在哪几项 —— 人无从下手" unless app_source.include?("卡在这几项")
 errors << "拓扑阻塞项没有翻成中文（topologyBlockerText 缺失）" unless app_source.include?("topologyBlockerText")
 

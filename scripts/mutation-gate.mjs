@@ -838,6 +838,15 @@ const MUTATIONS = [
     expect: "monitor dashboard receives every declared runtime context value"
   },
   {
+    name: "任务拆分派生记录必须走完整状态机",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyAgentGatewayContracts",
+    from: '  recordTransition(state, "DerivedTaskRequest", derivedRequest.requestId, "classified", "absorbed", "orchestrator", {\n    current_work_absorbed: `WorkItem:${workItem.id}`,\n    audit_ref: derivedRequest.auditRef\n  });\n',
+    to: "",
+    expect: "拆分派生请求没有走完候选、强化、分类、吸收状态机"
+  },
+  {
     name: "任务详情事件索引不得超过服务端账本窗口",
     file: "apps/control-plane-ui/public/modules/task-workbench.js",
     gate: "console",
@@ -7547,8 +7556,8 @@ const MUTATIONS = [
     name: "源文件不得绕过 read_source 直接读",
     file: "scripts/validate-specs.rb",
     gate: "specs",
-    from: 'console_source = read_source("apps/control-plane-ui/public/app.js")',
-    to: 'console_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))',
+    from: 'agent_installer_source = read_source("scripts/install-agent.sh")',
+    to: 'agent_installer_source = File.read(File.join(ROOT, "scripts/install-agent.sh"))',
     expect: "没走 read_source"
   },
   {

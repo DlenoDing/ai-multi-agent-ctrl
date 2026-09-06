@@ -83,6 +83,8 @@
 - 浏览器加载：`i18n-zh.js` → 公共模块 → `app.js`。
 - 行为门加载：同样顺序注入 VM。
 - 被裁字段和顶层视图字段检查扫描浏览器实际加载的全部产品脚本，不再只扫描 `app.js`；拆出的模块读取仍受视图契约约束。
+- Ruby 规范门与 Node 契约门从 `index.html` 解析真实前端脚本清单；表格截断、真人杠杆、提示目标、语言策略和状态字段检查不会因模板迁出 `app.js` 而失明。
+- 核心容量、状态集合、错误码、i18n 和活性检查同时扫描兼容门面、`command-bus.mjs` 与 `runtime-issue-tracker.mjs`。
 - 页面元数据扫描改读 `modules/navigation.js`，避免继续从 `app.js` 读取已经迁出的 `PAGE_META`。
 - 权限、集合、默认组织、语言和资源类型扫描改读 `modules/ui-config.js`，避免继续从 `app.js` 读取已经迁出的界面配置。
 - 执行角色清单扫描改读 `lib/model-catalog.mjs`，避免角色登记迁移后行为门空转。
