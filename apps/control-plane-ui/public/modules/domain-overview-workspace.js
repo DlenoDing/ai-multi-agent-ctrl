@@ -37,6 +37,24 @@
     "group-detail": "当前任务组的任务、配置与执行记录"
   };
 
+  const pageNotes = {
+    "sys-orgs": ["系统管理员只管理组织状态、配额和初始组织管理员；组织子账户由组织管理员维护。", "停用组织会阻断其新增和执行入口，恢复后才可继续。"],
+    "sys-settings": ["MCP、模型目录和技能源由服务器集中提供，Agent 节点不在本机重复部署服务。", "项目角色、Skill 覆盖和业务规则在对应项目内维护。"],
+    "org-overview": ["组织空间管理成员、项目目录和共享 Agent；项目执行进入具体项目处理。"],
+    "org-members": ["成员账号能力不能包含系统级或组织级通配权限。", "项目角色与任务组角色分别授权；一次性登录令牌使用后即失效。"],
+    "org-projects": ["创建人自动成为项目负责人；项目角色和任务组角色在具体作用域内生效。", "项目归档是终态，归档前应先完成任务组收口。"],
+    "org-agents": ["Agent 档案定义逻辑角色，运行节点提供实际执行能力，两者不是同一对象。", "组织共享节点可服务本组织项目；加入令牌和安装命令只在签发时显示一次。"],
+    "proj-overview": ["总控自动拆解、选模型、匹配 Skill 和派发；人只处理入口配置、必要审核与纠偏。"],
+    "proj-members": ["项目角色决定项目级能力，任务组角色只影响指定任务组。", "授权不会自动启动任务或扩大 Agent 的服务端权限。"],
+    "proj-agents": ["项目可调配本项目 Agent 和本组织共享 Agent。", "节点只运行轻量 Runtime；远程 MCP 和按任务 Skill 由服务器下发。"],
+    tg: ["任务组统一目标、语言和执行范围；组内任务由总控自动分析和派发。", "暂停、恢复、评审和纠偏都作用于明确任务组并保留审计。"],
+    monitor: ["执行过程持续回送事件；页面实时状态不替代 Git 检查点和质量证据。", "先处理受阻和待审核项，模型、放置与准入记录用于进一步诊断。"],
+    review: ["这里只处理必须由真人完成的确认、权限审批、危险操作和发现项。", "没有对应任务组审核权时只能查看，不能代替有权人员处置。"],
+    directives: ["人工指令是给总控的结构化输入，不是向运行会话直接发送聊天消息。", "指令按任务组权限和状态机消费，拒绝原因与执行动作均保留。"],
+    "proj-settings": ["项目配置只影响后续派发和产出落地，不会静默改写正在执行的会话。", "所有任务产出仍进入项目 Git 仓库；仓库凭据按项目独立保存。"],
+    "group-detail": ["任务组覆盖只作用于当前任务组，并优先于项目默认配置。", "执行控制、规则和协作记录都绑定当前对象，切换栏目不会改变作用域。"]
+  };
+
   function row(item, pageId, h, primary = false) {
     const useWorkspaceRoute = pageId === "group-detail";
     const attributes = useWorkspaceRoute
@@ -54,12 +72,14 @@
     const featured = featuredOrder.map((workspace) => available.find((item) => item.workspace === workspace)).filter(Boolean);
     const featuredSet = new Set(featured.map((item) => item.workspace));
     const other = available.filter((item) => !featuredSet.has(item.workspace));
-    return h.panel("常用入口", `<div class="domain-overview">
-      <header class="domain-overview-header"><div><strong>${h.esc(title)}</strong><span>${h.esc(pagePurpose[pageId] || "当前管理范围")}</span></div>
+    const notes = pageNotes[pageId] || [];
+    return h.panel("常用入口", `<div class="domain-overview" aria-label="${h.esc(title)}">
+      <header class="domain-overview-header"><div><strong>${h.esc(pagePurpose[pageId] || "当前管理范围")}</strong></div>
         <span class="domain-overview-count">${available.length} 项功能</span></header>
       <div class="domain-action-list">${featured.map((item, index) => row(item, pageId, h, index === 0)).join("")}</div>
       ${other.length ? `<details class="domain-more"><summary>其他功能（${other.length}）</summary>
         <div class="domain-action-list">${other.map((item) => row(item, pageId, h)).join("")}</div></details>` : ""}
+      ${notes.length ? `<div class="domain-notes"><strong>需要注意</strong><ul>${notes.map((note) => `<li>${h.esc(note)}</li>`).join("")}</ul></div>` : ""}
     </div>`, {wide: true});
   }
 

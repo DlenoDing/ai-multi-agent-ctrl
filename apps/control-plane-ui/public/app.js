@@ -1995,6 +1995,7 @@ function render() {
   const prevTableScroll = [...document.querySelectorAll(".table-scroll")].map((el) => el.scrollLeft);
   app.innerHTML = html;
   lastRenderedHtml = html;
+  syncLayoutMetrics();
 
   // 轮询/局部刷新后恢复滚动位置，避免整页 render 抖动
   window.scrollTo(0, prevScrollY);
@@ -2007,6 +2008,15 @@ function render() {
   restorePendingForm();
   window.AIMAC_RULE_EDITOR?.enhance(app);
 }
+
+function syncLayoutMetrics() {
+  const topbar = document.querySelector(".topbar");
+  const rect = topbar?.getBoundingClientRect?.();
+  if (!rect || !document.documentElement?.style) return;
+  document.documentElement.style.setProperty("--topbar-height", `${Math.ceil(rect.height)}px`);
+}
+
+window.addEventListener("resize", syncLayoutMetrics);
 
 function renderContent() {
   const project = PROJECT_PAGES.has(page) ? currentProject() : null;

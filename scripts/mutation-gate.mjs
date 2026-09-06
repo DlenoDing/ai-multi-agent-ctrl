@@ -11862,6 +11862,14 @@ const MUTATIONS = [
     expect: "项目侧栏不把创建、注册和说明当成日常功能"
   },
   {
+    name: "日常侧栏仍必须按账号权限过滤",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const visibleMenu = menuForCurrentSection(perspective, page).filter((item) => item.divider || menuItemAvailable(item));",
+    to: "  const visibleMenu = menuForCurrentSection(perspective, page);",
+    expect: "无任务组控制权账号的侧栏不得显示下达指令"
+  },
+  {
     name: "页面标题必须跟随具体功能菜单",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
@@ -11937,9 +11945,17 @@ const MUTATIONS = [
     name: "说明页不得恢复重复看板与流程堆叠",
     file: "apps/control-plane-ui/public/modules/domain-overview-workspace.js",
     gate: "console",
-    from: '    return h.panel("常用入口", `<div class="domain-overview">',
-    to: '    return h.panel("项目设置操作看板", `<div class="module-card domain-overview">',
+    from: '    return h.panel("常用入口", `<div class="domain-overview" aria-label="${h.esc(title)}">',
+    to: '    return h.panel("项目设置操作看板", `<div class="module-card domain-overview" aria-label="${h.esc(title)}">',
     expect: "说明页只保留一份功能索引"
+  },
+  {
+    name: "精简说明页不得丢失关键权限边界",
+    file: "apps/control-plane-ui/public/modules/domain-overview-workspace.js",
+    gate: "console",
+    from: '    "org-members": ["成员账号能力不能包含系统级或组织级通配权限。", "项目角色与任务组角色分别授权；一次性登录令牌使用后即失效。"],',
+    to: '    "org-members": ["成员账号能力由组织管理员维护。"],',
+    expect: "精简说明页仍保留权限、安全和作用域要点"
   },
   {
     name: "系统技术明细不得重新挤回概览",
@@ -11995,6 +12011,14 @@ const MUTATIONS = [
     gate: "console",
     from: "  const DEFAULT_VISIBLE_RULES = 12;",
     to: "  const DEFAULT_VISIBLE_RULES = 1200;",
+    expect: "规则默认窗口和保存工具栏必须真正生效"
+  },
+  {
+    name: "规则悬浮工具栏必须跟随真实顶栏高度",
+    file: "apps/control-plane-ui/public/rule-editor.css",
+    gate: "console",
+    from: "  top: calc(var(--topbar-height, 72px) + 8px);",
+    to: "  top: 72px;",
     expect: "规则默认窗口和保存工具栏必须真正生效"
   },
   {

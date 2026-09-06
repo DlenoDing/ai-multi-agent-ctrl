@@ -1631,9 +1631,10 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
       "规则摘要没有明确的桌面/移动布局约束，长标题或长预览在窄屏容易挤压错位");
     check("规则默认窗口和保存工具栏必须真正生效",
       /\.rule-row\[hidden\]\s*\{\s*display:\s*none/u.test(styleText)
-        && /\.rule-editor-toolbar\s*\{[\s\S]*position:\s*sticky/u.test(ruleStyleText)
+        && /\.rule-editor-toolbar\s*\{[\s\S]*position:\s*sticky[\s\S]*top:\s*calc\(var\(--topbar-height, 72px\) \+ 8px\)/u.test(ruleStyleText)
         && /const DEFAULT_VISIBLE_RULES = 12;/u.test(ruleModuleText)
-        && /matches\.slice\(0, DEFAULT_VISIBLE_RULES\)/u.test(ruleModuleText),
+        && /matches\.slice\(0, DEFAULT_VISIBLE_RULES\)/u.test(ruleModuleText)
+        && /setProperty\("--topbar-height"/u.test(readConsoleAppSource()),
       "规则脚本虽标记了隐藏行，但 display:flex 覆盖 hidden，或保存工具栏仍会滚出视野");
     check("默认角色为空时要说清回退到哪里",
       /还没有项目默认角色/.test(rolesText) && /内置角色/.test(rolesText),
@@ -2781,8 +2782,9 @@ async function runErrorGuidanceCase() {
       && /节点令牌轮换时持续刷新/u.test(joinInstructionSource)
       && /--no-configure-global-clients/u.test(joinInstructionSource),
     "注册命令会修改并持续维护客户端 MCP 配置，但一次性弹窗没有说明默认行为或退出方式");
-  const orgNav = renderedNav({accountId: "org", email: "org@local", displayName: "组织管理员",
-    accountType: "org_admin", roles: ["org_admin"], permissions: ["org:*", "project:create", "member:invite", "agent:activate"], organizationId: "org_default"}, "p1", "org-overview");
+  const orgAccount = {accountId: "org", email: "org@local", displayName: "组织管理员",
+    accountType: "org_admin", roles: ["org_admin"], permissions: ["org:*", "project:create", "member:invite", "agent:activate"], organizationId: "org_default"};
+  const orgNav = renderedNav(orgAccount, "p1", "org-overview");
   assertMenuLeaves("组织管理", orgNav, [["org-members", "list", "成员账户"],
     ["org-members", "grants", "权限矩阵"], ["org-projects", "list", "项目列表"], ["org-agents", "profiles", "共享 Agent 档案"],
     ["org-agents", "nodes", "共享运行节点"]]);
@@ -2848,6 +2850,20 @@ async function runErrorGuidanceCase() {
     /class="domain-overview"/u.test(helpHtml)
       && !/class="module-card|项目设置操作看板|项目设置职责分区|项目配置生效流程|规则治理概览/u.test(helpHtml),
     "说明页仍重复堆叠总览、看板、职责、流程或指标卡");
+  check("精简说明页仍保留权限、安全和作用域要点",
+    /class="domain-notes"/u.test(helpHtml) && /只影响后续派发和产出落地/u.test(helpHtml)
+      && [
+        [systemAccount, null, "sys-settings", /服务器集中提供/u],
+        [orgAccount, "p1", "org-members", /不能包含系统级或组织级通配权限/u],
+        [projectAccount, "p1", "proj-agents", /节点只运行轻量 Runtime/u],
+        [projectAccount, "p1", "monitor", /持续回送事件/u],
+        [projectAccount, "p1", "directives", /不是向运行会话直接发送聊天消息/u]
+      ].every(([account, projectId, pageId, expected]) => {
+        const root = el("div");
+        loadConsole(root, {realI18n: true}).renderFullPagePaneWith(navState, account, projectId, pageId, "help");
+        return expected.test(String(root.innerHTML || ""));
+      }),
+    "说明页虽然变短，但关键权限边界、安全限制或 AI-native 作用域信息也被一起删掉");
   const runPageRoot = el("div");
   loadConsole(runPageRoot, {realI18n: true}).renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "sessions");
   const runPageTopbar = String(runPageRoot.innerHTML || "").split('<header class="topbar">')[1]?.split("</header>")[0] || "";
@@ -6068,6 +6084,9 @@ async function runPendingTruncationCase() {
         && !/data-menu="tasks" data-menu-workspace="create"/u.test(readOnlyTasks)
         && !/data-menu="proj-agents" data-menu-workspace="register"/u.test(readOnlyAgents),
       [textOf(readOnlyTg).slice(0, 120), textOf(readOnlyTasks).slice(0, 120), textOf(readOnlyAgents).slice(0, 120)].join(" | "));
+    check("无任务组控制权账号的侧栏不得显示下达指令",
+      !/data-menu="directives" data-menu-workspace="compose"/u.test(String(readOnlyTg).split("</aside>")[0] || ""),
+      "下达指令不属于创建类隐藏项，若权限过滤失效会直接暴露给只读账号");
     check("创建和注册入口要从对象列表主按钮到达而不是挤进侧栏",
       /data-workspace-page="tg" data-workspace="create"/u.test(writableTg)
         && /data-workspace-page="tasks" data-workspace="create"/u.test(writableTasks)

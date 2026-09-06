@@ -29,6 +29,10 @@
 .domain-action-row span { color: var(--text-sub); font-size: 12px; overflow-wrap: anywhere; }
 .domain-more { border-top: 1px solid var(--card-border); padding-top: 10px; }
 .domain-more > summary { cursor: pointer; color: var(--text-sub); font-size: 13px; }
+.domain-notes { padding: 12px 14px; border-left: 3px solid #9aa7bd; background: #f7f8fb; color: var(--text-sub); }
+.domain-notes strong { color: var(--text-main); font-size: 13px; }
+.domain-notes ul { margin: 5px 0 0; padding-left: 18px; }
+.domain-notes li + li { margin-top: 3px; }
 
 .panel + .panel { margin-top: 0; }
 .panel-header { min-height: 48px; }
