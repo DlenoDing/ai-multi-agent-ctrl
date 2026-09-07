@@ -661,6 +661,14 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .cfg-row-repo[data-credential-mode="none"] input[name="repoUsername"], .cfg-row-repo[data-credential-mode="none"] input[name="repoPassword"], .cfg-row-repo[data-credential-mode="none"] input[name="repoApiKey"],
 .cfg-row-repo[data-credential-mode="account_password"] input[name="repoApiKey"],
 .cfg-row-repo[data-credential-mode="api_key"] input[name="repoUsername"], .cfg-row-repo[data-credential-mode="api_key"] input[name="repoPassword"] { display: none; }
+/* 配置行里每个字段带标签：值填上之后占位符就不见了，没有标签人分不清哪格是地址、哪格是分支 */
+.cfg-field { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 120px; }
+.cfg-field > span { font-size: 12px; color: var(--text-sub); }
+.cfg-row-repo .cfg-field { min-width: 0; }
+/* 隐藏字段时连标签一起藏（上面那组规则只藏 input，标签会剩下来） */
+.cfg-row-repo[data-credential-mode="none"] .cfg-field:has(> input[name="repoUsername"]), .cfg-row-repo[data-credential-mode="none"] .cfg-field:has(> input[name="repoPassword"]), .cfg-row-repo[data-credential-mode="none"] .cfg-field:has(> input[name="repoApiKey"]),
+.cfg-row-repo[data-credential-mode="account_password"] .cfg-field:has(> input[name="repoApiKey"]),
+.cfg-row-repo[data-credential-mode="api_key"] .cfg-field:has(> input[name="repoUsername"]), .cfg-row-repo[data-credential-mode="api_key"] .cfg-field:has(> input[name="repoPassword"]) { display: none; }
 
 .status-line { display: flex; gap: 12px; flex-wrap: wrap; padding: 14px 24px 0; }
 .status-line .metric { min-width: 140px; }

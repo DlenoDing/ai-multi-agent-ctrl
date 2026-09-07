@@ -14388,6 +14388,22 @@ const MUTATIONS = [
     from: '    esc(agentNodeLabel(command.nodeId)),',
     to: '    esc(command.nodeId),',
     expect: "会话与派发表的「任务」列、控制通道的节点与作用对象要写名字而不是 id"
+  },
+  {
+    name: "仓库行不得少了字段标签",
+    file: APP,
+    gate: "console",
+    from: '<label class="cfg-field"><span>仓库地址</span><input name="repoUrl"',
+    to: '<label class="cfg-field"><span></span><input name="repoUrl"',
+    expect: "仓库行每个字段要带标签，且隐藏字段时标签一起藏"
+  },
+  {
+    name: "隐藏凭据字段时标签必须一起藏",
+    file: "apps/control-plane-ui/public/styles.css",
+    gate: "console",
+    from: '.cfg-row-repo[data-credential-mode="none"] .cfg-field:has(> input[name="repoUsername"]), .cfg-row-repo[data-credential-mode="none"] .cfg-field:has(> input[name="repoPassword"]), .cfg-row-repo[data-credential-mode="none"] .cfg-field:has(> input[name="repoApiKey"]),',
+    to: '.cfg-row-repo[data-credential-mode="none"] .cfg-field:has(> input[name="repoUsername"]), .cfg-row-repo[data-credential-mode="none"] .cfg-field:has(> input[name="repoPassword"]),',
+    expect: "仓库行每个字段要带标签，且隐藏字段时标签一起藏"
   }
 ];
 

@@ -1690,6 +1690,11 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
       addButton.closest = (selector) => (selector === "[data-action]" ? addButton : null);
       await cfgProbe.click({target: addButton, preventDefault: () => {}});
       const rowHtml = String(cfgRoot.querySelector("[data-cfg-list='probe-list']")?.innerHTML || "");
+      // 【配置行每个字段带标签】（用户 09-08 走查）：值填上后占位符就不见了，一行四格没有标签，人分不清哪格是地址、哪格是分支。
+      check("仓库行每个字段要带标签，且隐藏字段时标签一起藏",
+        ["仓库名", "仓库地址", "默认分支", "访问凭据", "账号", "密码", "API Key / Token"].every((label) => rowHtml.includes(`<label class="cfg-field"><span>${label}</span>`))
+          && readConsoleSource("styles.css").includes('.cfg-row-repo[data-credential-mode="none"] .cfg-field:has(> input[name="repoApiKey"])'),
+        `仓库行：${rowHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 160)}`);
       check("新插的仓库行要带凭据方式标记（无凭据）",
         /class="cfg-row cfg-row-repo" data-cfg-kind="repo" data-credential-mode="none"/u.test(rowHtml),
         `仓库行开头：${rowHtml.replace(/\s+/gu, " ").slice(0, 160)}`);

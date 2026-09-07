@@ -7099,17 +7099,17 @@ function cfgRepoRow(repo = {}, readOnly = false) {
   const apiKeyPlaceholder = credential.apiKeySet ? "已配置 API Key；留空保留原值" : "API Key / Token";
   return `
     <div class="cfg-row cfg-row-repo" data-cfg-kind="repo" data-credential-mode="${esc(mode)}">
-      <input name="repoId" placeholder="仓库 ID" value="${esc(repo.id || "")}" ${ro}>
-      <input name="repoUrl" placeholder="仓库地址（git@... / https://...）" value="${esc(repo.url || "")}" ${ro}>
-      <input name="repoBranch" placeholder="默认分支" value="${esc(repo.defaultBranch || "main")}" ${ro}>
-      <select name="repoCredentialMode" ${disabled}>
+      <label class="cfg-field"><span>仓库名</span><input name="repoId" placeholder="例如 main-repo" value="${esc(repo.id || "")}" ${ro}></label>
+      <label class="cfg-field"><span>仓库地址</span><input name="repoUrl" placeholder="git@... / https://..." value="${esc(repo.url || "")}" ${ro}></label>
+      <label class="cfg-field"><span>默认分支</span><input name="repoBranch" placeholder="main" value="${esc(repo.defaultBranch || "main")}" ${ro}></label>
+      <label class="cfg-field"><span>访问凭据</span><select name="repoCredentialMode" ${disabled}>
         <option value="none"${mode === "none" ? " selected" : ""}>无凭据 / 公共仓库</option>
         <option value="account_password"${mode === "account_password" ? " selected" : ""}>账号密码</option>
         <option value="api_key"${mode === "api_key" ? " selected" : ""}>API Key / Token</option>
-      </select>
-      <input name="repoUsername" placeholder="账号（账号密码模式）" value="${esc(username)}" ${ro}>
-      <input name="repoPassword" type="password" placeholder="${esc(passwordPlaceholder)}" value="${esc(password)}" ${ro} autocomplete="new-password">
-      <input name="repoApiKey" type="password" placeholder="${esc(apiKeyPlaceholder)}" value="${esc(apiKey)}" ${ro} autocomplete="new-password">
+      </select></label>
+      <label class="cfg-field"><span>账号</span><input name="repoUsername" placeholder="账号（账号密码模式）" value="${esc(username)}" ${ro}></label>
+      <label class="cfg-field"><span>密码</span><input name="repoPassword" type="password" placeholder="${esc(passwordPlaceholder)}" value="${esc(password)}" ${ro} autocomplete="new-password"></label>
+      <label class="cfg-field"><span>API Key / Token</span><input name="repoApiKey" type="password" placeholder="${esc(apiKeyPlaceholder)}" value="${esc(apiKey)}" ${ro} autocomplete="new-password"></label>
       ${readOnly ? "" : `<div class="repo-row-actions">${repo.id ? `<button type="button" class="secondary-button" data-action="repo-test-connection" data-repo="${esc(repo.id)}" title="验证已保存的仓库地址和读取权限；推送权限请单独验证">测试连接</button>
         <button type="button" class="secondary-button" data-action="repo-test-connection" data-repo="${esc(repo.id)}" data-verify-write="true" title="真实创建并清理临时测试分支，验证推送权限">验证推送</button>` : ""}<button type="button" class="danger-button" data-action="cfg-del">删除</button></div>`}
     </div>
@@ -7151,9 +7151,9 @@ function cfgBaselineRow(item = {}, readOnly = false) {
   const ro = readOnly ? "readonly" : "";
   return `
     <div class="cfg-row" data-cfg-kind="baseline">
-      <input name="blName" placeholder="名称" value="${esc(item.name || "")}" ${ro}>
-      <input name="blLocator" placeholder="仓库内路径（例如 docs/baseline/需求说明.md）" value="${esc(String(item.locator || "").replace(/^git:/u, ""))}" ${ro}>
-      <input name="blDigest" placeholder="内容摘要（可选）" value="${esc(item.digest || "")}" ${ro}>
+      <label class="cfg-field"><span>名称</span><input name="blName" placeholder="例如 需求说明" value="${esc(item.name || "")}" ${ro}></label>
+      <label class="cfg-field"><span>仓库内路径</span><input name="blLocator" placeholder="例如 docs/baseline/需求说明.md" value="${esc(String(item.locator || "").replace(/^git:/u, ""))}" ${ro}></label>
+      <label class="cfg-field"><span>内容摘要（可选）</span><input name="blDigest" placeholder="sha256:…" value="${esc(item.digest || "")}" ${ro}></label>
       ${readOnly ? "" : `<button type="button" class="danger-button" data-action="cfg-del">删除</button>`}
     </div>
   `;
@@ -7167,8 +7167,8 @@ function cfgRoleRow(role = {}, readOnly = false) {
     .map((id) => `<option value="${esc(id)}"${id === roleId ? " selected" : ""}>${esc(t(id))}</option>`).join("");
   return `
     <div class="cfg-row" data-cfg-kind="role">
-      <select name="roleId" ${disabled}><option value=""${roleId ? "" : " selected"} disabled>选择执行角色…</option>${roleOptions}</select>
-      ${readOnly ? `<input name="roleSkillRef" value="${esc(role.roleSkillRef || "")}" readonly>` : roleSkillPickerHtml("roleSkillRef", role.roleSkillRef || "", {firstLabel: "角色 Skill：按执行角色默认"})}
+      <label class="cfg-field"><span>执行角色</span><select name="roleId" ${disabled}><option value=""${roleId ? "" : " selected"} disabled>选择执行角色…</option>${roleOptions}</select></label>
+      <div class="cfg-field"><span>角色 Skill</span>${readOnly ? `<input name="roleSkillRef" value="${esc(role.roleSkillRef || "")}" readonly>` : roleSkillPickerHtml("roleSkillRef", role.roleSkillRef || "", {firstLabel: "角色 Skill：按执行角色默认"})}</div>
       ${readOnly ? "" : `<button type="button" class="danger-button" data-action="cfg-del">删除</button>`}
     </div>
   `;
