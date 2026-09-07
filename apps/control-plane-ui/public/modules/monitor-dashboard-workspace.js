@@ -406,8 +406,8 @@ function render(context, helpers) {
       </div>
     `, {wide: true, headerSide: filterInput("按事件、摘要过滤…", "events")}),
     panel("可复用执行载体（Worker Lane）", table(["角色", "功能", "状态", {label: "复用代数", c: "num"}, "当前会话", {label: "更新时间", c: "nowrap"}], laneRows, {moreText: moreText(lanesAll.length, 20, "workerLanes")}), {wide: true, headerSide: filterInput("按角色、会话过滤…", "worker-lanes")}),
-    panel("工作会话", table(["会话", "角色", "工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态", "原因", "详情"], sessions, {moreText: moreText(sessionsAll.length, 20, "workSessions")}), {wide: true, headerSide: filterInput("按会话、工作项过滤…", "sessions")}),
-    panel("智能体派发", stuckExitNotice(dispatchesAll, sessionsAll) + table(["派发", "工作项", "状态", {label: "进度", c: "num"}, {label: "最近动静", c: "nowrap"}, "原因", "详情"], dispatches, {moreText: moreText(dispatchesAll.length, 20, "agentDispatches")}), {wide: true, headerSide: filterInput("按派发、工作项过滤…", "dispatches")}),
+    panel("工作会话", table(["会话", "角色", "任务", "放置方式", {label: "执行载体", c: "nowrap"}, "状态", "原因", "详情"], sessions, {moreText: moreText(sessionsAll.length, 20, "workSessions")}), {wide: true, headerSide: filterInput("按会话、任务过滤…", "sessions")}),
+    panel("智能体派发", stuckExitNotice(dispatchesAll, sessionsAll) + table(["派发", "任务", "状态", {label: "进度", c: "num"}, {label: "最近动静", c: "nowrap"}, "原因", "详情"], dispatches, {moreText: moreText(dispatchesAll.length, 20, "agentDispatches")}), {wide: true, headerSide: filterInput("按派发、任务过滤…", "dispatches")}),
     // 节点为什么拒/为什么失败，此前写进 command.ackResult 就再没人读过（全仓只有网关那一处写、
     // 零处读）—— 屏幕上只有一个「已拒绝」，人无处可查。它本来就随视图下发了，缺的只是这一列。
     panel("主动告警", activeAlerts.length
@@ -440,13 +440,13 @@ function render(context, helpers) {
         : `<div class="small muted">没有待处置的死信条目。命令重试超限时才会在这里出现，非终态会挡住任务组关闭。</div>`, {wide: true});
     })(),
     panel("运行节点", table(["节点", "状态", "准入", {label: "最近心跳", c: "nowrap"}, "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…", "runtime-nodes")}),
-    panel("模型选择记录", table(["角色", "Agent 档案", "工作项", "实际模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText(decisionsInScope.length, 10, "modelSelectionDecisions")})),
-    panel("会话放置记录", table(["工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态"], placements, {moreText: moreText(placementsInScope.length, 10, "sessionPlacementDecisions")})),
-    panel("准入决策", table(["工作项", "判定", "分类", {label: "原因", c: "text-clip"}], admissions, {moreText: moreText(admissionsInScope.length, 12, "admissionDecisions")}), {wide: true}),
-    panel("检查点（Git 证据）", table(["任务组", "工作项", "提交", "推送", {label: "产出清单", c: "text-clip"}, {label: "时间", c: "nowrap"}], checkpointRows, {moreText: moreText(filterSource((state.checkpoints || []).filter((cp) => groups.some((taskGroup) => taskGroup.id === cp.taskGroupId)), "checkpoints").length, 20, "checkpoints")}), {wide: true, headerSide: filterInput("按工作项、提交过滤…", "checkpoints")}),
+    panel("模型选择记录", table(["角色", "Agent 档案", "任务", "实际模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText(decisionsInScope.length, 10, "modelSelectionDecisions")})),
+    panel("会话放置记录", table(["任务", "放置方式", {label: "执行载体", c: "nowrap"}, "状态"], placements, {moreText: moreText(placementsInScope.length, 10, "sessionPlacementDecisions")})),
+    panel("准入决策", table(["任务", "判定", "分类", {label: "原因", c: "text-clip"}], admissions, {moreText: moreText(admissionsInScope.length, 12, "admissionDecisions")}), {wide: true}),
+    panel("检查点（Git 证据）", table(["任务组", "任务", "提交", "推送", {label: "产出清单", c: "text-clip"}, {label: "时间", c: "nowrap"}], checkpointRows, {moreText: moreText(filterSource((state.checkpoints || []).filter((cp) => groups.some((taskGroup) => taskGroup.id === cp.taskGroupId)), "checkpoints").length, 20, "checkpoints")}), {wide: true, headerSide: filterInput("按任务、提交过滤…", "checkpoints")}),
     (state.qualityGates || []).some((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)) ? panel("质量门禁 / 测试证据", `
-      ${failingTests.length ? `<div class="notice warn-notice">有 ${failingTests.length}${countSuffix("testResults")} 项失败测试，阻塞关闭门禁（gateType 对应门禁为 failed，需修复并重提通过测试、取消对应工作项，或由你判定该门不适用后豁免）。</div>` : ""}
-      ${table(["任务组", "门禁类型", "工作项", "状态", {label: "更新时间", c: "nowrap"}], qualityGateRows, {moreText: moreText(filterSource((state.qualityGates || []).filter((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)), "quality-gates").length, 20, "qualityGates")})}
+      ${failingTests.length ? `<div class="notice warn-notice">有 ${failingTests.length}${countSuffix("testResults")} 项失败测试，阻塞关闭门禁（gateType 对应门禁为 failed，需修复并重提通过测试、取消对应任务，或由你判定该门不适用后豁免）。</div>` : ""}
+      ${table(["任务组", "门禁类型", "任务", "状态", {label: "更新时间", c: "nowrap"}], qualityGateRows, {moreText: moreText(filterSource((state.qualityGates || []).filter((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)), "quality-gates").length, 20, "qualityGates")})}
       ${canReviewGates && waivableGates.length ? `
         <div class="record" style="margin-top:8px;">
           <div class="record-title">豁免未通过的质量门</div>
@@ -458,7 +458,7 @@ function render(context, helpers) {
               <button class="primary-button" type="submit">豁免此门</button>
             </form>`).join("")}
         </div>` : ""}
-    `, {wide: true, headerSide: filterInput("按门禁类型、工作项过滤…", "quality-gates")}) : "",
+    `, {wide: true, headerSide: filterInput("按门禁类型、任务过滤…", "quality-gates")}) : "",
     // 关闭门禁上每一个阻塞项都必须能在这里被人处理掉。后端有杠杆而界面上没有入口，
     // 等于这个杠杆不存在 —— 人只会看到一个红 chip，然后无从下手。
     panel("阻塞项人工处置", (openReviewPlans.length || openRuleSources.length || blockingDefinitions.length || openReviewBundles.length || openUpgradeCandidates.length || stuckTopologies.length
@@ -528,7 +528,7 @@ function render(context, helpers) {
           ${downgradableTopologies.map((topology) => `
             <form class="form-grid" data-form="topology-downgrade" data-request="${esc(topology.topologyId)}" style="margin-top:8px;">
               <div class="record-meta"><span class="mono">${esc(topology.topologyId)}</span> · ${esc(taskGroupNameOf(topology.taskGroupId))} · ${badge(topology.status)}
-                · 工作项 <span class="mono">${esc(topology.workItemId || "-")}</span>
+                · 任务 <span class="mono">${esc(topology.workItemId || "-")}</span>
                 ${topology.humanFinalization?.outcome === "confirmed" ? " · " + customBadge("已由人定稿", "blue") : ""}</div>
               <div class="small muted">卡在这几项：${(topology.blockers || [])
                 .slice(0, 6).map((blocker) => esc(topologyBlockerText(blocker))).join("；")}</div>
@@ -542,7 +542,7 @@ function render(context, helpers) {
           ${stuckTopologies.map((topology) => `
             <form class="form-grid" data-form="topology-cancel" data-request="${esc(topology.topologyId)}" style="margin-top:8px;">
               <div class="record-meta"><span class="mono">${esc(topology.topologyId)}</span> · ${esc(taskGroupNameOf(topology.taskGroupId))} · ${badge(topology.status)}
-                · 工作项 <span class="mono">${esc(topology.workItemId || "-")}</span>
+                · 任务 <span class="mono">${esc(topology.workItemId || "-")}</span>
                 ${topology.humanFinalization?.outcome === "confirmed" ? " · " + customBadge("已由人定稿", "blue") : ""}</div>
               ${(topology.blockers || []).length ? `<div class="small muted">卡在这几项：${(topology.blockers || [])
                 .slice(0, 6).map((blocker) => esc(topologyBlockerText(blocker))).join("；")}</div>` : ""}

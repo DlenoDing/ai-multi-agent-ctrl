@@ -28,7 +28,7 @@
         <div class="project-object-progress"><span>总进度</span>${h.progressLine(project.progress?.percent)}</div>
       </div>
       <div class="project-object-resources">
-        <span class="project-resource-fact">Agent 节点 ${esc(agentOnline)}/${esc(agentTotal)} 在线</span>
+        <span class="project-resource-fact">运行节点 ${esc(agentOnline)}/${esc(agentTotal)} 在线</span>
         <span class="project-resource-fact">仓库 ${esc(repositoryCount)} 个</span>
         <span class="project-resource-fact">成员 ${esc((project.members || []).length)} 人</span>
       </div>

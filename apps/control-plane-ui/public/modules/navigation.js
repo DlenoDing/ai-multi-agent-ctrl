@@ -33,7 +33,7 @@
     leaf("proj-overview", "outputs", "仓库产出", "项目 Git 产出归属"),
     leaf("tg", "create", "新建任务组", "定义目标、角色和初始状态", {requires: "task_group:control"}),
     leaf("tasks", "list", "任务", "按时间倒序查看任务和执行详情"),
-    leaf("tasks", "create", "新建任务", "向任务组增加工作项", {requires: "task_group:control"}),
+    leaf("tasks", "create", "新建任务", "向任务组增加任务", {requires: "task_group:control"}),
     leaf("proj-members", "add", "添加项目成员", "把组织成员加入当前项目", {requires: "project:grant"}),
     leaf("proj-members", "groups", "任务组权限", "按任务组分配控制、审核和观察"),
     leaf("proj-members", "grant-group", "授予任务组权限", "给成员分配当前任务组角色", {requires: "project:grant"}),

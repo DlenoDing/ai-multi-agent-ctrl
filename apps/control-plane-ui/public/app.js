@@ -1047,7 +1047,7 @@ const SUBMIT_SUCCESS = {
   "quality-gate-waive": "已豁免该质量门（理由已留档）",
   "review-plan-resolve": "已收尾评审计划",
   "rule-source-settle": "已提交规则来源判定",
-  "plan-finalization": "已更新该工作项的方案定稿要求",
+  "plan-finalization": "已更新该任务的方案定稿要求",
   "review-bundle-resolve": "已收尾评审包",
   "upgrade-candidate-resolve": "已处置系统升级候选项",
   "external-upgrade-import": "已导入外部升级包：仅进入待管理员激活台账，运行中的系统不会自改",
@@ -1283,8 +1283,8 @@ async function loadPage() {
       orgMembers = membersResult.members || [];
       ensureProjectSelection();
     } else if (page === "tg" || page === "tasks") {
-      // 建工作项表单里的「指定模型」下拉要读 modelCapabilities，而 tasks 视图不含它。
-      // 用轻量的 /api/model-registry（只回模型清单，不是整份 runtime 视图）并回补 —— 取不到就只显示「自动」，不挡建工作项。
+      // 建任务表单里的「指定模型」下拉要读 modelCapabilities，而 tasks 视图不含它。
+      // 用轻量的 /api/model-registry（只回模型清单，不是整份 runtime 视图）并回补 —— 取不到就只显示「自动」，不挡建任务。
       const [tasksState, modelRegistry, skillRegistry] = await Promise.all([
         fetchState("tasks", {projectId: currentProjectId}),
         api("/api/model-registry").catch(() => ({modelCapabilities: []})),
@@ -1871,7 +1871,9 @@ function reconcileRoutedObjectSelection() {
   } else if (page === "proj-members" && selectedProjectMemberId
     && !(currentProject()?.members || []).some((member) => member.accountId === selectedProjectMemberId)) {
     selectedProjectMemberId = "";
-    missing = "项目成员";
+    // 从组织成员页点「分配项目角色」过来时，地址里带的是【要授权的组织成员】，他本来就还不是项目成员：
+    // 这是表单的预选对象，不是失效的深链接 —— 不能弹「项目成员不存在」把人吓一跳（memberGrantAccountId 留着给表单预选）。
+    if (workspaces.current("proj-members")?.id !== "add") missing = "项目成员";
   } else if (["org-agents", "proj-agents"].includes(page) && selectedAgentProfileId) {
     const visibleAgents = page === "org-agents" ? orgScopedAgents() : projectScopedAgents(currentProjectId);
     if (!visibleAgents.some((agent) => agent.id === selectedAgentProfileId)) {
@@ -2300,7 +2302,7 @@ function renderSystemManagementHub(overview) {
       {pageId: "sys-orgs", title: "组织与配额", metric: `${orgCount}`, detail: "创建组织、调整配额、启停组织", action: "管理组织", tone: "blue"},
       // 节点归各组织管理，系统层没有跨组织节点清单：这张卡只能带人去组织列表看各组织的配额用量，
       // 不能指到「运行参数」—— 那页是控制面旋钮，跟节点在不在线没关系。
-      {pageId: "sys-orgs", title: "执行节点", metric: `${overview?.runtime?.onlineNodes ?? 0}/${overview?.runtime?.totalNodes ?? 0}`, detail: "在线／全部 Agent 节点；节点归各组织管理", action: "按组织查看", tone: Number(overview?.runtime?.onlineNodes || 0) ? "green" : "orange"},
+      {pageId: "sys-orgs", title: "执行节点", metric: `${overview?.runtime?.onlineNodes ?? 0}/${overview?.runtime?.totalNodes ?? 0}`, detail: "在线／全部运行节点；节点归各组织管理", action: "按组织查看", tone: Number(overview?.runtime?.onlineNodes || 0) ? "green" : "orange"},
       {pageId: "sys-orgs", title: "活跃任务组", metric: `${overview?.runtime?.activeTaskGroups ?? 0}`, detail: "各组织当前仍在执行的任务组", action: "查看组织", tone: Number(overview?.runtime?.activeTaskGroups || 0) ? "blue" : "gray"},
       {pageId: "sys-settings", title: "模型与技能源", metric: `${mcpToolCount}`, detail: "模型能力、技能源同步、指令压缩指标", action: "查看设置", tone: "blue"}
     ]
@@ -2413,7 +2415,7 @@ function renderSysOverview() {
           <ul class="danger-summary">
             <li>会清空组织、项目、任务组、账号、授权和审计记录，并恢复为种子数据。</li>
             <li>该操作不可撤销；生产环境同样可执行，请只用于明确的本地排障或重建。</li>
-            <li>下一步会要求按页面提示输入确认串；有会话、派发、确认单或工作项超出种子时，还会校验当前规模。</li>
+            <li>下一步会要求按页面提示输入确认串；有会话、派发、确认单或任务超出种子时，还会校验当前规模。</li>
           </ul>
         </div>
         <div class="button-row"><button class="danger-button" data-action="bootstrap-init">重新初始化运行态</button></div>
@@ -2609,7 +2611,7 @@ function renderSysOrgs() {
     `<div class="org-quota-grid"><div><label>成员（含管理员）</label>${quotaLine(org.usage?.members, org.quotas?.maxMembers)}</div>
       <div><label>项目</label>${quotaLine(org.usage?.projects, org.quotas?.maxProjects)}</div>
       <div><label>任务组</label>${quotaLine(org.usage?.taskGroups, org.quotas?.maxTaskGroups)}</div>
-      <div><label>Agent 节点</label>${quotaLine(org.usage?.agents, org.quotas?.maxAgents, org.usage?.agentsReserved)}</div></div>`,
+      <div><label>运行节点</label>${quotaLine(org.usage?.agents, org.quotas?.maxAgents, org.usage?.agentsReserved)}</div></div>`,
     {v: fmtTime(org.createdAt), c: "nowrap"},
     `<div class="org-actions"><button class="primary-button" data-action="open-org-detail" data-org="${esc(org.orgId)}">查看与管理</button></div>`
   ])).join("");
@@ -2972,7 +2974,7 @@ function renderSysSettings() {
 // 已注销的账号：把"什么时候、为什么"贴在状态旁边。注销不可撤销，这句话是事后唯一的依据。
 // artifacts_verified 这道阻塞此前只说一句"还有产物没核验"，指不出是哪一个 ——
 // 而 artifacts 本来就随视图下发到了控制台，只是一处都没渲染。人被告知"等执行方补齐证据，
-// 或取消对应工作项"，却不知道该盯哪个格子。这里把真正还挡着的那几条摆出来。
+// 或取消对应任务"，却不知道该盯哪个格子。这里把真正还挡着的那几条摆出来。
 function stillGatingArtifact(item) {
   if (["verified", "rejected", "gc"].includes(item.status)) return false;
   return !(item.status === "registered" && item.contentDigestAttested === true);
@@ -3108,7 +3110,7 @@ function renderTaskGroupGrantForm(project, options = {}) {
           ? `<input type="hidden" name="subjectId" value="${esc(fixedAccount.accountId)}"><strong>${esc(fixedAccount.displayName || fixedAccount.email || fixedAccount.accountId)}</strong>`
           : decisionSelect("subjectId", candidates.map((account) => [account.accountId, account.displayName || account.email || account.accountId]), "请选择账号…", {selected: memberGrantAccountId})}</div>
         <div class="form-row"><label>任务组角色</label>${decisionSelect("role", [
-          ["task_group_owner", "任务组负责人（控制任务组与工作项）"],
+          ["task_group_owner", "任务组负责人（控制任务组与任务）"],
           ["reviewer", "评审人（人工定稿 / 验收）"],
           ["agent_operator", "智能体操作员（监控与节点协同）"],
           ["viewer", "观察者（只读查看）"]
@@ -3309,7 +3311,7 @@ function renderOrgOverview() {
             return archived ? `<div class="small muted">另有 ${archived} 个已归档，不计入配额</div>` : "";
           })()}</div>
           <div><div class="small muted">任务组</div>${quotaLine(org.usage?.taskGroups, org.quotas?.maxTaskGroups)}</div>
-          <div><div class="small muted">Agent 节点</div>${quotaLine(org.usage?.agents, org.quotas?.maxAgents, org.usage?.agentsReserved)}${(() => {
+          <div><div class="small muted">运行节点</div>${quotaLine(org.usage?.agents, org.quotas?.maxAgents, org.usage?.agentsReserved)}${(() => {
             // 配额只数没被吊销的，而智能体那张表把已吊销的也列着 —— 不说清楚，人会拿表里的行数
             // 去对这个数字，对不上又找不出原因。只在确实有已吊销节点时才出现这一句。
             const revoked = (orgAgentNodes || []).filter((node) => node.status === "revoked").length;
@@ -3804,7 +3806,7 @@ function projectAgentCards(nodes, canControlNodes, options = {}) {
     showDanger: options.showDanger === true,
     showAdmission: options.showAdmission !== false,
     emptyText: options.emptyText
-      || "当前项目还没有任何 Agent 节点。要让任务实际执行，请直接进入“注册运行节点”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 Agent 主机执行。"
+      || "当前项目还没有任何运行节点。要让任务实际执行，请直接进入“注册运行节点”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 Agent 主机执行。"
   }, {heartbeatTimedOut, badge, agentHoverPop, nodeDispatchIds, fmtTime, t,
     claimMissHint, selfCheckFailureHint, heartbeatStaleHint, runtimeNodeDetailButton, agentActions});
 }
@@ -4356,7 +4358,7 @@ function renderProjectAgents() {
     ? `<div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>`
     : agentViewMode === "cards"
       ? ""
-      : `<div class="notice warn-notice">当前项目还没有任何 Agent 节点。要让任务实际执行，请直接进入“注册运行节点”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 Agent 主机执行。</div>`;
+      : `<div class="notice warn-notice">当前项目还没有任何运行节点。要让任务实际执行，请直接进入“注册运行节点”签发一次性加入令牌，然后把弹窗里的安装命令放到目标 Agent 主机执行。</div>`;
   const bodyHtml = agentViewMode === "cards"
     ? projectAgentCards(nodes, canControlNodes, {showDanger: !preferOrgGovernance})
     : table(["名称", "运行状态", "准入", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"], nodeRows, {emptyText: "当前项目暂无运行节点"});
@@ -4485,7 +4487,7 @@ function renderOrgProjectsLifecycleGuide({projects, activeProjects, archivedProj
         pageId: "tg",
         title: "5 任务组执行",
         metric: "执行",
-        detail: "任务组承载目标、统一语言、角色、工作项和自动派发主线",
+        detail: "任务组承载目标、统一语言、角色、任务和自动派发主线",
         tone: activeProjects.length ? "blue" : "gray",
         action: "去任务组"
       })}
@@ -4597,7 +4599,7 @@ function projectMemberRoleStats(project) {
 
 function projectMemberRoleImpact(role) {
   if (role === "project_owner" || role === "project_admin") return "项目配置、成员授权和管理入口";
-  if (role === "task_group_owner") return "任务组控制和工作项推进";
+  if (role === "task_group_owner") return "任务组控制和任务推进";
   if (role === "reviewer") return "人工审核、定稿和验收";
   if (role === "agent_operator") return "Agent 加入令牌和节点操作";
   return "查看项目状态和执行记录";
@@ -4842,11 +4844,11 @@ function workflowGuidePanel(project, groups) {
             ? `已签发 ${pendingTokens} 张加入令牌待使用，还没有节点注册：到 agent 主机上执行安装命令`
             : "尚未接入：先签发加入令牌，再在 agent 主机上执行安装命令"))},
     {title: "创建任务组", done: groups.length > 0, page: "tg", workspace: groups.length ? "list" : "create", state: groups.length ? `${groups.length} 个任务组` : "还没有任务组"},
-    {title: "创建任务", done: workItemCount > 0, page: "tasks", workspace: workItemCount ? "list" : "create", state: workItemCount ? `${workItemCount} 个工作项` : "还没有工作项：到任务组里创建任务"},
+    {title: "创建任务", done: workItemCount > 0, page: "tasks", workspace: workItemCount ? "list" : "create", state: workItemCount ? `${workItemCount} 个任务` : "还没有任务：到任务组里创建任务"},
     {title: "启动执行", done: dispatches > 0, page: "monitor", workspace: "overview",
       // 人在这里就能推一拍：同一个动作、同一套回执（被挡/推进 N 项/无事可做）；只对能编排的账号摆，看得到却按不动＝杠杆不可达。
       action: hasPerm("task_group:orchestrate") && workItemCount > 0 ? `<button class="secondary-button" data-action="orchestrator-run">推进一拍</button>` : "",
-      state: dispatches ? `已派发 ${dispatches} 次` : (workItemCount && online ? "还没派发：后台每拍自动推进；等不及可到「执行监控」点「运行自治循环」" : "有工作项且有在线 agent 后自动开始")},
+      state: dispatches ? `已派发 ${dispatches} 次` : (workItemCount && online ? "还没派发：后台每拍自动推进；等不及可到「执行监控」点「运行自治循环」" : "有任务且有在线 agent 后自动开始")},
     {title: "人工审核 / 定稿", done: reviewTodo === 0, attention: reviewTodo > 0, page: "review", workspace: "inbox",
       state: reviewTodo ? `${reviewTodo}${todo.partial ? "+" : ""} 项等你处理（定稿 / 授权 / 审批 / 发现项）`
         : (reviewOthers ? `有 ${reviewOthers} 项在等有权的人处置——你在相关任务组上没有审核权限，只能看` : "暂无等你处理的审核项")},
@@ -4877,7 +4879,7 @@ function renderProjectOverview() {
   const groups = projectTaskGroups();
   const openGroups = groups.filter((taskGroup) => !settledTaskGroupStatuses.has(taskGroup.status));
   const blockers = groups.flatMap((taskGroup) => taskGroup.blockers || []);
-  // 这个数是【按任务组】平均，而同一屏顶上那个大百分比是服务端【按工作项】平均算的
+  // 这个数是【按任务组】平均，而同一屏顶上那个大百分比是服务端【按任务】平均算的
   // （control-plane-core 的 recomputeProgressSnapshots）。两个数并排、公式不同，
   // 实测种子上就是 73% 与 75% —— 标签原先写"事项完成度"，读起来像是同一件事的第二种说法。
   // 两个都有用（一个看整体、一个看有没有某个组在拖），但必须各自说清是怎么算的。
@@ -4978,9 +4980,9 @@ function renderProjectOverview() {
   ].join("");
 }
 
-// 「这条工作项为什么回到就绪 / 它的方案是谁拍的板」—— 答案一直写在记录里
+// 「这条任务为什么回到就绪 / 它的方案是谁拍的板」—— 答案一直写在记录里
 //（humanDecisionRef / planFinalizationRef，core 里注释写明是【溯源引用】），
-// 而全仓零处读：屏幕上被人重开过的工作项和从没卡过的长得一模一样。
+// 而全仓零处读：屏幕上被人重开过的任务和从没卡过的长得一模一样。
 // 引用指向的记录可能已经被集合上限顶掉 —— 那时要说「查不到那条记录」，不能当成没有过这件事。
 function humanTraceHtml(workItem) {
   const parts = [];
@@ -5004,6 +5006,14 @@ function humanTraceHtml(workItem) {
 function taskGroupById(taskGroupId) {
   return (state.taskGroups || []).find((taskGroup) => taskGroup.id === taskGroupId) || null;
 }
+// 待确认卡片、监控表格里给人看的是任务标题，不是 work_ 开头的 id；找不到标题时才退回 id。
+function workItemTitleOf(taskGroupId, workItemId) {
+  const group = (state.taskGroups || []).find((item) => item.id === taskGroupId);
+  const workItem = (group?.workItems || []).find((item) => item.id === workItemId)
+    || (taskWorkDetail?.workItems || []).find((item) => item.id === workItemId);
+  return workItem?.title || workItemId || "-";
+}
+
 function taskGroupNameOf(taskGroupId) {
   return (state.taskGroups || []).find((taskGroup) => taskGroup.id === taskGroupId)?.name || taskGroupId || "-";
 }
@@ -5057,17 +5067,17 @@ function renderTaskGroupsSummary(groups) {
       ${summaryMetric("任务组", groups.length, "当前项目下的任务组总数")}
       ${summaryMetric("进行中", activeGroups.length, "未关闭、未取消的任务组")}
       ${summaryMetric("平均进度", `${avgProgress}%`, "按任务组进度平均")}
-      ${summaryMetric("工作项", workItemCount, "任务组内拆分出的执行单元")}
+      ${summaryMetric("任务", workItemCount, "任务组内拆分出的执行单元")}
       ${summaryMetric("受阻提示", blockedCount, "需要查看或处置的阻塞信号")}
       ${summaryMetric("统一语言", languages.size || 0, "任务组级协作语言种类")}
     </div>
-    <div class="small muted">语言分布：${esc(languageText)}。先看处置看板和生命周期，再决定是否创建新任务组、追加工作项或进入 Agent/监控/审核模块。</div>
+    <div class="small muted">语言分布：${esc(languageText)}。先看处置看板和生命周期，再决定是否创建新任务组、追加任务或进入 Agent/监控/审核模块。</div>
   `, {wide: true});
 }
 
 function renderTaskGroupAttentionBoard(groups) {
   if (!groups.length) {
-    return panel("任务组处置看板", `<div class="notice">当前项目暂无任务组。先创建任务组，系统才会开始拆分工作项、分配角色并调度 agent。</div>`, {wide: true});
+    return panel("任务组处置看板", `<div class="notice">当前项目暂无任务组。先创建任务组，系统才会开始拆分任务、分配角色并调度 agent。</div>`, {wide: true});
   }
   const fleet = (state || {}).fleet || {};
   const noOnlineAgent = Number(fleet.online || 0) <= 0;
@@ -5104,7 +5114,7 @@ function renderTaskGroupAttentionBoard(groups) {
       barrierBlocks ? `关闭门 ${barrierBlocks}` : "",
       blockedDispatches ? `派发被挡 ${blockedDispatches}` : "",
       pendingHuman ? `人工待办 ${pendingHuman}` : "",
-      blockedWorkItems ? `工作项受阻 ${blockedWorkItems}` : "",
+      blockedWorkItems ? `任务受阻 ${blockedWorkItems}` : "",
       waitingWithoutAgent ? `无在线 agent ${waitingWithoutAgent}` : "",
       activeDispatches && !score ? `活跃派发 ${activeDispatches}` : "",
       `进度 ${Number(taskGroup.progress || 0)}%`,
@@ -5127,7 +5137,7 @@ function renderTaskGroupAttentionBoard(groups) {
         </button>
       `).join("")}
     </div>
-    <div class="small muted">按“关闭门阻塞、派发阻塞、人工待办、工作项阻塞、无在线 agent”排序；只展示最需要先看的前 ${displayed.length} 个任务组。</div>
+    <div class="small muted">按“关闭门阻塞、派发阻塞、人工待办、任务阻塞、无在线 agent”排序；只展示最需要先看的前 ${displayed.length} 个任务组。</div>
   `, {wide: true});
 }
 
@@ -5148,18 +5158,18 @@ function renderTaskGroupLifecycleGuide(groups) {
         action: canControl ? "去创建" : "看列表"
       })}
       ${jumpModuleCard({
-        title: "2 拆工作项",
+        title: "2 拆任务",
         metric: workItemCount || "拆分",
-        detail: canControl ? "工作项绑定执行角色、要求和可选指定模型，进入就绪后由总控派发" : "工作项承载具体执行要求、角色、模型约束和验收条件",
+        detail: canControl ? "任务绑定执行角色、要求和可选指定模型，进入就绪后由总控派发" : "任务承载具体执行要求、角色、模型约束和验收条件",
         panelTitle: canControl ? "创建任务" : "任务组",
         tone: workItemCount ? "blue" : "gray",
-        action: canControl ? "加工作项" : "看工作项"
+        action: canControl ? "加任务" : "看任务"
       })}
       ${projectModuleCard({
         pageId: "proj-agents",
         title: "3 确认 Agent",
         metric: "注册",
-        detail: "注册入口在「项目管理」→「注册运行节点」；没有准入节点时，工作项不会真正执行",
+        detail: "注册入口在「项目管理」→「注册运行节点」；没有准入节点时，任务不会真正执行",
         tone: "blue",
         action: "看智能体"
       })}
@@ -5189,7 +5199,7 @@ function renderTaskGroupLifecycleGuide(groups) {
       })}
     </div>
     <div class="small muted">这张图只使用当前项目已加载数据，不新增接口或轮询；任务组仍是 AI-native 执行单元，人只负责目标、权限、语言、定稿和必要控制。</div>
-    <div class="small muted">统一语言：${esc(languageKinds || 0)} 类；运行主线：任务组目标 → 工作项 → Agent Runtime → 实时回送 → 人工审核 → 关闭门。</div>
+    <div class="small muted">统一语言：${esc(languageKinds || 0)} 类；运行主线：任务组目标 → 任务 → Agent Runtime → 实时回送 → 人工审核 → 关闭门。</div>
   `, {wide: true});
 }
 
@@ -5205,7 +5215,7 @@ function renderTaskGroups() {
   const archivedProject = currentProject()?.status === "archived";
   const createPanels = archivedProject
     ? [panel("创建任务组", `<div class="notice warn-notice">这个项目已归档（终态，不可撤销）：`
-      + "建不了新的任务组或工作项，已有的记录只能看。要继续这条线，请在上方切换到一个在用的项目，"
+      + "建不了新的任务组或任务，已有的记录只能看。要继续这条线，请在上方切换到一个在用的项目，"
       + "或新建一个项目。</div>", {wide: true})]
     : !canControl ? [] : [
     panel("创建任务组", hasProjectPermission("task_group:control") ? `
@@ -5224,7 +5234,7 @@ function renderTaskGroups() {
       <form class="form-grid" data-form="work-item-create">
         <div class="form-row"><label>所属任务组</label>
           ${(() => {
-            // 【下拉里只放他真能往里加的组】。原先列的是项目下【全部】任务组，而建工作项
+            // 【下拉里只放他真能往里加的组】。原先列的是项目下【全部】任务组，而建任务
             // 后端是按任务组判 task_group:control 的 —— 只在 tg1 上有权的人能选中 tg2 提交，
             // 然后拿到一句拒绝。按组过滤，并在一个都没有时说清是"没有组"还是"都没权限"。
             const addable = addableGroups;
@@ -5249,7 +5259,7 @@ function renderTaskGroups() {
           <div class="small">选「自动」由系统按角色与任务选最合适的模型；指定后这个任务每次派发都只用这个模型——它若不满足任务的约束或天花板，就挂阻塞交人工处置，而不会悄悄换一个。</div>
         </div>
         <div class="form-row"><label>机器可执行要求（每行一条）</label><textarea name="requirements" placeholder="每行一条约束或验收条件"></textarea></div>
-        ${groups.length ? "" : `<div class="notice">先创建任务组后再追加工作项。</div>`}
+        ${groups.length ? "" : `<div class="notice">先创建任务组后再追加任务。</div>`}
         ${groups.length ? noOnlineAgentCreateNotice() : ""}
         <button class="primary-button" type="submit" ${addableGroups.length ? "" : "disabled"}>创建任务</button>
       </form>
@@ -5570,7 +5580,7 @@ function workItemResultHtml(taskGroupId, workItemId, workStatus = "") {
 }
 
 
-// 一个工作项的【全部】派发（最新在前）：卡片上的「执行历史」用它——人要看的是这个任务先后交给了哪些 agent、
+// 一个任务的【全部】派发（最新在前）：卡片上的「执行历史」用它——人要看的是这个任务先后交给了哪些 agent、
 // 每次用什么角色/模型、结果如何，而不只是最新那一次（findWorkItemDispatch 只取活跃的那一个，给监控页用）。
 function findWorkItemDispatches(taskGroupId, workItemId) {
   return (state.agentDispatches || [])
@@ -5663,9 +5673,9 @@ const BLOCKER_GUIDE = {
 
   CommandEffect: "由编排周期自行和解，无需你动手",
   DerivedTaskRequest: "由编排周期分类后自行清除，无需你动手",
-  WorkItem: "还有工作项没有交付所需产出：等执行完成，或取消对应工作项",
-  Checkpoint: "缺少 Git 证据（提交/推送）：等执行方补齐，或取消对应工作项",
-  RepositoryOutputTarget: "仓库产出目标尚未终态：等推送完成，或取消对应工作项"
+  WorkItem: "还有任务没有交付所需产出：等执行完成，或取消对应任务",
+  Checkpoint: "缺少 Git 证据（提交/推送）：等执行方补齐，或取消对应任务",
+  RepositoryOutputTarget: "仓库产出目标尚未终态：等推送完成，或取消对应任务"
 };
 
 // 派发卡住时的出口。只收【不动手就不会好】的那几种：*_requeued 与 control_* 是自愈或
@@ -5728,16 +5738,16 @@ function stuckExitNotice(dispatches, sessions) {
     .map((reason) => `<br>· ${esc(t(reason) || reason)} —— ${esc(STUCK_EXIT_HINT[reason])}${esc(outOfReach(reason))}`).join("")}</div>`;
 }
 
-// 被阻塞工作项的出口提示。键优先看 blockedReason（更具体），退回到 status。
+// 被阻塞任务的出口提示。键优先看 blockedReason（更具体），退回到 status。
 // 每一条都对应代码里真实的清除路径：写一条并不存在的"会自动恢复"，比什么都不写更糟。
 const WORK_ITEM_EXIT_HINT = {
   needs_decision: "编排不会再自动推进它：到「人工指令」页用「决策处置（重开 / 放弃）」处置。",
-  blocked_dependency: "无需操作：它依赖的工作项通过验收后，下一轮编排会自动放行。",
-  model_selection_rejected: "没有可运行的模型满足它的硬性约束：让系统管理员到「系统管理」→「系统设置」核对模型能力注册，或放宽该工作项的模型约束。",
+  blocked_dependency: "无需操作：它依赖的任务通过验收后，下一轮编排会自动放行。",
+  model_selection_rejected: "没有可运行的模型满足它的硬性约束：让系统管理员到「系统管理」→「系统设置」核对模型能力注册，或放宽该任务的模型约束。",
   blocked_resource: "它等待的资源尚未就绪：让系统管理员到「系统管理」→「系统设置」核对模型与技能源状态。",
   credential_required: "执行需要凭据：在承接它的运行节点上配置所需的凭据环境变量后重试。",
   permission_required: "需要先获得授权：到「人工审核」页批准对应的权限申请。",
-  execution_failed_repeatedly: "同一个工作项连续多次执行失败，系统已停止自动重派（否则会一直空烧模型额度）：到「人工指令」页用「决策处置（重开 / 放弃）」处置，重开前先看阻塞提示里最近一次的失败原因。"
+  execution_failed_repeatedly: "同一个任务连续多次执行失败，系统已停止自动重派（否则会一直空烧模型额度）：到「人工指令」页用「决策处置（重开 / 放弃）」处置，重开前先看阻塞提示里最近一次的失败原因。"
 };
 // 出口提示只说「到人工指令页处置」还不够：人得自己去找那一页、再选任务组、再选任务。
 // 要人处置的那几种，直接给一个带着任务组与任务的入口，落地就是预选好目标的下达表单。
@@ -5776,7 +5786,7 @@ function topologyBlockerText(blocker) {
 // 于是这一类永远查不到 —— 人看到一个红名词，没有下一步。指引因此要按门名给。
 // 每条都对应代码里真实的解阻路径；不需要人动手的，就明说它会自己好，而不是编一个出口。
 const CLOSE_GATE_GUIDE = {
-  all_required_work_closed: "还有工作项没收口：到任务组页看它们卡在哪，或取消不再需要的那些",
+  all_required_work_closed: "还有任务没收口：到任务组页看它们卡在哪，或取消不再需要的那些",
   all_findings_terminal: "到「人工审核」页把未处置的发现项处置掉",
   all_quality_gates_passed: "到“验收与收口”处理未通过的质量门（可豁免，需填理由）",
   all_changes_integrated: "还有改动没合入：等执行方推完，或终止对应的执行方案",
@@ -5791,7 +5801,7 @@ const CLOSE_GATE_GUIDE = {
   all_rule_sources_resolved: "在“验收与收口”判定规则来源",
   all_shared_definitions_active: "在“验收与收口”处置共享定义契约",
   rules_candidates_processed: "在“验收与收口”判定系统升级候选项",
-  artifacts_verified: "还有产物没核验：等执行方补齐证据，或取消对应工作项",
+  artifacts_verified: "还有产物没核验：等执行方补齐证据，或取消对应任务",
   all_repository_output_targets_terminal: "还有写入目标没终结：等对应会话结束，或取消它的派发",
   all_leases_terminal: "写锁随持有它的会话一起释放：处理掉那个会话即可",
   all_commands_terminal: "无需操作：命令总线会自行推进到终态",
@@ -5884,14 +5894,14 @@ function fleetOfflineNotice() {
 // 任务组页是项目负责人盯单元的地方：单元停在 assigned/dispatched 不动时，他在这一页等。
 // 而"没有任何在线 agent"此前只在监控页说 —— 他要先想到去监控页看，才知道自己在等一件
 // 不会发生的事。提示要出现在他所在的位置。
-// 建工作项的表单旁要说清「建了也派不出去」：没有在线 agent 时，建好的工作项只会停在待派发，等人接节点。
-// 顶部那条「已交给执行方的单元没人领」只在【已经有单元等着】时才出现 —— 第一次建工作项的人看不到它，
+// 建任务的表单旁要说清「建了也派不出去」：没有在线 agent 时，建好的任务只会停在待派发，等人接节点。
+// 顶部那条「已交给执行方的单元没人领」只在【已经有单元等着】时才出现 —— 第一次建任务的人看不到它，
 // 建完只看到进度条不动，会以为系统坏了。fleet 没下发时不瞎说。
 function noOnlineAgentCreateNotice() {
   const fleet = (state || {}).fleet;
   if (!fleet || Number(fleet.online || 0) > 0) return "";
   const total = Number(fleet.total || 0);
-  return `<div class="notice warn-notice compact-notice"><strong>当前没有在线 Agent 节点。</strong> 可以先创建，但任务不会被领走。`
+  return `<div class="notice warn-notice compact-notice"><strong>当前没有在线运行节点。</strong> 可以先创建，但任务不会被领走。`
     + `${total ? `已注册 ${esc(total)} 个节点，请先恢复并刷新自检。` : "请先注册运行节点。"}`
     + `<div class="button-row"><button type="button" class="secondary-button" data-menu="proj-agents" data-menu-workspace="${total ? "nodes" : "register"}">${total ? "检查运行节点" : "注册运行节点"}</button></div></div>`;
 }
@@ -6388,7 +6398,7 @@ function renderReview() {
       <div class="record-meta">
         <span>任务组：${esc(taskGroupNameOf(request.taskGroupId))}</span>
         ${request.decisionType ? `<span>决策类型：${esc(t(request.decisionType) || request.decisionType)}</span>` : ""}
-        ${request.workItemId ? `<span>工作项：<span class="mono">${esc(request.workItemId)}</span></span>` : ""}
+        ${request.workItemId ? `<span>任务：${esc(workItemTitleOf(request.taskGroupId, request.workItemId))}</span>` : ""}
         <span>提交时间：${fmtTime(request.createdAt)}</span>
         <span>过期时间：${fmtTime(request.expiresAt)}</span>
       </div>
@@ -6817,7 +6827,7 @@ function renderMonitorActionBoard({
     ? (abnormalNodes
       ? "存在离线、心跳过旧、自检缺项或运行时过旧节点；先恢复 Agent 主机和 Runtime 心跳，能力修好后到「项目管理」→「运行节点」点「刷新自检」"
       : "可见节点当前正常")
-    : "当前项目没有可见 Agent 节点；先到「项目管理」→「注册运行节点」签发加入令牌并复制服务端安装脚本";
+    : "当前项目没有可见运行节点；先到「项目管理」→「注册运行节点」签发加入令牌并复制服务端安装脚本";
   const nodeTone = nodes.length ? (abnormalNodes ? "orange" : "green") : "gray";
   const orchestrator = state.runtime?.autonomousOrchestrator || {};
   const orchestratorIssues = Number(orchestrator.consecutiveErrors || 0);
@@ -6896,7 +6906,7 @@ function renderMonitorRealtimeGuide({eventsShown, sessionsAll, dispatchesAll, co
       ${jumpModuleCard({
         title: "1 派发会话",
         metric: `${activeDispatches}/${activeSessions}`,
-        detail: "总控把工作项落成派发和工作会话，Agent 从服务端原子领活",
+        detail: "总控把任务落成派发和工作会话，Agent 从服务端原子领活",
         panelTitle: activeDispatches ? "智能体派发" : "工作会话",
         tone: activeDispatches || activeSessions ? "blue" : "gray",
         action: "看派发"
@@ -7493,6 +7503,10 @@ document.addEventListener("submit", async (event) => {
     }
     if (kind === "project-member") {
       await api(`/api/projects/${encodeURIComponent(data.projectId)}/members`, {method: "POST", body: JSON.stringify(data)});
+      // 「添加项目成员」授权成功后回到成员列表：留在填满的表单上，人看不到他被加进去了没有，再点一下就是重复授权。
+      // 成员详情里改角色的那张同名表单不在此列（它本来就在详情里，保存后看到的就是新角色）。
+      if (page === "proj-members" && workspaces.current("proj-members")?.id === "add") { workspaces.select("proj-members", "list"); memberGrantAccountId = ""; }
+      formTouched = false;
       await loadPage();
       return;
     }
@@ -7717,7 +7731,7 @@ document.addEventListener("submit", async (event) => {
           title: finalizing ? "确认定稿" : "确认打回返工",
           message: finalizing
             ? "定稿之后，AI 不得再自动更改这个方案；如需变更必须重新回到人工确认。"
-            : "打回之后，这个工作项回到人工决策通道，等待重开或废弃。",
+            : "打回之后，这个任务回到人工决策通道，等待重开或废弃。",
           sub: "该决定只能做一次，提交后无法修改。",
           danger: true,
           confirmText: finalizing ? "确认定稿" : "确认打回"
@@ -9012,7 +9026,7 @@ document.addEventListener("click", async (event) => {
       const agent = (state.agents || []).find((item) => item.id === target.dataset.agent);
       if (agent?.status === "active" && !(await confirmDialog({title: "停用智能体", message: "确认停用该智能体档案？",
         // 这里最容易被误解成"把跑着的 agent 停了"。档案与运行中的节点是两回事，必须说破。
-        sub: "停用的是这份档案：该角色的新工作会改落到其它启用中的档案。它不会让正在运行的 Agent 节点停下来；要停止共享节点，请到「组织管理」→「共享运行节点」使用“关停”或“立即切断”。随时可以再启用。",
+        sub: "停用的是这份档案：该角色的新工作会改落到其它启用中的档案。它不会让正在运行的运行节点停下来；要停止共享节点，请到「组织管理」→「共享运行节点」使用“关停”或“立即切断”。随时可以再启用。",
         danger: true, confirmText: "停用"}))) return;
       await api(`/api/agents/${encodeURIComponent(target.dataset.agent)}/activate`, {method: "POST", body: JSON.stringify({active: agent?.status !== "active"})});
       await loadPage();
@@ -9090,7 +9104,7 @@ document.addEventListener("click", async (event) => {
     if (action === "agent-control") {
       const command = target.dataset.command;
       if (command === "cancel_dispatch" && !(await confirmDialog({title: "取消派发", message: "确认取消该节点当前派发的任务？",
-        sub: "这次派发就此进入终态，不会自动重排；工作项退回「待人工决策」等你处置，它名下的产出目标与 MCP 授权一并了结。",
+        sub: "这次派发就此进入终态，不会自动重排；任务退回「待人工决策」等你处置，它名下的产出目标与 MCP 授权一并了结。",
         danger: true, confirmText: "取消派发"}))) return;
       if (command === "shutdown" && !(await confirmDialog({title: "关停节点", message: "确认优雅关停该节点？", sub: "节点将进入 draining，完成或围栏当前派发后离线（区别于硬吊销）。", danger: true, confirmText: "关停"}))) return;
       const node = [...(state.agentRuntimeNodes || []), ...orgAgentNodes].find((item) => item.nodeId === target.dataset.nodeId);
@@ -9235,7 +9249,7 @@ document.addEventListener("click", async (event) => {
     if (action === "decide-model") {
       const taskGroup = projectTaskGroups()[0];
       const workItem = (taskGroup?.workItems || [])[0];
-      if (!taskGroup || !workItem) throw new Error("当前项目暂无可用于模型决策的任务组和工作项");
+      if (!taskGroup || !workItem) throw new Error("当前项目暂无可用于模型决策的任务组和任务");
       await api("/api/model-selection/decide", {method: "POST", body: JSON.stringify({taskGroupId: taskGroup.id, workItemId: workItem.id, roleId: "orchestrator"})});
       await loadPage();
       toast.success("已完成模型决策");

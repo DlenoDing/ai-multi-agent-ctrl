@@ -4,7 +4,7 @@
 
   function render(nodes, options = {}, helpers) {
     const {canControl = false, scope = "project", showDanger = false, showAdmission = true,
-      emptyText = "当前项目还没有任何 Agent 节点。要让任务实际执行，请进入“注册运行节点”签发一次性加入令牌。"} = options;
+      emptyText = "当前项目还没有任何运行节点。要让任务实际执行，请进入“注册运行节点”签发一次性加入令牌。"} = options;
     const h = helpers;
     if (!nodes.length) return `<div class="notice warn-notice">${esc(emptyText)}</div>`;
     return `<div class="agent-cards">${nodes.map((node) => {

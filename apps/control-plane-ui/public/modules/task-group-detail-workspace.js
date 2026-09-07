@@ -127,7 +127,7 @@ function render(taskGroup, context, helpers) {
     ? `<div class="notice">这个任务组已${taskGroup.status === "closed" ? "关闭" : "中止"}（终态），不再接受暂停、恢复、评审等控制操作。统一语言：${esc(languageLabel(languagePolicy))}。</div>`
     : `<div class="notice">当前账号无“任务组控制”权限，仅可查看。当前统一语言：${esc(languageLabel(languagePolicy))}。</div>`;
 
-  // 视图里嵌的工作项是截断过的（真实总数在 workItemCount）。明细页优先用专用端点的完整列表；
+  // 视图里嵌的任务是截断过的（真实总数在 workItemCount）。明细页优先用专用端点的完整列表；
   // 只有它没加载出来时才回落到这份截断的，而那时必须说清楚"这不是全部"。
   const embeddedTruncated = !progressData.workItems && taskGroup.workItemsTruncated === true;
   // 任务按时间线倒序：最新建的排最前（服务端下发的是插入序＝最旧在前）。两条数据路径（进度接口/列表内嵌）经同一个排序；slice 不改原数组。
@@ -138,7 +138,7 @@ function render(taskGroup, context, helpers) {
           <button class="secondary-button" data-open-work="${esc(workItem.id)}" data-work-group="${esc(taskGroup.id)}">查看任务</button></summary>
         ${progressLine(workItem.progress)}
         <div class="record-meta"><span>执行角色：${esc(t(workItem.ownerRole))}</span>${workItem.pinnedModelId ? `<span>指定模型：<span class="mono">${esc(workItem.pinnedModelId)}</span></span>` : ""}${workItem.blockedReason ? `<span>受阻原因：${esc(explainCoded(workItem.blockedReason))}</span>` : ""}${humanTraceHtml(workItem)}</div>
-        <!-- 被阻塞的工作项：屏幕上要么给出【出口】，要么明说【系统会自清】。只写一句"受阻原因"
+        <!-- 被阻塞的任务：屏幕上要么给出【出口】，要么明说【系统会自清】。只写一句"受阻原因"
              等于把人留在原地 —— 后端有杠杆而界面没入口，等于这个杠杆不存在；而系统自清的也必须
              说出来，否则人会去找一个并不需要的操作。每一条都按代码里真实的清除路径写：
              blocked_dependency 由下一轮编排自动放行，其余两种都要人先动手（已核实过产生它们的分支）。 -->
@@ -148,14 +148,14 @@ function render(taskGroup, context, helpers) {
              免得"没被要求定稿"被读成"系统判断过、认为不必"。 -->
         ${workItem.requiresPlanFinalization === true
           ? `<div class="notice warn-notice">已由 ${esc(workItem.planFinalizationDecidedBy || "?")} 指定：必须先有人工定稿的执行方案才能开跑${workItem.planFinalizationJustification ? `（${esc(workItem.planFinalizationJustification)}）` : ""}。
-              ${/* 这句话原先只说事实、不说出口。而编排在这种情况下【不改工作项状态、也留不下任务组阻塞】
-                    （没有工作项被标成受阻时，本轮结算会把阻塞面整体清空），所以除了这一句，屏幕上再没有
+              ${/* 这句话原先只说事实、不说出口。而编排在这种情况下【不改任务状态、也留不下任务组阻塞】
+                    （没有任务被标成受阻时，本轮结算会把阻塞面整体清空），所以除了这一句，屏幕上再没有
                     别的地方会讲它在等什么 —— 实测拉完杠杆连推三轮，单元一直停在原地。 */""}
               等 agent 提出执行方案后，到「人工审核」页定稿它；没有在线 agent 时不会有人提方案。
               不再需要这项要求时，在下面把它改回「不强制」。</div>`
           : ""}
         ${canReviewWork ? `
-          ${/* 这张表单每张工作项卡都整套渲染（说明 + 下拉 + 理由 + 保存），卡片被撑得很高，而它是偶尔才动一次的杠杆。
+          ${/* 这张表单每张任务卡都整套渲染（说明 + 下拉 + 理由 + 保存），卡片被撑得很高，而它是偶尔才动一次的杠杆。
                 默认收起，摘要写明当前取值；上面那条「必须先定稿」的警示不受影响，仍然常显。 */""}
           <details class="guide-bundle plan-finalization-toggle"><summary class="guide-bundle-summary">执行方案定稿要求：当前「${workItem.requiresPlanFinalization === true ? "必须先由人定稿方案" : "不强制（按系统判断）"}」—— 点开可改</summary>
           <form class="form-grid" data-form="plan-finalization" data-task="${esc(taskGroup.id)}" data-work="${esc(workItem.id)}" style="margin-top:8px;">
@@ -230,7 +230,9 @@ function render(taskGroup, context, helpers) {
   const blockers = `${barrierSummary}${advisoryBlockers || (barrierBlockers.length ? "" : `<div class="record">无其它提示型阻塞</div>`)}`;
 
   const guard = taskGroup.singleCellEscalationGuard;
-  const cellIds = (ids) => (ids || []).length ? (ids || []).map((id) => esc(id)).join("、") : "—";
+  // 准入分类里列的是任务：给人看标题，找不到标题（例如摘要窗口外的任务）才退回 id。
+  const cellTitle = (id) => ((progressData.workItems || []).find((item) => item.id === id) || (taskGroup.workItems || []).find((item) => item.id === id))?.title || id;
+  const cellIds = (ids) => (ids || []).length ? (ids || []).map((id) => esc(cellTitle(id))).join("、") : "—";
   const admissionHtml = guard ? `
       <div class="record-meta">
         <span>可执行任务：${(guard.executableCells || []).length}</span>

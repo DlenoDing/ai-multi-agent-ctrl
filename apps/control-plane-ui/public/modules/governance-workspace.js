@@ -18,7 +18,7 @@
       ["成员（含管理员）", org.usage?.members, org.quotas?.maxMembers],
       ["项目", org.usage?.projects, org.quotas?.maxProjects],
       ["任务组", org.usage?.taskGroups, org.quotas?.maxTaskGroups],
-      ["Agent 节点", org.usage?.agents, org.quotas?.maxAgents, org.usage?.agentsReserved]
+      ["运行节点", org.usage?.agents, org.quotas?.maxAgents, org.usage?.agentsReserved]
     ];
     const pressure = quotaItems.filter(([, used, max, reserved]) => Number(max) > 0
       && (Number(used || 0) + Number(reserved || 0)) / Number(max) >= 0.8).length;

@@ -705,7 +705,7 @@ if (process.env.AIMAC_RENDER_REAL) {
   console.log("（横幅里的失败请求可能来自【上一页】：本工具逐页渲染、不重走 loadPage，而 lastError 是全局的；"
     + "产品里切页会重新加载并清掉它 —— 看到「本页很新 + 别的页的 404」这种搭配，那是工具的拼接）\n");
   const noticeOfDerivedFields = "（这些数是服务端视图算出来的，本工具喂的是原始状态 —— 它们显示成 0/缺省是工具的缺省，"
-    + "不是产品算错了：任务组「角色数」(roleCount)、任务组里嵌的工作项条数(workItemCount/workItemsTruncated)、"
+    + "不是产品算错了：任务组「角色数」(roleCount)、任务组里嵌的任务条数(workItemCount/workItemsTruncated)、"
     + "任务拆解条数(itemCount)、按任务组的权限(taskGroupPermissions)、"
     + "技能源角色数(roleSkillCountBySource，它也决定「系统内置技能（共 N 个）」那个数)、"
     + "各表的「共 N+ 条」截断标记）";
@@ -1117,6 +1117,33 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
             probe.workspaceCurrent("org-members") === "list",
             `提交后栏目＝${probe.workspaceCurrent("org-members")}`);
         }
+      } finally {
+        probe.setFetch(previousFetch);
+      }
+    }
+    // 【「添加项目成员」授权成功后要回到成员列表】（用户 09-08 成员视角走查）：原先留在填满的表单上，人看不到
+    // 他被加进去了没有，再点一下就是重复授权。成员详情里改角色的同名表单不在此列。
+    {
+      const recorded = [];
+      const previousFetch = globalThis.fetch;
+      probe.setFetch(async (url, init = {}) => {
+        recorded.push({url: String(url), method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null});
+        return {ok: true, status: 201, headers: {get: () => null}, json: async () => ({ok: true})};
+      });
+      try {
+        probe.setPage("proj-members");
+        probe.workspaceSelect("proj-members", "add");
+        const form = el("form", {dataset: {form: "project-member"}}, [
+          el("input", {name: "projectId", value: "p1"}),
+          el("select", {name: "accountId", value: "acct_member"}),
+          el("select", {name: "role", value: "task_group_owner"}),
+          el("button", {type: "submit"})
+        ]);
+        await probe.submit({target: form, submitter: form.children[3], preventDefault: () => {}});
+        const post = recorded.find((item) => item.method === "POST" && /\/api\/projects\/p1\/members$/u.test(item.url));
+        check("「添加项目成员」授权成功后要回到项目成员列表",
+          Boolean(post) && probe.workspaceCurrent("proj-members") === "list",
+          `提交${post ? "已发出" : "没发出"}，提交后栏目＝${probe.workspaceCurrent("proj-members")}`);
       } finally {
         probe.setFetch(previousFetch);
       }
@@ -1594,7 +1621,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
           const abandonForm = mkDirective("resolve_decision", "abandon", "", " w_9 ");
           await probe.submit({target: abandonForm, submitter: abandonForm.children[4], preventDefault: () => {}});
           const abandoned = lastPost();
-          check("决策处置：选「放弃」并点名工作项，发出的正是 abandon 与去掉空白的 id",
+          check("决策处置：选「放弃」并点名任务，发出的正是 abandon 与去掉空白的 id",
             abandoned?.body?.resolution === "abandon" && abandoned?.body?.workItemId === "w_9",
             `发出去的是 ${JSON.stringify(abandoned?.body)}`);
         } finally {
@@ -2201,7 +2228,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     overviewProbe.renderFullPageWith({...stalled, fleet}, admin, "p1", "proj-overview");
     return String(overviewRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
   };
-  // 同一屏上两个百分比：顶上那个是服务端【按工作项】平均，关键指标里那个是前端【按任务组】平均。
+  // 同一屏上两个百分比：顶上那个是服务端【按任务】平均，关键指标里那个是前端【按任务组】平均。
   // 实测种子上就是 73% 与 75%。两个都有用，但标签必须说清各自是怎么算的，否则读起来像同一件事。
   {
     const twoNumbers = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
@@ -2309,7 +2336,7 @@ function sectionBodyOf(html, title) {
 }
 
 // 人拉了"这个单元必须先由人定稿执行方案"这条杠杆之后，编排只把它记进准入台账：
-// 不改工作项状态、也加不了任务组阻塞（没有工作项被标成受阻时，本轮结算会把阻塞面整体清空）。
+// 不改任务状态、也加不了任务组阻塞（没有任务被标成受阻时，本轮结算会把阻塞面整体清空）。
 // 于是这张卡上此前一个字都没有 —— 单元停在原地，人不知道它在等什么、不想等了怎么办。
 function runPlanFinalizationNoticeCase() {
   const probe = loadConsole(el("div"));
@@ -2336,7 +2363,7 @@ function runPlanFinalizationNoticeCase() {
   const toggleOf = (html) => /<details class="guide-bundle plan-finalization-toggle"( open)?>([\s\S]*?)<\/details>/u.exec(html);
   const openedToggle = toggleOf(withRequirement);
   const closedToggle = toggleOf(withoutRequirement);
-  check("工作项卡上的定稿要求表单要收进默认关闭的折叠块，摘要写明当前取值",
+  check("任务卡上的定稿要求表单要收进默认关闭的折叠块，摘要写明当前取值",
     Boolean(openedToggle) && !openedToggle[1] && /data-form="plan-finalization"/u.test(openedToggle[2]) && /当前「必须先由人定稿方案」/u.test(openedToggle[0])
       && Boolean(closedToggle) && !closedToggle[1] && /当前「不强制（按系统判断）」/u.test(closedToggle[0]),
     `定稿要求表单没有收起或摘要没写当前取值（有要求：${openedToggle ? openedToggle[0].slice(0, 160) : "没找到折叠块"}）`);
@@ -2345,22 +2372,22 @@ function runPlanFinalizationNoticeCase() {
     "警示被一起折进去了 —— 单元停在原地，人又看不到它在等什么");
 }
 
-// 任务按时间线倒序：任务组里的工作项要最新建的排最前。服务端下发的是插入序（最旧在前），
+// 任务按时间线倒序：任务组里的任务要最新建的排最前。服务端下发的是插入序（最旧在前），
 // 界面必须自己按 createdAt 倒序；两条数据路径（进度接口 / 列表内嵌）都经同一个排序，各验一遍。
 function runWorkItemOrderCase() {
   const probe = loadConsole(el("div"));
-  const older = {id: "w_old", title: "旧的工作项甲", status: "ready", progress: 0, ownerRole: "orchestrator", createdAt: "2026-01-01T00:00:00.000Z"};
-  const newer = {id: "w_new", title: "新的工作项乙", status: "ready", progress: 0, ownerRole: "orchestrator", createdAt: "2026-09-01T00:00:00.000Z"};
+  const older = {id: "w_old", title: "旧的任务甲", status: "ready", progress: 0, ownerRole: "orchestrator", createdAt: "2026-01-01T00:00:00.000Z"};
+  const newer = {id: "w_new", title: "新的任务乙", status: "ready", progress: 0, ownerRole: "orchestrator", createdAt: "2026-09-01T00:00:00.000Z"};
   const embedded = probe.renderTaskGroupDetail({taskGroupId: "tg_ord", progress: {}, config: null, roomMessages: []},
     {id: "tg_ord", roles: [], workItems: [older, newer]});
-  check("任务组内工作项按时间倒序（列表内嵌路径）：最新建的排最前",
-    embedded.indexOf("新的工作项乙") >= 0 && embedded.indexOf("新的工作项乙") < embedded.indexOf("旧的工作项甲"),
-    "最新建的工作项没有排在最前：界面按服务端的插入序（最旧在前）渲染，人找最近的活要翻到最底下");
+  check("任务组内任务按时间倒序（列表内嵌路径）：最新建的排最前",
+    embedded.indexOf("新的任务乙") >= 0 && embedded.indexOf("新的任务乙") < embedded.indexOf("旧的任务甲"),
+    "最新建的任务没有排在最前：界面按服务端的插入序（最旧在前）渲染，人找最近的活要翻到最底下");
   const viaProgress = probe.renderTaskGroupDetail({taskGroupId: "tg_ord", progress: {workItems: [older, newer]}, config: null, roomMessages: []},
     {id: "tg_ord", roles: [], workItems: []});
-  check("任务组内工作项按时间倒序（进度接口路径）：最新建的排最前",
-    viaProgress.indexOf("新的工作项乙") >= 0 && viaProgress.indexOf("新的工作项乙") < viaProgress.indexOf("旧的工作项甲"),
-    "最新建的工作项没有排在最前（进度接口路径）");
+  check("任务组内任务按时间倒序（进度接口路径）：最新建的排最前",
+    viaProgress.indexOf("新的任务乙") >= 0 && viaProgress.indexOf("新的任务乙") < viaProgress.indexOf("旧的任务甲"),
+    "最新建的任务没有排在最前（进度接口路径）");
 }
 
 
@@ -2375,7 +2402,7 @@ function runRuleTextareaAutoGrowCase() {
 }
 
 
-// 「每个任务也能看到完整执行流程，涉及哪些 agent 分别执行了什么」：工作项卡要列出这个任务的【全部】派发
+// 「每个任务也能看到完整执行流程，涉及哪些 agent 分别执行了什么」：任务卡要列出这个任务的【全部】派发
 // （不只是最新一次），最新在前，每条带节点/角色/模型/尝试次数/失败原因。
 function runWorkItemDispatchHistoryCase() {
   const probe = loadConsole(el("div"));
@@ -2390,7 +2417,7 @@ function runWorkItemDispatchHistoryCase() {
     {projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
       taskGroups: [group], agentDispatches: [older, newer], workSessions: [], closeBarriers: [], qualityGates: [], findings: [],
       humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []});
-  check("工作项卡要列出这个任务的全部派发（执行历史），不只是最新一次",
+  check("任务卡要列出这个任务的全部派发（执行历史），不只是最新一次",
     /执行历史（共 2 次派发/u.test(html) && html.includes("adp_hist_old") && html.includes("adp_hist_new"),
     "执行历史只显示了一次派发：人看不到这个任务先后交给过哪些 agent、之前为什么失败");
   check("执行历史最新在前",
@@ -2445,10 +2472,10 @@ function runWorkflowGuideCase() {
     humanDirectives: [{directiveId: "hd1", taskGroupId: "tg1", status: "queued"}],
     closeBarriers: [{taskGroupId: "tg1", blockers: [{gate: "x"}]}]};
   const running = probe.renderProjectOverviewWith(busy, admin, "p1");
-  check("流程导航：接入/建组/工作项/派发/指令/收口各步按真实数据计数",
-    /2 台在线/u.test(running) && /1 个任务组/u.test(running) && /3 个工作项/u.test(running) && /已派发 2 次/u.test(running)
+  check("流程导航：接入/建组/任务/派发/指令/收口各步按真实数据计数",
+    /2 台在线/u.test(running) && /1 个任务组/u.test(running) && /3 个任务/u.test(running) && /已派发 2 次/u.test(running)
       && /1 条指令待编排消费/u.test(running) && /1 个任务组还有关闭门阻塞/u.test(running),
-    "流程导航的某一步没按真实数据算（在线数/任务组数/工作项数/派发数/待消费指令/关闭门阻塞）");
+    "流程导航的某一步没按真实数据算（在线数/任务组数/任务数/派发数/待消费指令/关闭门阻塞）");
   // 「推进一拍」：能编排的账号在第 4 步就能启动，不必跑去监控页；没权限的不摆（看得到却按不动＝杠杆不可达）。
   const PERMS = ["task_group:review", "task_group:control", "task_group:orchestrate", "task_group:checkpoint_submit", "project:grant", "project:update", "agent:activate"];
   const operator = (perms) => ({accountId: "u2", accountType: "user_account", displayName: "操作员", organizationId: "org_default", effectivePermissions: perms});
@@ -2501,7 +2528,7 @@ function runWorkItemResultCase() {
     truncatedCollections: [], repositoryOutputs: [], checkpoints: []};
   const detail = {taskGroupId: "tg_r", progress: {}, config: null, roomMessages: []};
   const none = probe.renderTaskGroupDetail(detail, group, baseState);
-  check("工作项卡：没有产出时要如实说还没有", /结果：还没有产出/u.test(none), "没有任何产出的任务，卡上一个字都不提结果");
+  check("任务卡：没有产出时要如实说还没有", /结果：还没有产出/u.test(none), "没有任何产出的任务，卡上一个字都不提结果");
   const verifiedMissing = probe.renderTaskGroupDetail(detail,
     {...group, workItems: [{...group.workItems[0], status: "verified", progress: 100}]}, baseState);
   check("已验证任务缺少结果时详情必须明确告警",
@@ -2525,17 +2552,17 @@ function runWorkItemResultCase() {
   check("待决策的任务结果标题要说产出未落地，不能写着正在生成",
     /结果：产出未落地（执行已卡住）/u.test(stalledText) && !/结果：正在生成仓库产出/u.test(stalledText),
     `卡住的任务结果标题：${(/结果：[^ ]{0,20}/u.exec(stalledText) || ["没找到结果标题"])[0]}`);
-  check("工作项卡：结果要说清仓库产出到哪一步与检查点的 Git 证据",
+  check("任务卡：结果要说清仓库产出到哪一步与检查点的 Git 证据",
     /结果：已推送到远端/u.test(pushedText) && pushedText.includes("repo_x") && pushedText.includes("feat/x")
       && /检查点 1 个/u.test(pushedText) && /有提交/u.test(pushedText) && /已推送/u.test(pushedText),
     "任务的结果（仓库/分支/状态/提交/推送）没有在卡上说清");
-  check("工作项结果必须显示可核验的提交、变更文件和产出清单",
+  check("任务结果必须显示可核验的提交、变更文件和产出清单",
     pushedResult.includes("abcdef123456") && pushedResult.includes("apps/api.js") && pushedResult.includes("docs/result.md")
       && pushedResult.includes("docs/artifact-manifest.json") && pushedResult.includes("完成接口与文档"),
     "任务结果只说有提交和已推送，没有给出提交号、实际变更文件或产出清单，人仍无法核验具体结果");
   const unpushed = probe.renderTaskGroupDetail(detail, group, {...baseState,
     checkpoints: [{taskGroupId: "tg_r", workId: "w_r", commitRefs: ["c1"], pushRefs: []}]});
-  check("工作项卡：有提交没推送时要说未推送",
+  check("任务卡：有提交没推送时要说未推送",
     /有提交/u.test(unpushed) && /未推送/u.test(unpushed) && !/已推送/u.test(unpushed),
     "没推送却说已推送：人会以为改动已经到远端了");
   const pushedList = probe.renderTaskWorkbenchModule({groups: [group], nextState: {...baseState,
@@ -3481,6 +3508,17 @@ async function runErrorGuidanceCase() {
     missingRouteObject === "Agent 档案" && objectProbe.sessionState().selectedAgentProfileId === ""
       && routeNotices.some((message) => /不存在或当前账号无权查看/u.test(message)),
     `结果=${missingRouteObject || "空"}，提示=${routeNotices.join("；") || "无"}`);
+  // 【从组织成员页点「分配项目角色」带着组织成员进项目的「添加项目成员」表单，不是失效深链接】（用户 09-08 成员视角走查）：
+  // 他本来就还不是项目成员，原先一进来就弹「地址中的项目成员不存在或当前账号无权查看」，把人吓一跳。
+  routeNotices.length = 0;
+  objectProbe.restoreRoute({page: "proj-members", projectId: "p1", accountId: "acct_org_only_member", workspace: "add"});
+  const preselectMissing = objectProbe.reconcileRouteSelection();
+  objectProbe.restoreRoute({page: "proj-members", projectId: "p1", accountId: "acct_org_only_member", workspace: "list"});
+  const detailMissing = objectProbe.reconcileRouteSelection();
+  check("带着待授权的组织成员进「添加项目成员」表单时不得弹「项目成员不存在」，进成员详情时照旧要提示",
+    preselectMissing === "" && detailMissing === "项目成员"
+      && routeNotices.filter((message) => /项目成员不存在/u.test(message)).length === 1,
+    `表单＝${preselectMissing || "空"}，详情＝${detailMissing || "空"}，提示＝${routeNotices.join("；") || "无"}`);
   const windowedRoot = el("div");
   const windowedProbe = loadConsole(windowedRoot, {realI18n: true});
   const windowedState = {...navState, taskGroups: [], agentDispatches: [], workSessions: [], repositoryOutputs: [], closeBarriers: [], completionReadiness: []};
@@ -3553,8 +3591,8 @@ async function runErrorGuidanceCase() {
   const repo = [{id: "repo", credentialMode: "none"}];
   const commandCases = [
     ["配置项目仓库", {project: commandProject, groups: [], fleet: {total: 0, online: 0}, repositories: [], todos: {}, canControl: true}],
-    ["注册 Agent 节点", {project: commandProject, groups: [], fleet: {total: 0, online: 0}, repositories: repo, todos: {}, canControl: true}],
-    ["恢复 Agent 节点", {project: commandProject, groups: [], fleet: {total: 2, online: 0}, repositories: repo, todos: {}, canControl: true}],
+    ["注册运行节点", {project: commandProject, groups: [], fleet: {total: 0, online: 0}, repositories: repo, todos: {}, canControl: true}],
+    ["恢复运行节点", {project: commandProject, groups: [], fleet: {total: 2, online: 0}, repositories: repo, todos: {}, canControl: true}],
     ["创建任务组", {project: commandProject, groups: [], fleet: {total: 2, online: 1}, repositories: repo, todos: {}, canControl: true}],
     ["创建任务", {project: commandProject, groups: [{id: "tg", name: "任务组", status: "active", stats: {tasks: 0, runs: 0, reviews: 0, blocked: 0}}], fleet: {total: 2, online: 1}, repositories: repo, todos: {}, canControl: true}],
     ["启动任务组", {project: commandProject, groups: [{id: "tg", name: "任务组", status: "active", goalExecutionStatus: "active_paused_by_control", stats: {tasks: 1, runs: 0, reviews: 0, blocked: 0}}], fleet: {total: 2, online: 1}, repositories: repo, todos: {}, canControl: true}],
@@ -4123,7 +4161,7 @@ function runReviewAxisCase() {
       "p_arch", "tg", "create");
     const archHtml = String(archRoot.innerHTML || "");
     check("已归档项目的任务组页不许摆着「创建任务组 / 创建任务」表单",
-      /建不了新的任务组或工作项/u.test(archHtml)
+      /建不了新的任务组或任务/u.test(archHtml)
         && !/data-form="task-group-create"/u.test(archHtml)
         && !/data-form="work-item-create"/u.test(archHtml),
       archHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/创建任务组[^|]{0,80}/u)?.[0] || "（这一页没渲染出来）");
@@ -4310,13 +4348,13 @@ function runReviewAxisCase() {
           question: {summary: "还要不要继续"}, options: [], cancelReason: "dispatch_failed",
           updatedAt: "2026-08-20T00:00:00.000Z"},
         {requestId: "hcr_c2", taskGroupId: "tg1", status: "cancelled", decisionClass: "operational",
-          question: {summary: "验收确认"}, options: [], cancelReason: "工作项已由人工放弃",
+          question: {summary: "验收确认"}, options: [], cancelReason: "任务已由人工放弃",
           updatedAt: "2026-08-20T01:00:00.000Z"}
       ],
       qualityGates: []
     });
     check("被作废的确认单要说得出为什么（人正要回答的问题凭空消失）",
-      /已作废/u.test(cancelledHtml) && /工作项已由人工放弃/u.test(cancelledHtml),
+      /已作废/u.test(cancelledHtml) && /任务已由人工放弃/u.test(cancelledHtml),
       "已答历史里是一行空的「已取消」：没有选项、没有内容、没有确认人，也没有原因");
     // 另一处写的是 dispatch_failed 这类码 —— 直接摆给人看等于没说。用真词表验它被译过。
     // 用变量传选项，不复制 loadConsole(el("div"), {realI18n: true}) 这串字面量 ——
@@ -4542,7 +4580,7 @@ function runNoVisibleProjectCase() {
       "屏幕上只有一个「已关闭」，谁定的、什么时候定的都追不到");
 
     // 没选出模型的那一条决策，屏幕上原本只剩一个"任务类型"：为什么没选出来、按的是哪条
-    // 策略的硬约束，都写进了记录却没有任何读取点。人看到的是"这个工作项就是没有模型"。
+    // 策略的硬约束，都写进了记录却没有任何读取点。人看到的是"这个任务就是没有模型"。
     const denialState = structuredClone(stuckState);
     denialState.modelSelectionDecisions = [{decisionId: "msd1", taskGroupId: "tg1", workItemId: "wi_9",
       roleId: "implementer", status: "denied", taskExecutionClass: "code_change",
@@ -4556,7 +4594,7 @@ function runNoVisibleProjectCase() {
       !/no_candidate_satisfied_hard_constraints/u.test(denialText),
       "把 no_candidate_satisfied_hard_constraints 直接印在屏幕上了");
 
-    // 同一条纪律在【建工作项】那个下拉上：它原先列的是项目下全部任务组，而后端按组判
+    // 同一条纪律在【建任务】那个下拉上：它原先列的是项目下全部任务组，而后端按组判
     // task_group:control —— 只在 tg1 上有权的人能选中 tg2 提交，然后拿到一句拒绝。
     {
       const pickState = structuredClone(stuckState);
@@ -4569,7 +4607,7 @@ function runNoVisibleProjectCase() {
       const picker = {accountId: "u8", accountType: "org_member", displayName: "成员",
         organizationId: "org_default", effectivePermissions: ["task_group:control", "project:read"]};
       const pickText = renderAs(picker, pickState, "tasks", "p1", undefined, "create");
-      check("建工作项的下拉里不许出现他没权限的任务组（选了也只会被后端拒掉）",
+      check("建任务的下拉里不许出现他没权限的任务组（选了也只会被后端拒掉）",
         /我有权的组/u.test(pickText) && /另有 1 个组你没有/u.test(pickText),
         String(pickText).replace(/<[^>]+>/gu, " ").match(/所属任务组[^|]{0,90}/u)?.[0] || "（这一段没渲染出来）");
       const noneState = structuredClone(pickState);
@@ -4633,7 +4671,7 @@ function runNoVisibleProjectCase() {
       !/你处置不了/u.test(renderAs(partialReviewer, fullReachState, "monitor", "p1", undefined, "blockers")),
       "有权处置的人也被告知自己处置不了");
 
-    // 关闭门被 artifacts_verified 挡住时，人被告知"等执行方补齐证据，或取消对应工作项" ——
+    // 关闭门被 artifacts_verified 挡住时，人被告知"等执行方补齐证据，或取消对应任务" ——
   // 却不知道该盯哪一条产物。artifacts 那时在防泄漏白名单里，但没有任何视图真的下发它。
     {
     const artifactState = {
@@ -5619,16 +5657,16 @@ async function runPendingTruncationCase() {
     check("数据变了必须重建（跳过不能把真实变化一起挡住）",
       writes === afterFirst + 1 && /改过名的任务组/.test(value),
       `写入次数 ${writes}，界面上${/改过名的任务组/.test(value) ? "有" : "没有"}新名字`);
-    // 【建工作项表单旁要说「没有在线 agent 时建了也派不出去」】。顶部那条「已交给执行方的单元没人领」
-    // 只在已经有单元等着时出现，第一次建工作项的人看不到；有在线节点时不许喊。
+    // 【建任务表单旁要说「没有在线 agent 时建了也派不出去」】。顶部那条「已交给执行方的单元没人领」
+    // 只在已经有单元等着时出现，第一次建任务的人看不到；有在线节点时不许喊。
     probe.renderFullPagePaneWith({...makeState("任务组"), fleet: {online: 0, total: 2}}, account, "p1", "tasks", "create");
     const noAgentForm = /data-form="work-item-create"[\s\S]*?<\/form>/u.exec(value)?.[0] || "";
-    check("没有在线 agent 时，建工作项表单里要说建好后不会被领走、已注册几个",
+    check("没有在线 agent 时，建任务表单里要说建好后不会被领走、已注册几个",
       /不会被领走/u.test(noAgentForm) && /已注册 2 个/u.test(noAgentForm),
-      `建工作项表单里没说（${noAgentForm.length ? noAgentForm.slice(-300) : "没找到 work-item-create 表单"}）`);
+      `建任务表单里没说（${noAgentForm.length ? noAgentForm.slice(-300) : "没找到 work-item-create 表单"}）`);
     probe.renderFullPagePaneWith({...makeState("任务组"), fleet: {online: 1, total: 2}}, account, "p1", "tasks", "create");
     const withAgentForm = /data-form="work-item-create"[\s\S]*?<\/form>/u.exec(value)?.[0] || "";
-    check("有在线 agent 时建工作项表单不许喊「不会被领走」",
+    check("有在线 agent 时建任务表单不许喊「不会被领走」",
       withAgentForm.length > 0 && !/不会被领走/u.test(withAgentForm),
       "有节点在线仍在表单里喊没人领 —— 人会去白查节点");
     // 【从任务组详情点「创建任务」要真的看到表单】。详情态（expandedTaskGroupId）还在时，tasks/create
@@ -5736,7 +5774,7 @@ async function runPendingTruncationCase() {
       projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
       taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", progress: 40,
         languagePolicy: {languageTag: "zh-CN"}, workItemCount: 2,
-        workItems: [{id: "w1", title: "工作项", status: "assigned", ownerRole: "reviewer"}]}],
+        workItems: [{id: "w1", title: "任务", status: "assigned", ownerRole: "reviewer"}]}],
       accounts: [
         {accountId: "acct_a", displayName: "甲", email: "a@example.com", accountType: "system_admin", status: "active", roles: ["system-owner"]},
         {accountId: "acct_svc", displayName: "服务", email: "svc@example.com", accountType: "service_account", status: "active", roles: ["runtime-service"]}
@@ -6006,7 +6044,7 @@ async function runPendingTruncationCase() {
         && !/项目进度 ·/u.test(objectOverview) && !/class="module-card/u.test(objectOverview)
         && /任务组平均进度/u.test(objectOverview) && /待人工确认/u.test(objectOverview), textOf(objectOverview).slice(0, 300));
     check("项目资源摘要取实际配置与服务端节点范围，不把产出记录数当仓库数",
-      /仓库 1 个/u.test(objectOverview) && /Agent 节点 2\/3 在线/u.test(objectOverview), textOf(objectOverview));
+      /仓库 1 个/u.test(objectOverview) && /运行节点 2\/3 在线/u.test(objectOverview), textOf(objectOverview));
     const summaryAt = objectOverview.indexOf('aria-label="项目摘要"');
     const summaryHtml = summaryAt < 0 ? "" : objectOverview.slice(summaryAt, objectOverview.indexOf("</section>", summaryAt));
     check("项目资源摘要只展示事实，不再作为跨模块导航",
@@ -6253,7 +6291,7 @@ async function runPendingTruncationCase() {
       progress: {
         taskAnalysis: {items: [{kind: "task", title: "拆解", status: "running", progress: 40}]},
         roles: [{roleId: "reviewer", status: "active", addedBy: "auto"}],
-        workItems: [{id: "w1", title: "工作项", status: "assigned", ownerRole: "reviewer", progress: 20}],
+        workItems: [{id: "w1", title: "任务", status: "assigned", ownerRole: "reviewer", progress: 20}],
         workItemCount: 1,
         blockers: [{severity: "attention", summary: "等待自检"}]
       },
@@ -6298,6 +6336,14 @@ async function runPendingTruncationCase() {
         rolesPane.includes("通用任务执行") && !rolesPane.includes("智能体运行时"),
         `角色栏目：${rolesPane.slice(0, 300)}`);
     }
+    // 【准入分类里列的是任务标题，不是 work_ 开头的 id】（用户 09-08 成员视角走查）。
+    {
+      const guardedGroup = {...detailTaskGroup, singleCellEscalationGuard: {executableCells: ["w1"], waitingCells: [], blockedCells: [], escalatableBlockedCells: [], overallBlockedPermitted: false}};
+      const guardedPane = String(probe.renderTaskGroupDetailPane("control", detail, guardedGroup, overviewState, systemAdmin, "p1")).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+      check("执行控制栏的准入分类要写任务标题而不是 id",
+        /可执行：任务 /u.test(guardedPane) && !/可执行：w1/u.test(guardedPane),
+        `准入分类：${guardedPane.match(/可执行：.{0,80}/u)?.[0] || "没找到可执行那行"}`);
+    }
     const detailProgressPane = probe.renderTaskGroupDetailPane("progress", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
     const detailRolesPane = probe.renderTaskGroupDetailPane("roles", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
     const detailInheritancePane = probe.renderTaskGroupDetailPane("inheritance", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
@@ -6326,7 +6372,7 @@ async function runPendingTruncationCase() {
     check("任务组详情跳转处理器支持小节锚点和动态标题前缀",
       /querySelectorAll\("\[data-section-title\]"\)/u.test(probe.handlerSource("click"))
         && /sectionTitle\.startsWith\(title\)/u.test(probe.handlerSource("click")),
-      "点击处理器只找顶层 panel，动态工作项标题或详情小节跳不过去");
+      "点击处理器只找顶层 panel，动态任务标题或详情小节跳不过去");
     check("任务组详情阅读卡必须在对象局部栏目内跳转",
       /page === "tg" && expandedTaskGroupId \? "group-detail" : page/u.test(probe.handlerSource("click"))
         && /workspaces\.owner\(workspacePage, title\)/u.test(probe.handlerSource("click"))
@@ -6760,7 +6806,7 @@ async function runPendingTruncationCase() {
       "立即切断/取消派发这类高影响操作没有危险确认语义或后果说明");
   }
 
-  // 明细页的工作项来自专用端点，它现在也有上限（4000 单元时曾是约 1.1MB 载荷 + 4000 个 DOM 节点）。
+  // 明细页的任务来自专用端点，它现在也有上限（4000 单元时曾是约 1.1MB 载荷 + 4000 个 DOM 节点）。
   // 截断了就必须说清"共多少、当前展示多少"，并且要告诉人筛选只覆盖已加载的这些。
   {
     const baseGroup = {id: "tg1", projectId: "p1", name: "任务组", status: "development", workItems: []};
@@ -6794,13 +6840,13 @@ async function runPendingTruncationCase() {
     check("截断后的任务动态标题也要作为小节锚点",
       /任务（共 4000 个，当前展示 300 个）/.test(detailHtml)
         && probe.workspaceOwner("group-detail", "任务（共 4000 个，当前展示 300 个）") === "tasks",
-      "动态工作项标题没有归到任务列表 pane，截断集合就失去自己的工作区归属");
+      "动态任务标题没有归到任务列表 pane，截断集合就失去自己的工作区归属");
     check("提示里要写清只加载了最新的多少个",
       /只加载了最新的 300 个/.test(detailHtml),
       "截断了却没说只加载了一部分 —— 人会以为只有这些");
     check("要说清筛选只覆盖已加载的部分",
       /筛选只在已加载的这些里找/.test(detailHtml),
-      "截断之后没说筛选范围 —— 人筛不到就会以为那个工作项不存在");
+      "截断之后没说筛选范围 —— 人筛不到就会以为那个任务不存在");
     const fullProgress = {taskGroupId: "tg1", progress: {}, config: null, roomMessages: [],
       progress: {workItems: [{id: "w0", title: "单元0", status: "draft"}], workItemCount: 1, blockers: []}};
     check("没有截断时不挂那条提示",
@@ -6845,8 +6891,8 @@ async function runPendingTruncationCase() {
       "没有 pauseReason 也挂停因标记 —— 常亮的标记等于没有标记");
   }
 
-  // 视图里嵌的工作项是截断过的（真实总数在 workItemCount）。把截断后的长度当总数，
-  // 正是这套系统反复栽过的坑：人看到"工作项：20"，实际有 300 个。
+  // 视图里嵌的任务是截断过的（真实总数在 workItemCount）。把截断后的长度当总数，
+  // 正是这套系统反复栽过的坑：人看到"任务：20"，实际有 300 个。
   {
     const truncatedState = {
       schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
@@ -6858,12 +6904,12 @@ async function runPendingTruncationCase() {
       humanConfirmationRequests: [], truncatedCollections: []
     };
     const listView = probe.renderTaskGroupsWith(truncatedState, admin, "p1");
-    check("列表页的工作项数要报真实总数",
+    check("列表页的任务数要报真实总数",
       /data-field="task-count">300<\/span>/.test(listView),
-      `嵌入的工作项被截断到 20 条，列表页却按截断后的长度报数 —— 人看到的是一个假数字（片段：${
-        (listView.match(/工作项：\d+/) || ["无"])[0]}）`);
+      `嵌入的任务被截断到 20 条，列表页却按截断后的长度报数 —— 人看到的是一个假数字（片段：${
+        (listView.match(/任务：\d+/) || ["无"])[0]}）`);
     // 明细页的 tgDetail 要给全形状（taskGroupId/progress/config/roomMessages），
-    // 只传 {} 的话渲染根本走不到工作项那一段 —— 断言就成了在看一个没渲染出来的页面。
+    // 只传 {} 的话渲染根本走不到任务那一段 —— 断言就成了在看一个没渲染出来的页面。
     const detailView = probe.renderTaskGroupsWith(truncatedState, admin, "p1", "tg1",
       {taskGroupId: "tg1", progress: {}, config: null, roomMessages: []});
     check("回落到截断列表时必须说清不是全部",
@@ -7093,6 +7139,16 @@ async function runPendingTruncationCase() {
         && !leafButton("monitor", "quality") && !leafButton("monitor", "blockers")
         && !/nav-badge/u.test(leafButton("monitor", "overview")),
       "隐藏的审核明细仍占侧栏红点，或待办汇总与质量门计数不准确");
+    // 【待确认卡片上给人看的是任务标题，不是 work_ 开头的 id】（用户 09-08 成员视角走查）。
+    {
+      const titledState = {...routed,
+        taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", workItems: [{id: "work_titled_1", title: "评审工单分派规则文档", status: "verifying", ownerRole: "reviewer"}]}],
+        humanConfirmationRequests: [{requestId: "h1", taskGroupId: "tg1", status: "pending", workItemId: "work_titled_1", decisionType: "work_item_verification"}]};
+      const titledPane = String(loadConsole(el("div"), {realI18n: true}).renderReviewInventoryWith(titledState, admin, "p1", ["pending"])).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+      check("待确认卡片要写任务标题而不是 work_ 开头的 id",
+        titledPane.includes("任务：评审工单分派规则文档") && !/任务：work_titled_1/u.test(titledPane) && !/工作项/u.test(titledPane),
+        `卡片：${titledPane.match(/任务组：.{0,120}/u)?.[0] || titledPane.slice(0, 200)}`);
+    }
     // 权限审批 / 操作审批 / 发现处置同在「审批与处置」一栏，三段各自有标题、各含自己的记录；待我审核栏不混入它们。
     const dispositionsPane = probe.renderReviewInventoryWith(routed, admin, "p1", ["dispositions"]);
     const pendingOnlyPane = probe.renderReviewInventoryWith(routed, admin, "p1", ["pending"]);
@@ -7763,15 +7819,15 @@ runStablePrefixMeasurementCase();
 runOrchestratorVisibilityCase();
 runFirstRunGuidanceCase();
 runOutdatedRuntimeVisibilityCase();
-// 工作项「执行角色」下拉是界面写死的 7 个，而后端按 core 的 REGISTERED_OWNER_ROLES（22 个）判。
+// 任务「执行角色」下拉是界面写死的 7 个，而后端按 core 的 REGISTERED_OWNER_ROLES（22 个）判。
 // 两份同一件事的清单，中间没有任何东西钉着 —— 这类必漂。两向都要核：
 // 界面列了 core 不认的 = 选中必被拒的死杠杆；core 认而界面不列的 = 界面够不着的角色。
 // 后者多数是有意的（服务角色不该派活给人指派），但必须【逐个写明】，不能靠"大概是有意的"。
 const OWNER_ROLES_NOT_OFFERED_IN_CONSOLE = {
-  "decision-center": "控制面自身的决策中枢，不是人指派给工作项的执行角色",
+  "decision-center": "控制面自身的决策中枢，不是人指派给任务的执行角色",
   "scheduler": "控制面自身的调度组件",
   "work-session": "会话这个概念本身，不是执行角色",
-  "rule-steward": "规则治理由「系统管理」→「系统设置」的规则源与叠加来做，不走工作项派活",
+  "rule-steward": "规则治理由「系统管理」→「系统设置」的规则源与叠加来做，不走任务派活",
   "command-bus": "控制面内部服务",
   "permission-gateway": "控制面内部服务",
   "policy-engine": "控制面内部服务",
@@ -7780,7 +7836,7 @@ const OWNER_ROLES_NOT_OFFERED_IN_CONSOLE = {
   "model-registry": "控制面内部服务",
   "skill-registry": "控制面内部服务",
   "identity-service": "控制面内部服务",
-  "ui-console-service": "控制面内部服务（种子数据里有工作项挂着它，但那是自举，不是人该选的）",
+  "ui-console-service": "控制面内部服务（种子数据里有任务挂着它，但那是自举，不是人该选的）",
   "repository-router": "控制面内部服务",
   "instruction-optimizer": "控制面内部服务"
 };
@@ -7861,7 +7917,7 @@ function runSupersededReasonCase() {
     /租约过期/u.test(text),
     `仓库产出那一行显示的是：${(text.match(/repo_main[^。]{0,60}/u) || ["（没渲染出这一行）"])[0]}`);
 }
-// 被人重开过的工作项、方案被人拍过板的工作项，屏幕上与从没卡过的长得一模一样 ——
+// 被人重开过的任务、方案被人拍过板的任务，屏幕上与从没卡过的长得一模一样 ——
 // 答案一直写在记录里（humanDecisionRef / planFinalizationRef 是 core 有意写的【溯源引用】），
 // 全仓零处读。引用指向的记录被集合上限顶掉时，要说「查不到那条记录」，不能当成没有过这件事。
 function runHumanTraceCase() {
@@ -7899,12 +7955,12 @@ function runHumanTraceCase() {
     `带上账号之后显示的是：${(named.match(/由人工指令重开：[^·]*/u) || ["（没渲染出这一行）"])[0]}`);
 
   const resolved = detailOf(base);
-  check("被人重开过的工作项要说出是谁在什么时候重开的",
+  check("被人重开过的任务要说出是谁在什么时候重开的",
     /由人工指令重开：ops@local/u.test(resolved),
-    `工作项那一行显示的是：${(resolved.match(/执行角色[^执]{0,120}/u) || ["（没渲染出这一行）"])[0]}`);
-  check("方案被人定稿过的工作项要说出是谁拍的板",
+    `任务那一行显示的是：${(resolved.match(/执行角色[^执]{0,120}/u) || ["（没渲染出这一行）"])[0]}`);
+  check("方案被人定稿过的任务要说出是谁拍的板",
     /方案已由人定稿：lead@local/u.test(resolved),
-    `工作项那一行显示的是：${(resolved.match(/执行角色[^执]{0,160}/u) || ["（没渲染出这一行）"])[0]}`);
+    `任务那一行显示的是：${(resolved.match(/执行角色[^执]{0,160}/u) || ["（没渲染出这一行）"])[0]}`);
   // 引用还在、记录被容量顶掉了：不能因为查不到就当成没发生过。
   const dropped = detailOf({...base, humanDirectives: [], humanConfirmationRequests: []});
   check("溯源引用查不到对应记录时要说「查不到」，不能当成没有过这件事",
@@ -8106,7 +8162,7 @@ await runCodedApiErrorCase();
   loadConsole(createRoot, {realI18n: true}).renderFullPagePaneWith(withCells("assigned", {online: 0, total: 2}), account, "p1", "tasks", "create");
   const createHtml = String(createRoot.innerHTML || "");
   check("创建任务页只显示一条简短离线提示",
-    (createHtml.match(/当前没有在线 Agent 节点/gu) || []).length === 1
+    (createHtml.match(/当前没有在线运行节点/gu) || []).length === 1
       && !/执行已停住/u.test(createHtml)
       && /data-menu="proj-agents" data-menu-workspace="nodes"/u.test(createHtml),
     "创建表单旁和页面顶部重复显示同一段离线告警，主表单被挤到侧面或下方");
@@ -8154,7 +8210,7 @@ await runCodedApiErrorCase();
     }
   }
   const unknownLiterals = noticeLiterals.filter((entry) => entry.missing || !workItemStates.includes(entry.status));
-  check("提示里筛的工作项状态必须是状态机登记过的",
+  check("提示里筛的任务状态必须是状态机登记过的",
     workItemStates.length > 5 && noticeLiterals.length >= 5 && !unknownLiterals.length,
     workItemStates.length <= 5 ? "没能从 spec 取到 WorkItem 状态集，本条在空转"
       : (noticeLiterals.length < 5 ? `只提取到 ${noticeLiterals.length} 个状态字面量 —— 提取逻辑与代码脱节，本条在空转`
@@ -8606,8 +8662,8 @@ await runCodedApiErrorCase();
   }
 }
 
-// 工作项的阻塞状态是可枚举的（core 的 BLOCKED_WORKITEM_STATUSES 五种）。人在任务组页看到
-// 一个被阻塞的工作项时，屏幕上要么给出【出口】，要么明说【系统会自清】—— 只写一句"受阻原因"
+// 任务的阻塞状态是可枚举的（core 的 BLOCKED_WORKITEM_STATUSES 五种）。人在任务组页看到
+// 一个被阻塞的任务时，屏幕上要么给出【出口】，要么明说【系统会自清】—— 只写一句"受阻原因"
 // 等于把人留在原地。后端有杠杆而界面没入口，等于这个杠杆不存在；系统自清的也必须说出来，
 // 否则人会去找一个并不需要的操作。
 // 逐条写死只守得住写它的人当时想到的那一种，所以按 core 的清单全量核对。
@@ -8626,25 +8682,25 @@ await runCodedApiErrorCase();
   // 而它来自"没有可运行的模型满足硬性约束"，不动手永远不会好。写一条不存在的"会自动恢复"
   // 比什么都不写更糟：人会一直等下去。
   const SELF_CLEARING = {
-    blocked_dependency: "依赖的工作项通过验收后，下一轮编排自动放行"
+    blocked_dependency: "依赖的任务通过验收后，下一轮编排自动放行"
   };
   // stale_state 在全仓没有任何产生者（不可达状态）。登记在此，免得下次有人为它编一段界面文案；
   // 一旦将来有代码真的写它，这里的登记就该连同出口一起补。
-  const NO_PRODUCER = {stale_state: "全仓无任何代码把工作项置为该状态"};
+  const NO_PRODUCER = {stale_state: "全仓无任何代码把任务置为该状态"};
   for (const status of blockedStatuses) {
     const stateWithParkedCell = {
       schemaVersion: "runtime-state/v1", stateVersion: 1,
       projects: [{id: "p_park", name: "项目", organizationId: "org_default", status: "active", members: []}],
       taskGroups: [{id: "tg_park", projectId: "p_park", name: "任务组", status: "development", health: "attention",
-        workItems: [{id: "w_park", title: "被停住的工作项", status, blockedReason: status,
+        workItems: [{id: "w_park", title: "被停住的任务", status, blockedReason: status,
           ownerRole: "agent-runtime", progress: 40}]}],
       truncatedCollections: []
     };
     const html = probe.renderTaskGroupsWith(stateWithParkedCell, account, "p_park", "tg_park", {
       taskGroupId: "tg_park", progress: {}, config: null, roomMessages: []
     });
-    if (!html.includes("被停住的工作项")) {
-      failures.push(`阻塞状态出口: ${status} 的工作项根本没被渲染出来 —— 这一轮断言在空转`);
+    if (!html.includes("被停住的任务")) {
+      failures.push(`阻塞状态出口: ${status} 的任务根本没被渲染出来 —— 这一轮断言在空转`);
       continue;
     }
     // 判据必须收窄到【这张卡片】：拿整页去匹配的话，页面别处本来就有"人工指令/人工审核"这些词，
@@ -8652,7 +8708,7 @@ await runCodedApiErrorCase();
     // 先剥掉 HTML 注释再匹配：模板里那段解释性注释本身就含"自动放行""人工指令"这些词，
     // 它会原样出现在渲染结果里 —— 我第一版匹配到的正是自己写的注释，把出口整段删掉照样绿。
     const visible = html.replace(/<!--[\s\S]*?-->/gu, "");
-    const cardStart = visible.indexOf("被停住的工作项");
+    const cardStart = visible.indexOf("被停住的任务");
     const card = visible.slice(cardStart, cardStart + 900);
     // 别写死页名：本门原先认的是"运行时」页"，而界面上【根本没有】这个页（实测 10 处报文
     // 都指向它）—— 门和被测代码共用了同一个漂掉的名字，于是"指向不存在的页"被当成合法出口。
@@ -8662,7 +8718,7 @@ await runCodedApiErrorCase();
     const saysSelfClearing = /自动放行|无需操作/.test(card);
     if (NO_PRODUCER[status]) continue;
     if (!hasExit && !saysSelfClearing) {
-      failures.push(`阻塞状态出口: 工作项停在 ${status}，卡片上既没有告诉人去哪处置，也没说系统会自清`
+      failures.push(`阻塞状态出口: 任务停在 ${status}，卡片上既没有告诉人去哪处置，也没说系统会自清`
         + (SELF_CLEARING[status] ? `（这一种应当明说：${SELF_CLEARING[status]}）` : "（这一种需要一个人工出口）")
         + " —— 人只看到一句「受阻原因」就没有下文了");
     }
@@ -8671,7 +8727,7 @@ await runCodedApiErrorCase();
 
 
 // 派发也会卡住，而它显示在监控页的表格里 —— 一列"原因"，没有下文。
-// 与工作项那条同形：按【代码里真实产生的】阻塞原因全量核对，每种要么给出口，要么登记为瞬态
+// 与任务那条同形：按【代码里真实产生的】阻塞原因全量核对，每种要么给出口，要么登记为瞬态
 // 并写明为什么人不需要动手。逐条写死只守得住写它的人当时想到的那几种。
 {
   const probe = loadConsole(el("div"));
@@ -8697,7 +8753,7 @@ await runCodedApiErrorCase();
     .split(/\?|:/u)
     .map((part) => part.trim().match(/^"([a-z_]{4,})"$/u)?.[1])
     .filter(Boolean);
-  // 按赋值目标分面：工作项那一面在界面上有 needs_decision 兜底出口（WORK_ITEM_EXIT_HINT），
+  // 按赋值目标分面：任务那一面在界面上有 needs_decision 兜底出口（WORK_ITEM_EXIT_HINT），
   // 派发/会话这一面走 STUCK_EXIT_HINT。混在一起要求同一张表，会去要一个本来就不该在那儿的出口。
   const isWorkItemTarget = (name) => /item$/iu.test(name) || /work[_]?item/iu.test(name);
   const reasonsFromAssignments = [];
@@ -8718,11 +8774,11 @@ await runCodedApiErrorCase();
   if (reasons.length < 8) {
     failures.push(`派发出口: 只从生产者提取到 ${reasons.length} 种派发阻塞原因 —— 提取逻辑与代码脱节，本条在空转`);
   }
-  // 工作项那一面此前【整个没有门】：上面那句 isWorkItemTarget 把它排除掉了，理由是
+  // 任务那一面此前【整个没有门】：上面那句 isWorkItemTarget 把它排除掉了，理由是
   // "界面上有 needs_decision 兜底出口"。这句话是对的（workItemExitHint 会退回按 status 取），
   // 但门自己从没验过那个兜底在不在 —— 只要有人写出一个 status 不在出口表里的阻塞，
   // 人就会看到一个原因码、没有下一步，而这一面没有任何东西会红。
-  // 判据：每一个写到工作项上的 blockedReason，要么它自己在出口表里，
+  // 判据：每一个写到任务上的 blockedReason，要么它自己在出口表里，
   // 要么登记说明【是哪个状态带着出口】。
   {
     const workItemHintKeys = new Set(Object.keys(probe.workItemExitHintKeys?.() || {}));
@@ -8746,24 +8802,24 @@ await runCodedApiErrorCase();
     const workItemReasons = new Set([...producerSource.matchAll(/\w*[Ii]tem\.blockedReason\s*=\s*"([a-z_]+)"/gu)]
       .map((match) => match[1]));
     if (workItemReasons.size < 8) {
-      failures.push(`工作项出口: 只提取到 ${workItemReasons.size} 种工作项阻塞原因 —— 提取与代码脱节，本条在空转`);
+      failures.push(`任务出口: 只提取到 ${workItemReasons.size} 种任务阻塞原因 —— 提取与代码脱节，本条在空转`);
     }
     for (const reason of workItemReasons) {
       if (workItemHintKeys.has(reason)) continue;
       const carrier = CARRIED_BY_STATUS[reason];
       if (carrier && workItemHintKeys.has(carrier)) continue;
-      failures.push(`工作项出口: 阻塞原因「${reason}」在 WORK_ITEM_EXIT_HINT 里没有出口`
+      failures.push(`任务出口: 阻塞原因「${reason}」在 WORK_ITEM_EXIT_HINT 里没有出口`
         + (carrier ? `，登记说它由状态「${carrier}」带出口，而那个状态也不在表里` : "，也没有登记是哪个状态带着出口")
         + " —— 人会看到一个原因码、没有下一步");
     }
     const staleCarried = Object.keys(CARRIED_BY_STATUS).filter((reason) =>
       !workItemReasons.has(reason) || workItemHintKeys.has(reason));
     if (staleCarried.length) {
-      failures.push(`工作项出口: 登记表已过时：${staleCarried.join("、")} 现在要么自己有出口了、要么代码里已经不写这个原因`);
+      failures.push(`任务出口: 登记表已过时：${staleCarried.join("、")} 现在要么自己有出口了、要么代码里已经不写这个原因`);
     }
-    check("工作项那一面的阻塞原因也各有出口",
-      !failures.some((line) => line.startsWith("工作项出口:")),
-      `${workItemReasons.size} 种工作项阻塞原因逐个核过（${Object.keys(CARRIED_BY_STATUS).length} 种登记为由状态带出口）`);
+    check("任务那一面的阻塞原因也各有出口",
+      !failures.some((line) => line.startsWith("任务出口:")),
+      `${workItemReasons.size} 种任务阻塞原因逐个核过（${Object.keys(CARRIED_BY_STATUS).length} 种登记为由状态带出口）`);
   }
 
   // 「没有可用模型执行器」这条的出口原先只说"去看该节点的自检结果"——那是【去哪看】，不是【做什么】。

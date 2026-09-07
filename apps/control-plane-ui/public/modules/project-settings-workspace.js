@@ -70,7 +70,7 @@
           panelTitle: "业务规则", tone: ruleTone, action: "查看规则"
         })}
       </div>
-      <div class="small muted">处理顺序：先确认仓库凭据、默认角色与规则；Agent 节点到“运行节点”，注册脚本到“注册运行节点”。看板只使用本页已加载数据，不额外请求接口。</div>
+      <div class="small muted">处理顺序：先确认仓库凭据、默认角色与规则；运行节点到“运行节点”，注册脚本到“注册运行节点”。看板只使用本页已加载数据，不额外请求接口。</div>
     `, {wide: true});
   }
 
@@ -92,10 +92,10 @@
           tone: data.rulesLoaded ? "blue" : "orange", action: "看规则"})}
         ${h.projectModuleCard({pageId: "proj-agents", title: "Agent 接入",
           metric: data.agentStats.aliveNodes.length ? `${data.agentStats.onlineNodes}/${data.agentStats.aliveNodes.length}` : "项目页",
-          detail: "Agent 节点和远程 MCP 状态进入“运行节点”，注册脚本进入“注册运行节点”",
+          detail: "运行节点和远程 MCP 状态进入“运行节点”，注册脚本进入“注册运行节点”",
           tone: data.agentStats.onlineNodes ? "green" : "orange", action: "去注册"})}
       </div>
-      <div class="small muted">职责分区：项目治理只维护影响派发和产出的配置；Agent 节点、一次性加入令牌、安装脚本、远程 MCP 和 Skill 工作集分别进入“运行节点”和“注册运行节点”。</div>
+      <div class="small muted">职责分区：项目治理只维护影响派发和产出的配置；运行节点、一次性加入令牌、安装脚本、远程 MCP 和 Skill 工作集分别进入“运行节点”和“注册运行节点”。</div>
     `, {wide: true});
   }
 

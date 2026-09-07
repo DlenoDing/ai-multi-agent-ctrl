@@ -121,12 +121,12 @@ const MUTATIONS = [
     expect: "MCP 授权匹配"
   },
   {
-    name: "放弃工作项不得碰已终结的格子",
+    name: "放弃任务不得碰已终结的格子",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     skip: "契约门 verifyHumanAndOrganizationContracts 已实测创建人工指令时的上游终态守卫先拒绝同一输入；本处是消费侧纵深保护",
     from: "        const abandonable = (item) => !WORK_ITEM_SETTLED_STATUSES.includes(item.status);",
     to: "        const abandonable = () => true;",
-    expect: "掀动了一个已 verified 的工作项"
+    expect: "掀动了一个已 verified 的任务"
   },
   {
     // mcp-grant.schema.json 此前只压在 createMcpGrant 的夹具上（零生产调用方），真实产出
@@ -208,7 +208,7 @@ const MUTATIONS = [
     file: CORE,
     from: 'workItem.status = "verification_ready";',
     to: 'workItem.status = "verified";',
-    expect: "AI 互审仍然直接把工作项标记为 verified"
+    expect: "AI 互审仍然直接把任务标记为 verified"
   },
   {
     name: "AI 再分析不得终结决策",
@@ -235,12 +235,12 @@ const MUTATIONS = [
     expect: "允许重复 id（冒名记录可顶替人批准的那一份）"
   },
   {
-    name: "写入边界一个工作项只能有一份",
+    name: "写入边界一个任务只能有一份",
     check: "verifyHumanAndOrganizationContracts",
     file: MCP,
     from: "if (activeExisting) return {repositoryOutputTarget: activeExisting, deduplicated: true};",
     to: "",
-    expect: "同一工作项出现了多份生效的写入边界"
+    expect: "同一任务出现了多份生效的写入边界"
   },
   {
     name: "确认单去重键按类别隔离",
@@ -421,7 +421,7 @@ const MUTATIONS = [
     file: CORE,
     from: '      if (["verified", "closed"].includes(workItem.status)) {',
     to: '      if (["verified", "closed"].includes(workItem.status) && workItem.progress >= 100) {',
-    expect: "已被人验收定稿的工作项又被派发出去了"
+    expect: "已被人验收定稿的任务又被派发出去了"
   },
   {
     name: "容量淘汰不得删掉还开着的任务组",
@@ -547,13 +547,13 @@ const MUTATIONS = [
     expect: "看不出还有更多"
   },
   {
-    // 任务组里的工作项要按时间线倒序（最新在前）。去掉 slice().sort(...) 即回到服务端的插入序（最旧在前）。
-    name: "任务组内工作项必须按时间倒序展示（最新在前）",
+    // 任务组里的任务要按时间线倒序（最新在前）。去掉 slice().sort(...) 即回到服务端的插入序（最旧在前）。
+    name: "任务组内任务必须按时间倒序展示（最新在前）",
     file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
     from: "(progressData.workItems || taskGroup.workItems || []).slice().sort((a, b) => String(b.createdAt || \"\").localeCompare(String(a.createdAt || \"\"))).map((workItem) => {",
     to: "(progressData.workItems || taskGroup.workItems || []).map((workItem) => {",
-    expect: "最新建的工作项没有排在最前"
+    expect: "最新建的任务没有排在最前"
   },
   {
     // 规则内容文本框要随内容自动撑高。去掉 field-sizing: content 即回到固定高度的小框。
@@ -574,8 +574,8 @@ const MUTATIONS = [
     expect: "截断窗口没有保留最新的那几条"
   },
   {
-    // 工作项卡的执行历史要最新在前。把 findWorkItemDispatches 的排序反过来即最旧在前。
-    name: "工作项执行历史必须最新在前",
+    // 任务卡的执行历史要最新在前。把 findWorkItemDispatches 的排序反过来即最旧在前。
+    name: "任务执行历史必须最新在前",
     file: APP,
     gate: "console",
     from: "    .sort((left, right) => String(right.createdAt || right.updatedAt || \"\").localeCompare(String(left.createdAt || left.updatedAt || \"\")));",
@@ -584,7 +584,7 @@ const MUTATIONS = [
   },
   {
     // 执行历史要列出【全部】派发，不只是最新一次。把历史截成一条即回到"只看得到最新一次"。
-    name: "工作项执行历史必须列出全部派发",
+    name: "任务执行历史必须列出全部派发",
     file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
     from: "          const history = findWorkItemDispatches(taskGroup.id, workItem.id);",
@@ -602,7 +602,7 @@ const MUTATIONS = [
   },
   {
     // 执行历史每条派发要进同一个执行对象；把按钮退回成"实时事件/规则"两条分叉，就又需要人猜结果在哪。
-    name: "工作项执行历史必须收敛到统一执行详情",
+    name: "任务执行历史必须收敛到统一执行详情",
     file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
     from: "                <button class=\"secondary-button\" data-action=\"open-execution-object\" data-execution-type=\"dispatch\" data-execution-id=\"${esc(item.dispatchId)}\" data-task=\"${esc(taskGroup.id)}\">查看执行详情</button>",
@@ -959,7 +959,7 @@ const MUTATIONS = [
     expect: "下达指令页只有表单里的「目标任务组」"
   },
   {
-    name: "工作项卡的定稿要求表单必须默认收起",
+    name: "任务卡的定稿要求表单必须默认收起",
     file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
     from: "          <details class=\"guide-bundle plan-finalization-toggle\"><summary class=\"guide-bundle-summary\">执行方案定稿要求：",
@@ -1039,20 +1039,20 @@ const MUTATIONS = [
     expect: "档案表里默认模型仍是原始码"
   },
   {
-    name: "建工作项表单旁的「没有在线 agent」提示不许在有节点在线时也喊",
+    name: "建任务表单旁的「没有在线 agent」提示不许在有节点在线时也喊",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
     from: "  if (!fleet || Number(fleet.online || 0) > 0) return \"\";\n  const total = Number(fleet.total || 0);",
     to: "  if (!fleet) return \"\";\n  const total = Number(fleet.total || 0);",
-    expect: "有在线 agent 时建工作项表单不许喊"
+    expect: "有在线 agent 时建任务表单不许喊"
   },
   {
-    name: "建工作项表单旁没有在线 agent 时必须说清",
+    name: "建任务表单旁没有在线 agent 时必须说清",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
     from: "        ${groups.length ? noOnlineAgentCreateNotice() : \"\"}\n",
     to: "",
-    expect: "建工作项表单里要说建好后不会被领走"
+    expect: "建任务表单里要说建好后不会被领走"
   },
   {
     name: "测试连接：界面只认 ok === true，认不出的原因不许当成功",
@@ -1081,7 +1081,7 @@ const MUTATIONS = [
   },
   {
     // 推送与否骗人后果最重：把"未推送"写死成"已推送"，人会以为改动已经到远端。
-    name: "工作项结果行必须如实区分已推送与未推送",
+    name: "任务结果行必须如实区分已推送与未推送",
     file: APP,
     gate: "console",
     from: '  const headline = pushRefs.length ? "已推送到远端" : commitRefs.length ? "已提交，尚未确认推送" : stalled ? "产出未落地（执行已卡住）" : "正在生成仓库产出";',
@@ -1089,12 +1089,12 @@ const MUTATIONS = [
     expect: "没推送却说已推送"
   },
   {
-    name: "工作项结果必须显示真实提交与产出清单",
+    name: "任务结果必须显示真实提交与产出清单",
     file: APP,
     gate: "console",
     from: '  const manifests = distinct([...(latest?.artifactManifestRefs || []), target?.artifactManifestPath]);',
     to: "  const manifests = [];",
-    expect: "工作项结果必须显示可核验的提交、变更文件和产出清单"
+    expect: "任务结果必须显示可核验的提交、变更文件和产出清单"
   },
   {
     name: "任务列表必须显示结果状态",
@@ -1177,14 +1177,14 @@ const MUTATIONS = [
     expect: "精确钉模型未生效"
   },
   {
-    // 去掉 selectModel 里对 workItem.pinnedModelId 的读取 → 「建工作项时指定模型」在派发时失效
-    // （只剩本次调用显式传的那条路）。contract-check 的工作项钉模型断言会红。
-    name: "建工作项时指定的模型必须在派发选型时被读到",
+    // 去掉 selectModel 里对 workItem.pinnedModelId 的读取 → 「建任务时指定模型」在派发时失效
+    // （只剩本次调用显式传的那条路）。contract-check 的任务钉模型断言会红。
+    name: "建任务时指定的模型必须在派发选型时被读到",
     check: "verifyAgentGatewayContracts",
     file: CORE,
     from: "request.hardConstraints?.pinnedModelId ?? workItem.pinnedModelId ?? null;",
     to: "request.hardConstraints?.pinnedModelId ?? null;",
-    expect: "工作项上钉的模型未在派发选型时生效"
+    expect: "任务上钉的模型未在派发选型时生效"
   },
   {
     name: "模型选择策略的声明必须与引擎实际做的一致",
@@ -1898,7 +1898,7 @@ const MUTATIONS = [
   },
   {
     // 孪生分支：MCP 侧退回降级写法，"两条路同规"那条判据必须当场报红。
-    name: "MCP 侧建工作项也不得降级未知状态",
+    name: "MCP 侧建任务也不得降级未知状态",
     file: "apps/mcp-server/server.mjs",
     check: "verifyUnknownEnumValuesAreRefusedNotCoerced",
     from: "    status: workItemCreateStatus(args.status),",
@@ -2223,7 +2223,7 @@ const MUTATIONS = [
   },
   {
     // 五种阻塞态必须被算进 blocked 计数：不算的话概览上那个"阻塞 N 项"永远是 0，
-    // 人从总览看过去一切正常，而下面五个工作项谁也动不了。
+    // 人从总览看过去一切正常，而下面五个任务谁也动不了。
     name: "阻塞态必须被算进阻塞计数",
     file: CORE,
     check: "verifyWorkStatusEnumConvergence",
@@ -2253,14 +2253,14 @@ const MUTATIONS = [
     expect: "已经有变异指向了"
   },
   {
-    // 状态机迁移必须按【建模过的执行者】判权：不判的话，AI 角色能自行把工作项验收为 verified ——
+    // 状态机迁移必须按【建模过的执行者】判权：不判的话，AI 角色能自行把任务验收为 verified ——
     // 那是整套"人工定稿"在状态机这一层的落点。
     name: "状态机迁移必须按建模的执行者判权",
     file: "apps/control-plane-ui/lib/transition-engine.mjs",
     check: "verifyTransitionEngine",
     from: "  const modeled = candidates.find((transition) => transition.actor === actor);",
     to: "  const modeled = candidates[0];",
-    expect: "expected rejection for AI 角色自行把工作项验收为 verified"
+    expect: "expected rejection for AI 角色自行把任务验收为 verified"
   },
   {
     // 活跃派发引用的契约不得被裁掉：裁了之后 acceptAgentCheckpoint 按 sessionId+runId 找不到契约，
@@ -2301,14 +2301,14 @@ const MUTATIONS = [
     expect: "内容包降级在控制台上一个字都没有"
   },
   {
-    // 内容包里必须点名本次的工作项：不点名的话 agent 只能从一份只有标题的清单里自己对应，
+    // 内容包里必须点名本次的任务：不点名的话 agent 只能从一份只有标题的清单里自己对应，
     // 对错了就是改错东西 —— 而它改完照样交检查点。
-    name: "内容包必须点名本次工作项",
+    name: "内容包必须点名本次任务",
     file: GATEWAY,
     check: "verifyContentBundleNamesTheDispatchedItem",
     from: "    contract.workId ? `\\n## 本次派发\\n工作项：${contract.workId}${",
     to: "    false ? `\\n## 本次派发\\n工作项：${contract.workId}${",
-    expect: "整包里找不到本次的工作项"
+    expect: "整包里找不到本次的任务"
   },
   {
     // 记录声称遵守某份规范，而那份规范不存在 —— 这类记录第一次真正出现时，没有任何东西会核对它。
@@ -2401,7 +2401,7 @@ const MUTATIONS = [
     expect: "did not block all_command_effects_terminal"
   },
   {
-    // 确认卡过期后，挂卡时标记的三处（派发/会话/工作项）都要跟着改 —— 否则它们指向一张
+    // 确认卡过期后，挂卡时标记的三处（派发/会话/任务）都要跟着改 —— 否则它们指向一张
     // 不存在也不会再挂出来的卡，而未了结的会话还会一直算活跃、把关闭门永久挡住。
     name: "确认卡过期后派发的停放要清掉",
     file: CORE,
@@ -2411,12 +2411,12 @@ const MUTATIONS = [
     expect: "仍有 1 处记录停在 awaiting_human_confirmation"
   },
   {
-    name: "确认卡过期后工作项不得再指向那张卡",
+    name: "确认卡过期后任务不得再指向那张卡",
     file: CORE,
     check: "verifyExpiredConfirmationRetargetsTheWorkItem",
     from: "    const expiredWorkItem = request.workItemId ? (taskGroup?.workItems || []).find((item) => item.id === request.workItemId) : null;",
     to: "    const expiredWorkItem = null;",
-    expect: "人打开这个工作项，被告知等一个永远不来的确认"
+    expect: "人打开这个任务，被告知等一个永远不来的确认"
   },
   {
     // 权限申请【批准】之后必须把会话放出来：停在 permission_required 的会话一直算活跃，
@@ -2553,8 +2553,8 @@ const MUTATIONS = [
     expect: "没有把权限集对齐到当前"
   },
   {
-    // 建工作项有两份实现，少接一份等于没接。这一族上一轮刚在"建组"那对上漏过一次。
-    name: "终结的任务组里不得再建工作项（REST）",
+    // 建任务有两份实现，少接一份等于没接。这一族上一轮刚在"建组"那对上漏过一次。
+    name: "终结的任务组里不得再建任务（REST）",
     file: SERVER,
     check: "verifyBothWorkItemWritersHonourSettledTaskGroups",
     from: "  const settledRejection = taskGroupSettledRejection(state, taskGroup.id);\n  if (settledRejection) return {...settledRejection, status: 409};",
@@ -2562,7 +2562,7 @@ const MUTATIONS = [
     expect: "没有调 taskGroupSettledRejection"
   },
   {
-    name: "终结的任务组里不得再建工作项（MCP）",
+    name: "终结的任务组里不得再建任务（MCP）",
     file: MCP,
     check: "verifyBothWorkItemWritersHonourSettledTaskGroups",
     from: '  const settledRejection = taskGroupSettledRejection(state, taskGroup.id);\n  if (settledRejection) return settledRejection;\n  const workItemId = args.workItemId || createId("work");',
@@ -2696,8 +2696,8 @@ const MUTATIONS = [
     expect: "在产品代码里已经不存在了"
   },
   {
-    // 不给任务组时按工作项反查归属那一维 —— 这一族最后一个没被点过名的码。
-    name: "工作项的项目维度要单独报",
+    // 不给任务组时按任务反查归属那一维 —— 这一族最后一个没被点过名的码。
+    name: "任务的项目维度要单独报",
     file: MCP,
     skip: "判别力由 MCP e2e 覆盖（十条表驱动断言里对应的一条）",
     from: 'return {allowed: false, error: "work_item_project_scope_mismatch", required: `${projectId}:${workItemId}`};',
@@ -2706,7 +2706,7 @@ const MUTATIONS = [
   },
   {
     // 跨参数作用域这一族九个码，判据要能分清是哪一维对不上 —— 分不清的话，人只能逐个试。
-    name: "产出目标的工作项维度要单独报",
+    name: "产出目标的任务维度要单独报",
     file: MCP,
     skip: "判别力由 MCP e2e 覆盖（已用 mutate-probe 实证：那九条表驱动断言里对应的一条变红）",
     from: 'if (workItemId && target.workItemId !== workItemId) return {allowed: false, error: "repository_target_work_item_scope_mismatch"',
@@ -2722,13 +2722,13 @@ const MUTATIONS = [
     expect: "没有被拒成 resource_task_group_scope_mismatch"
   },
   {
-    // 谎报归属：产出目标登记在别的工作项名下。守卫失效时是"已受理"。
-    name: "产出目标必须属于这个工作项",
+    // 谎报归属：产出目标登记在别的任务名下。守卫失效时是"已受理"。
+    name: "产出目标必须属于这个任务",
     file: CORE,
     check: "verifyHumanApprovedPathsBindTheCommit",
     from: 'const targetScopeMismatch = target.projectId !== taskGroup.projectId ? "projectId"\n    : target.taskGroupId !== taskGroup.id ? "taskGroupId"\n    : target.workItemId !== workItem.id ? "workItemId" : null;',
     to: "const targetScopeMismatch = null;",
-    expect: "这次提交被算进了另一个工作项的产出"
+    expect: "这次提交被算进了另一个任务的产出"
   },
   {
     // 夹带一个不属于本会话的产出目标，先响的是角色漂移门（按 actionScopeRefs 判权）。
@@ -2741,8 +2741,8 @@ const MUTATIONS = [
     expect: "一个会话可以顺手把别的目标也写进自己的证据里"
   },
   {
-    // 这份证据到底属于哪件事：挂上别的工作项的会话，成果就算到了它没做过的那件事上。
-    name: "检查点的会话必须属于这个工作项",
+    // 这份证据到底属于哪件事：挂上别的任务的会话，成果就算到了它没做过的那件事上。
+    name: "检查点的会话必须属于这个任务",
     file: CORE,
     check: "verifyHumanApprovedPathsBindTheCommit",
     from: "if (!session || session.workItemId !== workItem.id) {",
@@ -3381,7 +3381,7 @@ const MUTATIONS = [
     // 未登记的角色被收下 → 派发时静默绑上 orchestrator 的技能，agent 按别人的规则干活。
     name: "MCP 侧也要拒未登记的执行角色",
     file: "apps/mcp-server/server.mjs",
-    skip: "判别力由 mcp:doctor 覆盖（真的用一个未登记的角色建工作项）",
+    skip: "判别力由 mcp:doctor 覆盖（真的用一个未登记的角色建任务）",
     from: "    ownerRole: mcpWorkItemOwnerRole(args.roleId || args.ownerRole),",
     to: '    ownerRole: args.roleId || args.ownerRole || "orchestrator",',
     expect: "收下了未登记的角色"
@@ -3533,7 +3533,7 @@ const MUTATIONS = [
     expect: "人不知道是哪一份"
   },
   {
-    // "必须先定稿方案"那条提示原先只说事实。而这种情况下编排既不改工作项状态、也留不下任务组阻塞，
+    // "必须先定稿方案"那条提示原先只说事实。而这种情况下编排既不改任务状态、也留不下任务组阻塞，
     // 所以除了这一句，屏幕上再没有别的地方讲它在等什么 —— 去掉出口，人就被留在原地。
     name: "要求先定稿方案的单元要给出口",
     file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
@@ -6006,12 +6006,12 @@ const MUTATIONS = [
     expect: "溯源里要显示人名而不是账号 id"
   },
   {
-    name: "被人重开过的工作项要看得出来",
+    name: "被人重开过的任务要看得出来",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
     from: "  if (workItem.humanDecisionRef) {",
     to: "  if (false) {",
-    expect: "被人重开过的工作项要说出是谁在什么时候重开的"
+    expect: "被人重开过的任务要说出是谁在什么时候重开的"
   },
   {
     name: "方案定稿的溯源要看得出来",
@@ -6019,7 +6019,7 @@ const MUTATIONS = [
     gate: "console",
     from: "  if (workItem.planFinalizationRef) {",
     to: "  if (false) {",
-    expect: "方案被人定稿过的工作项要说出是谁拍的板"
+    expect: "方案被人定稿过的任务要说出是谁拍的板"
   },
   {
     name: "溯源记录被顶掉时不许当成没发生过",
@@ -7318,14 +7318,14 @@ const MUTATIONS = [
     expect: "文档写了脚本并不认的参数"
   },
   {
-    // 工作项那一面此前整个没有门：判据把它排除掉，理由是"界面上有 needs_decision 兜底出口"——
+    // 任务那一面此前整个没有门：判据把它排除掉，理由是"界面上有 needs_decision 兜底出口"——
     // 而那句话从没被验过。把兜底那一条改名，这一面就该整片红。
-    name: "工作项阻塞的兜底出口不在了要红",
+    name: "任务阻塞的兜底出口不在了要红",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
     from: '  needs_decision: "编排不会再自动推进它：到「人工指令」页用「决策处置（重开 / 放弃）」处置。",',
     to: '  needs_decision_renamed: "编排不会再自动推进它：到「人工指令」页用「决策处置（重开 / 放弃）」处置。",',
-    expect: "工作项出口: 阻塞原因"
+    expect: "任务出口: 阻塞原因"
   },
   {
     // 反方向的核对：规范存在、却没有任何代码产出它描述的记录（读 spec/ 的人会以为对象存在）。
@@ -7830,7 +7830,7 @@ const MUTATIONS = [
     check: "verifyExecutionFailureCapSurvivesHistoryAndReopen",
     from: "  workItem.executionFailureCount = Number(workItem.executionFailureCount || 0) + 1;",
     to: "  workItem.executionFailureCount = 1;",
-    expect: "工作项上的计数却是 1"
+    expect: "任务上的计数却是 1"
   },
   {
     name: "agent 上报失败那条路也要记账",
@@ -9134,12 +9134,12 @@ const MUTATIONS = [
     expect: "没有任何【集合】超出种子的证据"
   },
   {
-    name: "判断有没有真实数据要把工作项算进去",
+    name: "判断有没有真实数据要把任务算进去",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
     from: "    const grownWorkItems = countWorkItems(state) > countWorkItems(bootstrapBaseline);",
     to: "    const grownWorkItems = false;",
-    expect: "没把【工作项】算进证据"
+    expect: "没把【任务】算进证据"
   },
   {
     name: "文案说了不可逆就必须标 danger",
@@ -9286,12 +9286,12 @@ const MUTATIONS = [
     expect: "尾码没有中文"
   },
   {
-    name: "方案必须挂在一件真实工作项上",
+    name: "方案必须挂在一件真实任务上",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyExecutionTopologyStateMachineRefusesBadTransitions",
     from: "  if (!workItemId) throw topologyError(\"execution_topology_requires_work_item\", 400);",
     to: "  if (false) throw topologyError(\"execution_topology_requires_work_item\", 400);",
-    expect: "不指明工作项也能建方案"
+    expect: "不指明任务也能建方案"
   },
   {
     name: "外部运行器必须带授权与本地验证",
@@ -9526,7 +9526,7 @@ const MUTATIONS = [
     expect: "permission_request_session_scope_mismatch"
   },
   {
-    name: "权限请求带的工作项必须属于本任务组",
+    name: "权限请求带的任务必须属于本任务组",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyHumanAndOrganizationContracts",
     from: "    if (!(owningGroup?.workItems || []).some((item) => item.id === request.workId)) {",
@@ -10164,7 +10164,7 @@ const MUTATIONS = [
     expect: "缺时间戳"
   },
   {
-    name: "种子缺时间戳要被逮到（工作项这一半）",
+    name: "种子缺时间戳要被逮到（任务这一半）",
     file: "scripts/contract-check.mjs",
     check: "verifySeedLooksLikeSomethingTheProductMade",
     from: "if (!item.updatedAt) missing.push(`${group.id}/${item.id}.updatedAt`);",
@@ -10848,7 +10848,7 @@ const MUTATIONS = [
     expect: "首次进入却弹了提示"
   },
   {
-    name: "没有工作项的任务组不得算作 100%（新建的组会显示'已完成'）",
+    name: "没有任务的任务组不得算作 100%（新建的组会显示'已完成'）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyEmptyTaskGroupIsNotComplete",
     from: "    : 0;",
@@ -10864,7 +10864,7 @@ const MUTATIONS = [
     expect: "应为 80"
   },
   {
-    name: "种子里存的进度必须与它自己的工作项对得上",
+    name: "种子里存的进度必须与它自己的任务对得上",
     file: "data/seed-state.json",
     check: "verifyEmptyTaskGroupIsNotComplete",
     from: "\"progress\": 80,",
@@ -11733,7 +11733,7 @@ const MUTATIONS = [
     expect: "人什么都看不到"
   },
   {
-    name: "建工作项的下拉里不许出现他没权限的任务组",
+    name: "建任务的下拉里不许出现他没权限的任务组",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
     from: '            const addable = addableGroups;',
@@ -11794,7 +11794,7 @@ const MUTATIONS = [
     expect: "不能摆一个按不动的保存按钮"
   },
   {
-    name: "已了结的工作项不许再被派活（它永远不会再跑，而屏幕上看起来又活了）",
+    name: "已了结的任务不许再被派活（它永远不会再跑，而屏幕上看起来又活了）",
     file: "apps/mcp-server/server.mjs",
     gate: "contract",
     from: "  if (WORK_ITEM_SETTLED_STATUSES.includes(workItem.status)) {",
@@ -11802,7 +11802,7 @@ const MUTATIONS = [
     expect: "还能被派活"
   },
   {
-    name: "已关闭的任务组里不许再派活（建工作项那条路有这道门，派活这条原先没有）",
+    name: "已关闭的任务组里不许再派活（建任务那条路有这道门，派活这条原先没有）",
     file: "apps/mcp-server/server.mjs",
     gate: "contract",
     from: "  const settledRejection = taskGroupSettledRejection(state, taskGroup.id);\n"
@@ -11842,7 +11842,7 @@ const MUTATIONS = [
     expect: "还能下达人工指令"
   },
   {
-    name: "不点名工作项就不许猜（原先取该组第一个，把上面那道拒绝整个架空）",
+    name: "不点名任务就不许猜（原先取该组第一个，把上面那道拒绝整个架空）",
     file: "apps/mcp-server/server.mjs",
     gate: "contract",
     from: "  if (!workItemId) return null;\n"
@@ -12222,7 +12222,7 @@ const MUTATIONS = [
     expect: "建组提交要把勾上的角色全部送出"
   },
   {
-    name: "任务组详情的任务小节不得改回工作项",
+    name: "任务组详情的任务小节不得改回「工作项」",
     file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
     from: "      ${sectionBlock(`任务${progressData.workItemsTruncated",
@@ -12875,8 +12875,8 @@ const MUTATIONS = [
     name: "项目主操作不得向无权限成员推荐 Agent 注册",
     file: "apps/control-plane-ui/public/modules/project-command-center.js",
     gate: "console",
-    from: '    if (!Number(fleet.total || 0) && canManageAgents) return {title: "注册 Agent 节点",',
-    to: '    if (!Number(fleet.total || 0)) return {title: "注册 Agent 节点",',
+    from: '    if (!Number(fleet.total || 0) && canManageAgents) return {title: "注册运行节点",',
+    to: '    if (!Number(fleet.total || 0)) return {title: "注册运行节点",',
     expect: "不得收到必然被拒的项目主操作"
   },
   {
@@ -13838,7 +13838,7 @@ const MUTATIONS = [
     expect: "do not explicitly enable persistent remote MCP client configuration"
   },
   {
-    name: "Agent 节点档案必须探测 Cursor 客户端",
+    name: "运行节点档案必须探测 Cursor 客户端",
     file: "apps/agent-runtime/runtime.mjs",
     gate: "agent",
     from: '"codex", "claude", "cursor", "gemini", "ollama"',
@@ -14220,6 +14220,38 @@ const MUTATIONS = [
     from: '<dt>执行角色</dt><dd>${esc(h.t(agent.role))}</dd>',
     to: '<dt>执行角色</dt><dd>${esc(h.t(agent.role))}<div class="small muted mono">${esc(agent.role)}</div></dd>',
     expect: "执行角色 agent-runtime 在档案列表与详情里统一叫「通用任务执行」，且详情不再贴英文角色 id"
+  },
+  {
+    name: "带着待授权的组织成员进「添加项目成员」表单时不得弹「项目成员不存在」",
+    file: APP,
+    gate: "console",
+    from: '    if (workspaces.current("proj-members")?.id !== "add") missing = "项目成员";',
+    to: '    missing = "项目成员";',
+    expect: "带着待授权的组织成员进「添加项目成员」表单时不得弹「项目成员不存在」，进成员详情时照旧要提示"
+  },
+  {
+    name: "「添加项目成员」授权成功后不得留在填满的表单上",
+    file: APP,
+    gate: "console",
+    from: '      if (page === "proj-members" && workspaces.current("proj-members")?.id === "add") { workspaces.select("proj-members", "list"); memberGrantAccountId = ""; }',
+    to: '      if (false) { workspaces.select("proj-members", "list"); memberGrantAccountId = ""; }',
+    expect: "「添加项目成员」授权成功后要回到项目成员列表"
+  },
+  {
+    name: "待确认卡片不得退回显示 work_ 开头的任务 id",
+    file: APP,
+    gate: "console",
+    from: '        ${request.workItemId ? `<span>任务：${esc(workItemTitleOf(request.taskGroupId, request.workItemId))}</span>` : ""}',
+    to: '        ${request.workItemId ? `<span>任务：${esc(request.workItemId)}</span>` : ""}',
+    expect: "待确认卡片要写任务标题而不是 work_ 开头的 id"
+  },
+  {
+    name: "执行控制栏的准入分类不得退回显示任务 id",
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
+    gate: "console",
+    from: '  const cellIds = (ids) => (ids || []).length ? (ids || []).map((id) => esc(cellTitle(id))).join("、") : "—";',
+    to: '  const cellIds = (ids) => (ids || []).length ? (ids || []).map((id) => esc(id)).join("、") : "—";',
+    expect: "执行控制栏的准入分类要写任务标题而不是 id"
   }
 ];
 
