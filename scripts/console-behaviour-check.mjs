@@ -6275,6 +6275,17 @@ async function runPendingTruncationCase() {
         && textOf(projectProfileDetail).includes("执行角色 通用任务执行")
         && !/<dd>[^<]*<div class="small muted mono">agent-runtime<\/div>/u.test(projectProfileDetail),
       `档案列表：${textOf(profileList).slice(0, 200)}；详情：${textOf(projectProfileDetail).match(/执行角色.{0,40}/u)?.[0] || "没找到执行角色"}`);
+    // 信任分输入框收的是 0～1 的小数，而列表与详情显示的是百分数：标签要把换算说清（用户 09-08 走查）。
+    check("信任分输入框的标签要说清 0～1 与百分数的换算",
+      /<label>信任分（0～1，例如 0.85 即 85%）<\/label><input name="trustScore"/u.test(agentForm),
+      "信任分输入框只写「信任分」，人不知道该填 85 还是 0.85");
+    {
+      const shutdownSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+      const shutdownDialog = shutdownSource.match(/command === "shutdown" && !\(await confirmDialog\(\{[^\n]*/u)?.[0] || "";
+      check("关停节点的确认弹窗要说人话：先交回派发再离线、不作废凭据、要作废用吊销／切断",
+        /先做完或交回手上的派发/u.test(shutdownDialog) && /不作废它的凭据/u.test(shutdownDialog) && /「吊销」或「立即切断」/u.test(shutdownDialog) && !/draining|围栏/u.test(shutdownDialog),
+        `关停弹窗：${shutdownDialog.slice(0, 200) || "没找到"}`);
+    }
     check("Agent 档案编辑页也必须使用登记值选择器并保留当前值",
       /<select name="role" required>[\s\S]*?value="agent-runtime" selected/u.test(agentForm)
         && /<select name="model" data-cascade-child="model" required>[\s\S]*?value="auto_fast" data-group="auto" selected/u.test(agentForm)

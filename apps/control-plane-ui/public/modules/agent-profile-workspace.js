@@ -25,7 +25,7 @@
         <div class="form-row"><label>执行角色</label><select name="role" required><option value="" selected disabled>请选择执行角色…</option>${roleOptions}</select></div>
         <div class="form-row"><label>模型偏好</label>${modelPicker || `<select name="model" required>${modelOptions}</select>`}
           <div class="small muted">「自动最优／自动快速／成本优先」三个预设由系统按任务选模型，也可以指定列表里的具体模型。偏好只在满足任务硬约束和模型上限的候选中生效。</div></div>
-        <div class="form-row"><label>信任分</label><input name="trustScore" type="number" step="0.01" min="0" max="1" value="0.85"></div>
+        <div class="form-row"><label>信任分（0～1，例如 0.85 即 85%）</label><input name="trustScore" type="number" step="0.01" min="0" max="1" value="0.85"></div>
       </div>
       <div class="form-row"><label>角色 Skill 引用（可选）</label>${skillPicker || `<select name="roleSkillRef"><option value="">按执行角色集中解析</option>${skillOptions}</select>`}</div>
       <div class="notice">${projectId ? "项目级 Agent 只服务当前项目；任务组派发时可同时调配当前项目级 Agent 和组织级 Agent。" : "组织级 Agent 可被本组织内项目调配；项目有特殊要求时再在项目页创建项目级 Agent。"}</div>
@@ -39,7 +39,7 @@
         <div class="form-row"><label>档案名称</label><input name="name" required value="${esc(agent.name || "")}"></div>
         <div class="form-row"><label>执行角色</label><select name="role" required>${h.roleOptions}</select></div>
         <div class="form-row"><label>模型偏好</label>${h.modelPicker || `<select name="model" required>${h.modelOptions}</select>`}</div>
-        <div class="form-row"><label>信任分</label><input name="trustScore" type="number" step="0.01" min="0" max="1" required value="${esc(Number.isFinite(Number(agent.trustScore)) ? agent.trustScore : "")}"></div>
+        <div class="form-row"><label>信任分（0～1，例如 0.85 即 85%）</label><input name="trustScore" type="number" step="0.01" min="0" max="1" required value="${esc(Number.isFinite(Number(agent.trustScore)) ? agent.trustScore : "")}"></div>
       </div>
       <div class="form-row"><label>角色 Skill 引用（留空则按角色集中解析）</label>${h.skillPicker || `<select name="roleSkillRef"><option value=""${agent.roleSkillRef ? "" : " selected"}>按执行角色集中解析</option>${h.skillOptions}</select>`}</div>
       <button class="primary-button" type="submit">保存 Agent 档案</button>

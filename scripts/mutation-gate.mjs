@@ -14436,6 +14436,22 @@ const MUTATIONS = [
     from: '      } else if (taskAction === "rebound_drift") {\n        toast.success(stopped ? `已触发纠偏：健康度标为「需关注」，并叫停了 ${stopped} 个在跑的派发` : "已触发纠偏：健康度标为「需关注」，当前没有在跑的派发");',
     to: '      } else if (taskAction === "rebound_drift") {\n        toast.success("已触发纠偏");',
     expect: "纠偏的确认弹窗要说清会叫停在跑的派发、回执要报叫停了几个"
+  },
+  {
+    name: "信任分标签不得退回只写「信任分」",
+    file: "apps/control-plane-ui/public/modules/agent-profile-workspace.js",
+    gate: "console",
+    from: '<div class="form-row"><label>信任分（0～1，例如 0.85 即 85%）</label><input name="trustScore" type="number" step="0.01" min="0" max="1" required value=',
+    to: '<div class="form-row"><label>信任分</label><input name="trustScore" type="number" step="0.01" min="0" max="1" required value=',
+    expect: "信任分输入框的标签要说清 0～1 与百分数的换算"
+  },
+  {
+    name: "关停节点弹窗不得退回 draining／围栏这类内部话",
+    file: APP,
+    gate: "console",
+    from: 'sub: "节点会先做完或交回手上的派发，再自行离线（期间显示为「撤出中」）；不作废它的凭据，之后在那台机器上重新启动即可再接入。要作废凭据请用「吊销」或「立即切断」。"',
+    to: 'sub: "节点将进入 draining，完成或围栏当前派发后离线（区别于硬吊销）。"',
+    expect: "关停节点的确认弹窗要说人话：先交回派发再离线、不作废凭据、要作废用吊销／切断"
   }
 ];
 

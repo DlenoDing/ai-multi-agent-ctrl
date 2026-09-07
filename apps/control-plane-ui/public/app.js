@@ -9210,7 +9210,7 @@ document.addEventListener("click", async (event) => {
       if (command === "cancel_dispatch" && !(await confirmDialog({title: "取消派发", message: "确认取消该节点当前派发的任务？",
         sub: "这次派发就此进入终态，不会自动重排；任务退回「待人工决策」等你处置，它名下的产出目标与 MCP 授权一并了结。",
         danger: true, confirmText: "取消派发"}))) return;
-      if (command === "shutdown" && !(await confirmDialog({title: "关停节点", message: "确认优雅关停该节点？", sub: "节点将进入 draining，完成或围栏当前派发后离线（区别于硬吊销）。", danger: true, confirmText: "关停"}))) return;
+      if (command === "shutdown" && !(await confirmDialog({title: "关停节点", message: "确认关停该节点？", sub: "节点会先做完或交回手上的派发，再自行离线（期间显示为「撤出中」）；不作废它的凭据，之后在那台机器上重新启动即可再接入。要作废凭据请用「吊销」或「立即切断」。", danger: true, confirmText: "关停"}))) return;
       const node = [...(state.agentRuntimeNodes || []), ...orgAgentNodes].find((item) => item.nodeId === target.dataset.nodeId);
       const dispatchId = target.dataset.dispatchId || nodeDispatchIds(node)[0] || "";
       await api(`/api/agent-nodes/${encodeURIComponent(target.dataset.nodeId)}/control`, {
