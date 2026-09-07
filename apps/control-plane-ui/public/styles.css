@@ -144,7 +144,10 @@ html, body {
   list-style-position: inside;
   user-select: none;
 }
-.nav-group-summary:hover { color: #fff; background: rgba(255, 255, 255, 0.04); }
+/* 分组常开之后标题只是分组名，不再是可点的折叠开关：去掉箭头与手型。 */
+.nav-group-summary { list-style: none; cursor: default; pointer-events: none; }
+.nav-group-summary::-webkit-details-marker { display: none; }
+.nav-group.active .nav-group-summary { color: #fff; }
 .nav-group-items { padding-bottom: 4px; }
 .nav-group:not([open]) .nav-group-items { display: none; }
 .sidebar-project-create { padding: 10px 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }

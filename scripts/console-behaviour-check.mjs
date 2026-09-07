@@ -2867,10 +2867,11 @@ async function runErrorGuidanceCase() {
       && projectNav.indexOf('data-menu="directives"') < projectNav.indexOf("<span>资源与设置</span>")
       && projectNav.indexOf("<span>资源与设置</span>") < projectNav.indexOf('data-menu="proj-agents"'),
     "项目管理侧栏没有按「项目 / 资源与设置」两组组织，或又铺回了六组平级入口");
-  check("桌面菜单只展开当前功能所属分组",
-    (projectNav.match(/<details class="nav-group" open>/gu) || []).length === 1
-      && /<details class="nav-group" open>[\s\S]*?<span>项目<\/span>[\s\S]*?data-menu="proj-overview"/u.test(projectNav),
-    "项目侧栏仍一次铺开全部叶子，或当前功能所在分组没有自动展开");
+  check("桌面菜单两组都常开、当前组标 active（收敛后不必再点开分组找入口）",
+    (projectNav.match(/<details class="nav-group[^"]*" open>/gu) || []).length === 2
+      && /<details class="nav-group active" open>\s*<summary class="nav-group-summary"><span>项目<\/span>[\s\S]*?data-menu="proj-overview"/u.test(projectNav)
+      && /<details class="nav-group" open>\s*<summary class="nav-group-summary"><span>资源与设置<\/span>/u.test(projectNav),
+    "项目侧栏分组没有常开，或当前组没标 active");
   const helpRoot = el("div");
   loadConsole(helpRoot, {realI18n: true}).renderFullPagePaneWith(navState, projectAccount, "p1", "proj-settings", "help");
   const helpHtml = String(helpRoot.innerHTML || "");
@@ -2884,8 +2885,7 @@ async function runErrorGuidanceCase() {
     "说明入口仍占一整组侧栏，或当前页面没有统一帮助入口");
   check("全部功能页必须使用模块名并展开所属分组",
     /<h1>项目默认配置全部功能<\/h1>/u.test(helpTopbar)
-      && (helpAside.match(/<details class="nav-group" open>/gu) || []).length === 1
-      && /<details class="nav-group" open>[\s\S]*?<span>资源与设置<\/span>/u.test(helpAside),
+      && /<details class="nav-group active" open>[\s\S]*?<span>资源与设置<\/span>/u.test(helpAside),
     "点击当前模块全部功能后标题仍像说明文档，或左侧没有展开用户刚才所在的业务分组");
   check("功能概览操作必须使用有目标名称的箭头",
     /class="icon-button domain-action-open primary"[^>]*aria-label="打开项目设置"[^>]*>→<\/button>/u.test(helpHtml)
@@ -2942,8 +2942,8 @@ async function runErrorGuidanceCase() {
       && !/<h1>执行监控<\/h1>/u.test(runPageTopbar),
     "打开执行会话后页头仍写父页面“执行监控”，用户无法确认当前位置");
   check("切换功能后自动展开新的业务分组并收起旧分组",
-    (runPageAside.match(/<details class="nav-group" open>/gu) || []).length === 1
-      && /<details class="nav-group" open>[\s\S]*?<span>资源与设置<\/span>[\s\S]*?data-menu="monitor" data-menu-workspace="overview"/u.test(runPageAside)
+    (runPageAside.match(/<details class="nav-group active" open>/gu) || []).length === 1
+      && /<details class="nav-group active" open>[\s\S]*?<span>资源与设置<\/span>[\s\S]*?data-menu="monitor" data-menu-workspace="overview"/u.test(runPageAside)
       && !/data-menu="monitor" data-menu-workspace="(?:sessions|execution)"/u.test(runPageAside)
       && /会话与派发（更多功能）/u.test(String(runPageRoot.innerHTML || "")),
     "进入工作会话后侧栏没有把焦点收敛到执行监控组");
@@ -2951,8 +2951,8 @@ async function runErrorGuidanceCase() {
   loadConsole(nodeControlRoot, {realI18n: true}).renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "node-control");
   const nodeControlAside = String(nodeControlRoot.innerHTML || "").split("</aside>")[0] || "";
   check("低频节点页面必须继续归入执行监控分组",
-    (nodeControlAside.match(/<details class="nav-group" open>/gu) || []).length === 1
-      && /<details class="nav-group" open>[\s\S]*?<span>资源与设置<\/span>/u.test(nodeControlAside)
+    (nodeControlAside.match(/<details class="nav-group active" open>/gu) || []).length === 1
+      && /<details class="nav-group active" open>[\s\S]*?<span>资源与设置<\/span>/u.test(nodeControlAside)
       && /节点与命令（更多功能）/u.test(String(nodeControlRoot.innerHTML || "")),
     "节点控制、控制命令或死信页被放进了没有常用入口的独立分组，深链接打开后侧栏没有任何分组展开");
   const menuActionProbe = loadConsole(el("div"), {realI18n: true});
@@ -3017,7 +3017,7 @@ async function runErrorGuidanceCase() {
     const tasksAside = String(tasksRoot.innerHTML || "").split("</aside>")[0] || "";
     check("任务页在侧栏要高亮「任务组」（任务从属于任务组，没有平级入口）",
       /data-menu="tg" data-menu-workspace="list" aria-current="page"/u.test(tasksAside) && !/data-menu="tasks"/u.test(tasksAside)
-        && (tasksAside.match(/<details class="nav-group" open>/gu) || []).length === 1,
+        && (tasksAside.match(/<details class="nav-group active" open>/gu) || []).length === 1,
       "打开任务页时侧栏没有高亮「任务组」，或又出现了平级的「任务」入口");
   }
   {

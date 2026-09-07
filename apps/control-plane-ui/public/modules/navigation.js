@@ -279,9 +279,11 @@
     const primaryItems = primaryNavigationItems(items);
     const primaryGroups = menuGroups(primaryItems);
     const activeGroup = primaryGroups.find((group) => group.items.some((item) => sidebarActive(item, pageId, workspace, primaryItems)))?.label;
+    // 侧栏收敛到每空间 3～8 个入口、至多两组之后，全部常开：人一眼看全，不必点开分组才知道另一组里有什么。
+    // 当前组仍标 active，供样式区分。
     return primaryGroups.map((group) => {
       const active = group.label === activeGroup;
-      return `<details class="nav-group"${active ? " open" : ""}>
+      return `<details class="nav-group${active ? " active" : ""}" open>
         <summary class="nav-group-summary"><span>${esc(group.label)}</span></summary>
         <div class="nav-group-items">${group.items.map((item) => menuItemHtml(item,
           sidebarActive(item, pageId, workspace, primaryItems), todoFor(item))).join("")}</div>

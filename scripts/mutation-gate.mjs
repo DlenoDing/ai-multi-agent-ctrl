@@ -11935,20 +11935,20 @@ const MUTATIONS = [
     expect: "桌面侧栏直接列功能"
   },
   {
-    name: "桌面菜单不得一次展开所有业务组",
-    file: "apps/control-plane-ui/public/modules/navigation.js",
-    gate: "console",
-    from: '      return `<details class="nav-group"${active ? " open" : ""}>',
-    to: '      return `<details class="nav-group" open>',
-    expect: "桌面菜单只展开当前功能所属分组"
+    name: '侧栏分组必须常开（收敛后不许再折回手风琴）',
+    file: 'apps/control-plane-ui/public/modules/navigation.js',
+    gate: 'console',
+    from: '      return `<details class="nav-group${active ? " active" : ""}" open>',
+    to: '      return `<details class="nav-group${active ? " active" : ""}"${active ? " open" : ""}>',
+    expect: '项目侧栏分组没有常开'
   },
   {
-    name: "桌面菜单必须自动展开当前业务组",
-    file: "apps/control-plane-ui/public/modules/navigation.js",
-    gate: "console",
-    from: '      return `<details class="nav-group"${active ? " open" : ""}>',
-    to: '      return `<details class="nav-group">',
-    expect: "桌面菜单只展开当前功能所属分组"
+    name: '侧栏当前组必须标 active（样式靠它区分当前所在组）',
+    file: 'apps/control-plane-ui/public/modules/navigation.js',
+    gate: 'console',
+    from: '      return `<details class="nav-group${active ? " active" : ""}" open>',
+    to: '      return `<details class="nav-group" open>',
+    expect: '项目侧栏分组没有常开，或当前组没标 active'
   },
   {
     name: "创建项目入口必须留在项目选择区",
