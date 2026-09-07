@@ -52,6 +52,7 @@ const COLLECTIONS_WITHOUT_STATE_MACHINE = {
   authSessions: "spec/auth-session.schema.json 的 status enum",
   agentJoinTokens: "spec/agent-join-token.schema.json 的 status enum",
   agentControlCommands: "spec/agent-control-command.schema.json 的 status enum",
+  alertRules: "spec/alert-rule.schema.json 的 status enum（服务端规则配置，不是告警实例生命周期）",
   agents: "spec/agent.schema.json 的 status enum（逻辑智能体目录项没有生命周期，只有启停两态）",
   mcpCalls: "spec/mcp-call.schema.json 的 status enum（一次调用要么成了要么没成，没有生命周期）",
   // 这个集合此前【从没在任何 e2e 产出里出现过】（room_join 一次都没成功执行过），所以既没有

@@ -242,6 +242,8 @@
         "derived_task_created",
         "dlq_entry_created",
         "dlq_entry_replayed",
+        "alert_raised",
+        "alert_resolved",
         "task_group_language_policy_updated",
         "worker_lane_registered",
         "worker_lane_retired"

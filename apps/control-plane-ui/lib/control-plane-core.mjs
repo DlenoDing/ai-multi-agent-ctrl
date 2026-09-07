@@ -150,9 +150,11 @@ const modelTierRank = {standard: 0, frontier_economy: 1, frontier_standard: 2, f
 export const COMMAND_TERMINAL_STATES = Object.freeze(["succeeded", "cancelled", "timed_out", "compensated", "dlq"]);
 export const COMMAND_EFFECT_TERMINAL_STATES = Object.freeze(["verified", "rolled_back", "abandoned"]);
 export const DLQ_ENTRY_TERMINAL_STATES = Object.freeze(["replayed", "discarded", "superseded"]);
+export const ALERT_TERMINAL_STATES = Object.freeze(["resolved", "suppressed"]);
 const COMMAND_TERMINAL = new Set(COMMAND_TERMINAL_STATES);
 const COMMAND_EFFECT_TERMINAL = new Set(COMMAND_EFFECT_TERMINAL_STATES);
 const DLQ_ENTRY_TERMINAL = new Set(DLQ_ENTRY_TERMINAL_STATES);
+const ALERT_TERMINAL = new Set(ALERT_TERMINAL_STATES);
 
 export function createId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -245,6 +247,8 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.qualityGates ||= [];
   state.commandEffects ||= [];
   state.dlqEntries ||= [];
+  state.alertRules ||= defaultAlertRules();
+  state.alerts ||= [];
   state.integrationBatches ||= [];
   state.progressSnapshots ||= [];
   state.repositoryOutputs ||= [];
@@ -2071,7 +2075,11 @@ function runAutonomousCycleBody(state, request = {}) {
   maintainWorkerLanes(state);
   expireStaleLeases(state);
   sweepCommandBus(state);
-  if (skillSyncBlocked) return {changed, progressSnapshots: computeProgressSnapshots(state).slice(0, 8)};
+  if (skillSyncBlocked) {
+    const alertChanges = reconcileAlerts(state, {now: request.now, cycleRef});
+    if (alertChanges.length) changed.push(...alertChanges.map((alert) => ({status: "alert", alertId: alert.alertId, severity: alert.severity, alertStatus: alert.status})));
+    return {changed, progressSnapshots: computeProgressSnapshots(state).slice(0, 8)};
+  }
   const taskGroups = (state.taskGroups || []).filter((taskGroup) => !request.taskGroupId || taskGroup.id === request.taskGroupId);
   // A9: resample the external condition source once per cycle from the request/state — never from a
   // local clock — so window-gated cells are admitted/deferred against a verifiable current baseline.
@@ -2477,7 +2485,193 @@ function runAutonomousCycleBody(state, request = {}) {
   if (progressMoved) {
     appendEvent(state, "progress", "ProgressSnapshot", `cycle:${Date.now()}`, "orchestrator", {changed});
   }
+  const alertChanges = reconcileAlerts(state, {now: request.now, cycleRef});
+  if (alertChanges.length) changed.push(...alertChanges.map((alert) => ({status: "alert", alertId: alert.alertId, severity: alert.severity, alertStatus: alert.status})));
   return {changed, progressSnapshots: state.progressSnapshots.slice(0, 8)};
+}
+
+export function defaultAlertRules() {
+  const at = "2026-08-01T00:00:00.000Z";
+  const rule = (alertRuleId, metric, severity, ownerRole, title) => ({
+    schemaVersion: "alert-rule/v1",
+    alertRuleId,
+    metric,
+    scopeType: "system",
+    status: "active",
+    severity,
+    ownerRole,
+    channel: "monitor_console",
+    title,
+    threshold: {operator: ">", value: 0},
+    window: {durationSeconds: 60, silenceSeconds: 300},
+    escalationPolicy: {afterSeconds: 900, escalateToRole: "system-orchestrator"},
+    createdAt: at,
+    updatedAt: at
+  });
+  return [
+    rule("alert_rule_agent_heartbeat_overdue", "agent_heartbeat_overdue", "critical", "monitor", "Agent 心跳中断"),
+    rule("alert_rule_active_dlq", "active_dlq", "error", "monitor", "死信队列存在待处置条目"),
+    rule("alert_rule_orchestrator_consecutive_errors", "orchestrator_consecutive_errors", "critical", "system-orchestrator", "自治周期连续失败")
+  ];
+}
+
+function activeAlertRule(state, metric) {
+  return (state.alertRules || []).find((rule) => rule.metric === metric && rule.status === "active");
+}
+
+function alertNow(options) {
+  const time = new Date(options?.now || Date.now());
+  return Number.isFinite(time.getTime()) ? time.toISOString() : new Date().toISOString();
+}
+
+function boundedRuntimeInteger(value, min, max, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(numeric)));
+}
+
+function agentHeartbeatOverdueForAlert(node, nowMs) {
+  if (!["online", "degraded", "draining", "initializing"].includes(node?.status)) return false;
+  const lastBeat = new Date(node.lastHeartbeatAt || node.registeredAt || 0).getTime();
+  const graceMs = boundedRuntimeInteger(process.env.AIMAC_NODE_HEARTBEAT_TIMEOUT_MS, 60000, 86400000, 900000);
+  return Boolean(lastBeat) && nowMs - lastBeat >= graceMs;
+}
+
+export function reconcileAlerts(state, options = {}) {
+  state.alertRules ||= defaultAlertRules();
+  state.alerts ||= [];
+  const at = alertNow(options);
+  const nowMs = new Date(at).getTime();
+  const changed = [];
+  const openByDedupe = new Map((state.alerts || [])
+    .filter((alert) => alert.dedupeKey && !ALERT_TERMINAL.has(alert.status))
+    .map((alert) => [alert.dedupeKey, alert]));
+  const expectedOpen = new Set();
+  const raise = ({metric, dedupeKey, organizationId, projectId, taskGroupId, scope, title, message, severity, evidenceRefs = []}) => {
+    const rule = activeAlertRule(state, metric);
+    if (!rule) return null;
+    expectedOpen.add(dedupeKey);
+    const existing = openByDedupe.get(dedupeKey);
+    if (existing) {
+      const nextSeverity = severity || rule.severity;
+      const nextEvidenceRefs = unique([...(existing.evidenceRefs || []), ...evidenceRefs]).slice(-20);
+      const silenceMs = boundedRuntimeInteger(rule.window?.silenceSeconds, 0, 86400, 300) * 1000;
+      const lastSeenMs = new Date(existing.lastSeenAt || existing.updatedAt || existing.startedAt || 0).getTime();
+      const shouldRefresh = !Number.isFinite(lastSeenMs) || nowMs - lastSeenMs >= silenceMs;
+      const changedFields = existing.status !== "routed"
+        || existing.severity !== nextSeverity
+        || existing.message !== message
+        || JSON.stringify(existing.evidenceRefs || []) !== JSON.stringify(nextEvidenceRefs);
+      if (changedFields || shouldRefresh) {
+        existing.status = "routed";
+        existing.severity = nextSeverity;
+        existing.ownerRole = existing.ownerRole || rule.ownerRole;
+        existing.alertRoute = existing.alertRoute || rule.channel;
+        existing.message = message;
+        existing.evidenceRefs = nextEvidenceRefs;
+        existing.updatedAt = at;
+        existing.lastSeenAt = at;
+        changed.push(existing);
+      }
+      return existing;
+    }
+    const alert = {
+      schemaVersion: "alert/v1",
+      alertId: createId("alrt"),
+      alertRuleId: rule.alertRuleId,
+      dedupeKey,
+      ...(organizationId ? {organizationId} : {}),
+      ...(projectId ? {projectId} : {}),
+      ...(taskGroupId ? {taskGroupId} : {}),
+      scope,
+      status: "raised",
+      severity: severity || rule.severity,
+      ownerRole: rule.ownerRole,
+      alertRoute: rule.channel,
+      title: title || rule.title,
+      message,
+      evidenceRefs,
+      ...(rule.escalationPolicy ? {escalationPolicy: rule.escalationPolicy} : {}),
+      handlingRecords: [],
+      startedAt: at,
+      routedAt: at,
+      lastSeenAt: at,
+      updatedAt: at
+    };
+    alert.status = "routed";
+    state.alerts.unshift(alert);
+    openByDedupe.set(dedupeKey, alert);
+    changed.push(alert);
+    appendEvent(state, "alert_raised", "Alert", alert.alertId, "monitor", {projectId, taskGroupId, alertId: alert.alertId, severity: alert.severity, message});
+    return alert;
+  };
+
+  for (const node of state.agentRuntimeNodes || []) {
+    if (!agentHeartbeatOverdueForAlert(node, nowMs)) continue;
+    const projectIds = Array.isArray(node.projectIds) && node.projectIds.length ? node.projectIds : [null];
+    for (const projectId of projectIds) {
+      raise({
+        metric: "agent_heartbeat_overdue",
+        dedupeKey: `agent_heartbeat_overdue:${node.nodeId}:${projectId || "organization"}`,
+        organizationId: node.organizationId || DEFAULT_ORGANIZATION_ID,
+        projectId,
+        scope: {resourceType: "AgentRuntimeNode", resourceId: node.nodeId},
+        title: "Agent 心跳中断",
+        message: `${node.nodeName || node.nodeId} 已超过心跳宽限期，调度应停止向该节点下发新任务。`,
+        evidenceRefs: [`AgentRuntimeNode:${node.nodeId}`, `lastHeartbeatAt:${node.lastHeartbeatAt || node.registeredAt || "unknown"}`]
+      });
+    }
+  }
+
+  for (const entry of state.dlqEntries || []) {
+    if (DLQ_ENTRY_TERMINAL.has(entry.status)) continue;
+    raise({
+      metric: "active_dlq",
+      dedupeKey: `active_dlq:${entry.entryId}`,
+      projectId: entry.projectId,
+      taskGroupId: entry.taskGroupId,
+      scope: {resourceType: "DLQEntry", resourceId: entry.entryId},
+      title: "死信队列待处置",
+      message: entry.reason || "命令或执行对象进入死信队列，任务组关闭前必须处置。",
+      severity: entry.severity || "error",
+      evidenceRefs: [`DLQEntry:${entry.entryId}`, entry.commandId ? `Command:${entry.commandId}` : entry.sourceObjectRef].filter(Boolean)
+    });
+  }
+
+  const consecutiveErrors = Number(state.runtime?.autonomousOrchestrator?.consecutiveErrors || 0);
+  if (consecutiveErrors > 0) {
+    raise({
+      metric: "orchestrator_consecutive_errors",
+      dedupeKey: "orchestrator_consecutive_errors",
+      projectId: null,
+      scope: {resourceType: "AutonomousOrchestrator", resourceId: "default"},
+      title: "自治周期连续失败",
+      message: `自治周期连续失败 ${consecutiveErrors} 次，需要先处理控制面错误。`,
+      evidenceRefs: [`AutonomousOrchestrator:consecutiveErrors:${consecutiveErrors}`]
+    });
+  }
+
+  for (const alert of state.alerts || []) {
+    if (!alert.dedupeKey || ALERT_TERMINAL.has(alert.status) || expectedOpen.has(alert.dedupeKey)) continue;
+    alert.status = "resolved";
+    alert.resolvedAt = at;
+    alert.updatedAt = at;
+    alert.resolutionEvidenceRefs = unique([...(alert.resolutionEvidenceRefs || []), `monitor:condition-cleared:${alert.dedupeKey}`]);
+    alert.handlingRecords ||= [];
+    alert.handlingRecords.push({actor: "monitor", action: "auto_resolve_condition_cleared", evidenceRef: `monitor:condition-cleared:${alert.dedupeKey}`, at});
+    changed.push(alert);
+    appendEvent(state, "alert_resolved", "Alert", alert.alertId, "orchestrator", {projectId: alert.projectId, taskGroupId: alert.taskGroupId, alertId: alert.alertId, severity: alert.severity, message: alert.message});
+  }
+  state.alerts = capKeepingOpenAlerts(state.alerts);
+  return changed;
+}
+
+function capKeepingOpenAlerts(alerts, limit = 2000) {
+  if (!Array.isArray(alerts) || alerts.length <= limit) return alerts || [];
+  const sorted = alerts.slice().sort((left, right) => new Date(right.updatedAt || right.startedAt || 0).getTime() - new Date(left.updatedAt || left.startedAt || 0).getTime());
+  const open = sorted.filter((alert) => !ALERT_TERMINAL.has(alert.status));
+  const closed = sorted.filter((alert) => ALERT_TERMINAL.has(alert.status)).slice(0, Math.max(0, limit - open.length));
+  return [...open, ...closed];
 }
 
 function splitMixedWorkItemIfNeeded(state, taskGroup, workItem) {

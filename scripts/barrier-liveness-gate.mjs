@@ -103,7 +103,7 @@ const VAR_MACHINES = {
   source: ["AgentSkillSource"], lease: ["Lease"], lane: ["WorkerLane"], guard: ["RoleDriftGuard"],
   entry: ["DLQEntry"], directive: ["HumanDirective"], overlay: ["RoleSkillOverlay"], grant: ["TempGrant", "AccessControlGrant"],
   definition: ["SharedDefinitionContract"], pattern: ["RuntimeIssuePattern"], gate: ["QualityGate"],
-  artifact: ["Artifact"], candidate: ["SystemUpgradeCandidate"],
+  artifact: ["Artifact"], candidate: ["SystemUpgradeCandidate"], alert: ["Alert"],
   // 人工指令的暂停/恢复分支里，被停住与被放回的都是派发。
   running: ["AgentDispatch"], parked: ["AgentDispatch"],
   // 控制命令被节点连续拒绝、重试用尽时改写的那两个对象。
@@ -162,7 +162,6 @@ function loadTerminalProducers() {
 // 整机死与终态死则是低噪声高信号 —— 前者说明这台机器纯属文档，后者说明这类对象永远无法终结。
 const MODELED_AHEAD_OF_IMPLEMENTATION = {
   AuditLog: "审计走的是 runtime/audit-log.jsonl 追加文件，不是 state 里的状态机对象",
-  Alert: "告警子系统尚未实现，没有任何代码产生 Alert 对象",
   ProgressSnapshot: "进度快照是被裁剪掉的，不走 archived 终态",
   // 同批登记的三台都已补上，这里不再有 Account：
   //   AgentSkillSource → retired（5572fbe）；

@@ -42,6 +42,14 @@ const CONSOLE_GATE = "scripts/console-behaviour-check.mjs";
 // 每条 mutation：把守卫改坏，期望 contract-check 失败且输出里出现 expect 片段。
 const MUTATIONS = [
   {
+    name: "主动告警必须由服务端真实生产并能关闭",
+    file: CORE,
+    check: "verifyActiveAlertsAreProducedAndResolved",
+    from: "  return (state.alertRules || []).find((rule) => rule.metric === metric && rule.status === \"active\");",
+    to: "  return null;",
+    expect: "主动告警"
+  },
+  {
     name: "任务详情权限投影不得把观察者当成控制者",
     file: SERVER,
     check: "verifyTaskGroupDetailPermissionProjection",
@@ -4110,7 +4118,7 @@ const MUTATIONS = [
     file: "scripts/contract-check.mjs",
     gate: "contract",
     check: "verifyStoppingAnExecutorTellsTheTruth",
-    from: "      const giveUp = setTimeout(() => setImmediate(() => finish(false)), 20000);",
+    from: "      const giveUp = setTimeout(() => setImmediate(() => finish(!processGroupAlive())), 60000);",
     to: "      const giveUp = setTimeout(() => setImmediate(() => finish(false)), 0);",
     expect: "没能在宽限期后被 SIGKILL 收掉"
   },

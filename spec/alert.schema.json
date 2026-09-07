@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.dev/ai-multi-agent-ctrl/spec/alert.schema.json",
+  "title": "Alert",
+  "description": "服务端主动告警实例。它把运行异常变成总控、监控角色和管理界面可实时读取的对象，并记录关闭证据。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "alertId",
+    "alertRuleId",
+    "dedupeKey",
+    "scope",
+    "status",
+    "severity",
+    "ownerRole",
+    "alertRoute",
+    "title",
+    "message",
+    "evidenceRefs",
+    "handlingRecords",
+    "startedAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "alert/v1"},
+    "alertId": {"type": "string", "pattern": "^alrt_[a-z0-9_]+$"},
+    "alertRuleId": {"type": "string", "pattern": "^alert_rule_[a-z0-9_]+$"},
+    "dedupeKey": {"type": "string", "minLength": 1},
+    "organizationId": {"type": "string", "minLength": 1},
+    "projectId": {"type": "string", "minLength": 1},
+    "taskGroupId": {"type": "string", "minLength": 1},
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resourceType", "resourceId"],
+      "properties": {
+        "resourceType": {"type": "string", "minLength": 1},
+        "resourceId": {"type": "string", "minLength": 1}
+      }
+    },
+    "status": {"type": "string", "enum": ["raised", "routed", "resolved", "suppressed"]},
+    "severity": {"type": "string", "enum": ["info", "warning", "error", "critical"]},
+    "ownerRole": {"type": "string", "minLength": 1},
+    "alertRoute": {"type": "string", "minLength": 1},
+    "title": {"type": "string", "minLength": 1},
+    "message": {"type": "string", "minLength": 1},
+    "evidenceRefs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "resolutionEvidenceRefs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "decisionRecordRef": {"type": "string", "minLength": 1},
+    "escalationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["afterSeconds", "escalateToRole"],
+      "properties": {
+        "afterSeconds": {"type": "integer", "minimum": 1},
+        "escalateToRole": {"type": "string", "minLength": 1}
+      }
+    },
+    "silenceUntil": {"type": "string", "format": "date-time"},
+    "handlingRecords": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["actor", "action", "at"],
+        "properties": {
+          "actor": {"type": "string", "minLength": 1},
+          "action": {"type": "string", "minLength": 1},
+          "evidenceRef": {"type": "string"},
+          "at": {"type": "string", "format": "date-time"}
+        }
+      }
+    },
+    "startedAt": {"type": "string", "format": "date-time"},
+    "routedAt": {"type": "string", "format": "date-time"},
+    "lastSeenAt": {"type": "string", "format": "date-time"},
+    "resolvedAt": {"type": "string", "format": "date-time"},
+    "suppressedAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  }
+}

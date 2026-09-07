@@ -1025,6 +1025,8 @@
     S2: "一般",
     S3: "轻微",
     critical: "阻断",
+    warning: "警告",
+    info: "提示",
     major: "严重",
     normal: "一般",
 

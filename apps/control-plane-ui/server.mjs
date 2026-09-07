@@ -1742,7 +1742,7 @@ const SCOPED_ALLOWED_TOP_KEYS = new Set([
   "sessionPlacementDecisions", "roleSkillOverlays", "executionTopologies", "reviewPlans", "reviewBundles",
   "checkpoints", "completionReadiness", "closeBarriers", "admissionDecisions", "admissionScans", "sharedDefinitions", "progressSnapshots", "leases",
   "accounts", "accessGrants", "auditLog", "policyDecisions", "commands", "decisionRecords", "commandEffects", "dlqEntries", "integrationBatches",
-  "idempotencyRecords", "runtimeIssuePatterns", "runtimeIssueSamples", "systemUpgradeCandidates",
+  "alertRules", "alerts", "idempotencyRecords", "runtimeIssuePatterns", "runtimeIssueSamples", "systemUpgradeCandidates",
   "agentGatewayEvents", "mcpCalls", "mcpProbeNodes", "instructionMetrics", "organizations",
   "humanConfirmationRequests", "humanDirectives", "transitionEvidence", "ruleSourceResolutions",
   "externalUpgradeImports", "mcpGrants", "roomMessages", "roomParticipants", "roomAcks", "roomSequenceByRoom",
@@ -1859,6 +1859,13 @@ function scopedStateForAccount(state, account, session) {
   cloned.decisionRecords = [];
   cloned.commandEffects = [];
   cloned.dlqEntries = (state.dlqEntries || []).filter((item) => item.taskGroupId ? visibleTaskGroupIds.has(item.taskGroupId) : visibleProjectIds.has(item.projectId));
+  cloned.alertRules = (state.alertRules || []).filter((item) =>
+    !item.projectId || visibleProjectIds.has(item.projectId));
+  cloned.alerts = (state.alerts || []).filter((item) =>
+    item.taskGroupId ? visibleTaskGroupIds.has(item.taskGroupId)
+      : item.projectId ? visibleProjectIds.has(item.projectId)
+        : item.organizationId ? item.organizationId === account.organizationId && account.accountType === "org_admin"
+          : isSystem);
   cloned.integrationBatches = [];
   cloned.idempotencyRecords = {};
   cloned.runtimeIssuePatterns = [];
@@ -2147,6 +2154,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     users: ["accounts", "accessGrants", "projects", "agentJoinTokens"],
     projects: ["accounts", "accessGrants", "projects", "repositoryOutputs", "agentJoinTokens"],
     tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "closeBarriers", "humanConfirmationRequests", "humanDirectives", "permissionRequests", "approvalRequests", "findings", "qualityGates", "testResults", "reviewPlans", "sharedDefinitions", "reviewBundles", "ruleSourceResolutions", "systemUpgradeCandidates", "executionTopologies",
+      "alertRules", "alerts",
       // 死信队列挡着 no_active_dlq 关闭门、属任务组维度，要下发到 monitor 页才有处置入口。
       "dlqEntries",
       // artifacts 此前在防泄漏白名单里却【没有任何视图下发它】。关闭门的 artifacts_verified
@@ -2155,7 +2163,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
       // 加入令牌：项目概览的流程导航要算"已签发待使用"，让人知道接入链卡在安装这一环。
       // 记录只存摘要不存明文，带 projectId，按项目裁剪与别的视图一致。
       "agentJoinTokens"],
-    runtime: ["modelCapabilities", "modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions", "workerLanes", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkillOverlays"],
+    runtime: ["modelCapabilities", "modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions", "workerLanes", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkillOverlays", "alertRules", "alerts"],
     // effectiveInstructionPackets / roleDriftGuards 控制台一处都没读（实测这一视图 608KB 里
     // 它们占 303KB）。需要时可从 view=full 或专用接口取，不该让每次打开这一页都付这笔钱。
     instructions: ["instructionMetrics", "sharedDefinitions", "externalUpgradeImports"],

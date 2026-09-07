@@ -108,6 +108,7 @@ import {
   artifactRegister,
   expireStaleLeases,
   expireStaleHumanConfirmations, createDlqEntry, operatorResolveDlqEntry, DLQ_ENTRY_TERMINAL_STATES,
+  reconcileAlerts, ALERT_TERMINAL_STATES,
   refreshConfirmationsAfterHumanChange,
   HUMAN_ACTOR_KEY,
   // 真人闸门的三份闭集：判据按闭集展开，新增一个取值时自动进入检验面，不必回来改断言。
@@ -577,6 +578,7 @@ const CAP_FUNCTION_GUARDS = {
   capLeaseHistory: "active 租约一条都不裁（fencing 与持有者权威还在用），只修剪已释放的历史",
   capDispatchHistory: "未终结的派发一条都不裁",
   capTaskContracts: "还有派发指着的合同一条都不裁",
+  capKeepingOpenAlerts: "未终结的告警一条都不裁；已关闭告警按最近窗口保留，关闭证据已经写在记录里",
   capCommandBus: "三个集合都委托给 capRetainingPredicate，按「未终结」保留 —— 它们被关闭门读，裁错会让门假满足",
   capRetainingOpen: "未了结状态的记录一条都不裁",
   capRetainingPredicate: "调用方给的谓词判为「要留」的一条都不裁"
@@ -817,6 +819,7 @@ run(verifyApprovedAcceptanceChecksHaveEvidence);
 run(verifyPerformanceCachesStayCorrect);
 run(verifyRepeatedExecutionFailureStops);
 run(verifyOrchestratorReportsItsOwnOutcome);
+run(verifyActiveAlertsAreProducedAndResolved);
 run(verifyDegradedContentBundleIsVisible);
 run(verifyMcpSummaryIsActuallyASummary);
 run(verifyHeartbeatDoesNotHideFailedSelfCheck);
@@ -2096,7 +2099,8 @@ function verifyHumanAndOrganizationContracts(output) {
       repositoryOutputs: {entity: "RepositoryOutputTarget", idField: "targetId"},
       effectiveInstructionPackets: {entity: "EffectiveInstructionPacket", idField: "packetId"},
       agentDispatches: {entity: "AgentDispatch", idField: "dispatchId"},
-      roleDriftGuards: {entity: "RoleDriftGuard", idField: "guardId"}
+      roleDriftGuards: {entity: "RoleDriftGuard", idField: "guardId"},
+      alerts: {entity: "Alert", idField: "alertId"}
     };
     // 非终态却允许淘汰的，必须逐条写明理由 —— 不留"默认放过"。
     const SHARD_EVICTABLE_EXEMPT = {
@@ -4159,6 +4163,8 @@ function verifyHumanAndOrganizationContracts(output) {
       agentControlCommands: {open: {commandId: "acc_open_oldest", status: "queued"}, done: (i) => ({commandId: `acc_${i}`, status: "acked"})},
       agentDispatches: {open: {dispatchId: "dsp_open_oldest", status: "running"}, done: (i) => ({dispatchId: `dsp_${i}`, status: "completed"})},
       roleDriftGuards: {open: {guardId: "rdg_open_oldest", status: "open"}, done: (i) => ({guardId: `rdg_${i}`, status: "closed"})},
+      alertRules: {open: {alertRuleId: "alert_rule_open_oldest", status: "active"}, done: (i) => ({alertRuleId: `alert_rule_${i}`, status: "retired"})},
+      alerts: {open: {alertId: "alrt_open_oldest", status: "routed"}, done: (i) => ({alertId: `alrt_${i}`, status: "resolved"})},
       agentTaskContracts: {open: {contractId: "atc_open_oldest", sessionId: "ws_live", runId: "run_live"}, done: (i) => ({contractId: `atc_${i}`, sessionId: `ws_${i}`, runId: `run_${i}`})}
     };
     const idOf = (item) => item.id || item.sessionId || item.requestId || item.directiveId || item.targetId
@@ -18046,16 +18052,21 @@ async function verifyStoppingAnExecutorTellsTheTruth(output) {
     let sawUp = false;
     await new Promise((resolve) => { child.stdout.once("data", () => { sawUp = true; resolve(); }); setTimeout(resolve, 8000); });
     const stopStartedAt = Date.now();
+    const processGroupAlive = () => {
+      try { process.kill(-child.pid, 0); return true; }
+      catch (error) { return error?.code === "EPERM"; }
+    };
     const stopped = await new Promise((resolve) => {
       let done = false;
       const finish = (value) => { if (!done) { done = true; resolve(value); } };
       const killTimer = setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch { /* 已经走了 */ } }, 300);
       // 这条验的是「SIGKILL 收得掉」，不是「多快收掉」。5 秒在机器被别的门压满时会偶发红
-      //（实测：docker e2e 与变异门同时在跑那一次）—— 时限放宽到 20 秒，判据不变。
+      //（实测：docker e2e 与变异门同时在跑那一次）—— 时限放宽到 60 秒，判据不变。
       // 到时不能直接判 false：本文件里同步的 run(...) 会用 spawnSync 把事件循环一口气挡住二三十秒，
       // 解封时「到期的定时器」先于「早就到了的 close 事件」执行 —— 实测「等了 39767ms」而子进程其实早死了。
-      // 让一拍 setImmediate（排在 poll 阶段之后），把已经到了的 I/O 先派发掉，再下结论。
-      const giveUp = setTimeout(() => setImmediate(() => finish(false)), 20000);
+      // 让一拍 setImmediate（排在 poll 阶段之后），把已经到了的 I/O 先派发掉；若 close 仍没到，
+      // 再问进程组是否还存在。产品要保证的是执行器被收掉，不是 Node 的 close 事件必须先到。
+      const giveUp = setTimeout(() => setImmediate(() => finish(!processGroupAlive())), 60000);
       child.once("close", () => { clearTimeout(killTimer); clearTimeout(giveUp); finish(true); });
       try { process.kill(-child.pid, "SIGTERM"); } catch { finish(true); }
     });
@@ -21282,6 +21293,81 @@ function verifyActiveDispatchesKeepTheirContracts(output) {
       output.push(`规模化引用完整性：${label} —— ${broken.length} 处（活跃派发 ${activeDispatches.length}）。${consequence}`);
     }
   }
+}
+
+function verifyActiveAlertsAreProducedAndResolved(output) {
+  const probe = structuredClone(seedState);
+  ensureRuntimeCollections(probe, {root});
+  const taskGroup = probe.taskGroups[0];
+  const projectId = taskGroup.projectId;
+  const oldBeat = "2026-09-07T00:00:00.000Z";
+  const now = "2026-09-07T00:30:00.000Z";
+  probe.agentRuntimeNodes.push({
+    schemaVersion: "agent-runtime-node/v1",
+    nodeId: "node_alert_probe",
+    nodeName: "告警探针节点",
+    organizationId: DEFAULT_ORGANIZATION_ID,
+    registrationScope: "project",
+    projectIds: [projectId],
+    status: "online",
+    admission: "ready",
+    endpoint: "agent://probe",
+    tokenHash: "sha256:probe",
+    tokenPreview: "probe",
+    allowedRoles: ["agent-runtime"],
+    registeredAt: oldBeat,
+    lastHeartbeatAt: oldBeat,
+    updatedAt: oldBeat
+  });
+  probe.dlqEntries.push({
+    schemaVersion: "dlq-entry/v1",
+    entryId: "dlq_alert_probe",
+    projectId,
+    taskGroupId: taskGroup.id,
+    status: "created",
+    sourceObjectRef: "Command:cmd_alert_probe",
+    commandId: "cmd_alert_probe",
+    reason: "probe command exhausted retries",
+    createdAt: now,
+    updatedAt: now
+  });
+  probe.runtime.autonomousOrchestrator = {consecutiveErrors: 2};
+
+  const first = reconcileAlerts(probe, {now});
+  const routed = (probe.alerts || []).filter((alert) => alert.status === "routed");
+  const heartbeat = routed.find((alert) => alert.dedupeKey === `agent_heartbeat_overdue:node_alert_probe:${projectId}`);
+  const dlq = routed.find((alert) => alert.dedupeKey === "active_dlq:dlq_alert_probe");
+  const orchestrator = routed.find((alert) => alert.dedupeKey === "orchestrator_consecutive_errors");
+  if (!heartbeat || !dlq || !orchestrator) {
+    output.push(`主动告警：异常条件没有生成完整告警（心跳=${Boolean(heartbeat)}，死信=${Boolean(dlq)}，自治=${Boolean(orchestrator)}）`);
+    return;
+  }
+  for (const alert of [heartbeat, dlq, orchestrator]) {
+    if (!alert.ownerRole || !alert.alertRoute || !alert.severity || !(alert.evidenceRefs || []).length) {
+      output.push(`主动告警：${alert.alertId} 缺 owner/route/severity/evidence，监控角色无法接手`);
+    }
+  }
+  if (!first.some((alert) => alert.alertId === dlq.alertId)) {
+    output.push("主动告警：首次发现异常没有把新告警作为本轮变化返回，调用方无法实时刷新");
+  }
+  const countAfterFirst = probe.alerts.length;
+  reconcileAlerts(probe, {now: "2026-09-07T00:31:00.000Z"});
+  if (probe.alerts.length !== countAfterFirst) {
+    output.push("主动告警：同一异常重复扫描生成了重复告警，去重键没有生效");
+  }
+  probe.agentRuntimeNodes.find((node) => node.nodeId === "node_alert_probe").status = "offline";
+  probe.dlqEntries.find((entry) => entry.entryId === "dlq_alert_probe").status = "discarded";
+  probe.runtime.autonomousOrchestrator.consecutiveErrors = 0;
+  reconcileAlerts(probe, {now: "2026-09-07T00:40:00.000Z"});
+  const unresolved = (probe.alerts || []).filter((alert) => !ALERT_TERMINAL_STATES.includes(alert.status));
+  if (unresolved.length) {
+    output.push(`主动告警：条件解除后仍有非终态告警 ${unresolved.map((alert) => alert.dedupeKey).join("、")} —— 总控会持续看到过期异常`);
+  }
+  const closedWithoutEvidence = (probe.alerts || []).filter((alert) => alert.status === "resolved" && !(alert.resolutionEvidenceRefs || []).length);
+  if (closedWithoutEvidence.length) {
+    output.push(`主动告警：${closedWithoutEvidence.length} 条告警关闭时没有 resolutionEvidenceRefs`);
+  }
+  console.log(`主动告警：生成 ${routed.length} 条活跃告警，重复扫描无新增，条件解除后全部进入 ${ALERT_TERMINAL_STATES.join("/")}`);
 }
 
 function verifyOrchestrationDoesNotShellOutPerCell(output) {

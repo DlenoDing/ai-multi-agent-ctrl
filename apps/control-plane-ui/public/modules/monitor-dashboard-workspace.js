@@ -133,6 +133,23 @@ function render(context, helpers) {
     {v: esc(explainCoded(command.ackResult?.reason || "")) || "-", c: "text-clip"},
     {v: fmtTime(command.updatedAt || command.createdAt), c: "nowrap"}
   ])).join("");
+  const ALERT_TERMINAL = new Set(["resolved", "suppressed"]);
+  const activeAlerts = filterSource((state.alerts || []).filter((alert) =>
+    !ALERT_TERMINAL.has(alert.status) && (!managementGroupId || alert.taskGroupId === managementGroupId)), "alerts");
+  const alertRuleById = new Map((state.alertRules || []).map((rule) => [rule.alertRuleId, rule]));
+  const alertRows = activeAlerts.slice(0, 20).map((alert) => row([
+    customBadge(t(alert.severity) || alert.severity || "-", alert.severity === "critical" ? "red" : alert.severity === "error" ? "orange" : "blue"),
+    badge(alert.status),
+    `<strong>${esc(alert.title || alertRuleById.get(alert.alertRuleId)?.title || "告警")}</strong><div class="small muted mono">${esc(alert.alertId)}</div>`,
+    alert.taskGroupId
+      ? esc(taskGroupNameOf(alert.taskGroupId))
+      : alert.projectId
+        ? "整个项目"
+        : "组织 / 系统",
+    esc(t(alert.ownerRole) || alert.ownerRole || "-"),
+    {v: `${esc(alert.message || "-")}${evidenceRefsHint(alert)}`, c: "text-clip"},
+    {v: fmtTime(alert.updatedAt || alert.startedAt), c: "nowrap"}
+  ])).join("");
 
   const canControlNodes = hasPerm("agent:activate");
   const canOrchestrate = hasPerm("task_group:orchestrate");
@@ -312,7 +329,7 @@ function render(context, helpers) {
   // 用这一页【已经算好的那几个作用域数组】判空，不再直接点名集合：
   // 账本限流那道门按"谁提到了这个集合名"找渲染点，直接点名会被它当成一处没设上限的渲染。
   const nothingRanYet = !eventsShown.length && !sessionsAll.length && !dispatchesAll.length
-    && !lanesAll.length && !admissionsInScope.length && !nodes.length;
+    && !lanesAll.length && !admissionsInScope.length && !nodes.length && !activeAlerts.length;
   // 项目空间已经和系统/组织空间拆开，跨空间指路不能再写成"去某某页"：
   // 人在当前左侧菜单里看不到那一项，会以为功能丢了。先点空间，再说面板名。
   const JOIN_TOKEN_ENTRY_BY_PERSPECTIVE = {
@@ -361,7 +378,8 @@ function render(context, helpers) {
       openReviewBundles,
       openRuleSources,
       openUpgradeCandidates,
-      blockingDefinitions
+      blockingDefinitions,
+      activeAlerts
     }),
     renderMonitorRealtimeGuide({
       eventsShown,
@@ -392,6 +410,11 @@ function render(context, helpers) {
     panel("智能体派发", stuckExitNotice(dispatchesAll, sessionsAll) + table(["派发", "工作项", "状态", {label: "进度", c: "num"}, {label: "最近动静", c: "nowrap"}, "原因", "详情"], dispatches, {moreText: moreText(dispatchesAll.length, 20, "agentDispatches")}), {wide: true, headerSide: filterInput("按派发、工作项过滤…", "dispatches")}),
     // 节点为什么拒/为什么失败，此前写进 command.ackResult 就再没人读过（全仓只有网关那一处写、
     // 零处读）—— 屏幕上只有一个「已拒绝」，人无处可查。它本来就随视图下发了，缺的只是这一列。
+    panel("主动告警", activeAlerts.length
+      ? table(["等级", "状态", "告警", "范围", "负责人", "说明 / 证据", {label: "更新时间", c: "nowrap"}],
+        alertRows, {moreText: moreText(activeAlerts.length, 20, "alerts")})
+      : `<div class="small muted">当前没有活跃告警。服务端会主动发现心跳中断、死信队列和自治周期连续失败等异常，并在条件解除后自动关闭。</div>`,
+      {wide: true, headerSide: filterInput("按告警、负责人、证据过滤…", "alerts")}),
     panel("控制通道", table([{label: "序号", c: "num"}, "节点", "命令", "作用对象", "状态", "原因", {label: "更新时间", c: "nowrap"}], commands, {moreText: moreText(commandsInScope.length, 16, "agentControlCommands")}), {wide: true}),
     (() => {
       // 死信队列：命令重试超限时产生，非终态会一直挡住关闭门（no_active_dlq）。此前它连下发都没有、

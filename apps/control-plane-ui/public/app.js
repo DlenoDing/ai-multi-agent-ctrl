@@ -6631,7 +6631,7 @@ function renderDirectives() {
 
 /* ---------------- 成员：执行监控 ---------------- */
 
-function renderMonitorSummary({eventsShown, sessionsAll, dispatchesAll, lanesAll, nodes, barriersInScope}) {
+function renderMonitorSummary({eventsShown, sessionsAll, dispatchesAll, lanesAll, nodes, barriersInScope, activeAlerts = []}) {
   const activeSessions = sessionsAll.filter((session) =>
     !["completed", "failed", "cancelled", "recycled", "closed"].includes(session.status)).length;
   const activeDispatches = dispatchesAll.filter((dispatch) => !terminalDispatchStatuses.has(dispatch.status)).length;
@@ -6645,6 +6645,7 @@ function renderMonitorSummary({eventsShown, sessionsAll, dispatchesAll, lanesAll
       ${summaryMetric("待执行派发", activeDispatches, "排队、已领走或执行中的派发")}
       ${summaryMetric("执行载体", lanesAll.length, "可复用 worker lane")}
       ${summaryMetric("在线节点", `${onlineNodes}/${nodes.length}`, "可承接任务的 agent 节点")}
+      ${summaryMetric("活跃告警", activeAlerts.length, "需要总控或监控角色立即知道的异常")}
       ${summaryMetric("关闭阻塞", blockingObjects, `${blockedBarriers} 个任务组仍未满足关闭门`)}
     </div>
     <div class="small muted">查看顺序：先看“实时事件流”，再看“智能体派发”和“工作会话”；需要收尾时看“关闭门禁”和“阻塞项人工处置”。</div>
@@ -6668,7 +6669,8 @@ function renderMonitorActionBoard({
   openReviewBundles,
   openRuleSources,
   openUpgradeCandidates,
-  blockingDefinitions
+  blockingDefinitions,
+  activeAlerts = []
 }) {
   const blockedDispatches = dispatchesAll.filter((dispatch) => dispatch.status === "blocked").length;
   const blockedSessions = sessionsAll.filter((session) => !SESSION_SETTLED_STATUSES.includes(session.status)
@@ -6692,6 +6694,13 @@ function renderMonitorActionBoard({
   const orchestrator = state.runtime?.autonomousOrchestrator || {};
   const orchestratorIssues = Number(orchestrator.consecutiveErrors || 0);
   const cards = [
+    monitorActionCard({
+      title: "主动告警",
+      metric: `${activeAlerts.length}`,
+      detail: activeAlerts.length ? "优先查看服务端主动发现的运行异常" : "当前没有活跃告警",
+      panelTitle: "主动告警",
+      tone: activeAlerts.length ? "red" : "green"
+    }),
     monitorActionCard({
       title: "派发 / 会话",
       metric: `${blockedDispatches + blockedSessions}`,

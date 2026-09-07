@@ -44,6 +44,17 @@
 
 这类问题不一定立刻导致执行失败，但会让机器契约从“运行时强制”退化成“事后发现”，容易在多轮修改中再次漂移。
 
+### 主动告警仍停在设计文本里
+
+最初设计明确要求系统必须内置主动告警，不只是提供看板，至少覆盖 Agent 心跳中断、DLQ 增长、outbox backlog、lease 长期未释放、磁盘水位、DB 连接耗尽、Artifact 写入失败、备份失败、错误率突增和模型/工具连续限流，并且告警要有 owner、severity、静默窗口、升级策略、处理记录和关闭证据。当前实现中：
+
+1. `spec/state-machines.yaml` 已登记 `Alert` 状态机，`spec/terminal-execution-manifest.yaml` 已把 `Alert` 当终态执行对象列入清单。
+2. 主设计文档仍要求 `alert_rules` 和 `alerts` 数据表。
+3. `scripts/barrier-liveness-gate.mjs` 却把 `Alert` 登记为“告警子系统尚未实现，没有任何代码产生 Alert 对象”。
+4. 运行时没有 `state.alertRules` / `state.alerts` 集合，也没有规格文件、分片持久化、租户过滤和监控界面。
+
+这会造成：监控页能显示已有事件、派发、会话和关闭门禁，但对服务端可主动判定的运行异常没有稳定对象，总控和监测角色只能从别的表里间接推断，需求中的“主动告警”实际丢失。
+
 ## 已完成修复
 
 1. 新增系统管理员 REST 入口 `POST /api/system-upgrade-candidates/import-external-result`。
@@ -72,6 +83,14 @@
 18. `docs/machine-executable-artifacts.md` 已更正 checkpoint、commit-ref、push-ref 的消费者说明。
 19. 主设计文档和 README 中残留的“Agent 侧本地库增量镜像”已改为“Agent 端仅保留运行配置、缓存和 outbox，不承载项目数据库服务或权威数据镜像”。
 20. 主设计文档和自治范围文档中容易被误解为运行期自动改规则的“规则沉淀”口径已收敛为“规则候选收集、来源解析、互审、系统外升级导入和版本治理”；系统级重复问题只能形成 `RuntimeIssuePattern`、`SystemUpgradeCandidate` 和系统外升级证据包。
+21. 新增 `spec/alert-rule.schema.json` 和 `spec/alert.schema.json`，告警规则与告警实例均有 schemaVersion、负责人、等级、路由、升级策略、处理记录和关闭证据字段。
+22. `ensureRuntimeCollections` 初始化默认告警规则；`reconcileAlerts` 在服务端自治周期内发现心跳超期、活跃 DLQ 和自治周期连续失败，按 dedupeKey 去重生成 `Alert.routed`，条件解除后自动转为 `Alert.resolved` 并写入 `resolutionEvidenceRefs`。
+23. 告警变化写入事件流 `alert_raised` / `alert_resolved`，满足总控、监控角色和用户界面的准实时观察要求。
+24. `alertRules` / `alerts` 纳入项目分片持久化集合，项目级告警随项目分片隔离；活跃规则和非终态告警不会被容量裁剪误删。
+25. `scopedStateForAccount` 与 `tasks/runtime` 视图已下发过滤后的告警；任务组、项目、组织和系统级告警按可见范围过滤，避免跨组织泄漏。
+26. 执行监控页新增“主动告警”看板卡片和明细表，活跃告警不再被隐藏在事件/死信/节点表里。
+27. `scripts/barrier-liveness-gate.mjs` 撤销 `Alert` 未实现豁免，状态机活性门会要求告警对象真实产生并可终结。
+28. `scripts/contract-check.mjs` 增加主动告警生产、去重、关闭证据和终态回收断言；`scripts/mutation-gate.mjs` 增加对应变异。
 
 ## 当前结论
 
@@ -83,5 +102,6 @@
 4. 项目/任务组/任务/派发/会话/事件监控入口仍存在。
 5. 运行期问题仍为 collect-only，真正升级仍在系统外完成。
 6. 文档基线不再要求或暗示 Agent 本地承载项目数据库镜像，避免后续实现把服务性组件下沉到 Agent 端。
+7. 主动告警已从“设计已写、代码未产出”修复为运行时对象、事件流、项目分片、租户视图和监控界面均可观察的闭环；当前先覆盖已有运行态可稳定判定的心跳、DLQ、自治周期错误三类，其余磁盘/DB/备份/限流类可沿同一规则与对象模型接入具体采样源。
 
 后续若再做 UI 或模块拆分，应先运行 `npm run validate`。其中 `node scripts/contract-check.mjs` 会检查文档接口是否真实存在，`node scripts/console-behaviour-check.mjs` 会检查系统管理入口是否再次漂移。

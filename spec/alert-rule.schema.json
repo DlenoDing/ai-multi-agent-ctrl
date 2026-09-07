@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.dev/ai-multi-agent-ctrl/spec/alert-rule.schema.json",
+  "title": "AlertRule",
+  "description": "服务端集中执行的主动告警规则。规则只描述可观测条件、负责人和升级策略，不允许 agent 在运行期自行改写系统规则。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "alertRuleId",
+    "metric",
+    "scopeType",
+    "status",
+    "severity",
+    "ownerRole",
+    "channel",
+    "title",
+    "threshold",
+    "window",
+    "escalationPolicy",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "alert-rule/v1"},
+    "alertRuleId": {"type": "string", "pattern": "^alert_rule_[a-z0-9_]+$"},
+    "projectId": {"type": "string", "minLength": 1},
+    "taskGroupId": {"type": "string", "minLength": 1},
+    "metric": {
+      "type": "string",
+      "enum": [
+        "agent_heartbeat_overdue",
+        "active_dlq",
+        "orchestrator_consecutive_errors",
+        "outbox_backlog",
+        "lease_overdue",
+        "disk_watermark",
+        "db_pool_exhausted",
+        "artifact_write_failure",
+        "backup_failure",
+        "model_tool_throttling"
+      ]
+    },
+    "scopeType": {"type": "string", "enum": ["system", "organization", "project", "task_group", "agent_node"]},
+    "status": {"type": "string", "enum": ["active", "disabled", "retired"]},
+    "severity": {"type": "string", "enum": ["info", "warning", "error", "critical"]},
+    "ownerRole": {"type": "string", "minLength": 1},
+    "channel": {"type": "string", "minLength": 1},
+    "title": {"type": "string", "minLength": 1},
+    "threshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operator", "value"],
+      "properties": {
+        "operator": {"type": "string", "enum": [">", ">=", "=", "<", "<="]},
+        "value": {"type": "number"}
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["durationSeconds", "silenceSeconds"],
+      "properties": {
+        "durationSeconds": {"type": "integer", "minimum": 1},
+        "silenceSeconds": {"type": "integer", "minimum": 0}
+      }
+    },
+    "escalationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["afterSeconds", "escalateToRole"],
+      "properties": {
+        "afterSeconds": {"type": "integer", "minimum": 1},
+        "escalateToRole": {"type": "string", "minLength": 1}
+      }
+    },
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  }
+}

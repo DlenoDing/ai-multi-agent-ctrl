@@ -26,6 +26,8 @@ const projectShardCollections = [
   "progressSnapshots",
   "agentControlCommands",
   "agentExecutionEvents",
+  "alertRules",
+  "alerts",
   "humanConfirmationRequests",
   "humanDirectives"
 ];
@@ -45,6 +47,8 @@ export const PROJECT_SHARD_COLLECTION_LIMITS = Object.freeze({
   progressSnapshots: 5000,
   agentControlCommands: 5000,
   agentExecutionEvents: 1000,
+  alertRules: 2000,
+  alerts: 2000,
   humanConfirmationRequests: 2000,
   humanDirectives: 2000
 });
@@ -706,6 +710,8 @@ const shardOpenPredicates = {
       && dispatch.sessionId === item.sessionId && dispatch.runId === item.runId),
   agentDispatches: (item) => !isTerminalDispatchStatus(item.status), // core 2778
   roleDriftGuards: (item) => !["closed", "corrected"].includes(item.status), // core 2756
+  alertRules: (item) => item.status === "active",
+  alerts: (item) => !["resolved", "suppressed"].includes(item.status),
   // 任务组是主实体，工作项内嵌在它里面 —— 淘汰一个任务组等于连同它的全部工作项一起删掉，
   // 而且它是【唯一】一个内存层完全不封顶的分片集合：其余集合都有 core 里的 cap 先行收口，
   // 只有任务组由人不断新建、从不收口，这道 2000 是它遇到的第一道也是唯一一道上限。
