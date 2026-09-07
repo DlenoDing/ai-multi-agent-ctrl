@@ -1091,6 +1091,8 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         return {ok: true, status: 201, headers: {get: () => null}, json: async () => ({account: {accountId: "acct_new", email: "new@local"}, accountToken: "aimac_account_probe"})};
       });
       try {
+        probe.setPage("org-members");
+        probe.workspaceSelect("org-members", "create");
         const form = el("form", {dataset: {form: "member-create"}}, [
           el("input", {name: "displayName", value: "新成员"}),
           el("input", {name: "email", value: "new@local"}),
@@ -1107,6 +1109,9 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
           check("成员创建提交的权限要且只要勾选的那些",
             JSON.stringify(post.body.permissions) === JSON.stringify(["project:create"]) && post.body.defaultProjectId === "p1",
             `发出去的是 ${JSON.stringify(post.body.permissions)}／defaultProjectId=${post.body.defaultProjectId} —— 没勾的权限也发了，等于替人多发权限`);
+          check("成员创建成功后要回到成员列表（弹窗关掉后不能又对着空表单）",
+            probe.workspaceCurrent("org-members") === "list",
+            `提交后栏目＝${probe.workspaceCurrent("org-members")}`);
         }
       } finally {
         probe.setFetch(previousFetch);
@@ -6290,6 +6295,11 @@ async function runPendingTruncationCase() {
     const orgMemberHelpPane = probe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["help"]);
     const orgMemberMatrixText = textOf(orgMemberMatrixPane);
     const orgMemberGuide = /<details class="guide-bundle"( open)?>([\s\S]*?)<\/details>/u.exec(orgMemberHelpPane);
+    // 【建成员表单的「默认项目」要说明它不等于授权】。选了默认项目、建完到权限矩阵一看「未分配项目」——
+    // 人会以为建坏了。字段旁边直接说清：只决定先打开哪个项目，权限在权限矩阵里授。
+    check("建成员表单的「默认项目」要说清不等于授权、权限去哪授",
+      /<select name="defaultProjectId">[\s\S]*?<\/select>\s*<span class="small muted">默认项目只决定[^<]*不等于授权[^<]*权限矩阵/u.test(orgMemberCreatePane),
+      "默认项目下拉旁没有「不等于授权／到权限矩阵授权」的说明，建完看到「未分配项目」会以为建坏了");
     check("组织成员授权说明保持默认折叠且内容可达",
       Boolean(orgMemberGuide) && !orgMemberGuide[1] && /<h2>成员授权流程<\/h2>/u.test(orgMemberGuide[2]),
       "「成员授权流程」要收进默认关闭的折叠块");

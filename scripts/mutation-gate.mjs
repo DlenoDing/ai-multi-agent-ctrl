@@ -12247,6 +12247,22 @@ const MUTATIONS = [
     expect: "系统概览的「执行节点」卡要带人去组织列表"
   },
   {
+    name: "成员创建成功后不得留在表单上",
+    file: APP,
+    gate: "console",
+    from: '      workspaces.select("org-members", "list");\n      formTouched = false;\n      await loadPage();\n      oneTimeTokenModal("成员创建成功",',
+    to: '      workspaces.select("org-members", "create");\n      formTouched = false;\n      await loadPage();\n      oneTimeTokenModal("成员创建成功",',
+    expect: "成员创建成功后要回到成员列表"
+  },
+  {
+    name: "默认项目字段不得丢掉「不等于授权」说明",
+    file: APP,
+    gate: "console",
+    from: '          <span class="small muted">默认项目只决定他登录后先打开哪个项目，不等于授权：项目与任务组权限建完后在「权限矩阵」→「管理授权」里授予。</span>',
+    to: '          <span class="small muted">默认项目：他登录后先打开哪个项目。</span>',
+    expect: "建成员表单的「默认项目」要说清不等于授权"
+  },
+  {
     name: "窄屏对象上下文必须隐藏重复操作",
     file: "apps/control-plane-ui/public/workspaces.css",
     gate: "console",

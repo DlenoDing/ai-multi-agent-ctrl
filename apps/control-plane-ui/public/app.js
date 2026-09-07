@@ -3537,6 +3537,7 @@ function renderOrgMembers() {
             <option value="">（不指定）</option>
             ${assignableProjects().map((project) => `<option value="${esc(project.id)}">${esc(project.name || project.id)}</option>`).join("")}
           </select>
+          <span class="small muted">默认项目只决定他登录后先打开哪个项目，不等于授权：项目与任务组权限建完后在「权限矩阵」→「管理授权」里授予。</span>
         </div>
         <div class="form-row"><label>账号能力</label>${permissionCheckboxes()}</div>
         <div class="notice">创建成功后将弹窗展示一次性登录令牌，请提示成员保存并尽快登录改密。</div>
@@ -7279,6 +7280,9 @@ document.addEventListener("submit", async (event) => {
         admin: {displayName: data.adminName, email: data.adminEmail},
         quotas: quotaBody(data)
       })});
+      // 建完回组织列表：弹窗关掉后人要看到新组织落在列表里，而不是又对着一张空表单。
+      workspaces.select("sys-orgs", "list");
+      formTouched = false;
       await loadPage();
       oneTimeTokenModal(`组织「${result.organization?.name || data.name}」创建成功`, result.adminAccount?.email || data.adminEmail, result.accountToken || "-", "请将令牌交给该组织的初始组织管理员，首次登录后建议立即设置密码。");
       return;
@@ -7320,6 +7324,9 @@ document.addEventListener("submit", async (event) => {
         permissions,
         defaultProjectId: data.defaultProjectId || null
       })});
+      // 建完回成员列表（同上）。
+      workspaces.select("org-members", "list");
+      formTouched = false;
       await loadPage();
       oneTimeTokenModal("成员创建成功", result.account?.email || data.email, result.accountToken || "-", "请将一次性登录令牌交给该成员。");
       return;
