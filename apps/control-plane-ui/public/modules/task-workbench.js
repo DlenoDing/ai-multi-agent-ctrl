@@ -81,13 +81,13 @@
           <dt>角色档案</dt><dd>${esc(logical?.name || logical?.id || session?.agentId || "未记录")}</dd>
           <dt>执行角色</dt><dd>${esc(h.t(run.roleId || work.ownerRole))}</dd>
           <dt>模型与推理</dt><dd>${esc(run.model || "未记录")} · ${esc(run.reasoning || "未记录")}</dd>
-          <dt>选型判断</dt><dd>${esc(run.modelDecision || "未记录")}</dd>
+          <dt>选型判断</dt><dd>${esc(h.modelDecisionTextZh(run.modelDecision))}</dd>
           <dt>会话</dt><dd class="mono">${esc(run.sessionId || "未记录")}</dd>
           <dt>派发时间</dt><dd>${h.fmtTime(run.createdAt)}</dd>
           <dt>最新回送</dt><dd>${h.fmtTime(run.lastExecutionEventAt || run.updatedAt)}</dd></dl>
         ${run.failureReason || run.blockedReason ? `<div class="notice warn-notice">${esc(h.explainCoded(run.failureReason || run.blockedReason))}${h.repositoryFailureAction(run)}</div>` : ""}
         <div class="button-row"><button class="primary-button" data-action="open-execution-object" data-execution-type="dispatch" data-execution-id="${esc(run.dispatchId)}" data-task="${esc(group.id)}">查看执行详情</button></div>
-        ${events.length ? `<details class="task-run-events"${disclosure[`${run.dispatchId}:events`] ? " open" : ""}><summary data-run-disclosure="${esc(run.dispatchId)}:events">执行记录（${events.length} 条）</summary><ol class="task-requirements">${events.map((event) => `<li><span class="small muted">${h.fmtTime(event.createdAt)}</span> ${esc(h.t(event.eventType))}：${esc(event.summary || "")}</li>`).join("")}</ol></details>` : ""}
+        ${events.length ? `<details class="task-run-events"${disclosure[`${run.dispatchId}:events`] ? " open" : ""}><summary data-run-disclosure="${esc(run.dispatchId)}:events">执行记录（${events.length} 条）</summary><ol class="task-requirements">${events.map((event) => `<li><span class="small muted">${h.fmtTime(event.createdAt)}</span> ${esc(h.t(event.eventType))}：${esc(h.agentEventSummaryZh(event.summary))}</li>`).join("")}</ol></details>` : ""}
       </div></details>`};
     });
     const latestEntry = historyEntries.at(-1) || null;

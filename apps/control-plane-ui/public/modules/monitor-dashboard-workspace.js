@@ -12,7 +12,7 @@ function render(context, helpers) {
     decisionSelect, esc, evidenceRefsHint, explainCoded, filterInput, filterSource,
     fleetOfflineNotice, fmtTime, focusedTaskGroups, gatingArtifactRows, hasGroupPerm,
     hasNoVisibleProject, hasPerm, heartbeatStaleHint, heartbeatTimedOut, laneFunctionLabel,
-    modelDecisionSummaryZh, moreText, noRightOnThisGroup, noVisibleProjectNotice,
+    modelDecisionSummaryZh, agentEventSummaryZh, moreText, noRightOnThisGroup, noVisibleProjectNotice,
     orchestratorStalledNotice, panel, percentCell, perspectiveOf,
     projectTaskGroups, recentHumanFinalizations, renderExecutionObjectDetail,
     renderMonitorActionBoard, renderMonitorRealtimeGuide, renderMonitorSummary,
@@ -51,7 +51,7 @@ function render(context, helpers) {
     // 证据引用此前从不渲染，而执行方恰恰在这里上报了"这次提示词里实际包含了哪几份规则文件"
     // （prompt-includes:system/rules.md 之类）。人在控制台上只看得到 summary 里那句"含 N 个规则文件"，
     // 看不到是哪几个 —— 而"人写下的那份规则有没有真的到达模型"正是要从这里回答的。
-    {v: `${esc(event.summary || "-")}${evidenceRefsHint(event)}${repositoryFailureAction(event)}`, c: "text-clip"},
+    {v: `${esc(agentEventSummaryZh(event.summary) || "-")}${evidenceRefsHint(event)}${repositoryFailureAction(event)}`, c: "text-clip"},
     {v: fmtTime(event.createdAt), c: "nowrap"}
   ])).join("");
 

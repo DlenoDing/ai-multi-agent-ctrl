@@ -16,7 +16,7 @@
   }
 
   function executionTimeline(taskGroup, progressData = {}, helpers) {
-    const {state, terminalDispatchStatuses, t, explainCoded, modelDecisionSummaryZh,
+    const {state, terminalDispatchStatuses, t, explainCoded, modelDecisionSummaryZh, agentEventSummaryZh = (value) => value,
       customBadge, badge, esc, fmtTime, agentNodeLabel} = helpers;
     const groupId = taskGroup.id;
     const workItems = progressData.workItems || taskGroup.workItems || [];
@@ -84,7 +84,7 @@
         status: event.status,
         at: eventTimeOf(event),
         tone: event.status === "failed" || event.status === "error" ? "red" : "blue",
-        detail: event.summary || "",
+        detail: agentEventSummaryZh(event.summary || ""),
         meta: [`事件：${t(event.eventType) || event.eventType || "-"}`,
           `Agent：${agentNodeLabel(event.nodeId)}`,
           event.progressPercent !== undefined ? `进度：${event.progressPercent}%` : ""]

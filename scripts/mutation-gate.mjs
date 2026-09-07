@@ -4166,13 +4166,12 @@ const MUTATIONS = [
     expect: "任务组配置里写错的默认角色该被拒"
   },
   {
-    name: "控制台角色输入框的示例必须是已登记的执行角色",
+    name: "默认角色下拉必须选中配置里已有的角色",
     file: "apps/control-plane-ui/public/app.js",
-    gate: "contract",
-    check: "verifyConsoleRoleExamplesAreRegistered",
-    from: 'placeholder="角色 ID（只认已登记的执行角色，如 reviewer）"',
-    to: 'placeholder="角色 ID（只认已登记的执行角色，如 backend-developer）"',
-    expect: "不是已登记的执行角色"
+    gate: "console",
+    from: '    .map((id) => `<option value="${esc(id)}"${id === roleId ? " selected" : ""}>${esc(id === "agent-runtime" ? "通用任务执行" : t(id))}</option>`).join("");',
+    to: '    .map((id) => `<option value="${esc(id)}">${esc(id === "agent-runtime" ? "通用任务执行" : t(id))}</option>`).join("");',
+    expect: "默认角色配置 pane 保留执行角色与 roleSkillRef 字段"
   },
   {
     name: "界面拿到的授权角色词表要与拒绝报文的 supported 同一份",
@@ -12356,6 +12355,87 @@ const MUTATIONS = [
     from: '  if (!rule.includes("*")) return rule === path;\n  return globSegmentsMatch(rule.split("/"), path.split("/"), 0, 0);',
     to: '  return rule === path;',
     expect: "两端不一致"
+  },
+  {
+    name: "运行时事件摘要不得原样上屏",
+    file: "apps/control-plane-ui/public/modules/labels.js",
+    gate: "console",
+    from: '    [/^Dispatch package received and binding verified\\.$/u, () => "已接收派发包并核对绑定"],',
+    to: '',
+    expect: "运行时事件摘要要翻成中文"
+  },
+  {
+    name: "选型判断不得原样上屏",
+    file: "apps/control-plane-ui/public/modules/labels.js",
+    gate: "console",
+    from: '    if (!hit) return raw;\n    return [WRITE_SET_LABELS[hit[1]]',
+    to: '    return raw;\n    return [WRITE_SET_LABELS[hit[1]]',
+    expect: "选型判断要翻成中文"
+  },
+  {
+    name: "任务契约小节的规则件引用不得退回原始串",
+    file: APP,
+    gate: "console",
+    from: '    <span>生效规则件：${list(summary.activeRuleRefs, "无", contractRefLabel)}</span>',
+    to: '    <span>生效规则件：${list(summary.activeRuleRefs, "无", (x) => x)}</span>',
+    expect: "任务契约小节不许出现内部 key"
+  },
+  {
+    name: "任务详情的选型判断不得退回英文句",
+    file: "apps/control-plane-ui/public/modules/task-workbench.js",
+    gate: "console",
+    from: '          <dt>选型判断</dt><dd>${esc(h.modelDecisionTextZh(run.modelDecision))}</dd>',
+    to: '          <dt>选型判断</dt><dd>${esc(run.modelDecision || "未记录")}</dd>',
+    expect: "任务详情的选型判断与执行记录要显示中文"
+  },
+  {
+    name: "角色 Skill 定制的能力不得退回自由文本",
+    file: APP,
+    gate: "console",
+    from: '  const capabilityChecks = (name) => `<div class="check-list">${capabilityChoices().map((cap) => `<label><input type="checkbox" name="${name}" value="${esc(cap)}"> ${esc(capabilityLabel(cap))}</label>`).join("")}</div>\n',
+    to: '  const capabilityChecks = (name) => `<input name="${name}" placeholder="例如 repo_write,playwright_check">\n',
+    expect: "角色 Skill 定制表单：角色从下拉选、能力用复选框"
+  },
+  {
+    name: "角色 Skill 定制提交不得漏掉勾选的能力",
+    file: APP,
+    gate: "console",
+    from: '      const allowedCapabilityAdds = [...new Set([...formData.getAll("allowedCapabilityAdds").map((item) => String(item).trim()).filter(Boolean), ...extra(data.allowedCapabilityAddsExtra)])];',
+    to: '      const allowedCapabilityAdds = [...new Set([...formData.getAll("allowedCapabilityAdds").map((item) => String(item).trim()).filter(Boolean).slice(0, 1), ...extra(data.allowedCapabilityAddsExtra)])];',
+    expect: "角色 Skill 定制提交要送出勾选的能力"
+  },
+  {
+    name: "任务组默认角色提交不得只收最后一个",
+    file: APP,
+    gate: "console",
+    from: '      const pickedRoles = new FormData(form).getAll("defaultRoles").map((item) => String(item).trim()).filter(Boolean).sort();',
+    to: '      const pickedRoles = [String(data.defaultRoles || "")].filter(Boolean).sort();',
+    expect: "任务组默认角色提交要送出勾选的全部角色"
+  },
+  {
+    name: "注册节点提交不得漏掉勾选的角色",
+    file: APP,
+    gate: "console",
+    from: '        allowedRoles: (() => { const picked = new FormData(form).getAll("allowedRoles").map((item) => String(item).trim()).filter(Boolean); return picked.includes("*") ? ["*"] : (picked.length ? picked : ["agent-runtime"]); })(),',
+    to: '        allowedRoles: ["agent-runtime"],',
+    expect: "注册节点提交要送出勾选的全部角色"
+  },
+  {
+    name: "多级选择换组后第二级必须跟着变",
+    file: APP,
+    gate: "console",
+    from: '      applyCascadeGroup(target.closest?.(".cascade-select")?.querySelector?.(`select[data-cascade-child="${target.dataset.cascade}"]`), target.value);',
+    to: '      void target.value;',
+    expect: "多级选择切换第一级后"
+  },
+  {
+    name: "角色不得退回自由文本输入框",
+    file: APP,
+    gate: "contract",
+    check: "verifyConsoleRoleExamplesAreRegistered",
+    from: '  return `<div class="check-list">${options.map(([value, label]) => `<label><input type="checkbox" name="allowedRoles" value="${esc(value)}"',
+    to: '  return `<input name="allowedRoles" value="agent-runtime"><div class="check-list">${options.map(([value, label]) => `<label><input type="checkbox" name="allowedRoles" value="${esc(value)}"',
+    expect: "控制台里又出现了自由填角色的输入框"
   },
   {
     name: "窄屏对象上下文必须隐藏重复操作",

@@ -9,6 +9,23 @@
   const dict = {
     session: "工作会话",
     dispatch: "Agent 派发",
+    /* ---------- 任务契约里的枚举（禁止动作 / 验收要求 / 自检探针 / 执行器类型 / 运行档位）：界面上不出现内部 key ---------- */
+    "model-registry": "模型注册",
+    mutate_active_ruleset: "修改生效中的规则集",
+    self_patch_control_plane: "自行修改控制面",
+    auto_expand_mcp_grant: "自行扩大 MCP 授权",
+    external_capability_bypass: "绕过外部能力审批",
+    runtime_self_upgrade: "运行时自我升级",
+    schema_valid: "结构校验通过",
+    checkpoint_registered: "检查点已登记",
+    repository_output_target_selected: "已选定仓库产出目标",
+    language_policy_satisfied: "满足语言策略",
+    model_agent_executor: "模型执行器",
+    skill_workset_cache: "技能工作集缓存",
+    runtime_local: "本地运行",
+    "codex-cli": "Codex 命令行",
+    "claude-cli": "Claude 命令行",
+    "cursor-cli": "Cursor 命令行",
     /* ---------- 错误码：直接抛给人看的那些 ---------- */
     // 这些码会经 api() 的 t(detail) 渲染成红色提示。未翻译时人看到的是一串英文枚举，
     // 而它们出现的时机恰恰是人最需要看懂的时候（节点没接上、成员停不掉、写请求被重放拦下）。

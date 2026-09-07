@@ -206,7 +206,8 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
       recentEvents: [{eventId: "e1", dispatchId: "d1", eventType: "progress", status: "running", summary: "已检查", createdAt: "now"}]
     },
     controls: '<button data-command="shutdown">关停</button>',
-    helpers: {badge: (value) => `<span>${value}</span>`, t: (value) => value, fmtTime: (value) => value, fmtBytes: (value) => value || "-", explainCoded: (value) => String(value || ""), evidenceRefsHint: () => ""}
+    helpers: {badge: (value) => `<span>${value}</span>`, t: (value) => value, fmtTime: (value) => value, fmtBytes: (value) => value || "-", explainCoded: (value) => String(value || ""), evidenceRefsHint: () => "",
+      agentEventSummaryZh: (value) => String(value || ""), providerLabel: (value) => String(value || ""), capabilityLabel: (value) => String(value || "")}
   });
   check("runtime node detail exposes scope, health, capabilities, profiles, work and control ACK",
     ["org_1", "node_1", "1.4.0", "openai", "git 2", "a1", "d1", "c1", "shutdown"].every((value) => html.includes(value))
@@ -380,6 +381,8 @@ const isTerminalDispatch = (status) => {
 };
 
 const helpers = {
+  modelDecisionTextZh: (value) => String(value || "未记录"),
+  agentEventSummaryZh: (value) => String(value || ""),
   badge: (kind, label) => `<span data-kind="${kind}">${label}</span>`,
   escapeHtml: context.escapeHtml || ((value) => String(value).replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -520,6 +523,8 @@ const helpers = {
       explainCoded: (value) => value,
       evidenceRefsHint: () => "",
       ruleSummaryHtml: () => '<div data-rules>skill-review</div>',
+      modelDecisionTextZh: (value) => String(value || "未记录"),
+      agentEventSummaryZh: (value) => String(value || ""),
       reasoningLabel: (value) => ({medium: "中"}[value] || value)
     }
   });

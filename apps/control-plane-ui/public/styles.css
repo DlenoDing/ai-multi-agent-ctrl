@@ -464,7 +464,12 @@ html, body {
 .form-row { display: flex; flex-direction: column; gap: 4px; }
 .form-row label { font-size: 13px; color: var(--text-sub); }
 .form-row-inline { display: flex; gap: 10px; flex-wrap: wrap; }
-.check-list { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 6px 0; }
+.check-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 14px; padding: 6px 0; }
+.check-list-extra { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.check-list-extra input { flex: 1; min-width: 160px; }
+.cascade-select { display: grid; grid-template-columns: minmax(140px, 0.8fr) minmax(200px, 1.6fr); gap: 8px; }
+.cascade-select select { width: 100%; min-width: 0; }
+@media (max-width: 640px) { .cascade-select { grid-template-columns: 1fr; } }
 .check-list label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-main, inherit); }
 .check-list .muted { color: var(--text-sub); font-size: 12px; }
 .form-row-inline .form-row { flex: 1; min-width: 130px; }

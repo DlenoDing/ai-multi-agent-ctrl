@@ -45,7 +45,7 @@ function render(taskGroup, context, helpers) {
   const roles = (progressData.roles || []).map((role) => `
     <div class="record">
       <div class="record-title">
-        <strong>${esc(t(role.roleId))}</strong><span class="mono small muted">${esc(role.roleId)}</span>
+        <strong>${esc(t(role.roleId))}</strong>
         ${badge(role.status)}
         ${role.addedBy === "auto" ? customBadge("自动加入", "orange") : role.addedBy === "inherited" ? customBadge("继承项目", "gray") : customBadge("手动添加", "blue")}
       </div>
@@ -68,9 +68,13 @@ function render(taskGroup, context, helpers) {
       </div>
       ${canControl ? "" : `<div class="notice warn-notice">当前账号无“任务组控制”权限，配置为只读。</div>`}
       <form class="form-grid" data-form="tg-config" data-task="${esc(taskGroup.id)}">
-        <div class="form-row"><label>默认角色（逗号分隔角色 ID）</label>
-          <input name="defaultRoles" list="config-role-options" data-orig="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}" value="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}" ${editDisabled}>
-          <datalist id="config-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist>
+        <div class="form-row"><label>本任务组的默认角色（勾选；不勾则继承项目配置）</label>
+          ${(() => {
+            // 角色只能从已登记的执行角色里勾，不让人手打内部 id；原值放在 data-orig 上供「没改动」判断。
+            const current = (config.defaultRoles || []).map((role) => role.roleId || role);
+            const choices = [...new Set([...current, ...WORK_ITEM_OWNER_ROLE_CHOICES])];
+            return `<div class="check-list" data-default-roles data-orig="${esc(current.join(","))}">${choices.map((roleId) => `<label><input type="checkbox" name="defaultRoles" value="${esc(roleId)}"${current.includes(roleId) ? " checked" : ""} ${editDisabled}> ${esc(roleId === "agent-runtime" ? "通用任务执行" : t(roleId))}</label>`).join("")}</div>`;
+          })()}
         </div>
         <div class="record-meta">
           <span>仓库配置：${(config.repositories || []).length} 条（在「项目设置」页维护，任务组可覆盖）</span>

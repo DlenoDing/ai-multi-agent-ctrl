@@ -193,3 +193,19 @@ Claude Opus/high 的第一次全仓只读审查运行约 11 分钟未返回结�
 - 修完再跑又撞两处：agent 运行时自己的白名单匹配只认 dir/** 与逐字，控制面给项目仓库缺省发的 `**` 被判越界（三次派发全失败）——
   运行时改成与 path-policy 同一套通配语义，契约门拿同一张表两端逐条比对；人工指令「重开」只把工作项置回就绪、受阻的旧派发留着，
   编排一直复用旧契约永不再派——重开先了结上一次尝试的派发／会话／租约／产出目标，下一拍按当前登记的仓库重建。
+
+### 2026-09-08 界面上不出现内部 key；能选的都做成选择（用户 09-07 深夜两条要求）
+
+用真实运行态把 70 多个页面／栏目逐个渲染成文本，扫出所有像内部键的可见片段（snake_case／kebab-case／英文定句），逐处修：
+- **原本给人看却是 key 的**：任务契约小节（角色技能 system-agent-runtime、规则件 terminal-execution-manifest:v1、禁止动作
+  mutate_active_ruleset、验收要求 schema_valid）、选型判断（core 拼的 "modelDecision: bounded writeSet …" 英文句）、
+  运行时回送的英文事件摘要（"Dispatch package received…"）、证据引用（agent-node:… / skill-workset:…）、节点能力标记与
+  供应商 id（aws_bedrock）、角色 id 副行、令牌角色范围 —— 统一经 labels.js 的 capabilityLabel／providerLabel／roleSkillLabel／
+  contractRefLabel／modelDecisionTextZh／agentEventSummaryZh 翻成中文，参数（提交号、路径、数量）原样保留。
+- **原本要人手打内部 id 的输入框，改成选择**：任务组建组角色、任务组默认角色、运行节点可承接角色 → 复选框（网格排齐）；
+  项目默认角色行 → 执行角色下拉 + 角色 Skill 两级选择；角色 Skill 定制 → Skill 两级选择（系统内置／技能库按类别）、
+  能力复选框 + 「清单里没有的直接填」、附加说明／模型要求三选一（不附加／直接填写／引用仓库文档），决策记录引用不再让人填；
+  Agent 档案的模型偏好 → 两级（系统自动选型／各供应商 → 具体模型），工作项指定模型同样两级。
+- 规则正文里的英文词（product-intelligence-first、temp_id 这类）是规则作者写的内容，不是界面键，未动。
+- 门：console 门新增 12 条断言（翻译函数、契约小节、任务详情、三张勾选表单的提交多值、两级选择切换），契约门「角色示例已登记」
+  改为「角色只能选不能填」，变异 +11 条全部红证。

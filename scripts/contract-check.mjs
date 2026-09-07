@@ -17534,11 +17534,15 @@ function verifyConsoleRoleExamplesAreRegistered(output) {
       output.push(`控制台 ${field} 输入框的示例「${example}」不是已登记的执行角色 —— 人照着示例填就会被服务端拒`);
     }
   }
-  const freeRoleInputs = [...app.matchAll(/<input name="(roleId|role|roles|defaultRoles|allowedRoles)"[^>]*>/gu)];
-  const withoutList = freeRoleInputs.filter(([tag]) => !/\blist="/u.test(tag)).map(([, field]) => field);
-  if (!freeRoleInputs.length) output.push("没找到任何自由填角色的输入框 —— 这条在空转（表单改写了，提取要跟上）");
-  if (withoutList.length) output.push(`控制台里自由填角色的输入框没挂词表：${withoutList.join("、")} —— 服务端只认已登记的执行角色，不给词表就是自造拼错陷阱`);
-  console.log(`控制台自由填角色的输入框 ${freeRoleInputs.length} 个都挂着词表，${examples.length} 个示例都是已登记角色`);
+  // 2026-09-07 起角色一律【选】不【填】：自由文本框（哪怕挂着 datalist）等于让人打内部 id。
+  // 这里改为两头都守：不许再出现自由填角色的 <input>，且三处选择控件（默认角色下拉、节点角色复选、建组角色复选）都在。
+  const freeRoleInputs = [...app.matchAll(/<input name="(roleId|role|roles|defaultRoles|allowedRoles)"(?![^>]*type="(?:checkbox|hidden)")[^>]*>/gu)].map(([, field]) => field);
+  if (freeRoleInputs.length) output.push(`控制台里又出现了自由填角色的输入框：${freeRoleInputs.join("、")} —— 角色只能从已登记的执行角色里选，不让人手打内部 id`);
+  const selectors = [['<select name="roleId"', "项目默认角色下拉"], ['name="allowedRoles" value="', "运行节点角色复选框"], ['type="checkbox" name="roles" value="', "建组角色复选框"]];
+  for (const [needle, what] of selectors) {
+    if (!app.includes(needle)) output.push(`找不到${what}（${needle}）—— 这条在空转，或角色又退回了自由文本`);
+  }
+  console.log(`控制台没有自由填角色的输入框，${selectors.length} 处角色选择控件都在，${examples.length} 个示例都是已登记角色`);
 }
 
 // 【启动时连不上 DATABASE_URL 指向的库要说人话】。原先是一段 pg 桥的崩溃栈（file:///…pg-sync-store.mjs:92 …）。

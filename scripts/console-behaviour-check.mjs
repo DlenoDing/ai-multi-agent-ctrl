@@ -353,7 +353,7 @@ globalThis.__probe = {
     return window.AIMAC_TASK_WORKBENCH.render({groups, state, selected, workDetail,
       pageData: null, eventHistory: false, eventPage: 1, disclosure: {},
       helpers: {badge, t, explainCoded, fmtTime, progressLine, humanTraceHtml, workItemExitHint,
-        workItemResultHtml, repositoryFailureAction,
+        workItemResultHtml, repositoryFailureAction, modelDecisionTextZh, agentEventSummaryZh,
         isTerminalDispatch: (status) => terminalDispatchStatuses.has(status)}});
   },
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
@@ -530,6 +530,8 @@ globalThis.__probe = {
   renderFullPagePaneWith: (nextState, account, projectId, pageId, paneId) => { state = nextState; currentAccount = account; currentProjectId = projectId; page = pageId; authToken = authToken || "probe-token"; if (paneId) workspaces.select(pageId, paneId); render(); },
   workspaceOwner: (pageId, title) => workspaces.owner(pageId, title),
   explainCodedText: (value) => explainCoded(value),
+  labels: () => window.AIMAC_CONSOLE_LABELS,
+  ruleSummaryHtmlWith: (summary) => ruleSummaryHtml(summary),
   workItemExitHintHtml: (workItem, taskGroupId) => workItemExitHint(workItem, taskGroupId),
   // 「待人工确认」那个数不在 state 里：它由 loadPage 从计数接口取回来放进模块级变量。
   // 不给探针一个入口的话，凡是依赖它的那一格都只能在 0 上被验，而真实产品里它常常不是 0。
@@ -1274,6 +1276,66 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         probe.setFetch(previousFetch);
       }
     }
+    // 【角色 Skill 定制 / 任务组默认角色 / 注册节点角色：都是勾选，提交要把勾上的全收齐】。
+    {
+      const recorded = [];
+      const previousFetch = globalThis.fetch;
+      probe.setFetch(async (url, init = {}) => {
+        recorded.push({url: String(url), method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null});
+        return {ok: true, status: 201, headers: {get: () => null}, json: async () => ({ok: true, overlayId: "rso_x", joinToken: "aimac_join_probe", installCommand: "sh install --join-token-file x"})};
+      });
+      try {
+        probe.stubNavigation();
+        probe.setObjectLocation({page: "proj-settings", projectId: "p1", groupId: "", expanded: false, workId: ""});
+        const overlayForm = el("form", {dataset: {form: "role-skill-overlay", scope: "project", project: "p1"}}, [
+          el("select", {name: "roleSkillRef", value: "system-reviewer"}, []),
+          el("input", {type: "checkbox", name: "allowedCapabilityAdds", value: "repo_write", checked: true}),
+          el("input", {type: "checkbox", name: "allowedCapabilityAdds", value: "playwright_check", checked: true}),
+          el("input", {type: "checkbox", name: "allowedCapabilityAdds", value: "coding", checked: false}),
+          el("input", {type: "checkbox", name: "forbiddenCapabilityAdds", value: "schema_change", checked: true}),
+          el("select", {name: "instructionRefMode", value: "git"}, []), el("input", {type: "hidden", name: "instructionRef", value: "overlay:empty"}), el("input", {name: "instructionRefPath", value: "docs/roles/reviewer.md"}),
+          el("select", {name: "modelRequirementPatchRefMode", value: "none"}, []), el("input", {type: "hidden", name: "modelRequirementPatchRef", value: "overlay:model:none"}), el("input", {name: "modelRequirementPatchRefPath", value: ""}),
+          el("button", {type: "submit"})
+        ]);
+        await probe.submit({target: overlayForm, submitter: overlayForm.children[10], preventDefault: () => {}});
+        const overlayPost = recorded.find((item) => item.method === "POST" && /\/api\/role-skill-overlays$/u.test(item.url));
+        check("角色 Skill 定制提交要送出勾选的能力，并把「引用仓库文档」拼成 git: 引用、「不附加」拼成内部占位值",
+          Boolean(overlayPost) && JSON.stringify(overlayPost.body.patch.allowedCapabilityAdds) === JSON.stringify(["repo_write", "playwright_check"])
+            && JSON.stringify(overlayPost.body.patch.forbiddenCapabilityAdds) === JSON.stringify(["schema_change"])
+            && overlayPost.body.patch.instructionRef === "git:docs/roles/reviewer.md" && overlayPost.body.patch.modelRequirementPatchRef === "overlay:model:none"
+            && overlayPost.body.roleSkillRef === "system-reviewer" && !("decisionRecordRef" in overlayPost.body),
+          overlayPost ? `送出的 patch＝${JSON.stringify(overlayPost.body.patch)}` : "没记录到 POST /api/role-skill-overlays —— 这条什么也没验");
+        probe.setObjectLocation({page: "group-detail", projectId: "p1", groupId: "tg1", expanded: true, workId: ""});
+        const rolesBox = el("div", {dataset: {defaultRoles: "", orig: "reviewer"}}, [
+          el("input", {type: "checkbox", name: "defaultRoles", value: "reviewer", checked: true}),
+          el("input", {type: "checkbox", name: "defaultRoles", value: "qa", checked: true}),
+          el("input", {type: "checkbox", name: "defaultRoles", value: "security", checked: false})
+        ]);
+        const tgForm = el("form", {dataset: {form: "tg-config", task: "tg1"}}, [rolesBox, el("button", {type: "submit"})]);
+        const baseQuery = tgForm.querySelector.bind(tgForm);
+        tgForm.querySelector = (selector) => (selector === "[data-default-roles]" ? rolesBox : baseQuery(selector));
+        await probe.submit({target: tgForm, submitter: tgForm.children[1], preventDefault: () => {}});
+        const tgPost = recorded.find((item) => item.method === "POST" && /\/api\/task-groups\/tg1\/config$/u.test(item.url));
+        check("任务组默认角色提交要送出勾选的全部角色（同名多值不能只剩最后一个）",
+          Boolean(tgPost) && JSON.stringify(tgPost.body.defaultRoles) === JSON.stringify([{roleId: "qa"}, {roleId: "reviewer"}]),
+          tgPost ? `送出的 defaultRoles＝${JSON.stringify(tgPost.body.defaultRoles)}` : "没记录到 POST /api/task-groups/tg1/config —— 这条什么也没验");
+        probe.setObjectLocation({page: "proj-agents", projectId: "p1", groupId: "", expanded: false, workId: ""});
+        const joinForm = el("form", {dataset: {form: "join-token"}}, [
+          el("input", {name: "projectId", value: "p1"}), el("input", {name: "nodeName", value: "节点甲"}),
+          el("input", {type: "checkbox", name: "allowedRoles", value: "*", checked: false}),
+          el("input", {type: "checkbox", name: "allowedRoles", value: "agent-runtime", checked: true}),
+          el("input", {type: "checkbox", name: "allowedRoles", value: "reviewer", checked: true}),
+          el("input", {name: "ttlSeconds", value: "1800"}), el("button", {type: "submit"})
+        ]);
+        await probe.submit({target: joinForm, submitter: joinForm.children[6], preventDefault: () => {}});
+        const joinPost = recorded.find((item) => item.method === "POST" && /\/api\/agent-join-tokens$/u.test(item.url));
+        check("注册节点提交要送出勾选的全部角色",
+          Boolean(joinPost) && JSON.stringify(joinPost.body.allowedRoles) === JSON.stringify(["agent-runtime", "reviewer"]),
+          joinPost ? `送出的 allowedRoles＝${JSON.stringify(joinPost.body.allowedRoles)}` : "没记录到 POST /api/agent-join-tokens —— 这条什么也没验");
+      } finally {
+        probe.setFetch(previousFetch);
+      }
+    }
     // 【新建 Agent 档案提交成功后要回到档案列表】。留在填满的表单上，人看不到新档案落在哪，再点一下就是重复创建。
     {
       const recorded = [];
@@ -1575,6 +1637,15 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
       check("新插的仓库行要带凭据方式标记（无凭据）",
         /class="cfg-row cfg-row-repo" data-cfg-kind="repo" data-credential-mode="none"/u.test(rowHtml),
         `仓库行开头：${rowHtml.replace(/\s+/gu, " ").slice(0, 160)}`);
+      // 【多级选择：第一级换组，第二级只露出该组的选项，并把选中值挪到该组第一项】
+      const mkOption = (value, group) => ({value, hidden: false, dataset: {group}});
+      const childOptions = [mkOption("auto_best", "auto"), mkOption("openai:gpt-5.5", "openai"), mkOption("anthropic:claude-sonnet-4-5", "anthropic")];
+      const childSelect = {options: childOptions, value: "auto_best", get selectedOptions() { return childOptions.filter((option) => option.value === this.value); }};
+      const container = {querySelector: (selector) => (selector === 'select[data-cascade-child="model"]' ? childSelect : null)};
+      await cfgProbe.change({target: {dataset: {cascade: "model"}, value: "openai", closest: (selector) => (selector === ".cascade-select" ? container : null)}});
+      check("多级选择切换第一级后，第二级只露出该组选项并选中该组第一项",
+        childOptions[0].hidden === true && childOptions[1].hidden === false && childOptions[2].hidden === true && childSelect.value === "openai:gpt-5.5",
+        `切到 openai 后：隐藏状态＝${childOptions.map((option) => option.hidden).join(",")}，选中＝${childSelect.value}`);
       const rowStub = {dataset: {credentialMode: "none"}};
       await cfgProbe.change({target: {name: "repoCredentialMode", value: "account_password", closest: (selector) => (selector === ".cfg-row-repo" ? rowStub : null)}});
       check("切换凭据方式要改仓库行的标记，否则字段露出不跟着变",
@@ -1762,6 +1833,17 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     const renderArgs = {groups: [group], selected: {taskGroupId: group.id, workItemId: work.id},
       workDetail: {taskGroup: group, workItem: work, events: [], eventCount: 120, returnedEventCount: 120}};
     const currentRun = eventProbe.renderTaskWorkbenchModule({...renderArgs, nextState: baseState});
+    {
+      const zhState = {...baseState,
+        agentDispatches: [{...baseState.agentDispatches[0], modelDecision: "modelDecision: bounded writeSet directed verification; no architecture裁决 -> openai:gpt-5.5 / medium"}],
+        agentExecutionEvents: [{...events[0], summary: "Dispatch package received and binding verified."}]};
+      const zhRun = eventProbe.renderTaskWorkbenchModule({...renderArgs, nextState: zhState});
+      const zhText = zhRun.replace(/<[^>]+>/gu, " ");
+      check("任务详情的选型判断与执行记录要显示中文，不许把 core 拼的英文句原样上屏",
+        /有界写入范围 · 任务类型：定向验证/u.test(zhText) && /已接收派发包并核对绑定/u.test(zhText)
+          && !/modelDecision:|Dispatch package received/u.test(zhText),
+        `任务详情：${(zhText.match(/选型判断.{0,80}/u) || ["没找到选型判断"])[0]} ｜ ${(zhText.match(/已接收派发.{0,60}/u) || ["没找到执行记录"])[0]}`);
+    }
     check("任务详情二次限流必须保留最新事件",
       /newest-window-event/u.test(currentRun) && !/oldest-window-event/u.test(currentRun),
       "latest=1 已返回升序的最新窗口，任务详情却 slice(0, N) 留下最旧一半");
@@ -3028,6 +3110,28 @@ async function runErrorGuidanceCase() {
     check("待决策任务的出口提示要带预选了任务组与任务的人工指令入口",
       /href="#\/project\/p1\/directives\/tg1\/w1\?pane=compose"/u.test(hint) && /去人工指令处置这个任务/u.test(hint),
       `出口提示：${hint.slice(0, 240)}`);
+    // 【界面上不出现内部 key】（用户 09-07 要求）：运行时回送的英文事件摘要、core 拼的选型判断句、任务契约里的
+    // 规则件／禁止动作／验收要求枚举，都要翻成中文；参数（提交号、数量、路径）原样保留。
+    const labels = codedProbe.labels();
+    check("运行时事件摘要要翻成中文（参数原样保留）",
+      labels.agentEventSummaryZh("Dispatch package received and binding verified.") === "已接收派发包并核对绑定"
+        && labels.agentEventSummaryZh("Model executor changed 3 repository paths.") === "执行器改动了 3 个仓库路径"
+        && labels.agentEventSummaryZh("Pushed 4c22b8b08ae26cb55113f7e55662e4d3977f5756 to origin/refs/heads/main.") === "已推送 4c22b8b08ae2 到 origin/main"
+        && !/^repository_path_outside_allowlist/u.test(labels.agentEventSummaryZh("repository_path_outside_allowlist:docs/a.md 不在这次派发允许改的路径里")),
+      `实际：${[labels.agentEventSummaryZh("Dispatch package received and binding verified."), labels.agentEventSummaryZh("Model executor changed 3 repository paths."), labels.agentEventSummaryZh("Pushed 4c22b8b08ae26cb55113f7e55662e4d3977f5756 to origin/refs/heads/main.")].join(" | ")}`);
+    check("选型判断要翻成中文（写入范围／任务类型／风险／模型／推理档）",
+      labels.modelDecisionTextZh("modelDecision: bounded writeSet directed verification; no architecture裁决 -> openai:gpt-5.5 / medium") === "有界写入范围 · 任务类型：定向验证 · 风险：无架构裁决 · 模型：openai:gpt-5.5 · 推理档：中",
+      `实际：${labels.modelDecisionTextZh("modelDecision: bounded writeSet directed verification; no architecture裁决 -> openai:gpt-5.5 / medium")}`);
+    check("规则件引用要翻成中文（版本号保留）",
+      labels.contractRefLabel("terminal-execution-manifest:v1") === "终态执行清单（v1）" && labels.contractRefLabel("effective-ruleset:sha256:633558a172e7ffa6a89ce0654e42d1bb") === "生效规则集（sha256:633558a172e7）",
+      `实际：${labels.contractRefLabel("terminal-execution-manifest:v1")} / ${labels.contractRefLabel("effective-ruleset:sha256:633558a172e7ffa6a89ce0654e42d1bb")}`);
+    const contractHtml = codedProbe.ruleSummaryHtmlWith({found: true, roleSkill: {roleSkillId: "system-agent-runtime", title: "agent-runtime system role skill", contentDigest: "sha256:c4992abc"},
+      activeRuleRefs: ["terminal-execution-manifest:v1", "language-policy:v1"], forbiddenActions: ["mutate_active_ruleset", "self_patch_control_plane"],
+      validationRequirements: ["schema_valid", "checkpoint_registered"], effectiveRulesDigest: "sha256:633558a17"});
+    check("任务契约小节不许出现内部 key（角色技能／规则件／禁止动作／验收要求全部中文）",
+      /智能体运行时（系统内置技能）/u.test(contractHtml) && /终态执行清单（v1）/u.test(contractHtml) && /修改生效中的规则集/u.test(contractHtml) && /结构校验通过/u.test(contractHtml)
+        && !/mutate_active_ruleset|schema_valid|terminal-execution-manifest|system-agent-runtime/u.test(contractHtml.replace(/<[^>]+>/gu, " ")),
+      `契约小节：${contractHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 260)}`);
     const passive = codedProbe.workItemExitHintHtml({id: "w2", status: "blocked", blockedReason: "blocked_dependency"}, "tg1");
     check("无需人操作的阻塞（依赖等待）不许摆人工指令入口",
       !/directives/u.test(passive) && /无需操作/u.test(passive),
@@ -6060,15 +6164,21 @@ async function runPendingTruncationCase() {
         && /name="blDigest"[\s\S]*value="sha256:abc"/u.test(baselinePane),
       textOf(baselinePane).slice(0, 220));
     check("默认角色配置 pane 保留执行角色与 roleSkillRef 字段",
-      /name="roleId"[\s\S]*list="config-role-options"[\s\S]*value="reviewer"/u.test(rolesPane)
-        && /name="roleSkillRef"[\s\S]*value="reviewer"/u.test(rolesPane)
-        && /<option value="reviewer">/u.test(rolesPane),
+      /<select name="roleId"[^>]*>(?:(?!<\/select>)[\s\S])*<option value="reviewer" selected>/u.test(rolesPane)
+        && /<select name="roleSkillRef"/u.test(rolesPane)
+        && !/list="config-role-options"/u.test(rolesPane),
       textOf(rolesPane).slice(0, 220));
+    check("角色 Skill 定制表单：角色从下拉选、能力用复选框、引用不让人手写内部值",
+      /<select data-cascade="roleSkillRef"[^>]*>[\s\S]*<select name="roleSkillRef" data-cascade-child="roleSkillRef" required>/u.test(skillsPane) && /<input type="checkbox" name="allowedCapabilityAdds" value="repo_write"> 写仓库/u.test(skillsPane)
+        && /<input type="checkbox" name="forbiddenCapabilityAdds" value="schema_change"> 改数据结构/u.test(skillsPane)
+        && /<select name="instructionRefMode" data-ref-mode="instructionRef">/u.test(skillsPane) && /<input name="instructionRef" type="hidden" value="overlay:empty">/u.test(skillsPane)
+        && !/<input name="allowedCapabilityAdds"|<input name="decisionRecordRef"|placeholder="overlay:/u.test(skillsPane),
+      `定制表单：${skillsPane.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 200)}`);
     check("项目默认角色与 Skill 定制同在「角色与 Skill」一栏（定制影响的正是这些角色）",
       /项目默认角色/u.test(rolesPane) && /角色 Skill 定制/u.test(rolesPane)
         && /data-form="role-skill-overlay" data-scope="project"/u.test(skillsPane)
-        && /放开 repo_read/u.test(skillsPane)
-        && /禁掉 schema_change/u.test(skillsPane)
+        && /放开 读仓库/u.test(skillsPane) && !/放开 repo_read/u.test(skillsPane)
+        && /禁掉 改数据结构/u.test(skillsPane) && !/禁掉 schema_change/u.test(skillsPane)
         && /modelRequirementPatchRef/u.test(skillsPane)
         && !/data-config-fields="repositories"/u.test(rolesPane),
       `${textOf(rolesPane).slice(0, 140)} | ${textOf(skillsPane).slice(0, 180)}`);
@@ -6200,17 +6310,17 @@ async function runPendingTruncationCase() {
       "角色多时不能要求操作者逐行统计作用域和活动状态");
     const namedOrgProfiles = probe.renderProjectAgentsInventoryWith({...overviewState, organizationContext: {id: "org_default", name: "研发组织"}}, systemAdmin, "p1", "table", ["profiles"]);
     check("项目 Agent 页用组织名称说明共享档案范围并解释模型预设",
-      /组织级：研发组织/u.test(namedOrgProfiles) && /自动最优（auto_best）/u.test(projectProfileCreate)
-        && /实际模型 ID/u.test(projectProfileCreate), `${textOf(namedOrgProfiles).slice(0, 180)} | ${textOf(projectProfileCreate).slice(0, 180)}`);
+      /组织级：研发组织/u.test(namedOrgProfiles) && /自动最优／自动快速／成本优先/u.test(projectProfileCreate)
+        && /具体模型/u.test(projectProfileCreate) && !/auto_best/u.test(projectProfileCreate.replace(/<option[^>]*>[^<]*<\/option>/gu, "")), `${textOf(namedOrgProfiles).slice(0, 180)} | ${textOf(projectProfileCreate).slice(0, 180)}`);
     check("Agent 档案列表与创建页面必须分开",
       !/data-form="agent-create"/u.test(projectProfiles)
         && /data-menu="proj-agents" data-menu-workspace="create"/u.test(projectProfiles)
         && /data-form="agent-create"/u.test(projectProfileCreate)
         && /name="projectId" value="p1"/u.test(projectProfileCreate)
         && /<select name="role" required>/u.test(projectProfileCreate)
-        && /<select name="model" required>/u.test(projectProfileCreate)
-        && /<select name="roleSkillRef">/u.test(projectProfileCreate),
-      "项目 Agent 档案列表仍混着创建表单，或新建页面没有绑定当前项目");
+        && /<select data-cascade="model"[^>]*>[\s\S]*<select name="model" data-cascade-child="model" required>/u.test(projectProfileCreate)
+        && /<select data-cascade="roleSkillRef"[^>]*>[\s\S]*<select name="roleSkillRef" data-cascade-child="roleSkillRef" >/u.test(projectProfileCreate),
+      "项目 Agent 档案列表仍混着创建表单，或新建页面没有绑定当前项目，或模型／Skill 没做成两级选择");
     const projectRegisterText = textOf(projectRegister);
     check("项目注册 pane 说明加入令牌和安装命令只显示一次",
       /只在[\s\S]{0,40}显示一次/u.test(projectRegisterText)
@@ -6609,7 +6719,8 @@ async function runPendingTruncationCase() {
     } else {
       check("建组表单的执行角色要用复选框列出（自由文本配登记册校验＝拼错一次就 400，英文 id 也没人认得）",
         /<div class="check-list" data-role-choices="task-group-create">/u.test(createHtml)
-          && /<input type="checkbox" name="roles" value="reviewer" checked> [^<]+ <span class="muted">\(reviewer\)<\/span>/u.test(createHtml)
+          && /<input type="checkbox" name="roles" value="reviewer" checked> [^<]+<\/label>/u.test(createHtml)
+          && !/\(reviewer\)/u.test(createHtml)
           && !/<input name="roles"/u.test(createHtml),
         "建组表单没有执行角色复选框，或 reviewer 没带可读标签／没默认勾上，或仍留着自由文本框");
     }
@@ -9272,6 +9383,18 @@ await runCodedApiErrorCase();
         danglingBannerRefs.add(`${label}/${page}`);
       }
       pageTouchCounts.set(page, Math.max(pageTouchCounts.get(page) || 0, tCalls.get(page) || 0));
+      if (process.env.AIMAC_DUMP_RAW_KEYS) {
+        try { fs.mkdirSync(process.env.AIMAC_DUMP_RAW_KEYS, {recursive: true}); fs.writeFileSync(path.join(process.env.AIMAC_DUMP_RAW_KEYS, `${label}__${page}.html`.replace(/[^\w\u4e00-\u9fff.-]+/gu, "_")), String(scanRoot.innerHTML || "")); } catch { /* 调试转储 */ }
+        const visible = String(scanRoot.innerHTML || "").replace(/<(script|style)[\s\S]*?<\/\1>/gu, " ").replace(/<[^>]+>/gu, " ").replace(/&[a-z#0-9]+;/gu, " ");
+        for (const token of visible.split(/[\s，。：；、（）「」『』()【】,;!?"'`<>=|]+/u)) {
+          if (!/^[a-zA-Z][a-zA-Z0-9]*(?:[_-][a-zA-Z0-9]+)+(?::[a-zA-Z0-9._-]+)?$/u.test(token)) continue;
+          if (/\d{4,}|^(?:acct|tg|work|adp|sess|node|rot|run|lane|prj|org|agent|rvb|hd|acc|wi|sa|subagent|hcr|adm|cp|dec|ev|evt|topo|ib|plan|bundle|fnd|qg|pr|ar|pkt|ctr|grant|tok|jt|src|skill|ovl|dir)_[a-z0-9]+/u.test(token)) continue;
+          globalThis.__rawKeyHits ||= new Map();
+          const hit = globalThis.__rawKeyHits.get(token) || new Set();
+          hit.add(`${label}/${page}`);
+          globalThis.__rawKeyHits.set(token, hit);
+        }
+      }
     }
     return done;
   };
@@ -9488,6 +9611,11 @@ await runCodedApiErrorCase();
       + " —— 多半是那一屏没渲染出来（状态取值不对、集合名写错），不是「已经全覆盖了」");
   }
   const shellOnly = [...pageTouchCounts].filter(([, count]) => count <= Math.min(...pageTouchCounts.values()));
+  if (process.env.AIMAC_DUMP_RAW_KEYS && globalThis.__rawKeyHits) {
+    const rows = [...globalThis.__rawKeyHits].sort((a, b) => b[1].size - a[1].size);
+    console.log(`[raw-keys] ${rows.length} 个像内部键的可见文本片段`);
+    for (const [token, where] of rows) console.log(`[raw-key] ${token}\t${where.size}\t${[...where].slice(0, 3).join("、")}`);
+  }
   console.log(`漏译扫描：用真的 t 渲染了 ${scanned.length} 个页面，未命中 ${misses.size} 个`
     + `；另有 ${shellOnly.length} 页只渲染了空壳（${shellOnly.map(([page]) => page).join("、")}）——`
     + "它整页几乎不经 t()（标签写死在模板里），枚举面本来就小 —— 这不是覆盖缺口。"

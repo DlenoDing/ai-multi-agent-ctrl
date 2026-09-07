@@ -37,6 +37,13 @@ const {
   admissionReasonLabel,
   laneFunctionLabel,
   modelDecisionSummaryZh,
+  capabilityLabel,
+  providerLabel,
+  skillCategoryLabel,
+  roleSkillLabel,
+  contractRefLabel,
+  modelDecisionTextZh,
+  agentEventSummaryZh,
   REASONING_LEVEL_LABELS
 } = window.AIMAC_CONSOLE_LABELS;
 const {
@@ -243,9 +250,19 @@ function evidenceRefsHint(event) {
   const ruleFiles = refs.filter((ref) => String(ref).startsWith("prompt-includes:"))
     .map((ref) => String(ref).slice("prompt-includes:".length));
   const others = refs.filter((ref) => !String(ref).startsWith("prompt-includes:"));
+  // 证据引用是 "种类:值" 的机器串：种类翻成中文，值（节点 id、摘要、提交号、路径）原样保留并截短。
+  const EVIDENCE_KIND_LABELS = {"agent-node": "节点", "skill-workset": "技能工作集", "content-bundle": "内容包", "remote-mcp": "远程 MCP",
+    commit: "提交", push: "推送", "git-path": "改动路径", "git-diff": "差异", prompt: "提示词", checkpoint: "检查点", dispatch: "派发", session: "会话", run: "运行"};
+  const describe = (ref) => {
+    const text = String(ref);
+    const at = text.indexOf(":");
+    const kind = at > 0 ? text.slice(0, at) : "";
+    const label = EVIDENCE_KIND_LABELS[kind];
+    return label ? `${label} ${text.slice(at + 1, at + 49)}` : text.slice(0, 60);
+  };
   return [
     ruleFiles.length ? `<div class="small muted">提示词实际包含：${ruleFiles.map((file) => esc(file)).join("、")}</div>` : "",
-    others.length ? `<div class="small muted mono">${others.slice(0, 4).map((ref) => esc(String(ref).slice(0, 60))).join(" ")}</div>` : ""
+    others.length ? `<div class="small muted">${others.slice(0, 4).map((ref) => `<span class="mono">${esc(describe(ref))}</span>`).join(" · ")}</div>` : ""
   ].filter(Boolean).join("");
 }
 
@@ -1232,15 +1249,18 @@ async function loadPage() {
       orgMembers = membersResult.members || [];
       state = projectState;
     } else if (page === "org-agents") {
-      const [agentsResult, projectState, skillRegistry] = await Promise.all([
+      // 建 Agent 档案的「模型偏好」两级下拉按供应商分组，要读 modelCapabilities：走轻量的 /api/model-registry 回补，取不到就只剩预设。
+      const [agentsResult, projectState, skillRegistry, modelRegistry] = await Promise.all([
         api("/api/org/agents"),
         fetchState("projects"),
-        api("/api/skill-registry").catch(() => ({roleSkillIndex: [], roleSkillOverlays: []}))
+        api("/api/skill-registry").catch(() => ({roleSkillIndex: [], roleSkillOverlays: []})),
+        api("/api/model-registry").catch(() => ({modelCapabilities: []}))
       ]);
       if (!currentRead()) return;
       orgAgentNodes = agentsResult.agentRuntimeNodes || [];
       state = {
         ...projectState,
+        modelCapabilities: modelRegistry.modelCapabilities || [],
         roleSkillIndex: skillRegistry.roleSkillIndex || [],
         roleSkillOverlays: skillRegistry.roleSkillOverlays || []
       };
@@ -1328,14 +1348,16 @@ async function loadPage() {
       ensureExecScope();
       await loadExecutionObjectDetail(currentRead);
     } else if (page === "proj-agents") {
-      const [tasksState, runtimeState, skillRegistry] = await Promise.all([
+      const [tasksState, runtimeState, skillRegistry, modelRegistry] = await Promise.all([
         fetchState("tasks", {projectId: currentProjectId}),
         fetchState("runtime", {projectId: currentProjectId}),
-        api("/api/skill-registry").catch(() => ({roleSkillIndex: [], roleSkillOverlays: []}))
+        api("/api/skill-registry").catch(() => ({roleSkillIndex: [], roleSkillOverlays: []})),
+        api("/api/model-registry").catch(() => ({modelCapabilities: []}))
       ]);
       if (!currentRead()) return;
       state = {
         ...tasksState,
+        modelCapabilities: modelRegistry.modelCapabilities || [],
         agentRuntimeNodes: runtimeState.agentRuntimeNodes || [],
         agentJoinTokens: runtimeState.agentJoinTokens || [],
         agentDispatches: runtimeState.agentDispatches || [],
@@ -2135,6 +2157,7 @@ function renderTaskWorkbench() {
     eventHistory: workEventHistoryMode, eventPage: workEventCursorStack.length + 1,
     disclosure: taskRunDisclosure,
     helpers: {badge, t, explainCoded, fmtTime, progressLine, humanTraceHtml, workItemExitHint, workItemResultHtml, repositoryFailureAction,
+      modelDecisionTextZh, agentEventSummaryZh,
       isTerminalDispatch: (status) => terminalDispatchStatuses.has(status)}
   }), {wide: true, headerSide: !selectedWork && hasPerm("task_group:control")
     ? `<button class="primary-button" data-workspace-page="tasks" data-workspace="create">新建任务</button>` : ""});
@@ -3192,7 +3215,7 @@ function renderJoinTokenSection(options = {}) {
     return row([
       `<span class="mono">${esc(token.joinTokenId)}</span>`,
       esc(token.registrationScope === "organization" ? "组织共享" : projectNameOf(token.projectId)),
-      esc((token.allowedRoles || []).join("、")),
+      esc((token.allowedRoles || []).map((roleId) => (roleId === "*" ? "不限" : t(roleId))).join("、")),
       statusBadge("joinToken", displayStatus),
       {v: `${token.useCount ?? 0}/${token.maxUses ?? 1}`, c: "num"},
       {v: fmtTime(token.expiresAt), c: "nowrap"},
@@ -3239,8 +3262,7 @@ function renderJoinTokenSection(options = {}) {
         <div class="form-row-inline">
           ${projectField}
           <div class="form-row"><label>节点名（可留空）</label><input name="nodeName" placeholder="自动生成"></div>
-          <div class="form-row"><label>角色范围（逗号分隔；只认已登记的执行角色，* 表示不限）</label><input name="allowedRoles" value="agent-runtime" list="join-token-role-options">
-            <datalist id="join-token-role-options"><option value="*">不限</option>${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
+          <div class="form-row"><label>这台节点可以承接的执行角色</label>${allowedRolesChecklist("agent-runtime")}</div>
           <div class="form-row"><label>有效期（秒）</label><input name="ttlSeconds" type="number" min="60" max="86400" value="1800"></div>
         </div>
         <button class="primary-button" type="submit">签发一次性加入令牌</button>
@@ -3262,7 +3284,7 @@ function renderOrgNodeRegistration() {
     <form class="form-grid" data-form="join-token">
       <input type="hidden" name="registrationScope" value="organization"><input type="hidden" name="organizationId" value="${esc(organizationId)}">
       <div class="form-row"><label>共享节点名称</label><input name="nodeName" placeholder="例如：研发公共执行节点"></div>
-      <div class="form-row"><label>执行角色范围</label><input name="allowedRoles" value="*" list="org-node-role-options"><datalist id="org-node-role-options"><option value="*">本组织全部机器执行角色</option>${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
+      <div class="form-row"><label>这台节点可以承接的执行角色</label>${allowedRolesChecklist("*")}</div>
       <div class="form-row"><label>加入令牌有效期（秒）</label><input name="ttlSeconds" type="number" min="60" max="86400" value="1800"></div>
       <button class="primary-button" type="submit">生成共享节点注册命令</button>
     </form></div>`;
@@ -3618,7 +3640,7 @@ function renderRuntimeNodeObject(scope) {
   return window.AIMAC_RUNTIME_NODE_WORKSPACE.render({
     detail: runtimeNodeDetail,
     controls: canControl ? agentActions(runtimeNodeDetail.node, {scope: scope === "organization" ? "org" : "project", showDanger, includeDispatchControl: false}) : "",
-    helpers: {badge, t, fmtTime, fmtBytes, explainCoded, evidenceRefsHint}
+    helpers: {badge, t, fmtTime, fmtBytes, explainCoded, evidenceRefsHint, agentEventSummaryZh, providerLabel, capabilityLabel}
   });
 }
 
@@ -3709,6 +3731,64 @@ function renderAgentProfileDetail(agent, {editable, scopeLabel}) {
   });
 }
 
+// 【多级选择】：一个下拉里塞几十项（预设 + 十几家供应商的模型、系统内置 + 技能库的几十个 Skill）人找不到。
+// 先选「组」，再在组内选；组由 data-cascade 串起来，change 处理器按组显隐第二级的选项。第二级是真正提交的字段。
+function cascadeSelect(name, groups, selected = "", {required = false, firstLabel = "请选择…"} = {}) {
+  const live = groups.filter((group) => group.options.length);
+  const selectedGroup = live.find((group) => group.options.some((option) => option.value === selected)) || live[0] || null;
+  const groupOptions = live.map((group) => `<option value="${esc(group.id)}"${group === selectedGroup ? " selected" : ""}>${esc(group.label)}</option>`).join("");
+  const options = live.flatMap((group) => group.options.map((option) =>
+    `<option value="${esc(option.value)}" data-group="${esc(group.id)}"${option.value === selected ? " selected" : ""}${group !== selectedGroup ? " hidden" : ""}>${esc(option.label)}</option>`)).join("");
+  return `<div class="cascade-select"><select data-cascade="${esc(name)}" aria-label="先选分组">${groupOptions}</select>
+    <select name="${esc(name)}" data-cascade-child="${esc(name)}" ${required ? "required" : ""}>${required ? "" : `<option value=""${selected ? "" : " selected"}>${esc(firstLabel)}</option>`}${options}</select></div>`;
+}
+function applyCascadeGroup(childSelect, groupId) {
+  if (!childSelect) return;
+  let firstVisible = null;
+  for (const option of childSelect.options || childSelect.querySelectorAll?.("option") || []) {
+    if (!option.dataset?.group) continue;
+    const show = option.dataset.group === groupId;
+    option.hidden = !show;
+    if (show && !firstVisible) firstVisible = option;
+  }
+  const current = childSelect.selectedOptions?.[0];
+  if (current?.dataset?.group && current.dataset.group !== groupId && firstVisible) childSelect.value = firstVisible.value;
+}
+// 模型：第一级「系统自动选型 / 各供应商」，第二级该组下的预设或模型。
+function modelPickerHtml(name, selected = "", {auto = "presets", required = true} = {}) {
+  const autoGroup = auto === "presets"
+    ? {id: "auto", label: "系统自动选型", options: Object.entries(AGENT_MODEL_PRESET_LABEL).map(([value, label]) => ({value, label}))}
+    : {id: "auto", label: "自动", options: [{value: "", label: "自动（按角色与任务选型）"}]};
+  const byProvider = new Map();
+  for (const profile of state.modelCapabilities || []) {
+    const provider = profile.providerClass || String(profile.modelId || "").split(":")[0] || "custom";
+    if (!byProvider.has(provider)) byProvider.set(provider, []);
+    byProvider.get(provider).push({value: profile.modelId, label: String(profile.modelId || "").replace(/^[a-z0-9_]+:/u, "") || profile.modelId});
+  }
+  if (selected && selected !== "" && !AGENT_MODEL_PRESET_LABEL[selected] && ![...byProvider.values()].flat().some((option) => option.value === selected)) {
+    byProvider.set("current", [{value: selected, label: `${selected}（不在当前模型能力列表）`}]);
+  }
+  const groups = [autoGroup, ...[...byProvider].map(([provider, options]) => ({id: provider, label: provider === "current" ? "当前值" : providerLabel(provider), options}))];
+  return cascadeSelect(name, groups, selected || (auto === "presets" ? "auto_best" : ""), {required: required && auto === "presets"});
+}
+// 角色 Skill：第一级「系统内置 / 技能库（按类别）」，第二级该组下的 Skill。
+function roleSkillPickerHtml(name, selected = "", {required = false, firstLabel = "按执行角色默认"} = {}) {
+  const skills = (state.roleSkillIndex || []).slice(0, 500);
+  const groups = new Map();
+  const groupOf = (skill) => {
+    if (/^system-/u.test(skill.roleSkillId || "")) return ["system", "系统内置"];
+    const category = skill.category || "other";
+    return [`cat:${category}`, `技能库 · ${skillCategoryLabel(category)}`];
+  };
+  for (const skill of skills) {
+    const [id, label] = groupOf(skill);
+    if (!groups.has(id)) groups.set(id, {id, label, options: []});
+    groups.get(id).options.push({value: skill.roleSkillId, label: roleSkillLabel(skill).replace(/（系统内置技能）$/u, "").replace(/ · (系统内置|中文智能体技能库)$/u, "")});
+  }
+  if (selected && !skills.some((skill) => skill.roleSkillId === selected)) groups.set("current", {id: "current", label: "当前引用", options: [{value: selected, label: "当前引用（已不在活动索引）"}]});
+  return cascadeSelect(name, [...groups.values()], selected, {required, firstLabel});
+}
+
 function modelOptionsHtml(selected = "") {
   const common = ["auto_best", "auto_fast", "cost_aware", "gpt-5.5", "gpt-5.6-sol",
     "claude-sonnet-4.5", "claude-opus-4.1", "gemini-2.5-pro", "gemini-2.5-flash",
@@ -3720,7 +3800,7 @@ function modelOptionsHtml(selected = "") {
 function renderAgentProfileForm({projectId = "", title = "创建 Agent 档案", readOnly = false} = {}) {
   return window.AIMAC_AGENT_PROFILE_WORKSPACE.createForm({projectId, title, readOnly,
     roleOptions: ownerRoleOptionsHtml(),
-    modelOptions: modelOptionsHtml(), skillOptions: roleSkillOptionsHtml()});
+    modelPicker: modelPickerHtml("model", "auto_best"), skillPicker: roleSkillPickerHtml("roleSkillRef", "", {firstLabel: "按执行角色集中解析"})});
 }
 
 function projectAgentCards(nodes, canControlNodes, options = {}) {
@@ -4843,7 +4923,7 @@ function renderProjectOverview() {
     {v: fmtTime(event.createdAt), c: "nowrap"},
     badge(event.eventType, "blue"),
     badge(event.status),
-    {v: esc(event.summary || "-") + repositoryFailureAction(event), c: "text-clip"}
+    {v: esc(agentEventSummaryZh(event.summary) || "-") + repositoryFailureAction(event), c: "text-clip"}
   ])).join("");
 
   return [
@@ -5124,7 +5204,7 @@ function renderTaskGroups() {
   const canControl = hasPerm("task_group:control");
   const addableGroups = groups.filter((group) => group.status !== "closed" && group.status !== "aborted" && hasGroupPerm(group.id, "task_group:control"));
   const roleOptions = WORK_ITEM_OWNER_ROLE_CHOICES
-    .map((role) => `<option value="${esc(role)}"${role === "agent-runtime" ? " selected" : ""}>${esc(role === "agent-runtime" ? "通用任务执行" : t(role))} (${esc(role)})</option>`).join("");
+    .map((role) => `<option value="${esc(role)}"${role === "agent-runtime" ? " selected" : ""}>${esc(role === "agent-runtime" ? "通用任务执行" : t(role))}</option>`).join("");
 
   // 当前项目已归档时，这两个创建表单后端一定拒（project_archived）—— 归档路由要求先把
   // 所有任务组关掉，归档之后还能往里建新组，那次收尾就白做了。摆着它们就是按不动的杠杆。
@@ -5141,7 +5221,7 @@ function renderTaskGroups() {
         <div class="form-row"><label>统一语言</label><select name="languageTag">${languageSelectOptions("zh-CN")}</select></div>
         <label><input type="checkbox" name="startPaused" value="true"> 创建后等待手动启动</label>
         <div class="form-row"><label>初始角色（勾选参与这个任务组的执行角色）</label>
-          <div class="check-list" data-role-choices="task-group-create">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<label><input type="checkbox" name="roles" value="${esc(roleId)}"${["orchestrator", "agent-runtime", "reviewer"].includes(roleId) ? " checked" : ""}> ${esc(roleId === "agent-runtime" ? "通用任务执行" : t(roleId))} <span class="muted">(${esc(roleId)})</span></label>`).join("")}</div></div>
+          <div class="check-list" data-role-choices="task-group-create">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<label><input type="checkbox" name="roles" value="${esc(roleId)}"${["orchestrator", "agent-runtime", "reviewer"].includes(roleId) ? " checked" : ""}> ${esc(roleId === "agent-runtime" ? "通用任务执行" : t(roleId))}</label>`).join("")}</div></div>
         ${currentProjectId ? "" : noVisibleProjectNotice()}
         <button class="primary-button" type="submit" ${currentProjectId ? "" : "disabled"}>创建任务组</button>
       </form>
@@ -5171,11 +5251,7 @@ function renderTaskGroups() {
         <div class="form-row"><label>任务标题</label><input name="title" required></div>
         <div class="form-row"><label>执行角色</label><select name="ownerRole">${roleOptions}</select></div>
         <div class="form-row"><label>指定模型（可选）</label>
-          <select name="pinnedModelId">
-            <option value="">自动（按角色与任务选型）</option>
-            ${(state.modelCapabilities || []).map((profile) =>
-              `<option value="${esc(profile.modelId)}">${esc(profile.modelId)}</option>`).join("")}
-          </select>
+          ${modelPickerHtml("pinnedModelId", "", {auto: "single", required: false})}
           <div class="small">选「自动」由系统按角色与任务选最合适的模型；指定后这个工作项每次派发都只用这个模型——它若不满足任务的约束或天花板，就挂阻塞交人工处置，而不会悄悄换一个。</div>
         </div>
         <div class="form-row"><label>机器可执行要求（每行一条）</label><textarea name="requirements" placeholder="每行一条约束或验收条件"></textarea></div>
@@ -5433,10 +5509,12 @@ const settledTaskGroupStatuses = new Set(["closed", "aborted"]);
 // 「这次派发用了什么规则」：如实展示契约记录的治理件。契约不在当前运行态里（被容量淘汰）要说清，不能显示成"没规则"。
 function ruleSummaryHtml(summary) {
   if (!summary || summary.found !== true) return `<div class="notice">这次派发的任务契约已不在当前运行态里（可能已被容量淘汰），查不到它当时用的规则。</div>`;
-  const list = (items, empty) => (items && items.length) ? items.map((x) => `<span class="mono">${esc(x)}</span>`).join("、") : empty;
+  // 这几行是给人核对的，不是给机器的：规则件引用、禁止动作、验收要求都按词表翻成中文，内部 key 不上屏。
+  const list = (items, empty, render = (x) => t(x)) => (items && items.length) ? items.map((x) => esc(render(x))).join("、") : empty;
+  const skillId = summary.roleSkill?.roleSkillId || summary.roleSkill?.title || "";
   return `<div class="record-meta stack" style="margin-left:12px;">
-    <span>角色技能：${esc(summary.roleSkill?.title || summary.roleSkill?.roleSkillId || "-")}${summary.roleSkill?.contentDigest ? `（摘要 ${esc(String(summary.roleSkill.contentDigest).slice(0, 12))}）` : ""}</span>
-    <span>生效规则件：${list(summary.activeRuleRefs, "无")}</span>
+    <span>角色技能：${esc(skillId ? roleSkillLabel({roleSkillId: skillId, name: summary.roleSkill?.title}) : "-")}${summary.roleSkill?.contentDigest ? `（摘要 ${esc(String(summary.roleSkill.contentDigest).slice(0, 12))}）` : ""}</span>
+    <span>生效规则件：${list(summary.activeRuleRefs, "无", contractRefLabel)}</span>
     <span>规则集摘要：<span class="mono">${esc(String(summary.effectiveRulesDigest || summary.rulesetDigest || "-").slice(0, 16))}</span>${summary.rulesChangedAfterContract ? "　<b>签约后规则已变更</b>" : ""}</span>
     <span>禁止动作：${list(summary.forbiddenActions, "无")}</span>
     <span>验收要求：${list(summary.validationRequirements, "无")}</span>
@@ -5520,7 +5598,7 @@ function agentNodeLabel(nodeId) {
 
 function renderTaskGroupExecutionTimeline(taskGroup, progressData = {}) {
   return window.AIMAC_TASK_GROUP_INSIGHTS.executionTimeline(taskGroup, progressData, {
-    state, terminalDispatchStatuses, t, explainCoded, modelDecisionSummaryZh,
+    state, terminalDispatchStatuses, t, explainCoded, modelDecisionSummaryZh, agentEventSummaryZh,
     customBadge, badge, esc, fmtTime, agentNodeLabel
   });
 }
@@ -6896,7 +6974,7 @@ function renderExecutionObjectDetail({backLabel = ""} = {}) {
     hasMoreEvents: execHasMore,
     historyTruncated: execEventsDropped,
     controls: executionObjectControlsHtml(executionObjectDetail),
-    helpers: {badge, t, fmtTime, explainCoded, evidenceRefsHint, ruleSummaryHtml,
+    helpers: {badge, t, fmtTime, explainCoded, evidenceRefsHint, ruleSummaryHtml, modelDecisionTextZh, agentEventSummaryZh,
       reasoningLabel: (value) => REASONING_LEVEL_LABELS[value] || value || "-"}
   });
 }
@@ -6911,7 +6989,7 @@ function renderMonitor() {
     decisionSelect, esc, evidenceRefsHint, explainCoded, filterInput, filterSource,
     fleetOfflineNotice, fmtTime, focusedTaskGroups, gatingArtifactRows, hasGroupPerm,
     hasNoVisibleProject, hasPerm, heartbeatStaleHint, heartbeatTimedOut, laneFunctionLabel,
-    modelDecisionSummaryZh, moreText, noRightOnThisGroup, noVisibleProjectNotice,
+    modelDecisionSummaryZh, agentEventSummaryZh, moreText, noRightOnThisGroup, noVisibleProjectNotice,
     orchestratorStalledNotice, panel, percentCell, perspectiveOf,
     projectTaskGroups, recentHumanFinalizations, renderExecutionObjectDetail,
     renderMonitorActionBoard, renderMonitorRealtimeGuide, renderMonitorSummary,
@@ -6992,20 +7070,21 @@ function cfgBaselineRow(item = {}, readOnly = false) {
   `;
 }
 
+// 默认角色行：角色从已登记的执行角色里选（中文名），角色 Skill 从索引里选（中文名）——不让人手打内部 id。
 function cfgRoleRow(role = {}, readOnly = false) {
-  const ro = readOnly ? "readonly" : "";
+  const disabled = readOnly ? "disabled" : "";
+  const roleId = String(role.roleId || "");
+  const roleOptions = [...(roleId && !WORK_ITEM_OWNER_ROLE_CHOICES.includes(roleId) ? [roleId] : []), ...WORK_ITEM_OWNER_ROLE_CHOICES]
+    .map((id) => `<option value="${esc(id)}"${id === roleId ? " selected" : ""}>${esc(id === "agent-runtime" ? "通用任务执行" : t(id))}</option>`).join("");
   return `
     <div class="cfg-row" data-cfg-kind="role">
-      <input name="roleId" placeholder="角色 ID（只认已登记的执行角色，如 reviewer）" list="config-role-options" value="${esc(role.roleId || "")}" ${ro}>
-      <input name="roleSkillRef" placeholder="角色规则引用（可选）" value="${esc(role.roleSkillRef || "")}" ${ro}>
+      <select name="roleId" ${disabled}><option value=""${roleId ? "" : " selected"} disabled>选择执行角色…</option>${roleOptions}</select>
+      ${readOnly ? `<input name="roleSkillRef" value="${esc(role.roleSkillRef || "")}" readonly>` : roleSkillPickerHtml("roleSkillRef", role.roleSkillRef || "", {firstLabel: "角色 Skill：按执行角色默认"})}
       ${readOnly ? "" : `<button type="button" class="danger-button" data-action="cfg-del">删除</button>`}
     </div>
   `;
 }
 
-function splitHumanList(value) {
-  return String(value || "").split(/[,\n，、]/u).map((item) => item.trim()).filter(Boolean);
-}
 
 function roleSkillOptionsHtml(selected = "") {
   const skills = state.roleSkillIndex || [];
@@ -7014,22 +7093,38 @@ function roleSkillOptionsHtml(selected = "") {
     ? [{roleSkillId: selected, name: "当前引用（已不在活动索引）"}, ...indexed]
     : indexed;
   return options.map((skill) => `
-    <option value="${esc(skill.roleSkillId)}"${skill.roleSkillId === selected ? " selected" : ""}>${esc([skill.name, skill.category, skill.sourceId].filter(Boolean).join(" · "))}</option>
+    <option value="${esc(skill.roleSkillId)}"${skill.roleSkillId === selected ? " selected" : ""}>${esc(roleSkillLabel(skill))}</option>
   `).join("");
 }
 
-function roleSkillChoiceList(id = "role-skill-options") {
-  return `<datalist id="${esc(id)}">${roleSkillOptionsHtml()}</datalist>`;
+// 能力候选：已登记角色 Skill 的能力标记并集 + 定制里常见的几项，去重排序。
+function capabilityChoices() {
+  const known = new Set(["repo_write", "playwright_check", "schema_change", "public_api_change", "shell_exec", "network_access", "secrets_access"]);
+  for (const skill of state.roleSkillIndex || []) for (const cap of skill.capabilities || []) known.add(String(cap));
+  return [...known].filter(Boolean).sort();
 }
+// 运行节点可承接的角色：复选框，「不限」单独一项。
+function allowedRolesChecklist(defaultValue = "agent-runtime") {
+  const options = [["*", "不限（本范围内全部执行角色）"], ...WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => [roleId, roleId === "agent-runtime" ? "通用任务执行" : t(roleId)])];
+  return `<div class="check-list">${options.map(([value, label]) => `<label><input type="checkbox" name="allowedRoles" value="${esc(value)}"${value === defaultValue ? " checked" : ""}> ${esc(label)}</label>`).join("")}</div>`;
+}
+
 
 function roleSkillOverlaySummary(overlay) {
   const patch = overlay.patch || {};
   return [
-    (patch.allowedCapabilityAdds || []).length ? `放开 ${(patch.allowedCapabilityAdds || []).join("、")}` : "",
-    (patch.forbiddenCapabilityAdds || []).length ? `禁掉 ${(patch.forbiddenCapabilityAdds || []).join("、")}` : "",
-    patch.instructionRef && patch.instructionRef !== "overlay:empty" ? `附加说明 ${patch.instructionRef}` : "",
-    patch.modelRequirementPatchRef && patch.modelRequirementPatchRef !== "overlay:model:none" ? `模型要求 ${patch.modelRequirementPatchRef}` : ""
+    (patch.allowedCapabilityAdds || []).length ? `放开 ${(patch.allowedCapabilityAdds || []).map(capabilityLabel).join("、")}` : "",
+    (patch.forbiddenCapabilityAdds || []).length ? `禁掉 ${(patch.forbiddenCapabilityAdds || []).map(capabilityLabel).join("、")}` : "",
+    patch.instructionRef && patch.instructionRef !== "overlay:empty" ? `附加说明 ${overlayRefText(patch.instructionRef)}` : "",
+    patch.modelRequirementPatchRef && patch.modelRequirementPatchRef !== "overlay:model:none" ? `模型要求 ${overlayRefText(patch.modelRequirementPatchRef)}` : ""
   ].filter(Boolean).join("；") || "保留默认补丁";
+}
+
+function overlayRefText(ref) {
+  const text = String(ref || "");
+  if (text.startsWith("text:")) return `「${text.slice(5, 65)}${text.length > 65 ? "…" : ""}」`;
+  if (text.startsWith("git:")) return `仓库文档 ${text.slice(4)}`;
+  return text;
 }
 
 function projectRoleSkillOverlays(projectId) {
@@ -7070,21 +7165,28 @@ function roleSkillOverlayForm({scope, projectId, taskGroupId, readOnly = false})
     `data-project="${esc(projectId || "")}"`,
     taskGroupId ? `data-task="${esc(taskGroupId)}"` : ""
   ].filter(Boolean).join(" ");
+  // 人填的都是选择：角色 Skill 从下拉选（中文名），能力从已知能力标记里勾（多选），附加说明／模型要求默认「不附加」，
+  // 要引用仓库文档时再展开一个路径输入。内部引用（overlay:empty / decision:…）由提交逻辑自己拼，不让人手写。
+  // 能力：已知的勾选（网格排齐），不在清单里的可以在下面直接填（逗号分隔）。
+  const capabilityChecks = (name) => `<div class="check-list">${capabilityChoices().map((cap) => `<label><input type="checkbox" name="${name}" value="${esc(cap)}"> ${esc(capabilityLabel(cap))}</label>`).join("")}</div>
+    <div class="check-list-extra"><span class="small muted">清单里没有的：</span><input name="${name}Extra" placeholder="直接填能力标记，逗号分隔"></div>`;
+  // 引用：不附加 / 直接填写（存成 text:…） / 引用仓库文档（存成 git:路径）。
+  const refChoice = (name, none, noneLabel) => `<select name="${name}Mode" data-ref-mode="${name}">
+      <option value="none" selected>${esc(noneLabel)}</option>
+      <option value="text">直接填写</option>
+      <option value="git">引用仓库里的文档</option>
+    </select><input name="${name}" type="hidden" value="${esc(none)}"><textarea name="${name}Text" placeholder="直接写给这个角色的补充说明" hidden></textarea><input name="${name}Path" class="ref-path" placeholder="仓库内文档路径，例如 docs/roles/reviewer.md" hidden>`;
   return `
     <form class="form-grid" ${formAttrs}>
-      ${roleSkillChoiceList(scope === "task_group" ? "tg-role-skill-options" : "project-role-skill-options")}
-      <div class="form-row"><label>选择要定制的角色 Skill</label>
-        <input name="roleSkillRef" list="${scope === "task_group" ? "tg-role-skill-options" : "project-role-skill-options"}" placeholder="输入或选择 roleSkillId" ${disabled}>
+      <div class="form-row"><label>要定制的角色 Skill</label>
+        ${roleSkillPickerHtml("roleSkillRef", "", {required: true})}
       </div>
+      <div class="form-row"><label>追加允许的能力（可多选）</label>${capabilityChecks("allowedCapabilityAdds")}</div>
+      <div class="form-row"><label>追加禁止的能力（可多选）</label>${capabilityChecks("forbiddenCapabilityAdds")}</div>
       <div class="form-grid two">
-        <div class="form-row"><label>追加允许的能力</label><input name="allowedCapabilityAdds" placeholder="例如 repo_write,playwright_check" ${disabled}></div>
-        <div class="form-row"><label>追加禁止的能力</label><input name="forbiddenCapabilityAdds" placeholder="例如 schema_change,public_api_change" ${disabled}></div>
+        <div class="form-row"><label>附加说明</label>${refChoice("instructionRef", "overlay:empty", "不附加说明")}</div>
+        <div class="form-row"><label>模型要求</label>${refChoice("modelRequirementPatchRef", "overlay:model:none", "沿用角色默认模型要求")}</div>
       </div>
-      <div class="form-grid two">
-        <div class="form-row"><label>附加说明引用</label><input name="instructionRef" placeholder="overlay:empty 或 git:docs/..." value="overlay:empty" ${disabled}></div>
-        <div class="form-row"><label>模型要求补丁引用</label><input name="modelRequirementPatchRef" placeholder="overlay:model:none 或 git:docs/..." value="overlay:model:none" ${disabled}></div>
-      </div>
-      <div class="form-row"><label>决策记录引用</label><input name="decisionRecordRef" placeholder="可选；例如 decision:task-special-role" ${disabled}></div>
       <button class="primary-button" type="submit" ${disabled}>创建角色 Skill 定制</button>
     </form>
   `;
@@ -7177,7 +7279,6 @@ function renderProjectSettings() {
     panel("项目默认角色", `
       <form class="form-grid" data-form="project-config" data-project="${esc(project.id)}" data-config-fields="defaultRoles" data-config-version="${esc(projConfigVersion || "")}">
         <div class="form-row"><label>默认角色</label>
-          <datalist id="config-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist>
           <div class="cfg-rows" data-cfg-list="proj-roles">${defaultRoles.map((role) => cfgRoleRow(role, Boolean(editDisabled))).join("")}${cfgEmpty(defaultRoles, "还没有项目默认角色：任务组会各自指定角色，指定不到时回退到系统内置角色。")}</div>
           <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="role" data-target="proj-roles" ${editDisabled}>添加角色</button></div>
         </div>
@@ -7399,7 +7500,8 @@ document.addEventListener("submit", async (event) => {
         ...(data.registrationScope ? {registrationScope: data.registrationScope, organizationId: data.organizationId} : {}),
         projectId: data.projectId,
         nodeName: data.nodeName || undefined,
-        allowedRoles: String(data.allowedRoles || "agent-runtime").split(",").map((item) => item.trim()).filter(Boolean),
+        // 复选框同名多值；勾了「不限」就只送 *。
+        allowedRoles: (() => { const picked = new FormData(form).getAll("allowedRoles").map((item) => String(item).trim()).filter(Boolean); return picked.includes("*") ? ["*"] : (picked.length ? picked : ["agent-runtime"]); })(),
         ttlSeconds: Number(data.ttlSeconds || 1800),
         maxUses: 1
       };
@@ -7497,20 +7599,36 @@ document.addEventListener("submit", async (event) => {
     if (kind === "role-skill-overlay") {
       const roleSkillRef = String(data.roleSkillRef || "").trim();
       if (!roleSkillRef) throw new Error("请选择要定制的角色 Skill");
-      const allowedCapabilityAdds = splitHumanList(data.allowedCapabilityAdds);
-      const forbiddenCapabilityAdds = splitHumanList(data.forbiddenCapabilityAdds);
-      const instructionRef = String(data.instructionRef || "").trim() || "overlay:empty";
-      const modelRequirementPatchRef = String(data.modelRequirementPatchRef || "").trim() || "overlay:model:none";
+      const formData = new FormData(form);
+      const extra = (value) => String(value || "").split(/[,\n，、]/u).map((item) => item.trim()).filter(Boolean);
+      const allowedCapabilityAdds = [...new Set([...formData.getAll("allowedCapabilityAdds").map((item) => String(item).trim()).filter(Boolean), ...extra(data.allowedCapabilityAddsExtra)])];
+      const forbiddenCapabilityAdds = [...new Set([...formData.getAll("forbiddenCapabilityAdds").map((item) => String(item).trim()).filter(Boolean), ...extra(data.forbiddenCapabilityAddsExtra)])];
+      const overlap = allowedCapabilityAdds.filter((item) => forbiddenCapabilityAdds.includes(item));
+      if (overlap.length) throw new Error(`同一项能力不能既允许又禁止：${overlap.map(capabilityLabel).join("、")}`);
+      // 引用由「模式 + 路径」拼出来：不附加＝内部占位值；引用仓库文档＝git:<路径>。
+      const refOf = (name, none) => {
+        const mode = String(data[`${name}Mode`] || "none");
+        if (mode === "text") {
+          const text = String(data[`${name}Text`] || "").trim();
+          if (!text) throw new Error("选择了「直接填写」就要写上内容");
+          return `text:${text.slice(0, 2000)}`;
+        }
+        if (mode !== "git") return none;
+        const path = String(data[`${name}Path`] || "").trim().replace(/^git:/u, "");
+        if (!path) throw new Error("选择了「引用仓库里的文档」就要填文档路径");
+        return `git:${path}`;
+      };
+      const instructionRef = refOf("instructionRef", "overlay:empty");
+      const modelRequirementPatchRef = refOf("modelRequirementPatchRef", "overlay:model:none");
       if (!allowedCapabilityAdds.length && !forbiddenCapabilityAdds.length
         && instructionRef === "overlay:empty" && modelRequirementPatchRef === "overlay:model:none") {
-        throw new Error("请至少填写一项定制内容：允许能力、禁止能力、附加说明引用或模型要求补丁引用");
+        throw new Error("请至少选一项定制内容：允许能力、禁止能力、附加说明或模型要求");
       }
       await api("/api/role-skill-overlays", {method: "POST", body: JSON.stringify({
         scope: form.dataset.scope || "project",
         projectId: form.dataset.project || currentProjectId,
         ...(form.dataset.scope === "task_group" ? {taskGroupId: form.dataset.task} : {}),
         roleSkillRef,
-        decisionRecordRef: String(data.decisionRecordRef || "").trim() || undefined,
         patch: {allowedCapabilityAdds, forbiddenCapabilityAdds, instructionRef, modelRequirementPatchRef}
       })});
       formTouched = false;
@@ -7519,10 +7637,11 @@ document.addEventListener("submit", async (event) => {
       return;
     }
     if (kind === "tg-config") {
-      const origRoles = form.querySelector("input[name='defaultRoles']")?.dataset.orig || "";
-      const changed = String(data.defaultRoles || "").trim() !== String(origRoles).trim();
+      const origRoles = String(form.querySelector("[data-default-roles]")?.dataset.orig || "").split(",").map((item) => item.trim()).filter(Boolean).sort();
+      const pickedRoles = new FormData(form).getAll("defaultRoles").map((item) => String(item).trim()).filter(Boolean).sort();
+      const changed = JSON.stringify(pickedRoles) !== JSON.stringify(origRoles);
       if (!changed) { formTouched = false; toast.info("默认角色未改动，任务组仍继承项目配置"); return "__skip_success__"; }
-      const defaultRoles = String(data.defaultRoles || "").split(",").map((item) => item.trim()).filter(Boolean).map((roleId) => ({roleId}));
+      const defaultRoles = pickedRoles.map((roleId) => ({roleId}));
       await api(`/api/task-groups/${encodeURIComponent(form.dataset.task)}/config`, {method: "POST", body: JSON.stringify({defaultRoles, expectedConfigVersion: tgDetail?.configVersion || null})});
       formTouched = false;
       await loadPage();
@@ -7547,8 +7666,8 @@ document.addEventListener("submit", async (event) => {
         digest: rowEl.querySelector("input[name='blDigest']")?.value?.trim() || ""
       })).filter((item) => item.name || item.locator);
       const defaultRoles = [...form.querySelectorAll("[data-cfg-kind='role']")].map((rowEl) => ({
-        roleId: rowEl.querySelector("input[name='roleId']")?.value?.trim() || "",
-        roleSkillRef: rowEl.querySelector("input[name='roleSkillRef']")?.value?.trim() || ""
+        roleId: rowEl.querySelector("[name='roleId']")?.value?.trim() || "",
+        roleSkillRef: rowEl.querySelector("[name='roleSkillRef']")?.value?.trim() || ""
       })).filter((role) => role.roleId);
       const values = {repositories, baselineData, defaultRoles};
       const fields = form.dataset.configFields ? form.dataset.configFields.split(",") : Object.keys(values);
@@ -7998,6 +8117,20 @@ document.addEventListener("change", async (event) => {
     if (target.name === "repoCredentialMode") {
       const repoRow = target.closest?.(".cfg-row-repo");
       if (repoRow) repoRow.dataset.credentialMode = target.value || "none";
+      return;
+    }
+    // 角色 Skill 定制：选了「引用仓库里的文档」露出路径输入，选了「直接填写」露出文本框。
+    if (target.dataset.refMode !== undefined) {
+      const row = target.closest?.(".form-row");
+      const pathInput = row?.querySelector?.(`input[name="${target.dataset.refMode}Path"]`);
+      const textInput = row?.querySelector?.(`textarea[name="${target.dataset.refMode}Text"]`);
+      if (pathInput) pathInput.hidden = target.value !== "git";
+      if (textInput) textInput.hidden = target.value !== "text";
+      return;
+    }
+    // 多级选择：第一级换了组，第二级只露出该组的选项。
+    if (target.dataset.cascade !== undefined) {
+      applyCascadeGroup(target.closest?.(".cascade-select")?.querySelector?.(`select[data-cascade-child="${target.dataset.cascade}"]`), target.value);
       return;
     }
     if (target.dataset.menuSelect !== undefined) {

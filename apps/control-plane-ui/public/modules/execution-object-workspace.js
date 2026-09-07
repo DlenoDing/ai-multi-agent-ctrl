@@ -40,7 +40,7 @@
     return `<ol class="execution-event-timeline">${events.map((event) => `<li>
       <span class="execution-event-point tone-${event.status === "failed" || event.status === "blocked" ? "red" : event.status === "completed" ? "green" : "blue"}"></span>
       <div class="execution-event-body"><div class="execution-event-title">${h.badge(event.eventType, "blue")} ${h.badge(event.status)}${Number.isFinite(Number(event.progressPercent)) ? `<strong>${esc(event.progressPercent)}%</strong>` : ""}</div>
-        <div>${esc(event.summary || "未提供摘要")}</div>${h.evidenceRefsHint(event)}
+        <div>${esc(h.agentEventSummaryZh(event.summary) || "未提供摘要")}</div>${h.evidenceRefsHint(event)}
         <div class="small muted">${h.fmtTime(event.createdAt)}${event.nodeId ? ` · 节点 ${esc(event.nodeId)}` : ""}</div></div>
     </li>`).join("")}</ol>`;
   }
@@ -124,7 +124,7 @@
         <section class="execution-object-band"><span class="governance-eyebrow">执行身份</span><h3>Agent 与节点</h3>${definitionList([
           ["逻辑 Agent", agent ? `<button class="object-name-link" data-action="execution-open-agent" data-agent="${esc(agent.id)}">${esc(agent.name || agent.id)}</button><div class="small muted mono">${esc(agent.id)}</div>` : "<span class=\"muted\">未绑定档案</span>"],
           ["作用范围", esc(agent?.projectId ? "项目级 Agent" : agent ? "组织共享 Agent" : "-")],
-          ["执行角色", `${esc(h.t(session.roleId || dispatch.roleId) || session.roleId || dispatch.roleId || "-")}<div class="small muted mono">${esc(session.roleId || dispatch.roleId || "-")}</div>`],
+          ["执行角色", esc(h.t(session.roleId || dispatch.roleId) || session.roleId || dispatch.roleId || "-")],
           ["运行节点", node ? `<button class="object-name-link" data-action="execution-open-node" data-node="${esc(node.nodeId)}">${esc(node.nodeName || node.nodeId)}</button><div class="small muted mono">${esc(node.nodeId)}</div>` : "<span class=\"muted\">尚未分配</span>"],
           ["节点状态", node ? `${h.badge(node.status)} ${h.badge(node.admission)}` : "-"]
         ])}</section>
@@ -133,7 +133,7 @@
           ["推理级别", esc(h.reasoningLabel(selectedModel.reasoningLevel || selectedModel.reasoning || dispatch.reasoning))],
           ["会话放置", esc(h.t(placement.placement || session.placement) || placement.placement || session.placement || "-")],
           ["执行载体", esc(h.t(placement.workerCarrierDecision?.carrier || placement.workerCarrierDecision?.mode || session.laneId || "-") || placement.workerCarrierDecision?.carrier || session.laneId || "-")],
-          ["模型选择依据", esc(decision.modelDecision || dispatch.modelDecision || "未记录")]
+          ["模型选择依据", esc(h.modelDecisionTextZh(decision.modelDecision || dispatch.modelDecision))]
         ])}</section>
       </div>
       <section class="execution-object-band"><div class="execution-band-heading"><div><span class="governance-eyebrow">任务契约</span><h3>Skill、规则与验收要求</h3></div><span class="mono small">${esc(dispatch.taskContractDigest || session.taskContractDigest || "")}</span></div>${h.ruleSummaryHtml(detail.contractSummary)}</section>
