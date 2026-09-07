@@ -443,9 +443,9 @@ const MUTATIONS = [
     name: "MCP 租户边界必须覆盖每一个对象地址",
     check: "verifyEveryProjectScopedIdIsScopeChecked",
     file: MCP,
-    from: '  "envelopeId", "grantId", "nodeId", "reviewBundleId", "reviewPlanId", "topologyId"',
-    to: '  "envelopeId", "grantId", "nodeId", "reviewBundleId", "reviewPlanId"',
-    expect: "topologyId 是一个项目级对象地址"
+    from: '  "batchId", "envelopeId", "grantId", "nodeId", "reviewBundleId", "reviewPlanId", "topologyId"',
+    to: '  "envelopeId", "grantId", "nodeId", "reviewBundleId", "reviewPlanId", "topologyId"',
+    expect: "batchId 是一个项目级对象地址"
   },
   {
     name: "读侧每个集合都要么被过滤、要么登记为全局",
@@ -4624,6 +4624,15 @@ const MUTATIONS = [
     from: "`execution_topology_plan`、`execution_topology_advance`、",
     to: "`execution_topology_plan`、",
     expect: "实现里有而核心规范 §5 工具表没有的工具"
+  },
+  {
+    name: "集成批次状态机要真的可执行",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyIntegrationBatchLifecycleIsExecutable",
+    from: '  record_batch_ci: {from: "batch_ci_running", to: "batch_verified", actor: "qa", requires: ["batch_ci_evidence"]},',
+    to: '  record_batch_ci: {from: "batch_ci_running", to: "merged", actor: "qa", requires: ["batch_ci_evidence"]},',
+    expect: "集成批次"
   },
   {
     name: "i18n 词表里的键都得有人产出（孤儿词条要被抓到）",
@@ -9513,8 +9522,8 @@ const MUTATIONS = [
     name: "拒绝码扫描面被摘掉一种写法要报红",
     file: "scripts/contract-check.mjs",
     check: "verifyRefusalCodeScanSeesEveryThrowHelper",
-    from: "const REFUSAL_CODE_THROW_HELPERS = [\"topologyError\", \"gatewayError\"];",
-    to: "const REFUSAL_CODE_THROW_HELPERS = [\"topologyError\"];",
+    from: "const REFUSAL_CODE_THROW_HELPERS = [\"topologyError\", \"integrationBatchError\", \"gatewayError\"];",
+    to: "const REFUSAL_CODE_THROW_HELPERS = [\"topologyError\", \"gatewayError\"];",
     expect: "不在拒绝码扫描面里"
   },
   {
@@ -10577,15 +10586,15 @@ const MUTATIONS = [
     name: "文档点名的接口必须真存在（照着它接入的人会撞 404）",
     file: "docs/core-control-plane-spec.md",
     check: "verifyDocumentedApiPathsExist",
-    from: "| POST | `/api/integration-batches` | **非入口设计项**：集成批次由编排链内部处理；当前没有独立 HTTP 创建入口 | release、orchestrator |",
-    to: "| POST | `/api/integration-batches-v2` | **非入口设计项**：集成批次由编排链内部处理；当前没有独立 HTTP 创建入口 | release、orchestrator |",
+    from: "| POST | `/api/integration-batches` | 创建集成批次，绑定 ChangeSet refs、基线提交与批量集成证据；未终态批次会阻塞任务组关闭 | release、orchestrator |",
+    to: "| POST | `/api/integration-batches-v2` | 创建集成批次，绑定 ChangeSet refs、基线提交与批量集成证据；未终态批次会阻塞任务组关闭 | release、orchestrator |",
     expect: "撞 404"
   },
   {
     name: "已经建好的接口要从'还没建'清单里摘掉（留着会骗人）",
     file: "scripts/contract-check.mjs",
     check: "verifyDocumentedApiPathsExist",
-    from: "    \"/api/integration-batches\": \"集成批次实体尚未落地\",",
+    from: "    \"/api/model-selection-decisions\": \"决策由 /api/model-selection/decide 产生，没有独立的集合路由\",",
     to: "    \"/api/orchestrator/run\": \"假装它还没建\",",
     expect: "已经建好了"
   },

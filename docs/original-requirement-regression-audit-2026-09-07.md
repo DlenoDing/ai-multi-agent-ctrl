@@ -55,6 +55,19 @@
 
 这会造成：监控页能显示已有事件、派发、会话和关闭门禁，但对服务端可主动判定的运行异常没有稳定对象，总控和监测角色只能从别的表里间接推断，需求中的“主动告警”实际丢失。
 
+### IntegrationBatch 控制对象被声明但没有生产路径
+
+最初设计要求多会话并行产物必须经 `ChangeSet -> MergeQueueItem -> IntegrationBatch` 进入主线，并在批次内完成 rebase、batch CI、冲突处理、release manifest、merge / rollback / abort。当前实现中：
+
+1. `spec/terminal-execution-manifest.yaml` 与 `spec/state-machines.yaml` 已把 `IntegrationBatch` 登记为终态执行控制对象。
+2. 主设计文档和核心控制面规格多处要求并行 ChangeSet 合入前必须进入 `IntegrationBatch`。
+3. 运行时集合 `state.integrationBatches` 已声明，但服务端和 MCP 投影都把它清空。
+4. 没有 `spec/integration-batch.schema.json`，也没有 `createIntegrationBatch` / `advanceIntegrationBatch` 生产和推进函数。
+5. `docs/core-control-plane-spec.md` 与 `scripts/contract-check.mjs` 仍把 `/api/integration-batches` 标为未实现。
+6. 任务组关闭门没有检查未终态集成批次。
+
+这会造成：并行任务可以有执行拓扑和分支回报，但并行产物进入主线的批量集成过程没有权威对象承接；最坏情况下任务组可能在批次集成、批量 CI 或冲突处理尚未完成时被误判为可关闭。
+
 ## 已完成修复
 
 1. 新增系统管理员 REST 入口 `POST /api/system-upgrade-candidates/import-external-result`。
@@ -91,6 +104,14 @@
 26. 执行监控页新增“主动告警”看板卡片和明细表，活跃告警不再被隐藏在事件/死信/节点表里。
 27. `scripts/barrier-liveness-gate.mjs` 撤销 `Alert` 未实现豁免，状态机活性门会要求告警对象真实产生并可终结。
 28. `scripts/contract-check.mjs` 增加主动告警生产、去重、关闭证据和终态回收断言；`scripts/mutation-gate.mjs` 增加对应变异。
+29. 新增 `spec/integration-batch.schema.json`，覆盖批次 id、项目/任务组归属、ChangeSet refs、baseline commit、rebase / conflict / batch CI / release manifest / merge / rollback / abort 证据字段。
+30. 新增 `createIntegrationBatch` 与 `advanceIntegrationBatch`，按 `spec/state-machines.yaml` 的 `IntegrationBatch` 状态机推进，所有状态变更写入 `TransitionEvidence`，并在落库前运行 schema 校验。
+31. 新增 REST 路由 `POST /api/integration-batches` 与 `POST /api/integration-batches/:batchId/advance`，走幂等、权限和任务组作用域守卫，推进后即时重算关闭门。
+32. 新增 MCP 工具 `scheduler-mcp.integration_batch_create` 与 `scheduler-mcp.integration_batch_advance`，`advance` 先按 batch 反查任务组再做 bounded principal 作用域校验。
+33. `integrationBatches` 纳入项目分片持久化；未终态批次不会被容量裁剪误删，且控制台/MCP 只下发可见任务组内的批次。
+34. 任务组完成就绪与关闭门均新增未终态集成批次阻塞，`CloseBarrier` schema、中文词表和关闭门处置指引同步更新。
+35. `docs/core-control-plane-spec.md` 不再把 `/api/integration-batches` 标为未实现，并补充批次推进路由。
+36. `scripts/contract-check.mjs` 增加集成批次生命周期断言：未终态阻塞、happy path merged、冲突重试、CI 失败重试、rollback、abort、缺证据拒绝；`scripts/mutation-gate.mjs` 更新接口存在性锚点。
 
 ## 当前结论
 
@@ -103,5 +124,6 @@
 5. 运行期问题仍为 collect-only，真正升级仍在系统外完成。
 6. 文档基线不再要求或暗示 Agent 本地承载项目数据库镜像，避免后续实现把服务性组件下沉到 Agent 端。
 7. 主动告警已从“设计已写、代码未产出”修复为运行时对象、事件流、项目分片、租户视图和监控界面均可观察的闭环；当前先覆盖已有运行态可稳定判定的心跳、DLQ、自治周期错误三类，其余磁盘/DB/备份/限流类可沿同一规则与对象模型接入具体采样源。
+8. `IntegrationBatch` 已从“设计已写、状态集合空置”修复为可创建、可推进、可审计、可分片、可经 REST/MCP 调用、可阻塞关闭门的真实控制对象；并行产物进入主线的底线链路不再只靠文档约束。
 
 后续若再做 UI 或模块拆分，应先运行 `npm run validate`。其中 `node scripts/contract-check.mjs` 会检查文档接口是否真实存在，`node scripts/console-behaviour-check.mjs` 会检查系统管理入口是否再次漂移。

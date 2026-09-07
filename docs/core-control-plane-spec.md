@@ -381,7 +381,7 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/role-skill-overlays` | 创建项目或任务组级 role skill overlay | skill-registry、decision-center |
 | POST | `/api/session-placement/decide` | 生成新 WorkSession 或 subagent 放置决策 | scheduler |
 | POST | `/api/session-placement-decisions` | **非入口设计项**：放置记录由 `/api/session-placement/decide` 一并落账；不得单独伪造 placement 记录 | scheduler |
-| POST | `/api/orchestrator/run` | 执行 Orchestrator 自治调度循环 | orchestrator |
+| POST | `/api/orchestrator/run` | 执行 Orchestrator 自治调度循环；默认不做技能源 git 同步，需要同步时显式 `autoSyncSkills: true` 或走技能源同步接口 | orchestrator |
 | POST | `/api/agent-join-tokens` | 生成项目/角色/MCP scope 绑定的一次性 Agent 加入令牌 | agent-gateway |
 | POST | `/api/agent/v1/register` | 消费 join token，注册轻量 Agent Runtime 并签发节点凭证 | agent-gateway |
 | POST | `/api/agent/v1/heartbeat` | 上报节点资源、模型和工具能力 | agent-gateway |
@@ -410,7 +410,8 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/contracts` | 注册或更新契约对象 | orchestrator、decision-center |
 | POST | `/api/shared-definition-contracts` | 创建或更新共享定义合同 | orchestrator、decision-center |
 | POST | `/api/repository-output-targets` | 为 WorkItem 选择项目 Git 仓库输出目标 | orchestrator、repository-router |
-| POST | `/api/integration-batches` | **非入口设计项**：集成批次由编排链内部处理；当前没有独立 HTTP 创建入口 | release、orchestrator |
+| POST | `/api/integration-batches` | 创建集成批次，绑定 ChangeSet refs、基线提交与批量集成证据；未终态批次会阻塞任务组关闭 | release、orchestrator |
+| POST | `/api/integration-batches/:batchId/advance` | 推进集成批次状态机：rebase、批量 CI、release manifest、merge、retry、rollback、abort | release、qa、orchestrator |
 | POST | `/api/runtime-issues` | 收集重复运行期问题并生成升级候选，不触发运行时自修改 | monitor |
 | POST | `/api/runtime-issue-patterns` | **非入口设计项**：运行时问题经 `/api/runtime-issues` 聚合，不能绕过 collect-only 策略直接写 pattern | monitor |
 | POST | `/api/system-upgrade-candidates/:candidateId/resolve` | 处置升级候选项，将运行期问题导出给系统外维护或关闭候选项 | monitor、rule-steward |
@@ -440,7 +441,7 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | `orchestration-mcp` | `project_create`、`task_group_create`、`work_item_create`、`work_assign`、`orchestrator_run`、`state_get` |
 | `room-mcp` | `room_join`、`room_send`、`room_wait`、`room_ack` |
 | `agent-control-mcp` | `node_register`、`node_probe`、`session_start`、`session_pause`、`session_cancel`、`session_recover`、`dispatch_status` |
-| `scheduler-mcp` | `model_select`、`session_place`、`work_assign`、`capacity_snapshot`、`execution_topology_plan`、`execution_topology_advance`、`derived_task_classify` |
+| `scheduler-mcp` | `model_select`、`session_place`、`work_assign`、`capacity_snapshot`、`execution_topology_plan`、`execution_topology_advance`、`integration_batch_create`、`integration_batch_advance`、`derived_task_classify` |
 | `resource-mcp` | `lease_claim`、`lease_release`、`resource_snapshot` |
 | `model-mcp` | `model_capabilities`、`model_policy_get`、`model_select` |
 | `skill-mcp` | `skill_source_sync`、`role_skill_parse`、`role_skill_overlay_validate`、`role_skill_resolve` |

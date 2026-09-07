@@ -3976,6 +3976,7 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
     // ExecutionTopology terminal states per spec/state-machines.yaml are merged/downgraded/cancelled (the
     // former closed/completed/superseded literals were not modeled states at all, so nothing could clear it).
     no_open_execution_topology: (state.executionTopologies || []).some((item) => item.taskGroupId === taskGroupId && !TOPOLOGY_TERMINAL_STATUSES.includes(item.status)),
+    no_open_integration_batch: (state.integrationBatches || []).some((item) => item.taskGroupId === taskGroupId && !INTEGRATION_BATCH_TERMINAL_STATUSES.includes(item.status)),
     no_open_review_plan: (state.reviewPlans || []).some((item) => item.taskGroupId === taskGroupId && !REVIEW_PLAN_TERMINAL_STATUSES.includes(item.status)),
     no_pending_review_bundle: (state.reviewBundles || []).some((item) => item.taskGroupId === taskGroupId && !["consumed", "rejected"].includes(item.status)),
     no_blocking_derived_task_request: (state.derivedTaskRequests || []).some((item) => item.taskGroupId === taskGroupId && DERIVED_TASK_REQUEST_PENDING_STATUSES.includes(item.status)),
@@ -4021,6 +4022,7 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
   if (checkFailures.repository_output_target_terminal) blockers.push({objectType: "RepositoryOutputTarget", objectId: taskGroupId, status: "non_terminal"});
   if ((state.workSessions || []).some((session) => session.taskGroupId === taskGroupId && !WORK_SESSION_SETTLED_STATUSES.includes(session.status))) blockers.push({objectType: "WorkSession", objectId: taskGroupId, status: "active"});
   if ((state.agentDispatches || []).some((dispatch) => dispatch.taskGroupId === taskGroupId && !isTerminalDispatchStatus(dispatch.status))) blockers.push({objectType: "AgentDispatch", objectId: taskGroupId, status: "active"});
+  if (checkFailures.no_open_integration_batch) blockers.push({objectType: "IntegrationBatch", objectId: taskGroupId, status: "open"});
   const leaseTargetIds = taskGroupTargetIds(state, taskGroupId);
   if ((state.leases || []).some((lease) => lease.status === "active" && leaseTargetIds.has(leaseTargetId(lease)))) blockers.push({objectType: "Lease", objectId: taskGroupId, status: "active"});
   if (checkFailures.all_required_evidence_present) blockers.push({objectType: "Checkpoint", objectId: taskGroupId, status: "missing_git_evidence"});
@@ -4125,6 +4127,7 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     rules_candidates_processed: (state.ruleSourceResolutions || []).some((item) => item.taskGroupId === taskGroupId && item.status === "discovered"),
     runtime_issue_candidates_exported: forTaskGroup(state.systemUpgradeCandidates).some((item) => item.status === "candidate_created"),
     no_open_execution_topologies: forTaskGroup(state.executionTopologies).some((item) => !TOPOLOGY_TERMINAL_STATUSES.includes(item.status)),
+    no_open_integration_batches: forTaskGroup(state.integrationBatches).some((item) => !INTEGRATION_BATCH_TERMINAL_STATUSES.includes(item.status)),
     no_blocking_derived_task_requests: forTaskGroup(state.derivedTaskRequests).some((item) => ["candidate", "strengthened", "classified"].includes(item.status)),
     all_review_plans_closed: forTaskGroup(state.reviewPlans).some((item) => !REVIEW_PLAN_TERMINAL_STATUSES.includes(item.status)),
     no_pending_review_bundles: forTaskGroup(state.reviewBundles).some((item) => !["consumed", "rejected"].includes(item.status)),
@@ -7041,6 +7044,20 @@ const TOPOLOGY_ELIGIBILITY_GATES = [
   "parent_serial_merge_owner",
   "final_validation_available"
 ];
+export const INTEGRATION_BATCH_TERMINAL_STATUSES = ["merged", "rolled_back", "aborted"];
+const INTEGRATION_BATCH_ACTIONS = {
+  start_rebase: {from: "queued", to: "rebasing", actor: "release", requires: ["change_set_refs", "baseline_commit"]},
+  start_batch_ci: {from: "rebasing", to: "batch_ci_running", actor: "release", requires: ["rebase_result_ref"]},
+  record_conflict: {from: "rebasing", to: "merge_conflict", actor: "release", requires: ["conflict_ref"]},
+  record_batch_ci: {from: "batch_ci_running", to: "batch_verified", actor: "qa", requires: ["batch_ci_evidence"]},
+  record_batch_ci_failed: {from: "batch_ci_running", to: "batch_ci_failed", actor: "qa", requires: ["batch_ci_failure_evidence"]},
+  prepare_merge: {from: "batch_verified", to: "merge_ready", actor: "release", requires: ["release_manifest"]},
+  merge: {from: "merge_ready", to: "merged", actor: "release", requires: ["merge_commit", "command_effect_ref"]},
+  abort: {from: "merge_ready", to: "aborted", actor: "release", requires: ["abort_decision"]},
+  rollback: {from: "batch_verified", to: "rolled_back", actor: "release", requires: ["rollback_evidence"]},
+  retry_after_conflict: {from: "merge_conflict", to: "rebasing", actor: "release", requires: ["conflict_resolution_checkpoint"]},
+  retry_after_ci_failed: {from: "batch_ci_failed", to: "queued", actor: "release", requires: ["split_or_retry_plan"]}
+};
 
 // ---------------------------------------------------------------------------------------------------
 // 承载授权/定稿的记录必须 id 唯一。
@@ -7083,6 +7100,121 @@ function topologyError(code, status = 409, details = {}) {
     error[key] = value;
   }
   return error;
+}
+
+function integrationBatchError(code, status = 409, details = {}) {
+  const error = new Error(code);
+  error.status = status;
+  for (const [key, value] of Object.entries(details)) {
+    if (key === "message" || key === "name" || key === "stack") continue;
+    error[key] = value;
+  }
+  return error;
+}
+
+function validateIntegrationBatchRecord(batch) {
+  const errors = runtimeRecordSchemaErrors("spec/integration-batch.schema.json", batch, "IntegrationBatch");
+  if (errors.length) throw integrationBatchError("integration_batch_schema_validation_failed", 500, {schemaErrors: errors});
+}
+
+function integrationBatchTransitionValues(batch, args, requires) {
+  const values = {
+    change_set_refs: (batch.changeSetRefs || []).join(","),
+    baseline_commit: batch.baselineCommit,
+    rebase_result_ref: args.rebaseResultRef || batch.rebaseResultRef,
+    conflict_ref: args.conflictRef || batch.conflictRef,
+    batch_ci_evidence: args.batchCiEvidence || batch.batchCiEvidence,
+    batch_ci_failure_evidence: args.batchCiFailureEvidence || batch.batchCiFailureEvidence,
+    release_manifest: args.releaseManifest || batch.releaseManifest,
+    merge_commit: args.mergeCommit || batch.mergeCommit,
+    command_effect_ref: args.commandEffectRef || batch.commandEffectRef,
+    abort_decision: args.abortDecision || batch.abortDecision,
+    rollback_evidence: args.rollbackEvidence || batch.rollbackEvidence,
+    conflict_resolution_checkpoint: args.conflictResolutionCheckpoint || batch.conflictResolutionCheckpoint,
+    split_or_retry_plan: args.splitOrRetryPlan || batch.splitOrRetryPlan
+  };
+  const missing = requires.filter((gate) => values[gate] === undefined || values[gate] === null || values[gate] === "");
+  if (missing.length) throw integrationBatchError("integration_batch_transition_evidence_missing", 400, {missing});
+  return Object.fromEntries(requires.map((gate) => [gate, values[gate]]));
+}
+
+function applyIntegrationBatchEvidence(batch, args = {}) {
+  const optional = [
+    "rebaseResultRef", "conflictRef", "conflictResolutionCheckpoint", "batchCiEvidence",
+    "batchCiFailureEvidence", "releaseManifest", "mergeCommit", "commandEffectRef",
+    "abortDecision", "rollbackEvidence", "splitOrRetryPlan"
+  ];
+  for (const key of optional) if (args[key]) batch[key] = String(args[key]);
+  if (Array.isArray(args.evidenceRefs) && args.evidenceRefs.length) {
+    batch.evidenceRefs = unique([...(batch.evidenceRefs || []), ...args.evidenceRefs.map(String)]);
+  }
+}
+
+export function createIntegrationBatch(state, args, options = {}) {
+  ensureRuntimeCollections(state);
+  const taskGroup = taskGroupForRecordOrRefuse(state, args, "集成批次");
+  const settledRejection = taskGroupSettledRejection(state, taskGroup.id);
+  if (settledRejection) return settledRejection;
+  const changeSetRefs = unique(args.changeSetRefs || []);
+  if (!changeSetRefs.length) throw integrationBatchError("integration_batch_requires_change_set_refs", 400);
+  const baselineCommit = String(args.baselineCommit || gitHeadOrNull(options.root || process.cwd()) || "").trim();
+  if (!baselineCommit) throw integrationBatchError("integration_batch_requires_baseline_commit", 400);
+  assertUniqueRecordId(state.integrationBatches, "batchId", args.batchId, "integration_batch_id_conflict");
+  const at = new Date().toISOString();
+  const batch = {
+    schemaVersion: "integration-batch/v1",
+    batchId: args.batchId || createId("ib"),
+    projectId: taskGroup.projectId,
+    taskGroupId: taskGroup.id,
+    ...(args.workItemId || args.workId ? {workItemId: String(args.workItemId || args.workId)} : {}),
+    status: "queued",
+    changeSetRefs,
+    ...(Array.isArray(args.mergeQueueItemRefs) && args.mergeQueueItemRefs.length
+      ? {mergeQueueItemRefs: unique(args.mergeQueueItemRefs)} : {}),
+    baselineCommit,
+    evidenceRefs: unique(args.evidenceRefs || []),
+    attempt: 1,
+    createdBy: args.actor || "release",
+    updatedBy: args.actor || "release",
+    createdAt: at,
+    updatedAt: at
+  };
+  validateIntegrationBatchRecord(batch);
+  state.integrationBatches.unshift(batch);
+  state.integrationBatches = capRetainingPredicate(state.integrationBatches,
+    (item) => !INTEGRATION_BATCH_TERMINAL_STATUSES.includes(item.status), 5000);
+  appendEvent(state, "integration", "IntegrationBatch", batch.batchId, batch.createdBy, {
+    projectId: batch.projectId, taskGroupId: batch.taskGroupId, workItemId: batch.workItemId || null,
+    status: batch.status, changeSetCount: changeSetRefs.length
+  });
+  return {integrationBatch: batch};
+}
+
+export function advanceIntegrationBatch(state, args) {
+  ensureRuntimeCollections(state);
+  const batch = (state.integrationBatches || []).find((item) => item.batchId === args.batchId);
+  if (!batch) return {ok: false, error: "integration_batch_not_found"};
+  if (INTEGRATION_BATCH_TERMINAL_STATUSES.includes(batch.status)) return {integrationBatch: batch, alreadyTerminal: true};
+  const action = String(args.action || "");
+  const modeled = INTEGRATION_BATCH_ACTIONS[action];
+  if (!modeled) throw integrationBatchError("integration_batch_unknown_action", 400, {action});
+  if (batch.status !== modeled.from) throw integrationBatchError(`integration_batch_expected_${modeled.from}_got_${batch.status}`, 409, {
+    currentStatus: batch.status, allowedStatuses: [modeled.from]
+  });
+  applyIntegrationBatchEvidence(batch, args);
+  const requiresValues = integrationBatchTransitionValues(batch, args, modeled.requires);
+  recordTransition(state, "IntegrationBatch", batch.batchId, modeled.from, modeled.to, modeled.actor, requiresValues);
+  batch.status = modeled.to;
+  batch.updatedBy = args.actor || modeled.actor;
+  batch.updatedAt = new Date().toISOString();
+  if (modeled.to === "queued") batch.attempt = Number(batch.attempt || 1) + 1;
+  validateIntegrationBatchRecord(batch);
+  state.integrationBatches = capRetainingPredicate(state.integrationBatches,
+    (item) => !INTEGRATION_BATCH_TERMINAL_STATUSES.includes(item.status), 5000);
+  appendEvent(state, "integration", "IntegrationBatch", batch.batchId, batch.updatedBy, {
+    projectId: batch.projectId, taskGroupId: batch.taskGroupId, status: batch.status, action
+  });
+  return {integrationBatch: batch};
 }
 
 function normalizeTopologyBranches(args, workItem) {

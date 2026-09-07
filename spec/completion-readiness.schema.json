@@ -74,6 +74,7 @@
         "type": "string",
         "enum": [
           "no_open_execution_topology",
+          "no_open_integration_batch",
           "no_open_review_plan",
           "no_pending_review_bundle",
           "no_blocking_derived_task_request",
@@ -95,6 +96,7 @@
       "additionalProperties": false,
       "required": [
         "no_open_execution_topology",
+        "no_open_integration_batch",
         "no_open_review_plan",
         "no_pending_review_bundle",
         "no_blocking_derived_task_request",
@@ -111,6 +113,9 @@
       ],
       "properties": {
         "no_open_execution_topology": {
+          "$ref": "#/$defs/checkResult"
+        },
+        "no_open_integration_batch": {
           "$ref": "#/$defs/checkResult"
         },
         "no_open_review_plan": {

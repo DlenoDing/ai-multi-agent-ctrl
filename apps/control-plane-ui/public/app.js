@@ -5545,6 +5545,7 @@ const BLOCKER_GUIDE = {
   ReviewBundle: "在本页下方「阻塞项人工处置」收尾评审包",
   SharedDefinitionContract: "在本页下方「阻塞项人工处置」处置共享定义契约",
   ExecutionTopology: "在本页下方「阻塞项人工处置」终止卡住的执行方案",
+  IntegrationBatch: "集成批次还没完成：到「实时事件」「检查点证据」看 release/qa agent 的回送；卡住时取消对应工作项或让总控重新派发",
   WorkSession: "执行中的会话：等它结束，或在「agent 节点」上取消对应派发",
   AgentDispatch: "执行中的派发：等它结束，或在「agent 节点」上取消它",
   Lease: "随持有它的会话一起释放：处理掉那个会话即可，无需单独操作",
@@ -5665,6 +5666,7 @@ const CLOSE_GATE_GUIDE = {
   no_pending_human_confirmations: "到「人工审核」页定稿或打回待确认的卡",
   no_pending_human_directives: "到「人工指令」页确认那些指令已被消费",
   no_open_execution_topologies: "在“阻塞处置”终止卡住的执行方案",
+  no_open_integration_batches: "还有集成批次没完成：等 release/qa 推进到合并、回滚或中止；卡住时到执行监控查看批次证据",
   all_review_plans_closed: "在“阻塞处置”收尾评审计划",
   no_pending_review_bundles: "在“阻塞处置”收尾评审包",
   all_rule_sources_resolved: "在“阻塞处置”判定规则来源",
@@ -9009,7 +9011,7 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "orchestrator-run") {
-      const cycle = await api("/api/orchestrator/run", {method: "POST", body: JSON.stringify({mode: "all"})});
+      const cycle = await api("/api/orchestrator/run", {method: "POST", body: JSON.stringify({mode: "all", autoSyncSkills: false})});
       await loadPage();
       // 这一拍完全可能【跑了但什么都没推进】：技能源同步失败会让整轮提前返回，
       // changed 里只留一条 blocked_resource。此前这里把回执整个丢掉、一律弹"已触发编排循环"——

@@ -56,6 +56,8 @@ import {
   contractPublish,
   createExecutionTopology,
   advanceExecutionTopology,
+  createIntegrationBatch,
+  advanceIntegrationBatch,
   findingResolve,
   findingSubmit,
   policyDecisionEval,
@@ -1439,6 +1441,7 @@ const MACHINE_ALLOWED_ACTIONS = [
   "artifact_register", "lease_claim", "lease_release", "work_assign", "instruction_envelope_create",
   // 二、编排与推进：自治循环每一拍都在做，人不可能逐条点。
   "orchestrator_run", "execution_topology_plan", "execution_topology_advance",
+  "integration_batch_create", "integration_batch_advance",
   "derived_task_classify", "model_selection_decide", "session_placement_decide",
   "repository_output_target_select", "model_capability_register", "policy_decision_eval",
   "task_group_close_barrier_compute", "task_group_recompute_readiness", "runtime_issue_collect",
@@ -1866,7 +1869,7 @@ function scopedStateForAccount(state, account, session) {
       : item.projectId ? visibleProjectIds.has(item.projectId)
         : item.organizationId ? item.organizationId === account.organizationId && account.accountType === "org_admin"
           : isSystem);
-  cloned.integrationBatches = [];
+  cloned.integrationBatches = (state.integrationBatches || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));
   cloned.idempotencyRecords = {};
   cloned.runtimeIssuePatterns = [];
   cloned.runtimeIssueSamples = [];
@@ -2415,7 +2418,7 @@ function permissionForAction(action) {
   if (action === "runtime_issue_collect") return "task_group:monitor";
   // Gap 2B: §4 REST endpoints over shared core mutators.
   if (["finding_submit", "finding_resolve", "approval_request_create", "approval_resolve", "review_plan_create", "review_bundle_register"].includes(action)) return "task_group:review";
-  if (["work_assign", "lease_claim", "lease_release", "execution_topology_plan", "execution_topology_advance", "derived_task_classify"].includes(action)) return "task_group:orchestrate";
+  if (["work_assign", "lease_claim", "lease_release", "execution_topology_plan", "execution_topology_advance", "integration_batch_create", "integration_batch_advance", "derived_task_classify"].includes(action)) return "task_group:orchestrate";
   if (["artifact_register", "permission_request_submit"].includes(action)) return "task_group:checkpoint_submit";
   if (["room_send", "rule_source_resolve"].includes(action)) return "task_group:control";
   if (action === "permission_resolve") return "project:grant";
@@ -4410,7 +4413,7 @@ async function handleApi(req, res) {
     // 手动跑两拍，它仍然 online、在线数仍是 1。
     // 与后台那一拍同因：一个只在系统健康时才运行的对账，恰好在最需要它的时候不运行。
     recycleExpiredClaims(state);
-    const result = runAutonomousCycle(state, {root: repositoryRoot, runtimeDir, endpoint: publicEndpoint(req), mode: body.mode || "all", taskGroupId: body.taskGroupId, autoSyncSkills: body.autoSyncSkills !== false});
+    const result = runAutonomousCycle(state, {root: repositoryRoot, runtimeDir, endpoint: publicEndpoint(req), mode: body.mode || "all", taskGroupId: body.taskGroupId, autoSyncSkills: body.autoSyncSkills === true});
     audit(state, guard.actor, "orchestrator_run", `TaskGroup:${body.taskGroupId || "all"}`);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
@@ -6291,6 +6294,59 @@ async function handleApi(req, res) {
     if (result.alreadyTerminal) return json(res, 409, {error: "execution_topology_already_terminal", topology: result.topology});
     recomputeBarrierAfterResolve(state, existingTopology.taskGroupId);
     audit(state, guard.actor, "execution_topology_advance", `ExecutionTopology:${result.topology.topologyId}`, result.topology.status);
+    finishGuardedWrite(state, guard, 200, result);
+    writeState(state);
+    json(res, 200, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/integration-batches") {
+    if (requireBodyFields(res, body, ["taskGroupId", "changeSetRefs"], "integration_batch_task_group_and_changes_required")) return;
+    const guard = beginGuardedWrite(req, state, "integration_batch_create", `IntegrationBatch:${body.batchId || "new"}`, taskGroupScope(state, body.taskGroupId));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    let result;
+    try {
+      result = createIntegrationBatch(state, {...body, actor: guard.actor}, {root: repositoryRoot});
+    } catch (error) {
+      return json(res, error.status || 409, {error: error.message,
+        ...(error.currentStatus ? {currentStatus: error.currentStatus} : {}),
+        ...(error.allowedStatuses ? {allowedStatuses: error.allowedStatuses} : {}),
+        ...(error.missing ? {missing: error.missing} : {}),
+        ...(error.schemaErrors ? {schemaErrors: error.schemaErrors} : {})});
+    }
+    if (result.ok === false) return json(res, refusalStatus(result), refusalPayload(result));
+    recomputeBarrierAfterResolve(state, result.integrationBatch.taskGroupId);
+    audit(state, guard.actor, "integration_batch_create", `IntegrationBatch:${result.integrationBatch.batchId}`);
+    finishGuardedWrite(state, guard, 201, result);
+    writeState(state);
+    json(res, 201, result);
+    return;
+  }
+
+  const integrationBatchAdvanceMatch = url.pathname.match(/^\/api\/integration-batches\/([^/]+)\/advance$/);
+  if (req.method === "POST" && integrationBatchAdvanceMatch) {
+    if (!requireAuthenticated(req, state, res)) return;
+    const existingBatch = (state.integrationBatches || []).find((item) => item.batchId === integrationBatchAdvanceMatch[1]);
+    if (!existingBatch) {
+      const denial = missingRecordDenial(req, state, "integration_batch_not_found", "policy_denied");
+      return json(res, denial.status, denial.payload);
+    }
+    const guard = beginGuardedWrite(req, state, "integration_batch_advance", `IntegrationBatch:${integrationBatchAdvanceMatch[1]}`, taskGroupScope(state, existingBatch.taskGroupId));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    let result;
+    try {
+      result = advanceIntegrationBatch(state, {...body, batchId: integrationBatchAdvanceMatch[1], actor: guard.actor});
+    } catch (error) {
+      return json(res, error.status || 409, {error: error.message,
+        ...(error.currentStatus ? {currentStatus: error.currentStatus} : {}),
+        ...(error.allowedStatuses ? {allowedStatuses: error.allowedStatuses} : {}),
+        ...(error.missing ? {missing: error.missing} : {}),
+        ...(error.schemaErrors ? {schemaErrors: error.schemaErrors} : {})});
+    }
+    if (result.ok === false) return json(res, refusalStatus(result), refusalPayload(result));
+    if (result.alreadyTerminal) return json(res, 409, {error: "integration_batch_already_terminal", integrationBatch: result.integrationBatch});
+    recomputeBarrierAfterResolve(state, existingBatch.taskGroupId);
+    audit(state, guard.actor, "integration_batch_advance", `IntegrationBatch:${result.integrationBatch.batchId}`, result.integrationBatch.status);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
     json(res, 200, result);

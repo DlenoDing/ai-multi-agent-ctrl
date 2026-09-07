@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/integration-batch.schema.json",
+  "title": "IntegrationBatch",
+  "description": "并行 ChangeSet / MergeQueueItem 进入主线前的集成批次。它记录基线、rebase、批量 CI、release manifest、合并或回滚证据，并作为任务组关闭门的阻塞对象。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "batchId",
+    "projectId",
+    "taskGroupId",
+    "status",
+    "changeSetRefs",
+    "baselineCommit",
+    "evidenceRefs",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "integration-batch/v1"},
+    "batchId": {"type": "string", "minLength": 1},
+    "projectId": {"type": "string", "minLength": 1},
+    "taskGroupId": {"type": "string", "minLength": 1},
+    "workItemId": {"type": "string", "minLength": 1},
+    "status": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "rebasing",
+        "batch_ci_running",
+        "batch_verified",
+        "merge_ready",
+        "merged",
+        "merge_conflict",
+        "batch_ci_failed",
+        "rolled_back",
+        "aborted"
+      ]
+    },
+    "changeSetRefs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "mergeQueueItemRefs": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "baselineCommit": {"type": "string", "minLength": 1},
+    "rebaseResultRef": {"type": "string", "minLength": 1},
+    "conflictRef": {"type": "string", "minLength": 1},
+    "conflictResolutionCheckpoint": {"type": "string", "minLength": 1},
+    "batchCiEvidence": {"type": "string", "minLength": 1},
+    "batchCiFailureEvidence": {"type": "string", "minLength": 1},
+    "releaseManifest": {"type": "string", "minLength": 1},
+    "mergeCommit": {"type": "string", "minLength": 1},
+    "commandEffectRef": {"type": "string", "minLength": 1},
+    "abortDecision": {"type": "string", "minLength": 1},
+    "rollbackEvidence": {"type": "string", "minLength": 1},
+    "splitOrRetryPlan": {"type": "string", "minLength": 1},
+    "evidenceRefs": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "attempt": {"type": "integer", "minimum": 1},
+    "createdBy": {"type": "string", "minLength": 1},
+    "updatedBy": {"type": "string", "minLength": 1},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  }
+}

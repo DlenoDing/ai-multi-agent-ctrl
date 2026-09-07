@@ -96,6 +96,8 @@ import {
   reviewBundleRegister,
   computeCompletionReadiness,
   createExecutionTopology,
+  createIntegrationBatch,
+  advanceIntegrationBatch,
   recordQualityGateFromTest,
   cancelPendingConfirmationsForDispatch,
   ruleSourceResolve,
@@ -295,7 +297,7 @@ const AGENT_RUNTIME_CLI_THROWS = new Set([
   "public Agent Gateway requires HTTPS; set AIMAC_AGENT_ALLOW_INSECURE_HTTP=true only for isolated"
 ]);
 
-const REFUSAL_CODE_THROW_HELPERS = ["topologyError", "gatewayError"];
+const REFUSAL_CODE_THROW_HELPERS = ["topologyError", "integrationBatchError", "gatewayError"];
 // timeoutCode: 也算一种抛码写法：三把目录锁收成 withDirectoryLock 一份之后，各自的 *_lock_timeout
 // 由调用方以 timeoutCode: "…" 传入、在共用函数里拼成模板串抛出 —— 只认 new Error("字面量") 的话，
 // 这一族整个从产品码集合里消失，第二道门的登记会被误判成"产品里已不存在"（实测就这么报了）。
@@ -953,6 +955,7 @@ run(verifyOneProjectWriteTouchesOneShard);
 run(verifyPanelGatesCoverEveryBlockInside);
 run(verifyTopologyBlockerPartsAllHaveChinese);
 run(verifyExecutionTopologyStateMachineRefusesBadTransitions);
+run(verifyIntegrationBatchLifecycleIsExecutable);
 run(verifyGateAssertionsMatchWholeRefusalCodes);
 run(verifyInviteEscalationGuardsShareOnePredicate);
 run(verifyAgentJoinTokenIsSpentExactlyOnce);
@@ -4163,6 +4166,7 @@ function verifyHumanAndOrganizationContracts(output) {
       agentControlCommands: {open: {commandId: "acc_open_oldest", status: "queued"}, done: (i) => ({commandId: `acc_${i}`, status: "acked"})},
       agentDispatches: {open: {dispatchId: "dsp_open_oldest", status: "running"}, done: (i) => ({dispatchId: `dsp_${i}`, status: "completed"})},
       roleDriftGuards: {open: {guardId: "rdg_open_oldest", status: "open"}, done: (i) => ({guardId: `rdg_${i}`, status: "closed"})},
+      integrationBatches: {open: {batchId: "ib_open_oldest", status: "queued"}, done: (i) => ({batchId: `ib_${i}`, status: "merged"})},
       alertRules: {open: {alertRuleId: "alert_rule_open_oldest", status: "active"}, done: (i) => ({alertRuleId: `alert_rule_${i}`, status: "retired"})},
       alerts: {open: {alertId: "alrt_open_oldest", status: "routed"}, done: (i) => ({alertId: `alrt_${i}`, status: "resolved"})},
       agentTaskContracts: {open: {contractId: "atc_open_oldest", sessionId: "ws_live", runId: "run_live"}, done: (i) => ({contractId: `atc_${i}`, sessionId: `ws_${i}`, runId: `run_${i}`})}
@@ -7388,13 +7392,14 @@ function verifyCommandBusLifecycle(output) {
       instructionMetrics: {envelopes: [{envelopeId: "ienv_probe", taskGroupId: "tg_probe"}]},
       accessGrants: [{grantId: "grant_probe", resource: {resourceType: "task_group", resourceId: "tg_probe"}}],
       agentRuntimeNodes: [{nodeId: "node_probe", projectIds: ["prj_probe"]}],
-      executionTopologies: [{topologyId: "topo_probe", projectId: "prj_probe", taskGroupId: "tg_probe"}]
+      executionTopologies: [{topologyId: "topo_probe", projectId: "prj_probe", taskGroupId: "tg_probe"}],
+      integrationBatches: [{batchId: "ib_probe", projectId: "prj_probe", taskGroupId: "tg_probe"}]
     };
     const sampleFor = {projectId: "prj_probe", taskGroupId: "tg_probe", workId: "wi_probe", workItemId: "wi_probe",
       dispatchId: "adp_probe", sessionId: "sess_probe", requestId: "preq_probe", contractId: "sdc_probe",
       leaseId: "lease_probe", findingId: "fd_probe", approvalId: "apr_probe", repositoryOutputTargetRef: "rot_probe",
       targetId: "rot_probe", envelopeId: "ienv_probe", grantId: "grant_probe", nodeId: "node_probe",
-      reviewBundleId: "rb_probe", reviewPlanId: "rp_probe", topologyId: "topo_probe"};
+      reviewBundleId: "rb_probe", reviewPlanId: "rp_probe", topologyId: "topo_probe", batchId: "ib_probe"};
     probe.taskGroups[0].workItems = [{id: "wi_probe"}];
     const unresolvable = [];
     for (const key of RESOURCE_ADDRESSING_ARG_KEYS) {
@@ -11854,7 +11859,6 @@ async function verifyDocumentedApiPathsExist(output) {
     // /api/agent/v1/skill-worksets/:worksetId —— 不是一条独立的集合接口。
     "/api/agent/v1/skill-worksets": "协议文档里给的是 base URL，真实路由带 :worksetId",
     "/api/effective-instruction-packets": "指令包由派发时内部生成，没有对外的创建路由",
-    "/api/integration-batches": "集成批次实体尚未落地",
     "/api/model-selection-decisions": "决策由 /api/model-selection/decide 产生，没有独立的集合路由",
     "/api/role-drift-guards": "角色漂移防护由编排内部维护，没有对外路由",
     "/api/role-drift-guards/:guardId/rebound": "同上",
@@ -12011,6 +12015,10 @@ function verifyGatesDoNotCloneFromTheNetwork(output) {
   if (leaking.length) {
     output.push("这些门里的编排周期没关技能同步，会往运行目录 git clone 远端仓库（慢，且让门依赖外网）：\n  "
       + leaking.join("\n  ") + "\n  要么加 autoSyncSkills: false，要么登记进 MUST_REALLY_SYNC 并写明为什么");
+  }
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  if (!server.includes("autoSyncSkills: body.autoSyncSkills === true")) {
+    output.push("POST /api/orchestrator/run 不能默认触发技能源 git 同步：手动推进编排应默认只推进调度，需要同步时显式 autoSyncSkills:true 或走技能源同步接口");
   }
   console.log(`门里的编排周期：${scanned} 处逐个核对，${leaking.length} 处会联网同步（应为 0；`
     + `另有 ${Object.keys(MUST_REALLY_SYNC).length} 处登记为"要的就是同步失败本身"）`);
@@ -12880,6 +12888,9 @@ function verifyServerFieldsReachThePerson(output) {
     sharedDefinition: "共享定义对象回显",
     systemUpgradeCandidate: "升级候选对象回显",
     topology: "执行拓扑对象回显",
+    integrationBatch: "集成批次对象回显，MCP/REST 机器调用方据此判断终态幂等，控制台从 state 读同一条",
+    missing: "缺失证据字段清单，MCP/REST 机器调用方据此补齐状态机推进参数",
+    schemaErrors: "规范校验错误明细，契约门与直接调用方排查规范漂移使用，不进入普通控制台提示",
   };
   // 只取【顶层】字段：嵌套对象里的键（诊断结构里的 code/file 之类）不是拒绝报文的字段，
   // 混进来会让这道门发出一堆假警报，而假警报的下场是被人随手登记掉（登记就此失去意义）。
@@ -22492,6 +22503,125 @@ function verifyTransitionEngine(output) {
   expectRejected("blocked_resource->ready by orchestrator (illegal actor)", "transition.actor_not_authorized", () =>
     assertTransition({}, "WorkItem", "blocked_resource", "ready", "orchestrator", { resource_available: "x" })
   );
+}
+
+function verifyIntegrationBatchLifecycleIsExecutable(output) {
+  const schema = loadJson("spec/integration-batch.schema.json");
+  const makeState = () => {
+    const st = structuredClone(seedState);
+    ensureRuntimeCollections(st, {root});
+    const tg = st.taskGroups.find((item) => item.id === "tg_runtime_management");
+    tg.workItems = [{id: "wi_integration_batch", title: "集成批次用例", status: "verified", ownerRole: "release", progress: 100,
+      reviewBundleRef: "ReviewBundle:rvb_integration_batch"}];
+    st.checkpoints = [{taskGroupId: tg.id, workId: "wi_integration_batch", runId: "cp_integration_batch",
+      commitRefs: [{sha: gitHeadOrNull(root) || "abcdef1", repositoryUrl: "local", branch: "main"}],
+      pushRefs: [{remote: "origin", branch: "main", sha: gitHeadOrNull(root) || "abcdef1"}],
+      artifactManifestRefs: ["artifact:integration-batch"]}];
+    return {st, tg};
+  };
+  const createBatch = (st, extra = {}) => createIntegrationBatch(st, {
+    taskGroupId: "tg_runtime_management",
+    workItemId: "wi_integration_batch",
+    batchId: extra.batchId || `ib_${Math.random().toString(36).slice(2, 8)}`,
+    changeSetRefs: ["ChangeSet:cs_a", "ChangeSet:cs_b"],
+    baselineCommit: gitHeadOrNull(root) || "abcdef1",
+    evidenceRefs: ["evidence:batch-created"],
+    ...extra
+  }, {root}).integrationBatch;
+
+  const {st} = makeState();
+  for (const [label, args, expected] of [
+    ["缺变更集", {taskGroupId: "tg_runtime_management", batchId: "ib_no_changes", baselineCommit: "abcdef1"}, "integration_batch_requires_change_set_refs"],
+    ["缺基线提交", {taskGroupId: "tg_runtime_management", batchId: "ib_no_baseline", changeSetRefs: ["ChangeSet:cs_a"], baselineCommit: ""}, "integration_batch_requires_baseline_commit"]
+  ]) {
+    let message = null;
+    try { createIntegrationBatch(st, args, {root: "/path/does/not/exist"}); } catch (error) { message = error.message; }
+    if (message !== expected) output.push(`集成批次: ${label} 没有返回 ${expected}（${message || "已创建"}）`);
+  }
+  let schemaFailure = null;
+  try {
+    createIntegrationBatch(makeState().st, {taskGroupId: "tg_runtime_management", batchId: "ib_bad_schema",
+      changeSetRefs: ["ChangeSet:cs_a"], baselineCommit: "abcdef1", evidenceRefs: [123]}, {root});
+  } catch (error) { schemaFailure = error.message; }
+  if (schemaFailure !== "integration_batch_schema_validation_failed") {
+    output.push(`integration_batch_schema_validation_failed: 不合规范的集成批次记录没有被拒（${schemaFailure || "已创建"}）`);
+  }
+  const batch = createBatch(st, {batchId: "ib_happy"});
+  let unknownAction = null;
+  try { advanceIntegrationBatch(st, {batchId: batch.batchId, action: "does_not_exist"}); } catch (error) { unknownAction = error.message; }
+  if (unknownAction !== "integration_batch_unknown_action") {
+    output.push(`integration_batch_unknown_action: 未知动作没有被状态机具名拒绝（${unknownAction || "已推进"}）`);
+  }
+  validateSchema(batch, schema, "IntegrationBatch(queued)", output);
+  const blocked = computeCloseBarrier(st, "tg_runtime_management", {root, mutate: false});
+  if (!(blocked.blockingObjects || []).some((item) => item.objectType === "IntegrationBatch")) {
+    output.push("集成批次: 未终态批次没有挡住任务组关闭门 —— 并行产物可能未集成就被关闭");
+  }
+  advanceIntegrationBatch(st, {batchId: batch.batchId, action: "start_rebase"});
+  advanceIntegrationBatch(st, {batchId: batch.batchId, action: "start_batch_ci", rebaseResultRef: "rebase:ok"});
+  advanceIntegrationBatch(st, {batchId: batch.batchId, action: "record_batch_ci", batchCiEvidence: "ci:batch-ok"});
+  advanceIntegrationBatch(st, {batchId: batch.batchId, action: "prepare_merge", releaseManifest: "release-manifest:ib_happy"});
+  advanceIntegrationBatch(st, {batchId: batch.batchId, action: "merge", mergeCommit: "merge:abcdef1", commandEffectRef: "CommandEffect:merge_ib_happy"});
+  if (batch.status !== "merged") output.push(`集成批次: happy path 没有到 merged（当前 ${batch.status}）`);
+  const terminalAgain = advanceIntegrationBatch(st, {batchId: batch.batchId, action: "merge", mergeCommit: "merge:again", commandEffectRef: "CommandEffect:again"});
+  if (!terminalAgain?.alreadyTerminal || terminalAgain.integrationBatch?.batchId !== batch.batchId) {
+    output.push("integration_batch_already_terminal: merged 后再次推进没有以终态幂等回执返回原批次");
+  }
+  validateSchema(batch, schema, "IntegrationBatch(merged)", output);
+  st.stateVersion = Number(st.stateVersion || 1) + 1;
+  const afterMerge = computeCloseBarrier(st, "tg_runtime_management", {root, mutate: false});
+  if ((afterMerge.blockingObjects || []).some((item) => item.objectType === "IntegrationBatch")) {
+    output.push("集成批次: merged 之后仍挡住关闭门 —— 终态集合与关闭门分叉");
+  }
+  const evidenceTransitions = (st.transitionEvidence || []).filter((item) => item.machine === "IntegrationBatch" && item.objectId === batch.batchId);
+  if (evidenceTransitions.length < 5) output.push(`集成批次: 状态推进没有留下完整 transitionEvidence（仅 ${evidenceTransitions.length} 条）`);
+  const notFound = advanceIntegrationBatch(st, {batchId: "ib_not_found", action: "merge"});
+  if (notFound?.error !== "integration_batch_not_found") {
+    output.push("integration_batch_not_found: 不存在的集成批次没有返回稳定拒绝码");
+  }
+
+  const conflictState = makeState().st;
+  const conflict = createBatch(conflictState, {batchId: "ib_conflict"});
+  advanceIntegrationBatch(conflictState, {batchId: conflict.batchId, action: "start_rebase"});
+  advanceIntegrationBatch(conflictState, {batchId: conflict.batchId, action: "record_conflict", conflictRef: "conflict:paths"});
+  advanceIntegrationBatch(conflictState, {batchId: conflict.batchId, action: "retry_after_conflict", conflictResolutionCheckpoint: "checkpoint:resolved"});
+  if (conflict.status !== "rebasing") output.push(`集成批次: 冲突解决后没有回到 rebasing（当前 ${conflict.status}）`);
+
+  const failedState = makeState().st;
+  const failed = createBatch(failedState, {batchId: "ib_failed"});
+  advanceIntegrationBatch(failedState, {batchId: failed.batchId, action: "start_rebase"});
+  advanceIntegrationBatch(failedState, {batchId: failed.batchId, action: "start_batch_ci", rebaseResultRef: "rebase:ok"});
+  advanceIntegrationBatch(failedState, {batchId: failed.batchId, action: "record_batch_ci_failed", batchCiFailureEvidence: "ci:failed"});
+  advanceIntegrationBatch(failedState, {batchId: failed.batchId, action: "retry_after_ci_failed", splitOrRetryPlan: "retry:smaller-batch"});
+  if (failed.status !== "queued" || failed.attempt !== 2) output.push(`集成批次: CI 失败重试没有回到 queued/attempt+1（${failed.status}/${failed.attempt})`);
+
+  const rollbackState = makeState().st;
+  const rollback = createBatch(rollbackState, {batchId: "ib_rollback"});
+  advanceIntegrationBatch(rollbackState, {batchId: rollback.batchId, action: "start_rebase"});
+  advanceIntegrationBatch(rollbackState, {batchId: rollback.batchId, action: "start_batch_ci", rebaseResultRef: "rebase:ok"});
+  advanceIntegrationBatch(rollbackState, {batchId: rollback.batchId, action: "record_batch_ci", batchCiEvidence: "ci:ok"});
+  advanceIntegrationBatch(rollbackState, {batchId: rollback.batchId, action: "rollback", rollbackEvidence: "rollback:ok"});
+  if (rollback.status !== "rolled_back") output.push(`集成批次: rollback 没有到 rolled_back（当前 ${rollback.status}）`);
+
+  const abortState = makeState().st;
+  const abort = createBatch(abortState, {batchId: "ib_abort"});
+  advanceIntegrationBatch(abortState, {batchId: abort.batchId, action: "start_rebase"});
+  advanceIntegrationBatch(abortState, {batchId: abort.batchId, action: "start_batch_ci", rebaseResultRef: "rebase:ok"});
+  advanceIntegrationBatch(abortState, {batchId: abort.batchId, action: "record_batch_ci", batchCiEvidence: "ci:ok"});
+  advanceIntegrationBatch(abortState, {batchId: abort.batchId, action: "prepare_merge", releaseManifest: "release:abort"});
+  advanceIntegrationBatch(abortState, {batchId: abort.batchId, action: "abort", abortDecision: "decision:abort"});
+  if (abort.status !== "aborted") output.push(`集成批次: abort 没有到 aborted（当前 ${abort.status}）`);
+
+  let missingEvidence = null;
+  try {
+    const badState = makeState().st;
+    const bad = createBatch(badState, {batchId: "ib_missing"});
+    advanceIntegrationBatch(badState, {batchId: bad.batchId, action: "start_rebase"});
+    advanceIntegrationBatch(badState, {batchId: bad.batchId, action: "start_batch_ci"});
+  } catch (error) { missingEvidence = error.message; }
+  if (missingEvidence !== "integration_batch_transition_evidence_missing") {
+    output.push(`集成批次: 缺少必要证据仍能推进（${missingEvidence || "已推进"}）`);
+  }
 }
 
 // Resolve a JSON-Pointer $ref (#/$defs/...) against the schema document root. Only local pointers are

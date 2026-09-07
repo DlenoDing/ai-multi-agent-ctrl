@@ -2512,8 +2512,7 @@ ENTITY_BOUNDED_COLLECTIONS = {
   "agents" => "智能体数由配额 maxAgents 封顶",
   "organizations" => "组织由系统管理员创建，数量级远小于活动量",
   "sharedDefinitions" => "共享定义是治理对象，人显式创建与终结；它还会成为关闭门的阻塞项，裁掉即丢阻塞",
-  "roomParticipants" => "参与者随房间×成员增长，受成员配额约束（房间消息自身另有体积预算裁剪）",
-  "integrationBatches" => "只声明未写入：当前没有任何生产路径产生它"
+  "roomParticipants" => "参与者随房间×成员增长，受成员配额约束（房间消息自身另有体积预算裁剪）"
 }.freeze
 # 裁剪函数体：函数名以 cap/trim/prune/retain 开头的那些，取到下一处顶格 } 为止。
 trimming_function_bodies = all_state_source.scan(/^(?:export )?function (?:cap|trim|prune|retain)[A-Za-z]*\([^\n]*\n(.*?)^\}/m).flatten

@@ -59,6 +59,8 @@ import {
   contractPublish,
   createExecutionTopology,
   advanceExecutionTopology,
+  createIntegrationBatch,
+  advanceIntegrationBatch,
   findTaskGroup,
   findingResolve,
   findingSubmit,
@@ -141,6 +143,8 @@ const toolDescriptions = {
   "scheduler-mcp.capacity_snapshot": "Return scheduler-visible session and agent capacity.",
   "scheduler-mcp.execution_topology_plan": "Create an execution topology plan for a task group.",
   "scheduler-mcp.execution_topology_advance": "Advance an execution topology along its modeled lifecycle (check_eligibility, start, downgrade, report_branch, reconcile_required, reconcile, block, unblock, merge, cancel).",
+  "scheduler-mcp.integration_batch_create": "Create an IntegrationBatch for parallel ChangeSet refs before serial release integration.",
+  "scheduler-mcp.integration_batch_advance": "Advance an IntegrationBatch through rebase, batch CI, release manifest, merge, retry, rollback or abort.",
   "scheduler-mcp.derived_task_classify": "Classify a derived task request without running it.",
   "resource-mcp.lease_claim": "Claim a bounded resource lease for a repository output target.",
   "resource-mcp.lease_release": "Release a resource lease and unblock follow-on dispatches.",
@@ -354,6 +358,8 @@ function requiredInputPropertiesFor(name) {
     "scheduler-mcp.work_assign": ["taskGroupId", "workItemId", "roleId"],
     "scheduler-mcp.execution_topology_plan": ["taskGroupId"],
     "scheduler-mcp.execution_topology_advance": ["topologyId", "action"],
+    "scheduler-mcp.integration_batch_create": ["taskGroupId", "changeSetRefs"],
+    "scheduler-mcp.integration_batch_advance": ["batchId", "action"],
     "model-mcp.model_select": ["taskGroupId", "workItemId", "roleId"],
     "resource-mcp.lease_release": ["leaseId", "holderRef", "fencingToken"],
     "skill-mcp.role_skill_overlay_validate": ["roleSkillRef"],
@@ -386,6 +392,7 @@ function commonInputProperties() {
   return {
     accountId: string,
     action: string,
+    abortDecision: string,
     actionReason: string,
     afterSequence: number,
     allowed: boolean,
@@ -396,15 +403,23 @@ function commonInputProperties() {
     artifactManifestRef: string,
     artifactManifestRefs: array,
     artifactRefs: array,
+    baselineCommit: string,
     baseRef: string,
     branch: string,
+    batchCiEvidence: string,
+    batchCiFailureEvidence: string,
+    batchId: string,
     capability: string,
     capabilityFlags: array,
     category: string,
     checkpointRefs: array,
     classification: string,
     command: string,
+    commandEffectRef: string,
     commitRefs: array,
+    changeSetRefs: array,
+    conflictRef: string,
+    conflictResolutionCheckpoint: string,
     conflictPolicy: {type: "string", enum: ["block_and_request_canonical_decision", "owner_reconciles_then_republish"]},
     consumerRef: string,
     consumerRefs: array,
@@ -459,6 +474,8 @@ function commonInputProperties() {
     locatorRefs: array,
     maxJobs: number,
     messageId: string,
+    mergeCommit: string,
+    mergeQueueItemRefs: array,
     mode: string,
     modelSelectionDecision: object,
     name: string,
@@ -501,10 +518,13 @@ function commonInputProperties() {
     resourceId: string,
     resourceType: string,
     returnPointRef: string,
+    rollbackEvidence: string,
     reviewBundleId: string,
     reviewEvidenceRefs: array,
     reviewPlanId: string,
     reviewScopeRefs: array,
+    rebaseResultRef: string,
+    releaseManifest: string,
     riskClass: string,
     roleId: string,
     roleSkillRef: string,
@@ -516,6 +536,7 @@ function commonInputProperties() {
     selectionMode: string,
     sessionId: string,
     severity: string,
+    splitOrRetryPlan: string,
     sourceId: string,
     sourceRef: string,
     sourceScope: string,
@@ -1120,7 +1141,7 @@ export const RESOURCE_ADDRESSING_ARG_KEYS = [
   "projectId", "taskGroupId", "workId", "workItemId", "dispatchId", "sessionId", "requestId",
   "contractId", "leaseId", "findingId", "approvalId", "repositoryOutputTargetRef", "targetId",
   // 以下六个同样是"单独一个就能指到一条项目级记录"的地址，原先不在清单里。
-  "envelopeId", "grantId", "nodeId", "reviewBundleId", "reviewPlanId", "topologyId"
+  "batchId", "envelopeId", "grantId", "nodeId", "reviewBundleId", "reviewPlanId", "topologyId"
 ];
 // Handlers that receive no explicit resource default their write to this project; a bounded principal not
 // scoped to it must not perform such an unscoped write into the control-plane tenant's default project.
@@ -1229,6 +1250,11 @@ export function inferMcpArgumentProjectIds(state, args = {}) {
     const taskGroup = (state.taskGroups || []).find((item) => item.id === taskGroupId);
     if (taskGroup?.projectId) projectIds.add(taskGroup.projectId);
   };
+  if (args.batchId) {
+    const batch = (state.integrationBatches || []).find((item) => item.batchId === args.batchId);
+    if (batch?.projectId) projectIds.add(batch.projectId);
+    projectIdForTaskGroupId(batch?.taskGroupId);
+  }
   const projectIdForSessionId = (sessionId) => {
     if (!sessionId) return;
     const session = (state.workSessions || []).find((item) => item.sessionId === sessionId);
@@ -1521,6 +1547,14 @@ async function dispatchTool(state, name, args, context = {}) {
       return createExecutionTopology(state, args, {root: repositoryRoot});
     case "scheduler-mcp.execution_topology_advance":
       return advanceExecutionTopology(state, {...args, actor: context?.principal?.id});
+    case "scheduler-mcp.integration_batch_create":
+      return boundedTaskGroupGuard(state, args, context) || createIntegrationBatch(state, {...args, actor: context?.principal?.id || "release"}, {root: repositoryRoot});
+    case "scheduler-mcp.integration_batch_advance": {
+      const existingBatch = (state.integrationBatches || []).find((item) => item.batchId === args.batchId);
+      if (!existingBatch) return {ok: false, error: "integration_batch_not_found"};
+      return boundedTaskGroupGuard(state, {taskGroupId: existingBatch.taskGroupId}, context)
+        || advanceIntegrationBatch(state, {...args, actor: context?.principal?.id || "release"});
+    }
     case "scheduler-mcp.derived_task_classify":
       return classifyDerivedTask(state, args);
     case "resource-mcp.lease_claim":
@@ -2064,6 +2098,7 @@ function finalizeScopedMcpState(scoped, projectIdSet, visibleTaskGroupIds) {
   scoped.modelSelectionDecisions = (scoped.modelSelectionDecisions || []).filter(tg);
   scoped.sessionPlacementDecisions = (scoped.sessionPlacementDecisions || []).filter(tg);
   scoped.executionTopologies = (scoped.executionTopologies || []).filter(tg);
+  scoped.integrationBatches = (scoped.integrationBatches || []).filter(tg);
   scoped.reviewPlans = (scoped.reviewPlans || []).filter(tg);
   scoped.reviewBundles = (scoped.reviewBundles || []).filter(tg);
   scoped.checkpoints = (scoped.checkpoints || []).filter(tg);
@@ -2111,7 +2146,6 @@ function finalizeScopedMcpState(scoped, projectIdSet, visibleTaskGroupIds) {
   scoped.decisionRecords = [];
   scoped.commandEffects = [];
   scoped.dlqEntries = [];
-  scoped.integrationBatches = [];
   scoped.idempotencyRecords = {};
   scoped.runtimeIssuePatterns = [];
   scoped.runtimeIssueSamples = [];

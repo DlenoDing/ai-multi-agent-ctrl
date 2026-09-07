@@ -59,6 +59,7 @@ const COLLECTION_ENTITY = {
   ruleSourceResolutions: "RuleSourceResolution",
   systemUpgradeCandidates: "SystemUpgradeCandidate",
   executionTopologies: "ExecutionTopology",
+  integrationBatches: "IntegrationBatch",
   derivedTaskRequests: "DerivedTaskRequest",
   reviewPlans: "ReviewPlan",
   reviewBundles: "ReviewBundle",
@@ -96,7 +97,7 @@ function loadProducedStatuses() {
 const VAR_MACHINES = {
   workItem: ["WorkItem"], expiredWorkItem: ["WorkItem"], blockedItem: ["WorkItem"], project: ["Project"],
   dispatch: ["AgentDispatch"], session: ["WorkSession"], command: ["Command"], effect: ["CommandEffect"],
-  topology: ["ExecutionTopology"], node: ["AgentNode"], taskGroup: ["TaskGroup"], account: ["Account"],
+  topology: ["ExecutionTopology"], batch: ["IntegrationBatch"], node: ["AgentNode"], taskGroup: ["TaskGroup"], account: ["Account"],
   request: ["PermissionRequest", "ApprovalRequest", "HumanConfirmationRequest", "DerivedTaskRequest"],
   derivedRequest: ["DerivedTaskRequest"],
   target: ["RepositoryOutputTarget"], repositoryTarget: ["RepositoryOutputTarget"],

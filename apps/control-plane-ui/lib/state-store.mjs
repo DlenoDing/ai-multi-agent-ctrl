@@ -26,6 +26,7 @@ const projectShardCollections = [
   "progressSnapshots",
   "agentControlCommands",
   "agentExecutionEvents",
+  "integrationBatches",
   "alertRules",
   "alerts",
   "humanConfirmationRequests",
@@ -47,6 +48,7 @@ export const PROJECT_SHARD_COLLECTION_LIMITS = Object.freeze({
   progressSnapshots: 5000,
   agentControlCommands: 5000,
   agentExecutionEvents: 1000,
+  integrationBatches: 5000,
   alertRules: 2000,
   alerts: 2000,
   humanConfirmationRequests: 2000,
@@ -710,6 +712,7 @@ const shardOpenPredicates = {
       && dispatch.sessionId === item.sessionId && dispatch.runId === item.runId),
   agentDispatches: (item) => !isTerminalDispatchStatus(item.status), // core 2778
   roleDriftGuards: (item) => !["closed", "corrected"].includes(item.status), // core 2756
+  integrationBatches: (item) => !["merged", "rolled_back", "aborted"].includes(item.status),
   alertRules: (item) => item.status === "active",
   alerts: (item) => !["resolved", "suppressed"].includes(item.status),
   // 任务组是主实体，工作项内嵌在它里面 —— 淘汰一个任务组等于连同它的全部工作项一起删掉，

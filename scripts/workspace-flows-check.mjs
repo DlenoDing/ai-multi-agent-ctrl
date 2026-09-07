@@ -21,9 +21,14 @@ server.stdout.on("data", (chunk) => { output += String(chunk); });
 server.stderr.on("data", (chunk) => { output += String(chunk); });
 
 async function request(path, {method = "GET", body, status = 200} = {}) {
-  const result = await fetch(`${baseUrl}${path}`, {method, signal: AbortSignal.timeout(10000),
-    headers: {"content-type": "application/json", "Idempotency-Key": randomUUID(), ...(sessionToken ? {authorization: `Bearer ${sessionToken}`} : {})},
-    ...(body === undefined ? {} : {body: JSON.stringify(body)})});
+  let result;
+  try {
+    result = await fetch(`${baseUrl}${path}`, {method, signal: AbortSignal.timeout(10000),
+      headers: {"content-type": "application/json", "Idempotency-Key": randomUUID(), ...(sessionToken ? {authorization: `Bearer ${sessionToken}`} : {})},
+      ...(body === undefined ? {} : {body: JSON.stringify(body)})});
+  } catch (error) {
+    throw new Error(`${method} ${path}: ${error.message}`, {cause: error});
+  }
   const payload = await result.json();
   assert.equal(result.status, status, `${method} ${path}: ${payload.error || result.status}`);
   return payload;
@@ -49,7 +54,7 @@ try {
   assert.equal(group.pauseReason, "human_directive_pause");
   const work = await request(`/api/task-groups/${group.id}/work-items`, {method: "POST", status: 201,
     body: {title: "手动启动前保留的任务", ownerRole: "agent-runtime", requirements: ["启动后按正常阶段门执行"]}});
-  await request("/api/orchestrator/run", {method: "POST", body: {mode: "all"}});
+  await request("/api/orchestrator/run", {method: "POST", body: {mode: "all", autoSyncSkills: false}});
   const beforeStart = await request(`/api/task-groups/${group.id}`);
   assert.equal(beforeStart.taskGroup.goalExecutionStatus, "active_paused_by_control");
   assert.equal(beforeStart.taskGroup.workItems.find((item) => item.id === work.workItem.id).status, work.workItem.status);

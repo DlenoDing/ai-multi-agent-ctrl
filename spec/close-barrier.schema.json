@@ -95,6 +95,7 @@
         "rules_candidates_processed",
         "runtime_issue_candidates_exported",
         "no_open_execution_topologies",
+        "no_open_integration_batches",
         "no_blocking_derived_task_requests",
         "all_review_plans_closed",
         "no_pending_review_bundles",
@@ -153,6 +154,9 @@
           "$ref": "#/$defs/gateResult"
         },
         "no_open_execution_topologies": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "no_open_integration_batches": {
           "$ref": "#/$defs/gateResult"
         },
         "no_blocking_derived_task_requests": {
@@ -390,6 +394,11 @@
             },
             {
               "contains": {
+                "const": "no_open_integration_batches"
+              }
+            },
+            {
+              "contains": {
                 "const": "no_blocking_derived_task_requests"
               }
             },
@@ -496,6 +505,7 @@
         "rules_candidates_processed",
         "runtime_issue_candidates_exported",
         "no_open_execution_topologies",
+        "no_open_integration_batches",
         "no_blocking_derived_task_requests",
         "all_review_plans_closed",
         "no_pending_review_bundles",
