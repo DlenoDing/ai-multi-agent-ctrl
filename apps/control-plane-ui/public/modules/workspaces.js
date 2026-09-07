@@ -103,17 +103,31 @@
   function showGuide() { return !context || !catalog[context.page] || current(context.page)?.id === "help"; }
   function showHub() { return !context || ["overview", "list"].includes(current(context.page)?.id || "overview"); }
 
+  // 动作型栏目（注册 / 创建 / 添加 / 授予）不进栏目条：停在这些栏目时高亮它所属的父栏目（注册节点→运行节点、授予任务组权限→任务组权限、
+  // 添加成员→列表、创建→本页第一个栏目），否则整条栏目条没有任何一项亮着，人不知道自己在哪。
+  const ACTION_PANES = new Set(["create", "add", "grant-group", "register"]);
+  function activePane(page) {
+    const id = current(page)?.id || "";
+    if (!ACTION_PANES.has(id)) return id;
+    const entries = catalog[page] || [];
+    const has = (target) => entries.some((entry) => entry.id === target);
+    if (id === "register" && has("nodes")) return "nodes";
+    if (id === "grant-group" && has("groups")) return "groups";
+    return entries.find((entry) => !ACTION_PANES.has(entry.id) && entry.id !== "help")?.id || id;
+  }
+
   function navigation(page, mobile = false, options = {}) {
     const entries = (catalog[page] || []).filter((entry) => entry.id !== "help"
       && !["create", "add", "grant-group", "register"].includes(entry.id)
       && (options.canCreate !== false || !["create", "register"].includes(entry.id)));
     if (!entries.length) return "";
+    const active = activePane(page);
     if (mobile === true) {
       return `<label class="workspace-mobile-picker"><span>当前栏目</span><select data-workspace-select data-workspace-page="${esc(page)}">${entries.map((entry) =>
-        `<option value="${esc(entry.id)}"${current(page)?.id === entry.id ? " selected" : ""}>${esc(entry.label)}</option>`).join("")}</select></label>`;
+        `<option value="${esc(entry.id)}"${active === entry.id ? " selected" : ""}>${esc(entry.label)}</option>`).join("")}</select></label>`;
     }
     return `<div class="${mobile === "inline" ? "workspace-detail-nav" : mobile ? "workspace-mobile-nav" : "workspace-nav"}" aria-label="功能栏目">${entries.map((entry) =>
-      `<button class="workspace-nav-item${current(page)?.id === entry.id ? " active" : ""}" data-workspace-page="${esc(page)}" data-workspace="${esc(entry.id)}" aria-current="${current(page)?.id === entry.id ? "page" : "false"}">${esc(entry.label)}</button>`).join("")}</div>`;
+      `<button class="workspace-nav-item${active === entry.id ? " active" : ""}" data-workspace-page="${esc(page)}" data-workspace="${esc(entry.id)}" aria-current="${active === entry.id ? "page" : "false"}">${esc(entry.label)}</button>`).join("")}</div>`;
   }
 
   function objectNavigation(page, options = {}) {
@@ -121,7 +135,8 @@
       && !["create", "add", "grant-group", "register"].includes(entry.id)
       && (options.canCreate !== false || !["create", "register"].includes(entry.id)));
     if (!entries.length) return "";
-    const item = (entry) => `<button class="object-section-nav-item${current(page)?.id === entry.id ? " active" : ""}" data-workspace-page="${esc(page)}" data-workspace="${esc(entry.id)}" aria-current="${current(page)?.id === entry.id ? "page" : "false"}">${esc(entry.label)}</button>`;
+    const active = activePane(page);
+    const item = (entry) => `<button class="object-section-nav-item${active === entry.id ? " active" : ""}" data-workspace-page="${esc(page)}" data-workspace="${esc(entry.id)}" aria-current="${active === entry.id ? "page" : "false"}">${esc(entry.label)}</button>`;
     const groups = [];
     for (const entry of entries) {
       const label = entry.group || "对象功能";
@@ -141,5 +156,5 @@
     return entry.titles.includes(entry.label) ? "" : `<div class="workspace-heading"><h2>${esc(entry.label)}</h2></div>`;
   }
 
-  window.AIMAC_WORKSPACES = {catalog, current, select, resolve, setAccount, owner, allows, run, showGuide, showHub, navigation, objectNavigation, heading};
+  window.AIMAC_WORKSPACES = {catalog, current, select, resolve, activePane, setAccount, owner, allows, run, showGuide, showHub, navigation, objectNavigation, heading};
 })();

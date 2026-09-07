@@ -943,6 +943,22 @@ const MUTATIONS = [
     expect: "集成批次终态后再推"
   },
   {
+    name: "动作型栏目时栏目条必须高亮父栏目（注册→运行节点）",
+    file: "apps/control-plane-ui/public/modules/workspaces.js",
+    gate: "console",
+    from: '    if (id === "register" && has("nodes")) return "nodes";\n',
+    to: '',
+    expect: "注册运行节点时栏目条高亮「运行节点」"
+  },
+  {
+    name: "下达指令页不许再摆第二个任务组选择器",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  if (page === "directives" && workspaces.current("directives")?.id === "compose") return "";\n',
+    to: '',
+    expect: "下达指令页只有表单里的「目标任务组」"
+  },
+  {
     name: "工作项卡的定稿要求表单必须默认收起",
     file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",

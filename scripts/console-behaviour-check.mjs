@@ -3038,6 +3038,33 @@ async function runErrorGuidanceCase() {
       !/class="workspace-detail-nav"/u.test(String(tgTabsRoot.innerHTML || "").split("</aside>")[1] || ""),
       "任务组列表页出现了只有一项的栏目条");
   }
+  {
+    // 【停在动作型栏目时栏目条要高亮父栏目】：注册运行节点时「运行节点」亮、创建 Agent 档案时「Agent 档案」亮，
+    // 否则整条栏目条没有一项亮着，人不知道自己在哪。
+    const registerRoot = el("div");
+    loadConsole(registerRoot, {realI18n: true}).renderFullPagePaneWith(navState, projectAccount, "p1", "proj-agents", "register");
+    const registerMain = String(registerRoot.innerHTML || "").split("</aside>")[1] || "";
+    const registerTabs = /<div class="workspace-detail-nav"[^>]*>([\s\S]*?)<\/div>/u.exec(registerMain)?.[1] || "";
+    check("注册运行节点时栏目条高亮「运行节点」",
+      /data-workspace="nodes" aria-current="page"/u.test(registerTabs) && !/data-workspace="profiles" aria-current="page"/u.test(registerTabs),
+      `注册页的栏目条：${registerTabs.slice(0, 240) || "没有栏目条"}`);
+    const createRoot = el("div");
+    loadConsole(createRoot, {realI18n: true}).renderFullPagePaneWith(navState, projectAccount, "p1", "proj-agents", "create");
+    const createTabs = /<div class="workspace-detail-nav"[^>]*>([\s\S]*?)<\/div>/u.exec(String(createRoot.innerHTML || "").split("</aside>")[1] || "")?.[1] || "";
+    check("创建 Agent 档案时栏目条高亮「Agent 档案」",
+      /data-workspace="profiles" aria-current="page"/u.test(createTabs),
+      `创建页的栏目条：${createTabs.slice(0, 240) || "没有栏目条"}`);
+    // 【下达指令页不摆两个任务组选择】：表单自带「目标任务组」，页顶的「任务组范围」只在指令流水栏出现。
+    const composeRoot = el("div");
+    loadConsole(composeRoot, {realI18n: true}).renderFullPagePaneWith({...navState, taskGroups: [{id: "tg_d", projectId: "p1", name: "组", status: "development", workItems: []}]}, projectAccount, "p1", "directives", "compose");
+    const composeMain = String(composeRoot.innerHTML || "").split("</aside>")[1] || "";
+    const historyRoot = el("div");
+    loadConsole(historyRoot, {realI18n: true}).renderFullPagePaneWith({...navState, taskGroups: [{id: "tg_d", projectId: "p1", name: "组", status: "development", workItems: []}]}, projectAccount, "p1", "directives", "history");
+    const historyMain = String(historyRoot.innerHTML || "").split("</aside>")[1] || "";
+    check("下达指令页只有表单里的「目标任务组」，页顶不再重复「任务组范围」；指令流水栏保留范围选择",
+      !/data-management-group/u.test(composeMain) && /data-form="directive-create"/u.test(composeMain) && /目标任务组/u.test(composeMain) && /data-management-group/u.test(historyMain),
+      `下达指令页范围选择器：${/data-management-group/u.test(composeMain)}；流水栏：${/data-management-group/u.test(historyMain)}`);
+  }
   check("桌面侧栏直接列功能，不在选中父菜单后临时展开 workspace 子导航",
     !/class="workspace-nav"/u.test(projectAside) && /data-menu="monitor" data-menu-workspace="overview"/u.test(projectAside)
       && /data-menu="proj-agents" data-menu-workspace="profiles"/u.test(projectAside),

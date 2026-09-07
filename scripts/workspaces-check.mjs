@@ -338,9 +338,13 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
       const html = workspaces.run(page, () => workspaces.navigation(page));
       const activeMatches = String(html).match(/class="workspace-nav-item active"/gu) || [];
       if (hiddenFromPrimaryNavigation.has(pane.id)) {
-        check(`${page}/${pane.id} remains selectable without occupying primary navigation`,
-          workspaces.current(page)?.id === pane.id && activeMatches.length === 0 && !String(html).includes(`data-workspace="${pane.id}"`),
-          `current=${workspaces.current(page)?.id}; nav=${html}`);
+        // 动作型栏目不进栏目条，但停在上面时栏目条要高亮它所属的父栏目（否则没有一项亮着，人不知道自己在哪）。
+        const parent = workspaces.activePane(page);
+        const expectActive = pane.id === "help" ? 0 : 1;
+        check(`${page}/${pane.id} remains selectable without occupying primary navigation (parent ${parent} highlighted)`,
+          workspaces.current(page)?.id === pane.id && activeMatches.length === expectActive && !String(html).includes(`data-workspace="${pane.id}"`)
+            && (pane.id === "help" || String(html).includes(`data-workspace="${parent}" aria-current="page"`)),
+          `current=${workspaces.current(page)?.id}; parent=${parent}; nav=${html}`);
       } else {
         check(`${page}/${pane.id} renders one active primary navigation item`, activeMatches.length === 1,
           `active item count=${activeMatches.length}`);

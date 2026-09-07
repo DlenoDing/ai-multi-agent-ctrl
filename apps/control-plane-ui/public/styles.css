@@ -477,6 +477,9 @@ input, select, textarea {
   color: var(--text-main);
 }
 input:focus, select:focus, textarea:focus { outline: 2px solid rgba(61, 127, 255, 0.35); border-color: var(--brand-accent); }
+/* 打开对象详情后脚本会把焦点放到页头（读屏用）：鼠标用户看到的一圈蓝框像是「选中态」，只在键盘聚焦时显示。 */
+[tabindex="-1"]:focus { outline: none; }
+[tabindex="-1"]:focus-visible { outline: 2px solid rgba(61, 127, 255, 0.35); outline-offset: 2px; }
 textarea { min-height: 72px; resize: vertical; }
 
 .checkbox-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 6px 12px; }

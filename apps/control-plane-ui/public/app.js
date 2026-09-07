@@ -2111,6 +2111,8 @@ function focusedTaskGroups() {
 function managementScopeBar() {
   if (page === "monitor" && selectedExecutionObject.id) return "";
   if (page === "tg" && expandedTaskGroupId) return "";
+  // 下达指令的表单自带「目标任务组」：页顶再摆一个「任务组范围」是同一页两个任务组选择；指令流水那一栏才需要范围。
+  if (page === "directives" && workspaces.current("directives")?.id === "compose") return "";
   if (!["tg", "tasks", "monitor", "review", "directives"].includes(page)) return "";
   focusedTaskGroups();
   const groups = projectTaskGroups();
