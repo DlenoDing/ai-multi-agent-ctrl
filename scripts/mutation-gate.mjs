@@ -12475,9 +12475,17 @@ const MUTATIONS = [
     name: "门清零时任务组详情不得少了关闭按钮",
     file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
-    from: '      ? `<div class="record"><div class="record-title">关闭门禁：${customBadge("可关闭", "green")}</div>${canControl',
-    to: '      ? `<div class="record"><div class="record-title">关闭门禁：${customBadge("可关闭", "green")}</div>${false',
+    from: '        : `<div class="record"><div class="record-title">关闭门禁：${customBadge("可关闭", "green")}</div>${canControl',
+    to: '        : `<div class="record"><div class="record-title">关闭门禁：${customBadge("可关闭", "green")}</div>${false',
     expect: "关闭门清零时任务组详情的执行控制栏要有「关闭任务组」按钮"
+  },
+  {
+    name: "已关闭的任务组不得被说成没权限",
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
+    gate: "console",
+    from: '  ` : ["closed", "aborted"].includes(taskGroup.status)\n    // 已了结的任务组不再接受控制：说清是终态，而不是把人当成没权限。\n    ? `<div class="notice">这个任务组已',
+    to: '  ` : false\n    // 已了结的任务组不再接受控制：说清是终态，而不是把人当成没权限。\n    ? `<div class="notice">这个任务组已',
+    expect: "已关闭的任务组要说是终态"
   },
   {
     name: "窄屏对象上下文必须隐藏重复操作",

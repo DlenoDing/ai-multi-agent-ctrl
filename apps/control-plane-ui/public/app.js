@@ -4934,7 +4934,7 @@ function renderProjectOverview() {
       <div class="metric-grid">
         <div class="metric"><span>任务组</span><strong>${openGroups.length}/${groups.length}</strong></div>
         <div class="metric"><span>任务组平均进度</span><strong>${avgProgress}%</strong>
-          <div class="small muted">按任务组平均；上面那个总进度是按工作项平均的，两者不一定相等</div></div>
+          <div class="small muted">按任务组平均；上面那个总进度是按任务平均的，两者不一定相等</div></div>
         <div class="metric"><span>受阻项</span><strong>${blockers.length}</strong>
           ${(() => {
             // 这一格数的是【任务组身上的 blockers】（关闭门那一套）。而「被挡住的派发」是另一回事，
@@ -9103,7 +9103,7 @@ document.addEventListener("click", async (event) => {
       if (!(await confirmDialog({
         title: "关闭任务组",
         message: `确认关闭任务组「${taskGroupNameOf(target.dataset.task)}」？`,
-        sub: "关闭后进入终态 closed，系统没有任何重新打开的入口 —— 这一步不可撤销。",
+        sub: "关闭后进入终态「已关闭」，系统没有任何重新打开的入口 —— 这一步不可撤销。",
         danger: true, confirmText: "关闭任务组"
       }))) return;
       const result = await api(`/api/task-groups/${encodeURIComponent(target.dataset.task)}/close-barrier/compute`, {method: "POST", body: JSON.stringify({mutate: true})});

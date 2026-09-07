@@ -121,7 +121,10 @@ function render(taskGroup, context, helpers) {
         <button class="primary-button" type="submit">保存语言策略</button>
       </form>
     </div>
-  ` : `<div class="notice">当前账号无“任务组控制”权限，仅可查看。当前统一语言：${esc(languageLabel(languagePolicy))}。</div>`;
+  ` : ["closed", "aborted"].includes(taskGroup.status)
+    // 已了结的任务组不再接受控制：说清是终态，而不是把人当成没权限。
+    ? `<div class="notice">这个任务组已${taskGroup.status === "closed" ? "关闭" : "中止"}（终态），不再接受暂停、恢复、评审等控制操作。统一语言：${esc(languageLabel(languagePolicy))}。</div>`
+    : `<div class="notice">当前账号无“任务组控制”权限，仅可查看。当前统一语言：${esc(languageLabel(languagePolicy))}。</div>`;
 
   // 视图里嵌的工作项是截断过的（真实总数在 workItemCount）。明细页优先用专用端点的完整列表；
   // 只有它没加载出来时才回落到这份截断的，而那时必须说清楚"这不是全部"。
@@ -208,7 +211,9 @@ function render(taskGroup, context, helpers) {
     ? `<div class="record"><div class="record-title">关闭门禁：<strong>尚未计算</strong></div><div class="record-meta">进入“关闭门禁”重算，或等下一次编排周期，才会知道这个任务组能不能关闭。</div></div>`
     : groupBarrier.satisfied
       // 门已经清零就把「关闭任务组」放在这里：原先只在执行监控的「验收与收口」栏目才有按钮，人在任务组详情看到「可关闭」却无处可点。
-      ? `<div class="record"><div class="record-title">关闭门禁：${customBadge("可关闭", "green")}</div>${canControl
+      ? ["closed", "aborted"].includes(taskGroup.status)
+        ? `<div class="record"><div class="record-title">关闭门禁：${customBadge(taskGroup.status === "closed" ? "已关闭" : "已中止", "gray")}</div></div>`
+        : `<div class="record"><div class="record-title">关闭门禁：${customBadge("可关闭", "green")}</div>${canControl
         ? `<div class="record-meta"><span>所有任务已收口，关闭后进入终态、不能重新打开。</span></div><div class="button-row"><button class="danger-button" data-action="close-task-group" data-task="${esc(taskGroup.id)}">关闭任务组</button></div>`
         : ""}</div>`
       : `<div class="record">

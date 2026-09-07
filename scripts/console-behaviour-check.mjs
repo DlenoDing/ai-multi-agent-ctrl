@@ -6263,6 +6263,10 @@ async function runPendingTruncationCase() {
       check("关闭门清零时任务组详情的执行控制栏要有「关闭任务组」按钮",
         /可关闭/u.test(controlPane) && new RegExp(`data-action="close-task-group" data-task="${detailTaskGroup.id}"`, "u").test(controlPane) && /不能重新打开/u.test(controlPane),
         `执行控制栏：${controlPane.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/关闭门禁.{0,80}/u)?.[0] || "没找到关闭门禁那行"}`);
+      const closedPane = probe.renderTaskGroupDetailPane("control", detail, {...detailTaskGroup, status: "closed"}, closableState, systemAdmin, "p1");
+      check("已关闭的任务组要说是终态，不能把有权限的人当成没权限，也不能再摆关闭按钮",
+        /已关闭（终态）/u.test(closedPane) && !/无“任务组控制”权限/u.test(closedPane) && !/data-action="close-task-group"/u.test(closedPane) && /关闭门禁：[\s\S]{0,120}已关闭/u.test(closedPane),
+        `已关闭的执行控制栏：${closedPane.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 200)}`);
       const readOnlyPane = probe.renderTaskGroupDetailPane("control", detail, detailTaskGroup, closableState, {accountId: "read_only", accountType: "user_account", permissions: []}, "p1");
       check("没有任务组控制权限的人看不到「关闭任务组」按钮",
         !/data-action="close-task-group"/u.test(readOnlyPane),
