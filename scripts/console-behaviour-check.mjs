@@ -2781,10 +2781,11 @@ async function runErrorGuidanceCase() {
   const systemAccount = {accountId: "sys", email: "sys@local", displayName: "系统管理员",
     accountType: "system_admin", roles: ["system_owner"], permissions: ["system:*"], organizationId: null};
   const systemNav = renderedNav(systemAccount, null, "sys-overview");
-  assertMenuLeaves("系统管理", systemNav, [["sys-overview", "overview", "系统概览"], ["sys-overview", "details", "技术状态"], ["sys-overview", "audit", "审计日志"],
-    ["sys-orgs", "list", "组织列表"], ["sys-settings", "models", "模型能力"],
-    ["sys-settings", "instruction-efficiency", "指令效率"], ["sys-settings", "envelopes", "指令信封"],
-    ["sys-settings", "definitions", "共享定义"], ["sys-settings", "upgrade-imports", "外部升级导入"]]);
+  // 系统空间侧栏 3 个入口：概览 / 组织 / 平台能力；技术状态、审计、维护与各项平台能力在页内栏目条切换。
+  assertMenuLeaves("系统管理", systemNav, [["sys-overview", "overview", "系统概览"], ["sys-orgs", "list", "组织"], ["sys-settings", "runtime", "平台能力"]]);
+  check("系统侧栏常显入口不多于 3 个，技术明细与平台能力分项不单列",
+    (systemNav.split("</aside>")[0].match(/data-menu-workspace="/gu) || []).length === 3,
+    `系统侧栏常显 ${(systemNav.split("</aside>")[0].match(/data-menu-workspace="/gu) || []).length} 个入口`);
   check("系统管理侧栏不混入创建和说明入口",
     !/data-menu-workspace="create"|data-menu-workspace="help"/u.test(systemNav),
     "系统侧栏仍把低频创建或说明入口与日常查阅并列");
@@ -2827,9 +2828,12 @@ async function runErrorGuidanceCase() {
   const orgAccount = {accountId: "org", email: "org@local", displayName: "组织管理员",
     accountType: "org_admin", roles: ["org_admin"], permissions: ["org:*", "project:create", "member:invite", "agent:activate"], organizationId: "org_default"};
   const orgNav = renderedNav(orgAccount, "p1", "org-overview");
-  assertMenuLeaves("组织管理", orgNav, [["org-members", "list", "成员账户"],
-    ["org-members", "grants", "权限矩阵"], ["org-projects", "list", "项目列表"], ["org-agents", "profiles", "共享 Agent 档案"],
-    ["org-agents", "nodes", "共享运行节点"]]);
+  // 组织空间侧栏 4 个入口：概览 / 成员账户 / 项目 / 共享 Agent；权限矩阵、项目授权、节点、令牌在页内栏目条切换。
+  assertMenuLeaves("组织管理", orgNav, [["org-overview", "overview", "组织概览"], ["org-members", "list", "成员账户"],
+    ["org-projects", "list", "项目"], ["org-agents", "profiles", "共享 Agent"]]);
+  check("组织侧栏常显入口不多于 4 个（权限矩阵 / 项目授权 / 节点 / 令牌都在页内切换）",
+    (orgNav.split("</aside>")[0].match(/data-menu-workspace="/gu) || []).length === 4,
+    `组织侧栏常显 ${(orgNav.split("</aside>")[0].match(/data-menu-workspace="/gu) || []).length} 个入口`);
   check("组织管理侧栏只保留日常查阅入口",
     !/data-menu-workspace="create"|data-menu-workspace="register"|data-menu-workspace="help"/u.test(orgNav),
     "组织侧栏仍把创建、注册或说明入口与日常查阅并列");

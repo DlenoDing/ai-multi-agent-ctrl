@@ -2063,7 +2063,7 @@ function renderContent() {
   if (groupDetail) return context + `<div class="object-detail-layout"><aside class="object-section-rail">${workspaces.objectNavigation("group-detail", workspaceOptions())}</aside><div class="object-detail-content">${pageBody}</div></div>`;
   // 页内栏目条：侧栏只留每页一个入口之后，页里的几个栏目（监控的 5 个、审核的 6 个、设置的 6 个…）要在内容区顶部
   // 用一条横向 tab 切换，不然只能从「⋯ 全部功能」绕。只有一个栏目的页（任务组列表、任务）不摆。
-  const pageTabs = !helpActive && !executionObjectOpen && PROJECT_PAGES.has(page) && pageWorkspaceTabCount(page) > 1
+  const pageTabs = !helpActive && !executionObjectOpen && pageWorkspaceTabCount(page) > 1
     ? workspaces.navigation(page, "inline", workspaceOptions()) : "";
   return context + (helpActive ? "" : mobileMenuHtml(functionalMenu, page, activeWorkspace)) + pageTabs + pageBody;
 }

@@ -64,19 +64,22 @@
   // 侧栏常显的项目入口（page:workspace）。任务页没有独立入口 —— 任务只在任务组里，侧栏高亮落在「任务组」。
   const PROJECT_PRIMARY = new Set(["proj-overview:overview", "tg:list", "review:inbox", "directives:compose",
     "proj-agents:profiles", "proj-members:list", "proj-settings:repositories", "monitor:overview"]);
+  // 系统 / 组织空间同法：每页一个侧栏入口，页内栏目条切换明细。
+  const SPACE_PRIMARY = new Set(["sys-overview:overview", "sys-orgs:list", "sys-settings:runtime",
+    "org-overview:overview", "org-members:list", "org-projects:list", "org-agents:profiles"]);
   const MENU_PAGE_ALIAS = {tasks: "tg"};
 
+  // 系统空间：系统只管组织与平台能力。侧栏 3 个入口（概览 / 组织 / 平台能力），技术状态、审计、维护与各项平台能力在页内栏目条切换。
   const SYSTEM_MENU = [
-    {divider: "平台运行"},
-    leaf("sys-overview", "overview", "系统概览", "服务、资源和存储状态"),
+    {divider: "系统管理"},
+    leaf("sys-overview", "overview", "系统概览", "服务、资源、审计与维护"),
+    leaf("sys-orgs", "list", "组织", "组织、初始管理员、启停和配额"),
+    leaf("sys-settings", "runtime", "平台能力", "运行参数、模型、技能源与指令协议"),
+    {divider: "全部功能"},
     leaf("sys-overview", "details", "技术状态", "服务器、资源、能耗、存储和服务明细"),
     leaf("sys-overview", "audit", "审计日志", "系统操作与归档链"),
     leaf("sys-overview", "maintenance", "维护操作", "初始化与受控维护"),
-    {divider: "组织治理"},
-    leaf("sys-orgs", "list", "组织列表", "组织、初始管理员、启停和配额"),
     leaf("sys-orgs", "create", "开通组织", "创建组织与初始组织管理员"),
-    {divider: "平台能力"},
-    leaf("sys-settings", "runtime", "运行参数", "服务器运行参数和状态"),
     leaf("sys-settings", "models", "模型能力", "可调度模型能力目录"),
     leaf("sys-settings", "skills", "技能源", "服务端 Skill 源与同步状态"),
     leaf("sys-settings", "instruction-efficiency", "指令效率", "token、压缩比例和缓存命中"),
@@ -88,18 +91,18 @@
     leaf("sys-settings", "help", "平台能力说明", "运行参数、模型、Skill 和协议边界")
   ];
 
+  // 组织空间：组织管理员管子账户、项目、共享 Agent。侧栏 4 个入口；权限矩阵、项目授权、节点、令牌在页内栏目条切换。
   const ORG_MENU = [
-    {divider: "日常管理"},
+    {divider: "组织管理"},
     leaf("org-overview", "overview", "组织概览", "配额、成员、项目与共享资源"),
-    leaf("org-projects", "list", "项目列表", "组织内项目状态和负责人"),
-    {divider: "成员与项目权限"},
-    leaf("org-members", "list", "成员账户", "组织子账户和生命周期"),
+    leaf("org-members", "list", "成员账户", "组织子账户、生命周期与权限矩阵"),
+    leaf("org-projects", "list", "项目", "组织内项目、负责人与项目授权"),
+    leaf("org-agents", "profiles", "共享 Agent", "组织级档案、共享运行节点与加入令牌"),
+    {divider: "全部功能"},
     leaf("org-members", "create", "创建成员", "签发一次性登录凭据"),
     leaf("org-members", "grants", "权限矩阵", "成员的项目与任务组角色"),
     leaf("org-projects", "create", "创建项目", "创建人自动成为项目负责人"),
     leaf("org-projects", "grants", "项目授权", "把组织成员加入项目"),
-    {divider: "共享 Agent"},
-    leaf("org-agents", "profiles", "共享 Agent 档案", "组织级逻辑角色"),
     leaf("org-agents", "create", "新建共享 Agent 档案", "创建可跨本组织项目调配的逻辑角色", {requires: "agent:activate"}),
     leaf("org-agents", "nodes", "共享运行节点", "组织级和项目级节点总览"),
     leaf("org-agents", "register", "注册共享运行节点", "组织范围的一次性接入"),
@@ -245,7 +248,7 @@
     return items.filter((item) => item.divider
       || (PROJECT_PAGES.has(item.id)
         ? PROJECT_PRIMARY.has(`${item.id}:${item.workspace}`)
-        : !actionWorkspaces.has(item.workspace)));
+        : SPACE_PRIMARY.has(`${item.id}:${item.workspace}`) && !actionWorkspaces.has(item.workspace)));
   }
 
   // 侧栏高亮：当前页在侧栏里只有一个入口时（monitor:dispatches → 执行监控），高亮那个入口；
@@ -318,6 +321,7 @@
     primaryNavigationItems,
     sidebarActive,
     PROJECT_PRIMARY,
+    SPACE_PRIMARY,
     MENU_PAGE_ALIAS,
     desktopMenuHtml,
     mobileMenuHtml

@@ -890,7 +890,7 @@ const MUTATIONS = [
     name: "侧栏收起明细栏目后，页内必须有栏目条（去掉＝只剩「⋯」一条路）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "  const pageTabs = !helpActive && !executionObjectOpen && PROJECT_PAGES.has(page) && pageWorkspaceTabCount(page) > 1\n    ? workspaces.navigation(page, \"inline\", workspaceOptions()) : \"\";",
+    from: "  const pageTabs = !helpActive && !executionObjectOpen && pageWorkspaceTabCount(page) > 1\n    ? workspaces.navigation(page, \"inline\", workspaceOptions()) : \"\";",
     to: "  const pageTabs = \"\";",
     expect: "监控页内容区顶部要有五个栏目的横向切换条"
   },
@@ -898,8 +898,8 @@ const MUTATIONS = [
     name: "只有一个栏目的页不摆空栏目条",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "PROJECT_PAGES.has(page) && pageWorkspaceTabCount(page) > 1\n",
-    to: "PROJECT_PAGES.has(page) && pageWorkspaceTabCount(page) > 0\n",
+    from: "!executionObjectOpen && pageWorkspaceTabCount(page) > 1\n",
+    to: "!executionObjectOpen && pageWorkspaceTabCount(page) > 0\n",
     expect: "任务组列表页出现了只有一项的栏目条"
   },
   {
@@ -917,6 +917,22 @@ const MUTATIONS = [
     from: "    const executionHost = (route.page === \"monitor\" && route.groupId) || (route.page === \"tasks\" && route.groupId && route.workId);",
     to: "    const executionHost = route.page === \"monitor\" && route.groupId;",
     expect: "任务页里的执行详情要写进地址"
+  },
+  {
+    name: "组织侧栏不许再把权限矩阵等明细铺回常显入口",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '    "org-overview:overview", "org-members:list", "org-projects:list", "org-agents:profiles"]);',
+    to: '    "org-overview:overview", "org-members:list", "org-members:grants", "org-projects:list", "org-agents:profiles"]);',
+    expect: "组织侧栏常显入口不多于 4 个"
+  },
+  {
+    name: "系统侧栏不许再把平台能力分项铺回常显入口",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '  const SPACE_PRIMARY = new Set(["sys-overview:overview", "sys-orgs:list", "sys-settings:runtime",',
+    to: '  const SPACE_PRIMARY = new Set(["sys-overview:overview", "sys-overview:audit", "sys-orgs:list", "sys-settings:runtime",',
+    expect: "系统侧栏常显入口不多于 3 个"
   },
   {
     name: "工作项卡的定稿要求表单必须默认收起",
