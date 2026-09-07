@@ -26,6 +26,8 @@ const STATE_MACHINE_BY_COLLECTION = {
   agentRuntimeNodes: "AgentNode",
   // 单数化只砍一个 s：agentDispatches → AgentDispatche，找不到机器 —— 于是这个集合当年被"登记豁免"了。
   agentDispatches: "AgentDispatch",
+  // 同一种坑：integrationBatches → IntegrationBatche。机器 IntegrationBatch 在规范里一直有，只是名字猜不到。
+  integrationBatches: "IntegrationBatch",
   // 下面七个此前也都"登记豁免"了 —— 机器一直在，只是名字对不上单数化的猜法；机器 states 与各自规范的
   // status enum 逐字相同（对过），所以直接按机器对表。
   accessGrants: "AccessControlGrant",

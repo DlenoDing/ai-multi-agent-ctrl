@@ -3833,6 +3833,29 @@ try {
       }
     }
     console.log("  ok  状态快照（系统/评审人 × 默认/full）都不带仓库凭证密文与明文，只带 apiKeySet 标记");
+    // 【集成批次控制流】：创建 → start_rebase → start_batch_ci → record_batch_ci → rollback 走到终态；终态之后再推要拒；
+    // 不存在的批次不能成为存在性预言机。批次走到终态才不会留下一个阻塞任务组关闭的活批次。
+    {
+      const batchPost = (path, key, body) => jsonFetch(port, path, {method: "POST", headers: {"Idempotency-Key": key, authorization: systemAuth}, body: JSON.stringify(body)});
+      const created = await batchPost("/api/integration-batches", "doctor-ib-create", {taskGroupId: "tg_runtime_management", batchId: "ib_doctor_flow",
+        changeSetRefs: ["changeset:doctor-1"], baselineCommit: "0000000000000000000000000000000000000000", evidenceRefs: []});
+      if (created.response.status !== 201 || created.payload?.integrationBatch?.status !== "queued") {
+        throw new Error(`集成批次创建失败（HTTP ${created.response.status} ${JSON.stringify(created.payload).slice(0, 160)}）`);
+      }
+      const steps = [["start_rebase", {}, "rebasing"], ["start_batch_ci", {rebaseResultRef: "rebase:doctor"}, "batch_ci_running"],
+        ["record_batch_ci", {batchCiEvidence: "ci:doctor-pass"}, "batch_verified"], ["rollback", {rollbackEvidence: "rollback:doctor"}, "rolled_back"]];
+      for (const [action, extra, expected] of steps) {
+        const advanced = await batchPost("/api/integration-batches/ib_doctor_flow/advance", `doctor-ib-${action}`, {action, ...extra});
+        if (advanced.response.status !== 200 || advanced.payload?.integrationBatch?.status !== expected) {
+          throw new Error(`集成批次 ${action} 没有走到 ${expected}（HTTP ${advanced.response.status} ${JSON.stringify(advanced.payload).slice(0, 160)}）`);
+        }
+      }
+      expectStatus(await batchPost("/api/integration-batches/ib_doctor_flow/advance", "doctor-ib-after-terminal", {action: "start_rebase"}),
+        409, "集成批次终态后再推", "integration_batch_already_terminal");
+      const missingBatch = await batchPost("/api/integration-batches/ib_doctor_missing/advance", "doctor-ib-missing", {action: "start_rebase"});
+      if (![403, 404].includes(missingBatch.response.status)) throw new Error(`不存在的集成批次没有被拒（HTTP ${missingBatch.response.status}）`);
+      console.log("  ok  集成批次：创建→重基→批量 CI→验证→回滚走到终态，终态后再推被拒，不存在的批次被拒");
+    }
     // 不自检就领不到活（admission 停在 read_only）—— 六项必检全绿才算入网。
     await jsonFetch(port, "/api/agent/v1/self-check", {
       method: "POST", headers: {authorization: haltNodeAuth},

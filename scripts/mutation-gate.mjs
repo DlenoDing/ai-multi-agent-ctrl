@@ -935,6 +935,14 @@ const MUTATIONS = [
     expect: "系统侧栏常显入口不多于 3 个"
   },
   {
+    name: "集成批次到终态后再推必须以 integration_batch_already_terminal 拒掉",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (result.alreadyTerminal) return json(res, 409, {error: "integration_batch_already_terminal", integrationBatch: result.integrationBatch});\n',
+    to: "",
+    expect: "集成批次终态后再推"
+  },
+  {
     name: "工作项卡的定稿要求表单必须默认收起",
     file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",

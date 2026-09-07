@@ -189,7 +189,7 @@
       "type": "string",
       "enum": [
         "command",
-        "command_created",
+        "integration", "command_created",
         "command_dispatched",
         "command_failed",
         "command_succeeded",
