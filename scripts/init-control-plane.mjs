@@ -53,7 +53,7 @@ function buildState() {
   const state = loadJson(seedPath);
   const now = new Date().toISOString();
   const systemAdminEmail = process.env.AIMAC_SYSTEM_ADMIN_EMAIL || "system.admin@local";
-  const systemAdminName = process.env.AIMAC_SYSTEM_ADMIN_NAME || "System Owner";
+  const systemAdminName = process.env.AIMAC_SYSTEM_ADMIN_NAME || "系统管理员";
   const systemOwner = state.accounts.find((account) => account.accountId === "acct_system_owner");
   if (systemOwner) {
     systemOwner.email = systemAdminEmail;

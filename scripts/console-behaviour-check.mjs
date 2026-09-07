@@ -4309,6 +4309,29 @@ function runReviewAxisCase() {
       /张三/u.test(text), "账号 actor 不再解析成显示名");
     check("认不出的账号 id 仍原样回落，不许被当成词表键",
       /acct_ghost/u.test(text), "不认识的账号 id 被吞掉或译错了");
+    // 【审计表的操作者与对象要说人话】（用户 09-08 系统管理员视角走查）：原先对象列整列是「TaskGroup:tg_x」，
+    // 运行节点操作者印成「agent-node:node_x」，系统服务表印的是英文服务 id。
+    const namedProbe = loadConsole(el("div"), {realI18n: true});
+    const namedHtml = namedProbe.renderSysOverviewWith({
+      accounts: [{accountId: "acct_u1", displayName: "张三", email: "z@x", accountType: "system_admin", status: "active", roles: []}],
+      projects: [{id: "p1", name: "客服平台", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg_1", projectId: "p1", name: "工单分派", status: "development", workItems: [{id: "w_1", title: "写分派文档", status: "ready"}]}],
+      agentRuntimeNodes: [{nodeId: "node_1", nodeName: "走查节点", organizationId: "org_default", status: "online"}],
+      auditLog: [
+        {id: "b1", at: "2026-09-08T00:00:00.000Z", actor: "agent-node:node_1", action: "agent_node_register", subject: "AgentRuntimeNode:node_1", result: "succeeded"},
+        {id: "b2", at: "2026-09-08T00:00:01.000Z", actor: "mcp:agent_node:node_1", action: "mcp_tool_call", subject: "evidence-mcp.artifact_register · projectId=p1", result: "succeeded"},
+        {id: "b3", at: "2026-09-08T00:00:02.000Z", actor: "acct_u1", action: "task_group_create", subject: "TaskGroup:tg_1", result: "succeeded"},
+        {id: "b4", at: "2026-09-08T00:00:03.000Z", actor: "acct_u1", action: "work_item_create", subject: "WorkItem:tg_1:w_1", result: "succeeded"}
+      ],
+      runtime: {services: [{serviceId: "agent-gateway", status: "running", health: "ok"}]}, services: [], truncatedCollections: []
+    }, {accountId: "acct_u1", accountType: "system_admin", displayName: "张三"}, null);
+    const namedText = String(namedHtml).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+    check("审计表的对象列要写「类型：名字」，运行节点操作者要写节点名，系统服务表要用中文服务名",
+      namedText.includes("任务组：工单分派") && namedText.includes("任务：写分派文档") && namedText.includes("运行节点：走查节点")
+        && namedText.includes("运行节点 走查节点") && namedText.includes("MCP · 运行节点 走查节点") && namedText.includes("项目：客服平台")
+        && namedText.includes("注册运行节点") && namedText.includes("Agent 网关")
+        && !/TaskGroup:tg_1|WorkItem:tg_1|agent-node:node_1|agent-gateway/u.test(namedText),
+      `审计表：${namedText.match(/审计日志.{0,400}/u)?.[0] || namedText.slice(0, 400)}`);
   }
 
   // 注销不可撤销，而"什么时候、为什么"此前落在 retiredAt/retiredReason 上、全仓没有读取点：
@@ -9056,7 +9079,7 @@ await runCodedApiErrorCase();
     loadConsole(mcpRoot, {realI18n: true}).renderFullPagePaneWith(mcpAudit, admin, null, "sys-overview", "audit");
     const mcpHtml = String(mcpRoot.innerHTML || "");
     check("MCP 那条审计记录要显示成中文且看得出是谁做的",
-      /MCP 工具调用/.test(mcpHtml) && /mcp:system_admin:acct_x/.test(mcpHtml),
+      /MCP 工具调用/.test(mcpHtml) && /MCP · acct_x/.test(mcpHtml),
       "审计页上出现英文动作名或看不出执行者 —— 问责这一栏作废");
   }
 }

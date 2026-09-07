@@ -13777,8 +13777,8 @@ const MUTATIONS = [
     file: "data/seed-state.json",
     gate: "contract",
     check: "verifyHumanAndOrganizationContracts",
-    from: '      "accountType": "org_admin",\n      "displayName": "Default Organization Admin",',
-    to: '      "accountType": "user_account",\n      "displayName": "Default Organization Admin",',
+    from: '      "accountType": "org_admin",\n      "displayName": "默认组织管理员",',
+    to: '      "accountType": "user_account",\n      "displayName": "默认组织管理员",',
     expect: "默认组织登记的初始管理员不是本组织的 org_admin"
   },
   {
@@ -14252,6 +14252,30 @@ const MUTATIONS = [
     from: '  const cellIds = (ids) => (ids || []).length ? (ids || []).map((id) => esc(cellTitle(id))).join("、") : "—";',
     to: '  const cellIds = (ids) => (ids || []).length ? (ids || []).map((id) => esc(id)).join("、") : "—";',
     expect: "执行控制栏的准入分类要写任务标题而不是 id"
+  },
+  {
+    name: "审计表对象列不得退回「类型:id」",
+    file: APP,
+    gate: "console",
+    from: '  const hit = /^([A-Za-z]+):(.+)$/u.exec(projectNamed);',
+    to: '  const hit = null;',
+    expect: "审计表的对象列要写「类型：名字」，运行节点操作者要写节点名，系统服务表要用中文服务名"
+  },
+  {
+    name: "审计表运行节点操作者不得退回原始 agent-node:id",
+    file: APP,
+    gate: "console",
+    from: '  if (node) return `运行节点 ${agentNodeLabel(node[1])}`;',
+    to: '  if (node) return raw;',
+    expect: "审计表的对象列要写「类型：名字」，运行节点操作者要写节点名，系统服务表要用中文服务名"
+  },
+  {
+    name: "系统服务表不得退回英文服务 id",
+    file: APP,
+    gate: "console",
+    from: '    esc(t(service.serviceId)),',
+    to: '    esc(service.serviceId),',
+    expect: "审计表的对象列要写「类型：名字」，运行节点操作者要写节点名，系统服务表要用中文服务名"
   }
 ];
 

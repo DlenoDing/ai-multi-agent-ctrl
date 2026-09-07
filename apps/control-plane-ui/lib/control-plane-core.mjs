@@ -317,7 +317,7 @@ function ensureOrganizations(state) {
       schemaVersion: "account/v1",
       accountId: "acct_default_org_admin",
       accountType: "org_admin",
-      displayName: "Default Organization Admin",
+      displayName: "默认组织管理员",
       email: "org.admin@local",
       status: "active",
       organizationId: DEFAULT_ORGANIZATION_ID,

@@ -1666,7 +1666,7 @@ function verifyHumanAndOrganizationContracts(output) {
   }
   const loginHints = localAccountLoginHints(state, {acct_default_org_admin: "abcd1234wxyz"});
   const defaultAdminHint = loginHints.find((item) => item.accountId === "acct_default_org_admin");
-  if (defaultAdminHint?.email !== "org.admin@local" || defaultAdminHint?.displayName !== "Default Organization Admin"
+  if (defaultAdminHint?.email !== "org.admin@local" || defaultAdminHint?.displayName !== "默认组织管理员"
     || defaultAdminHint?.tokenHint !== "abcd...wxyz" || "token" in (defaultAdminHint || {})) {
     output.push("本机默认组织管理员提示没有同时给登录账号、用途和脱敏令牌");
   }

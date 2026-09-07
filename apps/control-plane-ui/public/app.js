@@ -2339,18 +2339,54 @@ function renderOrgManagementHub(org, projects, openTaskGroups) {
 
 /* ---------------- 系统管理员：系统概览 ---------------- */
 
+// 审计表的操作者与对象都要说人话：「agent-node:node_x」是某台运行节点、「mcp:account:acct_x」是某人经 MCP 操作、
+// 「TaskGroup:tg_x」是某个任务组 —— 能查到名字就写名字，查不到才落回 id（原先整列印的是 类型:id）。
+function auditActorLabel(actor) {
+  const raw = String(actor || "");
+  const mcp = /^mcp:([a-z_]+):(.+)$/u.exec(raw);
+  if (mcp) return `MCP · ${mcp[1] === "agent_node" ? `运行节点 ${agentNodeLabel(mcp[2])}` : accountName(mcp[2])}`;
+  const node = /^agent[-_]node:(.+)$/u.exec(raw);
+  if (node) return `运行节点 ${agentNodeLabel(node[1])}`;
+  return accountName(raw);
+}
+
+const AUDIT_SUBJECT_TYPE_LABELS = {TaskGroup: "任务组", WorkItem: "任务", Project: "项目", Organization: "组织", Account: "账号",
+  AgentNode: "运行节点", AgentRuntimeNode: "运行节点", AgentDispatch: "派发", AgentJoinToken: "加入令牌", HumanDirective: "人工指令",
+  HumanConfirmationRequest: "人工确认请求", AccessGrant: "访问授权", PermissionRequest: "权限申请", ApprovalRequest: "审批请求",
+  Finding: "发现", QualityGate: "质量门", ReviewPlan: "评审计划", ReviewBundle: "评审包", Room: "协作室", Lease: "租约",
+  AgentSkillSource: "技能源", RoleSkillOverlay: "角色 Skill 定制", RepositoryOutputTarget: "产出目标", IntegrationBatch: "集成批次",
+  ExecutionTopology: "执行方案", SharedDefinitionContract: "共享定义", RuleSourceResolution: "规则来源", SystemUpgradeCandidate: "升级候选",
+  PolicyDecision: "策略决策", ModelSelectionDecision: "模型选择", SessionPlacementDecision: "会话放置", ModelCapabilityProfile: "模型能力",
+  InstructionEnvelope: "指令信封"};
+function auditSubjectLabel(subject) {
+  const raw = String(subject || "");
+  const projectNamed = raw.replace(/projectId=([A-Za-z0-9_-]+)/u, (whole, id) => `项目：${(state.projects || []).find((project) => project.id === id)?.name || id}`);
+  const hit = /^([A-Za-z]+):(.+)$/u.exec(projectNamed);
+  if (!hit) return projectNamed;
+  const [, type, rest] = hit;
+  const typeLabel = AUDIT_SUBJECT_TYPE_LABELS[type] || (kindLabel(type) !== type ? kindLabel(type) : type);
+  let name = rest;
+  if (type === "TaskGroup") name = taskGroupNameOf(rest);
+  else if (type === "WorkItem") { const [groupId, workId] = rest.split(":"); name = workId ? workItemTitleOf(groupId, workId) : rest; }
+  else if (type === "Project") name = (state.projects || []).find((project) => project.id === rest)?.name || rest;
+  else if (type === "Organization") name = [...(organizations || []), ...(state.organizations || [])].find((org) => org.orgId === rest)?.name || rest;
+  else if (type === "Account") name = accountName(rest);
+  else if (type === "AgentNode" || type === "AgentRuntimeNode") name = agentNodeLabel(rest);
+  return `${typeLabel}：${name}`;
+}
+
 function renderSysOverview() {
   const overview = systemOverview;
   const services = (state.runtime?.services || []).map((service) => row([
-    `<span class="mono">${esc(service.serviceId)}</span>`,
+    esc(t(service.serviceId)),
     badge(service.status),
     badge(service.health)
   ])).join("");
   const audit = (state.auditLog || []).slice(0, 15).map((entry) => row([
     fmtTime(entry.at),
-    esc(accountName(entry.actor)),
+    esc(auditActorLabel(entry.actor)),
     esc(t(entry.action)),
-    {v: esc(entry.subject), c: "text-clip"},
+    {v: esc(auditSubjectLabel(entry.subject)), c: "text-clip"},
     badge(entry.result || "ok")
   ])).join("");
 
