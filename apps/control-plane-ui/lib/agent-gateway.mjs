@@ -1716,6 +1716,14 @@ export function dispatchRepositoryCredential(state, dispatch, repositoryOutputTa
   return {mode, repositoryId: wanted, username: String(credential.username || (mode === "api_key" ? "x-access-token" : "")), secret};
 }
 
+function overlayRefLines(label, ref, emptyValue) {
+  const value = String(ref || "");
+  if (!value || value === emptyValue) return [];
+  if (value.startsWith("text:")) return [`### ${label}（人工直接填写，必须遵守）`, "", value.slice("text:".length).trim(), ""];
+  if (value.startsWith("git:")) return [`- ${label}见项目仓库文件 \`${value.slice("git:".length)}\`：执行前先读它并遵守`];
+  return [`- ${label}引用：${value}`];
+}
+
 function buildDispatchPackage(state, dispatch, node, options) {
   const contract = state.agentTaskContracts.find((item) => item.sessionId === dispatch.sessionId && item.runId === dispatch.runId);
   const repositoryOutputTarget = state.repositoryOutputs.find((item) => item.targetId === dispatch.repositoryOutputTargetRef);
@@ -1799,8 +1807,10 @@ export function buildSkillWorkset(state, contract, options) {
       overlayText.push(`## ${overlay.overlayId}`);
       if ((patch.allowedCapabilityAdds || []).length) overlayText.push(`- 追加允许的能力：${patch.allowedCapabilityAdds.join("、")}`);
       if ((patch.forbiddenCapabilityAdds || []).length) overlayText.push(`- 追加禁止的能力：${patch.forbiddenCapabilityAdds.join("、")}`);
-      if (patch.instructionRef && patch.instructionRef !== "overlay:empty") overlayText.push(`- 附加说明引用：${patch.instructionRef}`);
-      if (patch.modelRequirementPatchRef && patch.modelRequirementPatchRef !== "overlay:model:none") overlayText.push(`- 模型要求补丁：${patch.modelRequirementPatchRef}`);
+      // 附加说明／模型要求：人在控制台「直接填写」的存成 text:…，正文原样下发；「引用仓库文档」存成 git:路径，
+      // 让 agent 执行前先读那份文件。原先只把引用串原样列出来，直接填写的一个字都到不了 agent。
+      overlayText.push(...overlayRefLines("附加说明", patch.instructionRef, "overlay:empty"));
+      overlayText.push(...overlayRefLines("模型要求", patch.modelRequirementPatchRef, "overlay:model:none"));
       overlayText.push("");
     }
     const overlayContent = overlayText.join("\n");

@@ -12438,6 +12438,24 @@ const MUTATIONS = [
     expect: "控制台里又出现了自由填角色的输入框"
   },
   {
+    name: "直接填写的附加说明必须下发正文",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '  if (value.startsWith("text:")) return [`### ${label}（人工直接填写，必须遵守）`, "", value.slice("text:".length).trim(), ""];',
+    to: '  if (value.startsWith("text:")) return [`- ${label}引用：${value}`];',
+    expect: "人「直接填写」的附加说明正文没有下发给 agent"
+  },
+  {
+    name: "运行时提示词必须点名读角色定制文件",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '      ? [`- read and apply ${join(workset.directory, "SKILL.overlay.md")} — human customization for this role; on conflict it overrides SKILL.md`] : []),',
+    to: '      ? [] : []),',
+    expect: "运行时提示词没有点名读 SKILL.overlay.md"
+  },
+  {
     name: "窄屏对象上下文必须隐藏重复操作",
     file: "apps/control-plane-ui/public/workspaces.css",
     gate: "console",

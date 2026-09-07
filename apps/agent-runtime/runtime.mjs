@@ -1832,6 +1832,9 @@ function buildExecutionPrompt(config, dispatchPackage, workset, packagePath) {
     "- run stated focused gates",
     "- commit/push task-owned checkpoint when stable",
     `- load skill workset ${workset.manifestPath}`,
+    // 人对这个角色的定制（SKILL.overlay.md）叠加于 SKILL.md：单靠「加载技能集」一句，模型未必会读到它。
+    ...(workset.directory && existsSync(join(workset.directory, "SKILL.overlay.md"))
+      ? [`- read and apply ${join(workset.directory, "SKILL.overlay.md")} — human customization for this role; on conflict it overrides SKILL.md`] : []),
     ...(bundleFiles.length ? [
       // 与技能集同规的强制指令。没有这一句，上面 read: 里列出的文件只是"可以看看"，
       // 而这些是【必须遵守】的规则与【人已经拍过板】的决定。

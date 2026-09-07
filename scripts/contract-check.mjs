@@ -3389,6 +3389,29 @@ function verifyHumanAndOrganizationContracts(output) {
     if (overlayFile && !String(overlayFile.content).includes("cap_banned")) {
       output.push("角色定制: overlay 里追加的禁止能力没有出现在下发内容里");
     }
+    // 人在控制台「直接填写」的附加说明（text:…）正文必须原样下发；「引用仓库文档」（git:路径）要让 agent 执行前先读那份文件。
+    {
+      const textOverlay = registerRoleSkillOverlay(ovState, {roleSkillRef: ovBase.roleSkillId,
+        patch: {allowedCapabilityAdds: [], forbiddenCapabilityAdds: [], instructionRef: "text:遇到不确定的接口先问人，不要自行猜测", modelRequirementPatchRef: "git:docs/roles/reviewer-model.md"}});
+      const textId = textOverlay.overlay?.overlayId || textOverlay.overlayId;
+      const textContract = {roleId: "reviewer", languagePolicy: {}, roleSkill: {roleSkillRef: `${ovBase.roleSkillId}+${textId}`, overlayRefs: [textId]}};
+      let textWorkset = null;
+      try { textWorkset = buildSkillWorkset(ovState, textContract, {runtimeDir: ".runtime"}); }
+      catch (error) { output.push(`角色定制（直接填写）: 无法构建技能集（${error.message}）—— 这条断言无从验证`); }
+      const textFile = (textWorkset?.files || []).find((file) => file.path === "SKILL.overlay.md");
+      const body = String(textFile?.content || "");
+      if (!body.includes("遇到不确定的接口先问人，不要自行猜测") || !/附加说明（人工直接填写，必须遵守）/u.test(body)) {
+        output.push("角色定制: 人「直接填写」的附加说明正文没有下发给 agent（SKILL.overlay.md 里只有引用串，没有正文）");
+      }
+      if (body.includes("text:遇到")) output.push("角色定制: 附加说明下发时把 text: 前缀原样带上了 —— 那是存储形态，不是给模型看的");
+      if (!/模型要求见项目仓库文件 `docs\/roles\/reviewer-model\.md`：执行前先读它并遵守/u.test(body)) {
+        output.push("角色定制: 「引用仓库文档」的模型要求没有告诉 agent 去读那份文件");
+      }
+      const runtimeSource = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+      if (!/read and apply \$\{join\(workset\.directory, "SKILL\.overlay\.md"\)\}/u.test(runtimeSource)) {
+        output.push("运行时提示词没有点名读 SKILL.overlay.md —— 单靠「加载技能集」一句，人的角色定制未必会被模型读到");
+      }
+    }
 
     // 技能包是 agent 干活的依据（SKILL.md 就是它读到的角色规则）。这四道门此前【零覆盖】：
     // 技能不在册、源文件不在盘上、盘上那份与登记的摘要对不上、注册表整个空了。
