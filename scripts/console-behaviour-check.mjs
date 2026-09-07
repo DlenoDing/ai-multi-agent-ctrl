@@ -3007,6 +3007,24 @@ async function runErrorGuidanceCase() {
         && (tasksAside.match(/<details class="nav-group" open>/gu) || []).length === 1,
       "打开任务页时侧栏没有高亮「任务组」，或又出现了平级的「任务」入口");
   }
+  {
+    // 【侧栏收起明细栏目之后，页内要有栏目条】：监控 5 个栏目、审核 6 个、设置 6 个要在内容区顶部横向切换；
+    // 只有一个栏目的页（任务组列表）不摆空条。
+    const monitorTabsRoot = el("div");
+    loadConsole(monitorTabsRoot, {realI18n: true}).renderFullPagePaneWith(navState, projectAccount, "p1", "monitor", "overview");
+    const monitorTabsHtml = String(monitorTabsRoot.innerHTML || "");
+    const monitorTabsMain = monitorTabsHtml.split("</aside>")[1] || "";
+    const tabBar = /<div class="workspace-detail-nav"[^>]*>([\s\S]*?)<\/div>/u.exec(monitorTabsMain)?.[1] || "";
+    check("监控页内容区顶部要有五个栏目的横向切换条（侧栏收起明细后不能只剩「⋯」一条路）",
+      (tabBar.match(/data-workspace-page="monitor"/gu) || []).length === 5
+        && /data-workspace="acceptance"/u.test(tabBar) && /data-workspace="overview" aria-current="page"/u.test(tabBar),
+      `监控页栏目条：${tabBar.slice(0, 300) || "没有 workspace-detail-nav"}`);
+    const tgTabsRoot = el("div");
+    loadConsole(tgTabsRoot, {realI18n: true}).renderFullPagePaneWith(navState, projectAccount, "p1", "tg", "list");
+    check("只有一个栏目的页（任务组列表）不摆空的栏目条",
+      !/class="workspace-detail-nav"/u.test(String(tgTabsRoot.innerHTML || "").split("</aside>")[1] || ""),
+      "任务组列表页出现了只有一项的栏目条");
+  }
   check("桌面侧栏直接列功能，不在选中父菜单后临时展开 workspace 子导航",
     !/class="workspace-nav"/u.test(projectAside) && /data-menu="monitor" data-menu-workspace="overview"/u.test(projectAside)
       && /data-menu="proj-agents" data-menu-workspace="profiles"/u.test(projectAside),

@@ -887,6 +887,22 @@ const MUTATIONS = [
     expect: "切换功能后自动展开新的业务分组并收起旧分组"
   },
   {
+    name: "侧栏收起明细栏目后，页内必须有栏目条（去掉＝只剩「⋯」一条路）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const pageTabs = !helpActive && !executionObjectOpen && PROJECT_PAGES.has(page) && pageWorkspaceTabCount(page) > 1\n    ? workspaces.navigation(page, \"inline\", workspaceOptions()) : \"\";",
+    to: "  const pageTabs = \"\";",
+    expect: "监控页内容区顶部要有五个栏目的横向切换条"
+  },
+  {
+    name: "只有一个栏目的页不摆空栏目条",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "PROJECT_PAGES.has(page) && pageWorkspaceTabCount(page) > 1\n",
+    to: "PROJECT_PAGES.has(page) && pageWorkspaceTabCount(page) > 0\n",
+    expect: "任务组列表页出现了只有一项的栏目条"
+  },
+  {
     name: "工作项卡的定稿要求表单必须默认收起",
     file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
@@ -11874,8 +11890,8 @@ const MUTATIONS = [
     name: "窄屏主要功能必须收敛成单一全局选择器",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "  return context + (helpActive ? \"\" : mobileMenuHtml(functionalMenu, page, activeWorkspace)) + pageBody;",
-    to: "  return context + pageBody;",
+    from: "  return context + (helpActive ? \"\" : mobileMenuHtml(functionalMenu, page, activeWorkspace)) + pageTabs + pageBody;",
+    to: "  return context + pageTabs + pageBody;",
     expect: "窄屏主要功能只使用一个全局选择器"
   },
   {
