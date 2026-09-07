@@ -1034,7 +1034,7 @@ const MUTATIONS = [
     name: "档案表默认模型预设要显示中文",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "  return label ? `${esc(label)}<div class=\"small muted mono\">${esc(id)}</div>` : `<span class=\"mono\">${esc(id)}</span>`;",
+    from: "  return label ? esc(label) : `<span class=\"mono\">${esc(id)}</span>`;",
     to: "  return `<span class=\"mono\">${esc(id)}</span>`;",
     expect: "档案表里默认模型仍是原始码"
   },
@@ -12454,6 +12454,14 @@ const MUTATIONS = [
     from: '      ? [`- read and apply ${join(workset.directory, "SKILL.overlay.md")} — human customization for this role; on conflict it overrides SKILL.md`] : []),',
     to: '      ? [] : []),',
     expect: "运行时提示词没有点名读 SKILL.overlay.md"
+  },
+  {
+    name: "登录页不得丢掉弹窗（改密提示会看不见）",
+    file: APP,
+    gate: "console",
+    from: '    </div>\n    ${modalHtml}\n  `;\n  // 登录页也要把弹窗带上',
+    to: '    </div>\n  `;\n  // 登录页也要把弹窗带上',
+    expect: "那句提示要真的在屏幕上"
   },
   {
     name: "窄屏对象上下文必须隐藏重复操作",

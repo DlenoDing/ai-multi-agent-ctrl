@@ -5438,6 +5438,21 @@ async function runPendingTruncationCase() {
       check("改密的成功提示要说清所有会话（含这一台）都失效了",
         /都已失效|包括当前这一台/u.test(branch),
         "没有说清为什么突然要重新登录 —— 人会以为是故障");
+      // 上面三条只看源码；这一条真提交：改完密码回到登录页时，那句提示必须真的在屏幕上（登录页模板原先不含弹窗，实测看不到）。
+      {
+        const pwProbe = loadConsole(el("div"), {realI18n: true});
+        const recorded = [];
+        pwProbe.setFetch(async (url, init = {}) => { recorded.push({url: String(url), method: init.method || "GET"}); return {ok: true, status: 200, headers: {get: () => null}, json: async () => ({ok: true})}; });
+        pwProbe.setAuth("probe-token", {accountId: "acct_pw", accountType: "org_admin", displayName: "改密的人", organizationId: "org_default"});
+        const pwForm = el("form", {dataset: {form: "change-password"}}, [
+          el("input", {name: "currentPassword", value: ""}), el("input", {name: "newPassword", value: "Walk-2026-sandbox"}), el("input", {name: "confirmPassword", value: "Walk-2026-sandbox"}), el("button", {type: "submit"})]);
+        await pwProbe.submit({target: pwForm, submitter: pwForm.children[3], preventDefault: () => {}});
+        const posted = recorded.some((item) => item.method === "POST" && /\/api\/auth\/change-password$/u.test(item.url));
+        const loginScreen = pwProbe.renderLoginWith(null);
+        check("改完密码回到登录页时，「密码已更新、请用新密码重新登录」那句提示要真的在屏幕上",
+          posted && /data-form="login"/u.test(loginScreen) && /密码已更新/u.test(loginScreen) && /请用新密码重新登录/u.test(loginScreen),
+          posted ? `登录页上${/密码已更新/u.test(loginScreen) ? "有" : "没有"}那句提示` : "没记录到 POST /api/auth/change-password —— 这条什么也没验");
+      }
     }
   }
 
