@@ -879,6 +879,14 @@ const MUTATIONS = [
     expect: "只读任务组仍摆出不能提交的 Skill 定制表单"
   },
   {
+    name: "监控明细页在侧栏要回落高亮「执行监控」（当前页只有一个侧栏入口时）",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: "    return !primaryItems.some((other) => !other.divider && other.id === pageId && other.workspace === workspace);",
+    to: "    return false;",
+    expect: "切换功能后自动展开新的业务分组并收起旧分组"
+  },
+  {
     name: "工作项卡的定稿要求表单必须默认收起",
     file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
@@ -11930,25 +11938,25 @@ const MUTATIONS = [
     name: "低频页面不得挤进日常侧栏",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
-    from: '      monitor: new Set(["sessions", "lanes", "models", "placements", "admissions", "events", "node-control", "commands", "dlq", "checkpoints", "finalizations"]),',
-    to: "      monitor: new Set([]),",
-    expect: "低频页面只在功能概览按需展开"
+    from: '    "proj-agents:profiles", "proj-members:list", "proj-settings:repositories", "monitor:overview"]);',
+    to: '    "proj-agents:profiles", "proj-members:list", "proj-settings:repositories", "monitor:overview", "monitor:dispatches"]);',
+    expect: "项目侧栏常显入口不多于 8 个"
   },
   {
     name: "项目历史不得挤进日常侧栏",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
-    from: '      "proj-overview": new Set(["activity", "outputs"]),',
-    to: '      "proj-overview": new Set([]),',
-    expect: "低频页面只在功能概览按需展开"
+    from: '  const PROJECT_PRIMARY = new Set(["proj-overview:overview", "tg:list", "review:inbox", "directives:compose",',
+    to: '  const PROJECT_PRIMARY = new Set(["proj-overview:overview", "tg:list", "tasks:list", "review:inbox", "directives:compose",',
+    expect: "项目侧栏常显入口不多于 8 个"
   },
   {
     name: "审核明细不得挤进日常侧栏",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
-    from: '      review: new Set(["pending", "permissions", "approvals", "findings", "history"])',
-    to: "      review: new Set([])",
-    expect: "低频页面只在功能概览按需展开"
+    from: '  const PROJECT_PRIMARY = new Set(["proj-overview:overview", "tg:list", "review:inbox", "directives:compose",',
+    to: '  const PROJECT_PRIMARY = new Set(["proj-overview:overview", "tg:list", "directives:compose",',
+    expect: "缺少稳定功能入口：review/inbox/待办处理"
   },
   {
     name: "低频页面必须保留功能概览入口",
@@ -12066,8 +12074,8 @@ const MUTATIONS = [
     name: "全部功能页必须展开所属业务分组",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
-    from: '    const activeGroup = workspace === "help"\n      ? primaryGroups.find((group) => group.items.some((item) => item.id === pageId))?.label\n      : menuGroups(items).find((group) => group.items.some((item) => item.id === pageId && item.workspace === workspace))?.label;',
-    to: '    const activeGroup = menuGroups(items).find((group) => group.items.some((item) => item.id === pageId && item.workspace === workspace))?.label;',
+    from: "    const activeGroup = primaryGroups.find((group) => group.items.some((item) => sidebarActive(item, pageId, workspace, primaryItems)))?.label;",
+    to: "    const activeGroup = null;",
     expect: "全部功能页必须使用模块名并展开所属分组"
   },
   {
@@ -13656,25 +13664,25 @@ const MUTATIONS = [
     name: "项目成员与 Agent 必须归入明确资源分组",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
-    from: '    {divider: "成员与 Agent"},',
-    to: '    {divider: "团队与 Agent"},',
-    expect: "项目管理侧栏要按普通管理动作分栏目"
+    from: '    {divider: "项目"},\n    leaf("proj-overview", "overview", "项目概览", "总进度、健康度和当前下一步"),',
+    to: '    {divider: "工作"},\n    leaf("proj-overview", "overview", "项目概览", "总进度、健康度和当前下一步"),',
+    expect: "项目管理侧栏没有按「项目 / 资源与设置」两组组织"
   },
   {
     name: "项目默认配置分组必须明确层级",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
-    from: '    {divider: "项目默认配置"},',
-    to: '    {divider: "项目设置"},',
-    expect: "项目管理侧栏要按普通管理动作分栏目"
+    from: '    {divider: "资源与设置"},',
+    to: '    {divider: "设置"},',
+    expect: "项目管理侧栏没有按「项目 / 资源与设置」两组组织"
   },
   {
     name: "人工审核与指令必须统一归组",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
-    from: '    {divider: "人工审核与指令"},',
-    to: '    {divider: "人工介入"},',
-    expect: "项目管理侧栏要按普通管理动作分栏目"
+    from: '  const MENU_PAGE_ALIAS = {tasks: "tg"};',
+    to: '  const MENU_PAGE_ALIAS = {};',
+    expect: "任务页在侧栏要高亮「任务组」"
   },
   {
     name: "任务组快捷入口必须点明当前作用域",

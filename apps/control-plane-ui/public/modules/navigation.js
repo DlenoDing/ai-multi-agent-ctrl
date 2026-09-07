@@ -14,26 +14,32 @@
 
   const leaf = (id, workspace, label, description, options = {}) => ({id, workspace, label, description, ...options});
 
+  // 项目空间的侧栏按从属层级收敛：项目 → 任务组（任务在任务组里）→ 待办与指令；资源与设置另成一组。
+  // 此前 53 个叶子分 6 组、侧栏常显 21 个，人看到的是「到处都有入口、到处在交叉」。
+  // 下面前两组是侧栏常显的 8 个入口；「全部功能」组里的叶子只用于路由、页头标题、权限与说明页，不进侧栏。
   const PROJECT_MENU_TAIL = [
-    {divider: "日常工作"},
+    {divider: "项目"},
     leaf("proj-overview", "overview", "项目概览", "总进度、健康度和当前下一步"),
+    leaf("tg", "list", "任务组", "任务组、任务与执行详情"),
+    leaf("review", "inbox", "待办处理", "等你审核、审批和处置的事项"),
+    leaf("directives", "compose", "人工指令", "向 AI 总控下达结构化指令", {requires: "task_group:control"}),
+    {divider: "资源与设置"},
+    leaf("proj-agents", "profiles", "Agent", "档案、运行节点与注册"),
+    leaf("proj-members", "list", "成员与权限", "项目成员与任务组权限"),
+    leaf("proj-settings", "repositories", "项目设置", "仓库、基线、角色、Skill 与规则"),
+    leaf("monitor", "overview", "执行监控", "会话、派发、节点与验收"),
+    {divider: "全部功能"},
     leaf("proj-overview", "activity", "最新执行", "近期执行事件与变化"),
     leaf("proj-overview", "outputs", "仓库产出", "项目 Git 产出归属"),
-    leaf("tg", "list", "任务组", "任务组列表、进度与状态"),
     leaf("tg", "create", "新建任务组", "定义目标、角色和初始状态", {requires: "task_group:control"}),
     leaf("tasks", "list", "任务", "按时间倒序查看任务和执行详情"),
     leaf("tasks", "create", "新建任务", "向任务组增加工作项", {requires: "task_group:control"}),
-    {divider: "成员与 Agent"},
-    leaf("proj-members", "list", "项目成员", "项目角色和成员详情"),
     leaf("proj-members", "add", "添加项目成员", "把组织成员加入当前项目", {requires: "project:grant"}),
     leaf("proj-members", "groups", "任务组权限", "按任务组分配控制、审核和观察"),
     leaf("proj-members", "grant-group", "授予任务组权限", "给成员分配当前任务组角色", {requires: "project:grant"}),
-    leaf("proj-agents", "profiles", "项目 Agent", "项目专属与组织共享逻辑角色"),
     leaf("proj-agents", "create", "新建 Agent 档案", "创建当前项目专属逻辑角色", {requires: "agent:activate"}),
     leaf("proj-agents", "nodes", "项目运行节点", "项目专属与组织共享运行载体"),
     leaf("proj-agents", "register", "注册运行节点", "签发一次性令牌和安装脚本", {requires: "agent:activate"}),
-    {divider: "执行监控"},
-    leaf("monitor", "overview", "项目监控", "项目或任务组进度与异常"),
     leaf("monitor", "sessions", "工作会话", "持续多轮执行的会话状态"),
     leaf("monitor", "dispatches", "Agent 派发", "任务派发、进度、阻塞和结果"),
     leaf("monitor", "lanes", "执行载体", "可复用 Worker Lane 与当前会话"),
@@ -44,23 +50,17 @@
     leaf("monitor", "node-control", "运行节点", "执行节点健康、准入和控制入口"),
     leaf("monitor", "commands", "控制命令", "暂停、恢复、取消和节点 ACK"),
     leaf("monitor", "dlq", "死信队列", "控制命令重试超限后的处置"),
-    {divider: "验收与收口"},
     leaf("monitor", "checkpoints", "检查点证据", "Git 提交、推送和产出清单"),
     leaf("monitor", "quality", "质量门禁", "测试结果、质量门和人工豁免"),
     leaf("monitor", "finalizations", "人工定稿", "收尾裁决、责任人、时间和理由"),
     leaf("monitor", "blockers", "阻塞处置", "评审计划、共享定义和卡住方案"),
     leaf("monitor", "close-gates", "关闭门禁", "任务组关闭条件与阻塞对象"),
-    {divider: "人工审核与指令"},
     leaf("review", "pending", "待我审核", "执行方案与确认卡"),
     leaf("review", "permissions", "权限审批", "Agent 请求的临时权限与作用范围"),
     leaf("review", "approvals", "操作审批", "危险操作、阶段门和多方审批"),
     leaf("review", "findings", "发现处置", "评审发现、结论、状态和证据"),
     leaf("review", "history", "审核历史", "已完成的人定记录"),
-    leaf("review", "inbox", "待办汇总", "当前账号可处理的全部待办"),
-    leaf("directives", "compose", "下达指令", "向 AI 总控提交结构化控制输入", {requires: "task_group:control"}),
     leaf("directives", "history", "指令记录", "查看消费、拒绝和执行动作"),
-    {divider: "项目默认配置"},
-    leaf("proj-settings", "repositories", "项目仓库", "仓库地址、账号密码或 API Key"),
     leaf("proj-settings", "baseline", "项目基线", "任务组和任务可引用的稳定输入"),
     leaf("proj-settings", "default-roles", "项目默认角色", "任务组未覆盖时继承的角色"),
     leaf("proj-settings", "skills", "项目默认 Skill", "任务组未覆盖时继承的角色能力"),
@@ -76,6 +76,11 @@
     leaf("directives", "help", "指令通道说明", "独立指令的下达与消费状态"),
     leaf("proj-settings", "help", "项目配置说明", "仓库、基线、角色和规则配置")
   ];
+
+  // 侧栏常显的项目入口（page:workspace）。任务页没有独立入口 —— 任务只在任务组里，侧栏高亮落在「任务组」。
+  const PROJECT_PRIMARY = new Set(["proj-overview:overview", "tg:list", "review:inbox", "directives:compose",
+    "proj-agents:profiles", "proj-members:list", "proj-settings:repositories", "monitor:overview"]);
+  const MENU_PAGE_ALIAS = {tasks: "tg"};
 
   const SYSTEM_MENU = [
     {divider: "平台运行"},
@@ -253,14 +258,21 @@
 
   function primaryNavigationItems(items) {
     const actionWorkspaces = new Set(["create", "add", "grant-group", "register", "help"]);
-    const secondaryWorkspaces = {
-      "proj-overview": new Set(["activity", "outputs"]),
-      monitor: new Set(["sessions", "lanes", "models", "placements", "admissions", "events", "node-control", "commands", "dlq", "checkpoints", "finalizations"]),
-      review: new Set(["pending", "permissions", "approvals", "findings", "history"])
-    };
     return items.filter((item) => item.divider
-      || (!actionWorkspaces.has(item.workspace)
-        && !secondaryWorkspaces[item.id]?.has(item.workspace)));
+      || (PROJECT_PAGES.has(item.id)
+        ? PROJECT_PRIMARY.has(`${item.id}:${item.workspace}`)
+        : !actionWorkspaces.has(item.workspace)));
+  }
+
+  // 侧栏高亮：当前页在侧栏里只有一个入口时（monitor:dispatches → 执行监控），高亮那个入口；
+  // 任务页高亮「任务组」（任务从属于任务组）。
+  function sidebarActive(item, pageId, workspace, primaryItems) {
+    if (item.divider) return false;
+    const alias = MENU_PAGE_ALIAS[pageId];
+    if (alias) return item.id === alias && item.workspace === "list";
+    if (item.id !== pageId) return false;
+    if (item.workspace === workspace) return true;
+    return !primaryItems.some((other) => !other.divider && other.id === pageId && other.workspace === workspace);
   }
 
   function menuGroups(items) {
@@ -277,16 +289,15 @@
   }
 
   function desktopMenuHtml(items, pageId, workspace, todoFor) {
-    const primaryGroups = menuGroups(primaryNavigationItems(items));
-    const activeGroup = workspace === "help"
-      ? primaryGroups.find((group) => group.items.some((item) => item.id === pageId))?.label
-      : menuGroups(items).find((group) => group.items.some((item) => item.id === pageId && item.workspace === workspace))?.label;
+    const primaryItems = primaryNavigationItems(items);
+    const primaryGroups = menuGroups(primaryItems);
+    const activeGroup = primaryGroups.find((group) => group.items.some((item) => sidebarActive(item, pageId, workspace, primaryItems)))?.label;
     return primaryGroups.map((group) => {
       const active = group.label === activeGroup;
       return `<details class="nav-group"${active ? " open" : ""}>
         <summary class="nav-group-summary"><span>${esc(group.label)}</span></summary>
         <div class="nav-group-items">${group.items.map((item) => menuItemHtml(item,
-          item.id === pageId && item.workspace === workspace, todoFor(item))).join("")}</div>
+          sidebarActive(item, pageId, workspace, primaryItems), todoFor(item))).join("")}</div>
       </details>`;
     }).join("");
   }
@@ -296,9 +307,10 @@
     const groups = menuGroups(primaryItems);
     const currentItem = items.find((item) => !item.divider && item.id === pageId && item.workspace === workspace);
     const currentIsSecondary = currentItem && !primaryItems.includes(currentItem);
+    const activeValue = primaryItems.find((item) => sidebarActive(item, pageId, workspace, primaryItems));
     return `<label class="mobile-function-picker"><span>当前功能</span><select data-menu-select aria-label="当前功能">${currentIsSecondary
       ? `<optgroup label="更多功能"><option value="${esc(`${currentItem.id}|${currentItem.workspace || ""}`)}" selected>${esc(currentItem.label)}（更多功能）</option></optgroup>` : ""}${groups.map((group) =>
-      `<optgroup label="${esc(group.label)}">${group.items.map((item) => `<option value="${esc(`${item.id}|${item.workspace || ""}`)}"${item.id === pageId && item.workspace === workspace ? " selected" : ""}>${esc(item.label)}</option>`).join("")}</optgroup>`).join("")}</select></label>`;
+      `<optgroup label="${esc(group.label)}">${group.items.map((item) => `<option value="${esc(`${item.id}|${item.workspace || ""}`)}"${!currentIsSecondary && item === activeValue ? " selected" : ""}>${esc(item.label)}</option>`).join("")}</optgroup>`).join("")}</select></label>`;
   }
 
   global.AIMAC_CONSOLE_NAV = {
@@ -320,6 +332,9 @@
     sectionSwitchHtml,
     menuItemHtml,
     primaryNavigationItems,
+    sidebarActive,
+    PROJECT_PRIMARY,
+    MENU_PAGE_ALIAS,
     desktopMenuHtml,
     mobileMenuHtml
   };

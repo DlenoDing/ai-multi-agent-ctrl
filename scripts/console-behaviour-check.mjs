@@ -2827,15 +2827,14 @@ async function runErrorGuidanceCase() {
   const projectAccount = {accountId: "user", email: "user@local", displayName: "项目成员",
     accountType: "user_account", roles: ["workspace_owner"], permissions: ["project:view", "project:update", "project:grant", "agent:activate", "task_group:control", "task_group:review"], organizationId: "org_default"};
   const projectNav = renderedNav(projectAccount, "p1", "proj-overview");
-  const projectMenuOrder = [["proj-overview", "overview", "项目概览"], ["tg", "list", "任务组"], ["tasks", "list", "任务"],
-    ["proj-members", "list", "项目成员"], ["proj-members", "groups", "任务组权限"],
-    ["proj-agents", "profiles", "项目 Agent"], ["proj-agents", "nodes", "项目运行节点"],
-    ["monitor", "overview", "项目监控"], ["monitor", "dispatches", "Agent 派发"], ["monitor", "quality", "质量门禁"],
-    ["monitor", "blockers", "阻塞处置"], ["monitor", "close-gates", "关闭门禁"], ["review", "inbox", "待办汇总"],
-    ["directives", "compose", "下达指令"], ["directives", "history", "指令记录"], ["proj-settings", "repositories", "项目仓库"],
-    ["proj-settings", "baseline", "项目基线"], ["proj-settings", "default-roles", "项目默认角色"],
-    ["proj-settings", "skills", "项目默认 Skill"], ["proj-settings", "system-rules", "项目系统规则"],
-    ["proj-settings", "business-rules", "项目业务规则"]];
+  // 项目侧栏按从属层级收敛为 8 个入口：项目 → 任务组（任务在任务组里）→ 待办 → 指令；资源与设置另成一组。
+  const projectMenuOrder = [["proj-overview", "overview", "项目概览"], ["tg", "list", "任务组"], ["review", "inbox", "待办处理"],
+    ["directives", "compose", "人工指令"], ["proj-agents", "profiles", "Agent"], ["proj-members", "list", "成员与权限"],
+    ["proj-settings", "repositories", "项目设置"], ["monitor", "overview", "执行监控"]];
+  check("项目侧栏常显入口不多于 8 个（任务、监控明细、审核明细、配置分项都不单列）",
+    (projectNav.match(/data-menu-workspace="/gu) || []).length === projectMenuOrder.length
+      && !/data-menu="tasks"/u.test(projectNav),
+    `项目侧栏常显 ${(projectNav.match(/data-menu-workspace="/gu) || []).length} 个入口`);
   assertMenuLeaves("项目管理", projectNav, projectMenuOrder);
   check("项目侧栏不把创建、注册和说明当成日常功能",
     !/data-menu-workspace="create"|data-menu-workspace="add"|data-menu-workspace="grant-group"|data-menu-workspace="register"|data-menu-workspace="help"/u.test(projectNav),
@@ -2848,23 +2847,16 @@ async function runErrorGuidanceCase() {
       || projectNav.indexOf(`data-menu="${pageId}" data-menu-workspace="${workspace}"`)
         > projectNav.indexOf(`data-menu="${projectMenuOrder[index - 1][0]}" data-menu-workspace="${projectMenuOrder[index - 1][1]}"`)),
     "项目菜单顺序没有按日常工作、成员资源、执行监控、人工审核与项目默认配置排列");
-  check("项目管理侧栏要按普通管理动作分栏目",
-    ["日常工作", "成员与 Agent", "执行监控", "验收与收口", "人工审核与指令", "项目默认配置"]
-      .every((label) => projectNav.includes(`<span>${label}</span>`))
-      && projectNav.indexOf("日常工作") < projectNav.indexOf('data-menu="proj-overview"')
-      && projectNav.indexOf("成员与 Agent") < projectNav.indexOf('data-menu="proj-members"')
-      && projectNav.indexOf("执行监控") < projectNav.indexOf('data-menu="monitor" data-menu-workspace="overview"')
-      && projectNav.indexOf("验收与收口") < projectNav.indexOf('data-menu="monitor" data-menu-workspace="quality"')
-      && projectNav.indexOf("验收与收口") > projectNav.indexOf('data-menu="monitor" data-menu-workspace="dispatches"')
-      && projectNav.indexOf("人工审核与指令") < projectNav.indexOf('data-menu="review"')
-      && projectNav.indexOf("人工审核与指令") < projectNav.indexOf('data-menu="directives"')
-      && projectNav.indexOf("人工审核与指令") > projectNav.indexOf('data-menu="monitor" data-menu-workspace="close-gates"')
-      && projectNav.indexOf("项目默认配置") < projectNav.indexOf('data-menu="proj-settings"')
-      && projectNav.indexOf("项目默认配置") > projectNav.indexOf('data-menu="directives"'),
-    "项目管理侧栏仍是平铺功能清单，没有把项目总览、准备接入、执行推进、人工控制和治理配置分开");
+  check("项目管理侧栏按从属层级分两组：项目（概览→任务组→待办→指令）与资源与设置",
+    ["项目", "资源与设置"].every((label) => projectNav.includes(`<span>${label}</span>`))
+      && !/<span>(?:日常工作|成员与 Agent|执行监控|验收与收口|人工审核与指令|项目默认配置)<\/span>/u.test(projectNav)
+      && projectNav.indexOf("<span>项目</span>") < projectNav.indexOf('data-menu="proj-overview"')
+      && projectNav.indexOf('data-menu="directives"') < projectNav.indexOf("<span>资源与设置</span>")
+      && projectNav.indexOf("<span>资源与设置</span>") < projectNav.indexOf('data-menu="proj-agents"'),
+    "项目管理侧栏没有按「项目 / 资源与设置」两组组织，或又铺回了六组平级入口");
   check("桌面菜单只展开当前功能所属分组",
     (projectNav.match(/<details class="nav-group" open>/gu) || []).length === 1
-      && /<details class="nav-group" open>[\s\S]*?<span>日常工作<\/span>[\s\S]*?data-menu="proj-overview"/u.test(projectNav),
+      && /<details class="nav-group" open>[\s\S]*?<span>项目<\/span>[\s\S]*?data-menu="proj-overview"/u.test(projectNav),
     "项目侧栏仍一次铺开全部叶子，或当前功能所在分组没有自动展开");
   const helpRoot = el("div");
   loadConsole(helpRoot, {realI18n: true}).renderFullPagePaneWith(navState, projectAccount, "p1", "proj-settings", "help");
@@ -2880,10 +2872,11 @@ async function runErrorGuidanceCase() {
   check("全部功能页必须使用模块名并展开所属分组",
     /<h1>项目默认配置全部功能<\/h1>/u.test(helpTopbar)
       && (helpAside.match(/<details class="nav-group" open>/gu) || []).length === 1
-      && /<details class="nav-group" open>[\s\S]*?<span>项目默认配置<\/span>/u.test(helpAside),
+      && /<details class="nav-group" open>[\s\S]*?<span>资源与设置<\/span>/u.test(helpAside),
     "点击当前模块全部功能后标题仍像说明文档，或左侧没有展开用户刚才所在的业务分组");
   check("功能概览操作必须使用有目标名称的箭头",
-    /class="icon-button domain-action-open primary"[^>]*aria-label="打开项目仓库"[^>]*>→<\/button>/u.test(helpHtml)
+    /class="icon-button domain-action-open primary"[^>]*aria-label="打开项目设置"[^>]*>→<\/button>/u.test(helpHtml)
+      && /class="icon-button domain-action-open"[^>]*aria-label="打开项目基线"[^>]*>→<\/button>/u.test(helpHtml)
       && !/>打开<\/button>/u.test(helpHtml),
     "每一行都重复一个无法区分目标的“打开”按钮，扫描噪声高且辅助技术不知道要打开什么");
   const clarityMainStyles = readConsoleSource("styles.css");
@@ -2937,7 +2930,7 @@ async function runErrorGuidanceCase() {
     "打开执行会话后页头仍写父页面“执行监控”，用户无法确认当前位置");
   check("切换功能后自动展开新的业务分组并收起旧分组",
     (runPageAside.match(/<details class="nav-group" open>/gu) || []).length === 1
-      && /<details class="nav-group" open>[\s\S]*?<span>执行监控<\/span>[\s\S]*?data-menu="monitor" data-menu-workspace="overview"/u.test(runPageAside)
+      && /<details class="nav-group" open>[\s\S]*?<span>资源与设置<\/span>[\s\S]*?data-menu="monitor" data-menu-workspace="overview"/u.test(runPageAside)
       && !/data-menu="monitor" data-menu-workspace="sessions"/u.test(runPageAside)
       && /工作会话（更多功能）/u.test(String(runPageRoot.innerHTML || "")),
     "进入工作会话后侧栏没有把焦点收敛到执行监控组");
@@ -2946,7 +2939,7 @@ async function runErrorGuidanceCase() {
   const nodeControlAside = String(nodeControlRoot.innerHTML || "").split("</aside>")[0] || "";
   check("低频节点页面必须继续归入执行监控分组",
     (nodeControlAside.match(/<details class="nav-group" open>/gu) || []).length === 1
-      && /<details class="nav-group" open>[\s\S]*?<span>执行监控<\/span>/u.test(nodeControlAside)
+      && /<details class="nav-group" open>[\s\S]*?<span>资源与设置<\/span>/u.test(nodeControlAside)
       && /运行节点（更多功能）/u.test(String(nodeControlRoot.innerHTML || "")),
     "节点控制、控制命令或死信页被放进了没有常用入口的独立分组，深链接打开后侧栏没有任何分组展开");
   const menuActionProbe = loadConsole(el("div"), {realI18n: true});
@@ -3004,8 +2997,18 @@ async function runErrorGuidanceCase() {
       && /sidebar-progress/u.test(projectAside)
       && !/class="project-switch"/u.test(projectTopbar),
     "项目选择器、项目状态和项目模块仍散落在顶栏与内容区");
+  {
+    // 任务从属于任务组：任务页没有独立侧栏入口，打开任务列表/任务详情时侧栏高亮「任务组」，人不会以为自己到了别的栏目。
+    const tasksRoot = el("div");
+    loadConsole(tasksRoot, {realI18n: true}).renderFullPagePaneWith(navState, projectAccount, "p1", "tasks", "list");
+    const tasksAside = String(tasksRoot.innerHTML || "").split("</aside>")[0] || "";
+    check("任务页在侧栏要高亮「任务组」（任务从属于任务组，没有平级入口）",
+      /data-menu="tg" data-menu-workspace="list" aria-current="page"/u.test(tasksAside) && !/data-menu="tasks"/u.test(tasksAside)
+        && (tasksAside.match(/<details class="nav-group" open>/gu) || []).length === 1,
+      "打开任务页时侧栏没有高亮「任务组」，或又出现了平级的「任务」入口");
+  }
   check("桌面侧栏直接列功能，不在选中父菜单后临时展开 workspace 子导航",
-    !/class="workspace-nav"/u.test(projectAside) && /data-menu="monitor" data-menu-workspace="dispatches"/u.test(projectAside)
+    !/class="workspace-nav"/u.test(projectAside) && /data-menu="monitor" data-menu-workspace="overview"/u.test(projectAside)
       && /data-menu="proj-agents" data-menu-workspace="profiles"/u.test(projectAside),
     "侧栏仍把日常执行或 Agent 查阅藏在父页面下面的临时栏目里");
   const creatorShell = renderedNav({accountId: "creator", email: "creator@local", displayName: "项目创建者",
@@ -6681,8 +6684,8 @@ async function runPendingTruncationCase() {
         && !leafButton("review", "approvals")
         && !leafButton("review", "findings")
         && /nav-badge">6</u.test(leafButton("review", "inbox"))
-        && /nav-badge">1</u.test(leafButton("monitor", "quality"))
-        && !/nav-badge/u.test(leafButton("monitor", "blockers")),
+        && !leafButton("monitor", "quality") && !leafButton("monitor", "blockers")
+        && !/nav-badge/u.test(leafButton("monitor", "overview")),
       "隐藏的审核明细仍占侧栏红点，或待办汇总与质量门计数不准确");
     const reviewDispositionPanes = [
       ["permissions", "权限审批", "授权请求：", ["审批请求：", "发现："]],
