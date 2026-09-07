@@ -14412,6 +14412,30 @@ const MUTATIONS = [
     from: '      if (page === "org-projects" && workspaces.current("org-projects")?.id === "grants") { workspaces.select("org-projects", "list"); memberGrantAccountId = ""; }',
     to: '      if (false) { workspaces.select("org-projects", "list"); memberGrantAccountId = ""; }',
     expect: "组织「项目授权」授权成功后要回到项目列表"
+  },
+  {
+    name: "执行控制栏目不得再摆第二排不看状态的暂停／恢复",
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
+    gate: "console",
+    from: '      <div class="small muted">暂停执行／恢复执行、请求评审和纠偏在上方工具条，按当前状态只出现能做的那个。</div>',
+    to: '      <div class="button-row"><button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="resume">恢复执行</button></div>',
+    expect: "执行控制栏目不再另摆一排暂停／恢复按钮，只指向上方工具条"
+  },
+  {
+    name: "工具条上的恢复按钮要与指路文案同名（恢复执行）",
+    file: APP,
+    gate: "console",
+    from: 'data-task-action="resume">恢复执行</button>`',
+    to: 'data-task-action="resume">启动执行</button>`',
+    expect: "任务组暂停／恢复按钮只在工具条出现一次，且按状态二选一（没暂停不摆恢复、暂停了不摆暂停）"
+  },
+  {
+    name: "纠偏回执不得退回不报叫停数量的一句话",
+    file: APP,
+    gate: "console",
+    from: '      } else if (taskAction === "rebound_drift") {\n        toast.success(stopped ? `已触发纠偏：健康度标为「需关注」，并叫停了 ${stopped} 个在跑的派发` : "已触发纠偏：健康度标为「需关注」，当前没有在跑的派发");',
+    to: '      } else if (taskAction === "rebound_drift") {\n        toast.success("已触发纠偏");',
+    expect: "纠偏的确认弹窗要说清会叫停在跑的派发、回执要报叫停了几个"
   }
 ];
 

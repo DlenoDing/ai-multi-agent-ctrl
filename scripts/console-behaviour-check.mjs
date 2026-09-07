@@ -6490,6 +6490,36 @@ async function runPendingTruncationCase() {
         /可执行：任务 /u.test(guardedPane) && !/可执行：w1/u.test(guardedPane),
         `准入分类：${guardedPane.match(/可执行：.{0,80}/u)?.[0] || "没找到可执行那行"}`);
     }
+    // 【暂停／恢复只有工具条那一份且按状态二选一】（用户 09-08 走查：执行控制栏目里另摆一排、没暂停也摆着「恢复执行」）。
+    {
+      const toolbarProbe = loadConsole(el("div"), {realI18n: true});
+      const groupWith = (patch) => ({...overviewState, taskGroups: overviewState.taskGroups.map((group) => group.id === detailTaskGroup.id ? {...group, ...patch} : group)});
+      // 栏目里的 canControl 来自进度接口的 taskGroup 投影：不带它，控制栏目只会渲染「无权限」那一支，验不到真正的控制区。
+      const controllableDetail = {...detail, progress: {...detail.progress, taskGroup: {id: detailTaskGroup.id, projectId: "p1", canControl: true, canReview: true}}};
+      const activeGroup = {...detailTaskGroup, status: "development", goalExecutionStatus: "active"};
+      const pausedGroup = {...detailTaskGroup, status: "development", goalExecutionStatus: "active_paused_by_control", pauseReason: "manual_pause"};
+      const activeToolbar = String(toolbarProbe.renderTaskGroupsWith(groupWith(activeGroup), systemAdmin, "p1", detailTaskGroup.id, controllableDetail));
+      const pausedToolbar = String(toolbarProbe.renderTaskGroupsWith(groupWith(pausedGroup), systemAdmin, "p1", detailTaskGroup.id, controllableDetail));
+      // 只数详情页工具条那一格（列表行各有自己的快捷控制，不在本条管辖内）。
+      const toolbarOf = (html) => { const at = html.indexOf('class="task-group-object-actions"'); return at < 0 ? "" : html.slice(at, html.indexOf("</div>", html.indexOf("</div>", at) + 1)); };
+      const count = (html, action) => (toolbarOf(html).match(new RegExp(`data-task-action="${action}"`, "gu")) || []).length;
+      check("任务组暂停／恢复按钮只在工具条出现一次，且按状态二选一（没暂停不摆恢复、暂停了不摆暂停）",
+        count(activeToolbar, "pause") === 1 && count(activeToolbar, "resume") === 0 && /data-task-action="pause">暂停执行</u.test(toolbarOf(activeToolbar))
+          && count(pausedToolbar, "resume") === 1 && count(pausedToolbar, "pause") === 0 && /data-task-action="resume">恢复执行</u.test(toolbarOf(pausedToolbar)),
+        `进行中：pause×${count(activeToolbar, "pause")} resume×${count(activeToolbar, "resume")}；已暂停：pause×${count(pausedToolbar, "pause")} resume×${count(pausedToolbar, "resume")}`);
+      const controlPane = String(toolbarProbe.renderTaskGroupDetailPane("control", controllableDetail, activeGroup, groupWith(activeGroup), systemAdmin, "p1"));
+      // 纠偏在服务端会叫停在跑的派发（与暂停同一条 pause_dispatch 命令）：确认弹窗与回执都要说这一半，不能只说「标为需关注」。
+      const controlSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+      const controlBranch = controlSource.slice(controlSource.indexOf('if (action === "task-control")'), controlSource.indexOf('if (action === "tg-list")'));
+      check("纠偏的确认弹窗要说清会叫停在跑的派发、回执要报叫停了几个",
+        /sub: "会把任务组健康度标为「需关注」，并叫停这个任务组里正在跑的派发/u.test(controlBranch)
+          && /taskAction === "rebound_drift"\) \{\s*toast\.success\(stopped \?/u.test(controlBranch)
+          && /taskAction === "request_review"\) \{\s*toast\.success\("已请求评审/u.test(controlBranch),
+        "纠偏弹窗只说「标为需关注」而不说会停活，或回执不报叫停数量");
+      check("执行控制栏目不再另摆一排暂停／恢复按钮，只指向上方工具条",
+        controlPane.includes("在上方工具条") && !/data-task-action="(?:pause|resume)"/u.test(controlPane),
+        `执行控制栏目：${controlPane.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/执行控制.{0,160}/u)?.[0] || controlPane.slice(0, 200)}`);
+    }
     const detailProgressPane = probe.renderTaskGroupDetailPane("progress", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
     const detailRolesPane = probe.renderTaskGroupDetailPane("roles", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
     const detailInheritancePane = probe.renderTaskGroupDetailPane("inheritance", detail, detailTaskGroup, overviewState, systemAdmin, "p1");

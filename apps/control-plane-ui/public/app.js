@@ -5378,9 +5378,9 @@ function taskGroupControls(taskGroup) {
 function taskGroupLifecycleControl(taskGroup) {
   if (settledTaskGroupStatuses.has(taskGroup.status) || !hasGroupPerm(taskGroup.id, "task_group:control")) return "";
   if (String(taskGroup.goalExecutionStatus || "").startsWith("active_paused")) return canResumeTaskGroup(taskGroup)
-    ? `<button class="primary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="resume">启动执行</button>`
+    ? `<button class="primary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="resume">恢复执行</button>`
     : `<span class="notice">这个任务组是人停下来的（停因：${esc(t(taskGroup.pauseReason))}），只有真人能恢复它</span>`;
-  return `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="pause">暂停</button>`;
+  return `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="pause">暂停执行</button>`;
 }
 
 function renderTaskGroupDetail(taskGroup) {
@@ -9239,7 +9239,8 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "task-control") {
       const taskAction = target.dataset.taskAction;
-      if (taskAction === "rebound_drift" && !(await confirmDialog({title: "执行纠偏", message: "确认执行纠偏？", sub: "任务组健康度将标记为需关注并触发复核。", confirmText: "执行纠偏"}))) return;
+      // 纠偏在服务端做两件事：健康度标为「需关注」，并叫停这个任务组里在跑的派发（与暂停同一条命令）。原先只说前一半，人不知道按下去会停活。
+      if (taskAction === "rebound_drift" && !(await confirmDialog({title: "执行纠偏", message: "确认执行纠偏？", sub: "会把任务组健康度标为「需关注」，并叫停这个任务组里正在跑的派发；你核对完方向后点「恢复执行」放行。不会取消或改动任何任务。", confirmText: "执行纠偏"}))) return;
       const control = await api(`/api/task-groups/${encodeURIComponent(target.dataset.task)}/control`,
         {method: "POST", body: JSON.stringify({action: taskAction})});
       await loadPage();
@@ -9253,8 +9254,12 @@ document.addEventListener("click", async (event) => {
         toast.success(stopped ? `已暂停任务组，并叫停了 ${stopped} 个在跑的派发` : "已暂停任务组：当前没有在跑的派发");
       } else if (taskAction === "resume") {
         toast.success(resumed ? `已恢复任务组，放行了 ${resumed} 个此前被挡住的派发` : "已恢复任务组：没有被这次暂停挡住的派发");
+      } else if (taskAction === "rebound_drift") {
+        toast.success(stopped ? `已触发纠偏：健康度标为「需关注」，并叫停了 ${stopped} 个在跑的派发` : "已触发纠偏：健康度标为「需关注」，当前没有在跑的派发");
+      } else if (taskAction === "request_review") {
+        toast.success("已请求评审：任务组审核状态改为「已请求评审」");
       } else {
-        toast.success({rebound_drift: "已触发纠偏"}[taskAction] || "已执行任务组操作");
+        toast.success("已执行任务组操作");
       }
       return;
     }

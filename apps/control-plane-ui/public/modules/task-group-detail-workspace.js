@@ -112,11 +112,8 @@ function render(taskGroup, context, helpers) {
   const languagePolicy = taskGroup.languagePolicy || {languageTag: "zh-CN"};
   const controlHtml = canControl ? `
     <div class="stack">
-      <div class="button-row">
-        <button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="pause">暂停执行</button>
-        <button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="resume">恢复执行</button>
-        <button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="request_review">请求评审</button>
-      </div>
+      <!-- 暂停／恢复、请求评审、纠偏只放上方工具条那一份：原先这里再摆一排、且不看状态（没暂停也摆着「恢复执行」），两处不一致。 -->
+      <div class="small muted">暂停执行／恢复执行、请求评审和纠偏在上方工具条，按当前状态只出现能做的那个。</div>
       <form class="form-grid" data-form="language-policy" data-language-policy-form data-task="${esc(taskGroup.id)}">
         <div class="form-row"><label>任务组统一语言</label><select name="languageTag">${languageSelectOptions(languagePolicy.languageTag || "zh-CN")}</select></div>
         <button class="primary-button" type="submit">保存语言策略</button>
