@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "artifact-manifest/v1",
+  "projectId": "prj_mtr2xem6_j5drzp",
+  "taskGroupId": "tg_mtr35vif_s2d2lf",
+  "workId": "work_mtr3fq8i_qklfv8",
+  "sessionId": "sess_mtr3h4tw_0hxe6p",
+  "dispatchId": "adp_mtr3h4tx_8okk3g",
+  "repositoryOutputTargetRefs": [
+    "rot_mtr3h4tb_x0c6m0"
+  ],
+  "taskContractDigest": "sha256:bc3e11832df51f2efabe46284a0b1b66f13e879593f3fc4c05d2ed324e85b69f",
+  "languagePolicy": {
+    "schemaVersion": "language-policy/v1",
+    "languageTag": "zh-CN",
+    "languageName": "中文",
+    "script": "Hans",
+    "scope": [
+      "role_interaction",
+      "dispatch_instruction",
+      "room_message",
+      "execution_event",
+      "checkpoint",
+      "repository_output",
+      "review_material"
+    ],
+    "enforcement": "required",
+    "fallback": "return_blocked_for_language_mismatch"
+  },
+  "languagePolicyDigest": "sha256:29b54c17ee9612ffa69ab52f8308e4243c9902f3bcd2cdd3449be62c1b36e5b3",
+  "outputPolicy": "project_git_repository_only",
+  "generatedBy": "aimac-agent-runtime",
+  "model": {
+    "model": "openai:gpt-5.5",
+    "modelId": "openai:gpt-5.5",
+    "alias": "openai",
+    "providerClass": "openai",
+    "taskExecutionClass": "verification",
+    "reasoning": "medium",
+    "reasoningLevel": "medium",
+    "selectionMode": "auto_best",
+    "modelDecision": "modelDecision: bounded writeSet directed verification; no architecture裁决 -> openai:gpt-5.5 / medium",
+    "modelSelectionDecisionRef": "msd_mtr3h4sf_el2dr7"
+  },
+  "roleSkill": {
+    "roleSkillRef": "system-agent-runtime",
+    "roleSkillDigest": "sha256:c4992bdabd23f96fa2fbea8defe77f1e88cbe9d61eab562ed710ac29c8da51d9",
+    "selectedAgentSkillRef": "system-agent-runtime",
+    "sourceId": "system-default",
+    "overlayRefs": [],
+    "worksetId": "skillset_261c9bd991c979e58e79f3a2",
+    "synchronizationMode": "server_managed_on_demand",
+    "usageDirective": "The agent-runtime agent must load this exact skill workset before execution and must explicitly bind a separate server-issued workset for every child role. LanguagePolicy zh-CN/中文: all role interaction, dispatch instructions, room messages, execution events, checkpoints, repository outputs and review materials MUST use this language; return blocked if unable.",
+    "modelSelectionDecisionRef": "msd_mtr3h4sf_el2dr7"
+  },
+  "outputRefs": [
+    "docs/agent-output/tg_mtr35vif_s2d2lf/work_mtr3fq8i_qklfv8.md"
+  ],
+  "verificationRefs": [
+    "walk:executor-ok"
+  ],
+  "createdAt": "2026-09-07T10:52:13.869Z"
+}
