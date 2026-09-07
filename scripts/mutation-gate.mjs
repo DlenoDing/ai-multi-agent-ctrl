@@ -12739,8 +12739,8 @@ const MUTATIONS = [
     name: "登录恢复执行对象时首批事件必须立即呈现",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '      if (page === "monitor") {\n        await loadExecEvents({reset: true});\n        startExecPolling();\n        render();\n      }\n      return;',
-    to: '      if (page === "monitor") {\n        startExecPolling();\n      }\n      return;',
+    from: '      if (page === "monitor") {\n        await loadExecEvents({reset: true});\n        startExecPolling();\n        render();\n      }\n      // 用一次性令牌进来的人此刻还没有密码',
+    to: '      if (page === "monitor") {\n        startExecPolling();\n      }\n      // 用一次性令牌进来的人此刻还没有密码',
     expect: "登录后直接进入监控对象必须先加载事件再呈现"
   },
   {
@@ -14308,6 +14308,46 @@ const MUTATIONS = [
     from: '· 节点 ${esc((h.agentNodeLabel && h.agentNodeLabel(event.nodeId)) || event.nodeId)}',
     to: '· 节点 ${esc(event.nodeId)}',
     expect: "派发详情的大标题要是任务标题（派发号退到副行），事件脚注要写节点名而不是 node_ id"
+  },
+  {
+    name: "任务组权限列表页不得少了授权入口",
+    file: APP,
+    gate: "console",
+    from: '${hasPerm("project:grant") ? `<button class="primary-button" data-menu="proj-members" data-menu-workspace="grant-group">授予任务组权限</button>` : ""}`}),',
+    to: '${false ? `<button class="primary-button" data-menu="proj-members" data-menu-workspace="grant-group">授予任务组权限</button>` : ""}`}),',
+    expect: "任务组权限列表页头要有「授予任务组权限」入口（有 project:grant 时）"
+  },
+  {
+    name: "「授予任务组权限」成功后不得留在填满的表单上",
+    file: APP,
+    gate: "console",
+    from: '      if (page === "proj-members" && workspaces.current("proj-members")?.id === "grant-group") workspaces.select("proj-members", "groups");',
+    to: '      if (false) workspaces.select("proj-members", "groups");',
+    expect: "「授予任务组权限」成功后要回到任务组权限列表"
+  },
+  {
+    name: "首次用一次性令牌登录的人不得被放走而不设密码",
+    file: APP,
+    gate: "console",
+    from: '      if (result.account?.passwordSet === false && !String(result.account?.accountType || "").startsWith("system_")) {',
+    to: '      if (false) {',
+    expect: "用一次性令牌首次登录且没有密码的成员，登录后要当场弹出设置密码框并说明令牌已失效"
+  },
+  {
+    name: "用初始化令牌登录的系统管理员不得被拦着设密码",
+    file: APP,
+    gate: "console",
+    from: '      if (result.account?.passwordSet === false && !String(result.account?.accountType || "").startsWith("system_")) {',
+    to: '      if (result.account?.passwordSet === false) {',
+    expect: "已有密码的人、以及用初始化令牌登录的系统管理员，登录后不弹设置密码框"
+  },
+  {
+    name: "登录失败横幅不得再带状态码和接口路径",
+    file: APP,
+    gate: "console",
+    from: '  return String(text || "").replace(/^\\d{3}\\s+/u, "").replace(/（\\/api\\/auth\\/login）$/u, "");',
+    to: '  return String(text || "");',
+    expect: "登录失败横幅要去掉「401」和「（/api/auth/login）」，并提示一次性令牌只能用一次"
   }
 ];
 

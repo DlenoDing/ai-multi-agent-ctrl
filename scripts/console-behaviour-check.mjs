@@ -240,7 +240,8 @@ function makeContext(documentRoot) {
     console: {log: noop, warn: noop, error: noop, info: noop, debug: noop},
     fetch: async () => { throw new Error("行为门不应发起网络请求"); },
     FormData: StubFormData,
-    WebSocket: class { constructor() { this.close = noop; } },
+    // 登录成功后 connectRealtime 会挂监听：桩上没有 addEventListener 的话，登录这条路在门里从没走通过（抛在 saveSession 之后）。
+    WebSocket: class { constructor() { this.close = noop; this.send = noop; this.addEventListener = noop; this.removeEventListener = noop; } },
     location: {origin: "http://localhost", protocol: "http:", host: "localhost", href: "http://localhost/"},
     // 会话存储要是【真的能存】的桩：草稿跨过会话过期这条路径全靠它，
     // 用只读空桩的话，那几条断言测的是"什么都没发生"。
@@ -371,6 +372,7 @@ globalThis.__probe = {
     render();
     return String(document.body.innerHTML || "").replace(/<[^>]+>/gu, " ");
   },
+  setLoginError: (message) => { lastError = message; },
   failureBannerText: (nextState, account, message, isRequest) => {
     state = nextState; currentAccount = account; currentProjectId = null; page = "sys-overview";
     authToken = "probe-token";
@@ -1143,6 +1145,33 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         const post = recorded.find((item) => item.method === "POST" && /\/api\/projects\/p1\/members$/u.test(item.url));
         check("「添加项目成员」授权成功后要回到项目成员列表",
           Boolean(post) && probe.workspaceCurrent("proj-members") === "list",
+          `提交${post ? "已发出" : "没发出"}，提交后栏目＝${probe.workspaceCurrent("proj-members")}`);
+      } finally {
+        probe.setFetch(previousFetch);
+      }
+    }
+    // 【「授予任务组权限」成功后要回到任务组权限列表】（用户 09-08 走查）：与「添加项目成员」同病。
+    {
+      const recorded = [];
+      const previousFetch = globalThis.fetch;
+      probe.setFetch(async (url, init = {}) => {
+        recorded.push({url: String(url), method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null});
+        return {ok: true, status: 201, headers: {get: () => null}, json: async () => ({ok: true})};
+      });
+      try {
+        probe.setPage("proj-members");
+        probe.workspaceSelect("proj-members", "grant-group");
+        const form = el("form", {dataset: {form: "grant-create"}}, [
+          el("input", {name: "resourceType", value: "task_group"}),
+          el("select", {name: "resourceId", value: "tg1"}),
+          el("select", {name: "subjectId", value: "acct_member"}),
+          el("select", {name: "role", value: "reviewer"}),
+          el("button", {type: "submit"})
+        ]);
+        await probe.submit({target: form, submitter: form.children[4], preventDefault: () => {}});
+        const post = recorded.find((item) => item.method === "POST" && /\/api\/access-grants$/u.test(item.url));
+        check("「授予任务组权限」成功后要回到任务组权限列表",
+          Boolean(post) && probe.workspaceCurrent("proj-members") === "groups",
           `提交${post ? "已发出" : "没发出"}，提交后栏目＝${probe.workspaceCurrent("proj-members")}`);
       } finally {
         probe.setFetch(previousFetch);
@@ -3726,6 +3755,10 @@ async function runErrorGuidanceCase() {
       && /任务组权限列表/u.test(taskGroupPermissionListHtml) && !/data-form="project-member"|data-form="grant-create"/u.test(taskGroupPermissionListHtml)
       && /data-form="grant-create"/u.test(taskGroupPermissionGrantHtml) && !/项目成员列表|项目成员授权/u.test(taskGroupPermissionGrantHtml),
     "成员查阅、项目授权、任务组权限查阅和任务组授权仍有两个以上堆在同一页面");
+  // 【任务组权限列表页要有自己的授权入口】（用户 09-08 走查）：原先按钮只在成员列表页头上，人站在这一页（空态还劝他按任务组细分）却无处可点。
+  check("任务组权限列表页头要有「授予任务组权限」入口（有 project:grant 时）",
+    /data-menu="proj-members" data-menu-workspace="grant-group"/u.test(taskGroupPermissionListHtml),
+    "任务组权限列表页没有授权入口 —— 杠杆有、入口没有，等于杠杆不存在");
   check("项目成员权限页必须说明成员角色如何影响 Agent、任务组、审核和监控",
     /智能体操作员/u.test(projectMembersHtml)
       && /任务组负责人/u.test(projectMembersHtml)
@@ -5515,6 +5548,43 @@ async function runPendingTruncationCase() {
       check("改密的成功提示要说清所有会话（含这一台）都失效了",
         /都已失效|包括当前这一台/u.test(branch),
         "没有说清为什么突然要重新登录 —— 人会以为是故障");
+      // 【首次用一次性令牌登录、还没有密码的人，登录后当场弹设置密码框】（用户 09-08 走查：成员没设密码，下次用同一令牌 401，被锁在门外）。
+      {
+        const firstProbe = loadConsole(el("div"), {realI18n: true});
+        firstProbe.stubNavigation();
+        const loginResult = (passwordSet, accountType) => ({sessionToken: "tok_first", expiresAt: "2099-01-01T00:00:00Z",
+          account: {accountId: "acct_first", accountType, displayName: "首次登录的人", organizationId: "org_default", roles: [], permissions: [], effectivePermissions: [], consoleScopes: [], passwordSet}});
+        const loginForm = () => el("form", {dataset: {form: "login"}}, [el("input", {name: "email", value: "first@local"}), el("input", {name: "secret", value: "aimac_account_once"}), el("button", {type: "submit"})]);
+        const firstErrors = [];
+        firstProbe.captureToastKind("error", (message) => firstErrors.push(String(message)));
+        firstProbe.setFetch(async () => ({ok: true, status: 200, headers: {get: () => null}, json: async () => loginResult(false, "user_account")}));
+        const firstForm = loginForm();
+        await firstProbe.submit({target: firstForm, submitter: firstForm.children[2], preventDefault: () => {}});
+        const firstModal = String(firstProbe.sessionState().modalHtml || "");
+        check("用一次性令牌首次登录且没有密码的成员，登录后要当场弹出设置密码框并说明令牌已失效",
+          /data-form="change-password"/u.test(firstModal) && /令牌已经失效/u.test(firstModal) && /设置密码/u.test(firstModal),
+          `登录后弹窗：${firstModal.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 160) || "（没有弹窗）"}；报错：${firstErrors.join("；") || "无"}`);
+        const passwordProbe = loadConsole(el("div"), {realI18n: true});
+        passwordProbe.stubNavigation();
+        passwordProbe.setFetch(async () => ({ok: true, status: 200, headers: {get: () => null}, json: async () => loginResult(true, "user_account")}));
+        await passwordProbe.submit({target: loginForm(), submitter: null, preventDefault: () => {}});
+        const sysProbe = loadConsole(el("div"), {realI18n: true});
+        sysProbe.stubNavigation();
+        sysProbe.setFetch(async () => ({ok: true, status: 200, headers: {get: () => null}, json: async () => loginResult(false, "system_admin")}));
+        await sysProbe.submit({target: loginForm(), submitter: null, preventDefault: () => {}});
+        check("已有密码的人、以及用初始化令牌登录的系统管理员，登录后不弹设置密码框",
+          !/data-form="change-password"/u.test(String(passwordProbe.sessionState().modalHtml || "")) && !/data-form="change-password"/u.test(String(sysProbe.sessionState().modalHtml || "")),
+          "常亮的弹窗等于没有弹窗 —— 有密码的人每次登录都被拦一下");
+      }
+      // 【登录失败横幅不带状态码和接口路径，并说清一次性令牌只能用一次】
+      {
+        const bannerProbe = loadConsole(el("div"), {realI18n: true});
+        bannerProbe.setLoginError("401 账号或登录令牌不正确（/api/auth/login）");
+        const failedScreen = bannerProbe.renderLoginWith(null).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+        check("登录失败横幅要去掉「401」和「（/api/auth/login）」，并提示一次性令牌只能用一次",
+          /登录失败：账号或登录令牌不正确/u.test(failedScreen) && !/401|\/api\/auth\/login/u.test(failedScreen) && /一次性登录令牌只能用一次/u.test(failedScreen) && /重发邀请/u.test(failedScreen),
+          `登录页：${failedScreen.match(/登录失败.{0,120}/u)?.[0] || failedScreen.slice(0, 160)}`);
+      }
       // 上面三条只看源码；这一条真提交：改完密码回到登录页时，那句提示必须真的在屏幕上（登录页模板原先不含弹窗，实测看不到）。
       {
         const pwProbe = loadConsole(el("div"), {realI18n: true});

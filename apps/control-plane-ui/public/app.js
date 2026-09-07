@@ -1689,6 +1689,27 @@ async function loadLoginHint() {
 // 上一次真正写进 DOM 的整页 HTML；任何绕过 render 的写入都必须把它作废
 let lastRenderedHtml = null;
 
+// 设置／修改密码弹窗：顶栏按钮与首次登录都走这里。首次登录时顶上多一句为什么现在就要设。
+function openChangePasswordModal({firstLogin = false} = {}) {
+  const hasPassword = Boolean(currentAccount?.passwordSet ?? currentAccount?.authPolicy?.passwordSet);
+  const firstLoginNotice = firstLogin
+    ? `<div class="notice warn-notice">你刚用一次性令牌登录，令牌已经失效。请现在设置密码，否则下次登录只能请组织管理员重发邀请。</div>`
+    : "";
+  openModal(hasPassword ? "修改密码" : "设置密码", firstLoginNotice + `
+        <form class="form-grid" data-form="change-password">
+          <div class="form-row"><label>${(currentAccount?.passwordSet ?? currentAccount?.authPolicy?.passwordSet) ? "当前密码" : "当前密码（你还没有设过密码，留空即可）"}</label><input name="currentPassword" type="password" autocomplete="current-password"${(currentAccount?.passwordSet ?? currentAccount?.authPolicy?.passwordSet) ? " required" : ""}></div>
+          <div class="form-row"><label>新密码（至少 8 位）</label><input name="newPassword" type="password" required minlength="8" autocomplete="new-password"></div>
+          <div class="form-row"><label>确认新密码</label><input name="confirmPassword" type="password" required minlength="8" autocomplete="new-password"></div>
+          <button class="primary-button" type="submit">保存新密码</button>
+        </form>
+      `);
+}
+
+// 登录失败横幅上不要状态码和接口路径（「401 …（/api/auth/login）」）：站在登录页的人只关心是哪里填错了。
+function loginFailureText(text) {
+  return String(text || "").replace(/^\d{3}\s+/u, "").replace(/（\/api\/auth\/login）$/u, "");
+}
+
 function renderLogin() {
   const hintBlock = loginHint
     ? `
@@ -1709,14 +1730,14 @@ function renderLogin() {
           <h1>AI 多智能体管控台</h1>
         </div>
         <p class="login-sub">系统管理、组织管理、项目执行控制统一入口</p>
-        ${lastError ? `<div class="notice error-notice" style="margin-bottom:14px;">登录失败：${esc(lastError)}</div>` : ""}
+        ${lastError ? `<div class="notice error-notice" style="margin-bottom:14px;">登录失败：${esc(loginFailureText(lastError))}${/账号或登录令牌不正确/u.test(lastError) ? `<div class="small" style="margin-top:6px;">一次性登录令牌只能用一次；如果你登录过但还没设置密码，请组织管理员「重发邀请」重新签发令牌。</div>` : ""}</div>` : ""}
         <form class="form-grid" data-form="login">
           <div class="form-row"><label for="loginEmail">登录账号（邮箱或账号 ID）</label><input id="loginEmail" name="email" required autocomplete="username"></div>
           <div class="form-row"><label for="loginSecret">登录令牌或密码</label><input id="loginSecret" name="secret" type="password" required autocomplete="current-password"></div>
           <button class="primary-button" type="submit">登录</button>
         </form>
         ${hintBlock}
-        <p class="small muted" style="margin-top:16px;">首次用一次性令牌登录后，可在顶栏「设置密码」处设置个人密码。</p>
+        <p class="small muted" style="margin-top:16px;">一次性令牌用过一次就失效：首次用它登录后会直接弹出设置密码框，之后也可在顶栏「设置密码」处设置个人密码。</p>
       </div>
     </div>
     ${modalHtml}
@@ -4774,7 +4795,8 @@ function renderProjectMembers() {
     panel("任务组权限授权", hasPerm("project:grant")
       ? renderTaskGroupGrantForm(project)
       : `<div class="notice warn-notice">当前账号没有“项目授权管理(project:grant)”权限，只能查看任务组授权列表。</div>`, {wide: true}),
-    panel("任务组权限列表", renderTaskGroupGrantList(project), {wide: true, headerSide: filterInput("按任务组、账号、角色过滤…", "task-group-grants")}),
+    // 列表页上要有它自己的入口：原先「授任务组权限」按钮只在成员列表页头上，人站在任务组权限列表里（空态还劝他按任务组细分）却无处可点。
+    panel("任务组权限列表", renderTaskGroupGrantList(project), {wide: true, headerSide: `${filterInput("按任务组、账号、角色过滤…", "task-group-grants")}${hasPerm("project:grant") ? `<button class="primary-button" data-menu="proj-members" data-menu-workspace="grant-group">授予任务组权限</button>` : ""}`}),
     guideBundle("协作流程指引", [renderProjectMembersLifecycleGuide(project, stats)], ["成员协作流程（5 步）"]),
   ].join("");
 }
@@ -7433,6 +7455,11 @@ document.addEventListener("submit", async (event) => {
         startExecPolling();
         render();
       }
+      // 用一次性令牌进来的人此刻还没有密码，而令牌已经作废：不当场让他设密码，下次就只能请管理员重发邀请
+      //（走查时真的被锁在门外一次）。系统管理员用初始化令牌登录，不在此列。
+      if (result.account?.passwordSet === false && !String(result.account?.accountType || "").startsWith("system_")) {
+        openChangePasswordModal({firstLogin: true});
+      }
       return;
     }
     if (kind === "change-password") {
@@ -7522,6 +7549,10 @@ document.addEventListener("submit", async (event) => {
     }
     if (kind === "grant-create") {
       await api("/api/access-grants", {method: "POST", body: JSON.stringify(data)});
+      // 「授予任务组权限」成功后回到任务组权限列表：留在填满的表单上，人看不到授权落没落下，再点一下就是重复授权。
+      // 组织成员详情里的同名表单不在此列（它本来就在详情里）。
+      if (page === "proj-members" && workspaces.current("proj-members")?.id === "grant-group") workspaces.select("proj-members", "groups");
+      formTouched = false;
       await loadPage();
       return;
     }
@@ -8763,14 +8794,7 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "open-change-password") {
-      openModal("修改密码", `
-        <form class="form-grid" data-form="change-password">
-          <div class="form-row"><label>${(currentAccount?.passwordSet ?? currentAccount?.authPolicy?.passwordSet) ? "当前密码" : "当前密码（你还没有设过密码，留空即可）"}</label><input name="currentPassword" type="password" autocomplete="current-password"${(currentAccount?.passwordSet ?? currentAccount?.authPolicy?.passwordSet) ? " required" : ""}></div>
-          <div class="form-row"><label>新密码（至少 8 位）</label><input name="newPassword" type="password" required minlength="8" autocomplete="new-password"></div>
-          <div class="form-row"><label>确认新密码</label><input name="confirmPassword" type="password" required minlength="8" autocomplete="new-password"></div>
-          <button class="primary-button" type="submit">保存新密码</button>
-        </form>
-      `);
+      openChangePasswordModal();
       return;
     }
     if (action === "open-project-page") {
