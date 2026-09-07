@@ -2731,7 +2731,7 @@ function renderSysSettingsActionBoard(runtime, metrics) {
         action: "看导入"
       })}
     </div>
-    <div class="small muted">系统设置只做全局能力查看和治理，不签发项目 Agent 脚本；项目级注册直接进入「项目管理」→「注册运行节点」。</div>
+    <div class="small muted">系统设置只做全局能力查看和治理，不签发项目 Agent 脚本；项目级注册直接进入「项目管理」→「Agent」→「注册运行节点」。</div>
   `, {wide: true});
 }
 
@@ -2807,7 +2807,7 @@ function renderSysSettingsLifecycleGuide(runtime, metrics) {
         action: "看导入"
       })}
     </div>
-    <div class="small muted">系统设置是全局能力治理面板：集中 MCP、模型能力、技能源和公共定义在服务端统一维护；项目执行分别进入仓库凭据、Agent 档案、运行节点、任务组和项目监控。</div>
+    <div class="small muted">系统设置是全局能力治理面板：集中 MCP、模型能力、技能源和公共定义在服务端统一维护；项目执行分别进入项目设置、Agent、任务组和执行监控。</div>
   `, {wide: true});
 }
 
@@ -3423,7 +3423,7 @@ function renderOrgMembersLifecycleGuide(members) {
         pageId: "proj-overview",
         title: "5 回项目操作",
         metric: "项目",
-        detail: "授权后回项目概览检查任务组、Agent 档案、项目监控和待我审核是否可用",
+        detail: "授权后回项目概览检查任务组、Agent、执行监控和待办处理是否可用",
         tone: activeProjects ? "blue" : "gray",
         action: "进项目"
       })}
@@ -4421,7 +4421,7 @@ function renderOrgProjectsLifecycleGuide({projects, activeProjects, archivedProj
         action: "看项目"
       })}
     </div>
-    <div class="small muted">组织项目页负责项目生命周期治理；项目内部执行分别进入仓库凭据、Agent 档案、运行节点、任务组和项目监控。不要在组织项目页寻找 Agent 注册脚本，脚本必须在具体项目的“注册运行节点”签发。</div>
+    <div class="small muted">组织项目页负责项目生命周期治理；项目内部执行分别进入项目设置、Agent、任务组和执行监控。不要在组织项目页寻找 Agent 注册脚本，脚本必须在具体项目「Agent」页的「注册运行节点」签发。</div>
     <div class="small muted">当前可授权在用项目：${esc(assignableCount)} 个；在用项目：${esc(activeProjects.length)} 个；健康异常：${esc(unhealthyProjects)} 个。</div>
   `, {wide: true});
 }
@@ -5566,7 +5566,7 @@ const BLOCKER_GUIDE = {
   ReviewBundle: "在本页下方「阻塞项人工处置」收尾评审包",
   SharedDefinitionContract: "在本页下方「阻塞项人工处置」处置共享定义契约",
   ExecutionTopology: "在本页下方「阻塞项人工处置」终止卡住的执行方案",
-  IntegrationBatch: "集成批次还没完成：到「实时事件」「检查点证据」看 release/qa agent 的回送；卡住时取消对应工作项或让总控重新派发",
+  IntegrationBatch: "集成批次还没完成：到「实时事件」「验收与收口」看 release/qa agent 的回送；卡住时取消对应工作项或让总控重新派发",
   WorkSession: "执行中的会话：等它结束，或在「agent 节点」上取消对应派发",
   AgentDispatch: "执行中的派发：等它结束，或在「agent 节点」上取消它",
   Lease: "随持有它的会话一起释放：处理掉那个会话即可，无需单独操作",
@@ -5589,7 +5589,7 @@ const STUCK_EXIT_HINT = {
   credential_required: "在承接它的 agent 节点上配置所需的凭据环境变量",
   agent_runtime_executor_required: "该节点上没有模型执行器：到那台机器上装 codex / claude / gemini / ollama 任一个"
     + "（节点会自动探测这四个命令），或用 --executor-command 指定自定义执行器后重新加入；"
-    + "装好后有项目 Agent 管理权限的人可到「项目管理」→「运行节点」对该节点点「刷新自检」；"
+    + "装好后有项目 Agent 管理权限的人可到「项目管理」→「Agent」→「运行节点」对该节点点「刷新自检」；"
     + "没有项目控制权时，让组织管理员到「组织管理」→「共享运行节点」点「刷新自检」确认它认出来了",
   // 下面三条是【节点拒绝了人的控制指令且重试已用尽】。它们不会自己好，而且最要紧的一点是：
   // 控制面这边已经停了，那台机器上的 agent 可能还在跑 —— 出口是绕开节点配合的强制吊销。

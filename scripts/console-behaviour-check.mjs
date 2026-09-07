@@ -2884,7 +2884,7 @@ async function runErrorGuidanceCase() {
       && !/class="mobile-function-picker"/u.test(helpHtml),
     "说明入口仍占一整组侧栏，或当前页面没有统一帮助入口");
   check("全部功能页必须使用模块名并展开所属分组",
-    /<h1>项目默认配置全部功能<\/h1>/u.test(helpTopbar)
+    /<h1>项目设置全部功能<\/h1>/u.test(helpTopbar)
       && /<details class="nav-group active" open>[\s\S]*?<span>资源与设置<\/span>/u.test(helpAside),
     "点击当前模块全部功能后标题仍像说明文档，或左侧没有展开用户刚才所在的业务分组");
   check("功能概览操作必须使用有目标名称的箭头",

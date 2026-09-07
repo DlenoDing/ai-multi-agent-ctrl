@@ -10232,7 +10232,7 @@ const MUTATIONS = [
     name: "不许用没加书名号的英文页名指路（「到 agent 页」实测 4 处）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyGuidanceNamesRealPages",
-    from: '    + "装好后有项目 Agent 管理权限的人可到「项目管理」→「运行节点」对该节点点「刷新自检」；"',
+    from: '    + "装好后有项目 Agent 管理权限的人可到「项目管理」→「Agent」→「运行节点」对该节点点「刷新自检」；"',
     to: '    + "装好后有项目 agent 管理权限的人可到 agent 页对该节点点「刷新自检」；"',
     expect: "没加书名号"
   },
@@ -10312,7 +10312,7 @@ const MUTATIONS = [
     name: "产品报文不得指路到界面上没有的页（实测「运行时」页 10 处）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyGuidanceNamesRealPages",
-    from: "装好后有项目 Agent 管理权限的人可到「项目管理」→「运行节点」对该节点点「刷新自检」；\"\n    + \"没有项目控制权时，让组织管理员到「组织管理」→「共享运行节点」点「刷新自检」确认它认出来了",
+    from: "装好后有项目 Agent 管理权限的人可到「项目管理」→「Agent」→「运行节点」对该节点点「刷新自检」；\"\n    + \"没有项目控制权时，让组织管理员到「组织管理」→「共享运行节点」点「刷新自检」确认它认出来了",
     to: "装好后到「运行时」页对该节点点「刷新自检」；\"\n    + \"没有项目控制权时，让组织管理员到「运行时」页点「刷新自检」确认它认出来了",
     expect: "界面上没有这个"
   },

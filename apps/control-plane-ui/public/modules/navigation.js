@@ -135,8 +135,8 @@
     "review": ["人工审核", "集中处理执行过程中提交的人工确认请求"],
     "directives": ["人工指令", "通过独立通道向系统下达结构化指令"],
     "monitor": ["执行监控", "会话、派发、控制通道与实时执行事件流"],
-    "proj-agents": ["项目 Agent", "项目专属档案、可调配共享档案、运行节点与注册控制"],
-    "proj-settings": ["项目默认配置", "项目仓库、基线、默认角色、Skill 与规则"]
+    "proj-agents": ["Agent", "项目专属档案、可调配共享档案、运行节点与注册控制"],
+    "proj-settings": ["项目设置", "项目仓库、基线、默认角色、Skill 与规则"]
   };
 
   function menuMeta(perspective, pageId, workspace) {

@@ -342,7 +342,7 @@ function render(context, helpers) {
       + `不是没取回来。要让它动起来：${joinTokenWhere
         ? `${joinTokenWhere}，点「签发一次性加入令牌」并在 agent 主机运行安装命令注册一台节点，`
         : "先让管理员签发加入令牌，并在 agent 主机运行安装命令注册一台节点（签发加入令牌这件事你这个账号做不了），"}`
-      + `再到“任务”确认工作项已就绪。节点接上之后，“工作会话”“Agent 派发”和“实时事件”会持续显示运行过程。</div>`
+      + `再到「任务组」里确认任务已就绪。节点接上之后，「会话与派发」和「实时事件」两栏会持续显示运行过程。</div>`
     : "";
   const selectedMonitorGroup = managementGroupId ? groups.find((group) => group.id === managementGroupId) || null : null;
   const selectedStats = selectedMonitorGroup ? taskGroupOperationalStats(selectedMonitorGroup) : {
