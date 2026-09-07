@@ -2786,6 +2786,34 @@ try {
   if (systemReissues.response.status !== 409 || systemReissues.payload.error !== "org_member_invite_reissue_not_applicable") {
     throw new Error(`系统管理员的重发邀请没够着这个成员（应 409 not_applicable，得到 ${systemReissues.response.status}:${systemReissues.payload.error}）—— 404 说明这条路由仍按操作者自己的组织找人`);
   }
+  // 已激活的普通成员登不进来（令牌用过、密码没设或忘了）时，组织管理员带 resetLogin 能重置他的登录：
+  // 新令牌能登、旧会话当场失效、密码作废；而组织的初始管理员不归组织管理员重置（403）。
+  const memberReset = await jsonFetch(port, `/api/org/members/${encodeURIComponent(memberAccountId)}/reissue-invite`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-org-member-reset-login", authorization: orgAdminAuth},
+    body: JSON.stringify({resetLogin: true})
+  });
+  if (memberReset.response.status !== 200 || !memberReset.payload.accountToken) {
+    throw new Error(`组织管理员重置已激活成员的登录失败（应 200，得到 ${memberReset.response.status}:${memberReset.payload.error}）—— 令牌用过又没设密码的成员没人救得了`);
+  }
+  const memberResetLogin = await jsonFetch(port, "/api/auth/login", {
+    method: "POST", body: JSON.stringify({email: "doctor.member1@local", token: memberReset.payload.accountToken})
+  });
+  if (!memberResetLogin.response.ok || memberResetLogin.payload.account?.passwordSet !== false) {
+    throw new Error(`重置出来的成员令牌登录不了或没把密码作废（${memberResetLogin.response.status} passwordSet=${memberResetLogin.payload.account?.passwordSet}）`);
+  }
+  const orgAdminSelfOrg = (await jsonFetch(port, "/api/org/members", {headers: {authorization: orgAdminAuth}})).payload;
+  const initialAdminId = (orgAdminSelfOrg.members || []).find((member) => member.accountType === "org_admin")?.accountId;
+  if (initialAdminId) {
+    const adminReset = await jsonFetch(port, `/api/org/members/${encodeURIComponent(initialAdminId)}/reissue-invite`, {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-org-admin-reset-login-forbidden", authorization: orgAdminAuth},
+      body: JSON.stringify({resetLogin: true})
+    });
+    if (adminReset.response.status !== 403 || adminReset.payload.error !== "org_member_login_reset_forbidden") {
+      throw new Error(`组织管理员居然能重置初始管理员的登录（应 403 forbidden，得到 ${adminReset.response.status}:${adminReset.payload.error}）`);
+    }
+  }
   // 而放开这条口子不得让"别的组织有没有这个账号"漏出去：存在但不属于我 与 根本不存在，
   // 对组织管理员必须是同一个回答，否则这条路由就成了跨租户的存在性探针。
   const foreignTarget = await jsonFetch(port, "/api/org/members/acct_system_owner/status", {

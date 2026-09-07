@@ -3438,8 +3438,8 @@ const MUTATIONS = [
     name: "改密后要当场清掉本地会话",
     file: APP,
     gate: "console",
-    from: '      clearSession();\n      openModal("修改密码"',
-    to: '      openModal("修改密码"',
+    from: '      clearSession();\n      openModal("密码已更新"',
+    to: '      openModal("密码已更新"',
     expect: "已经死掉的会话"
   },
   {
@@ -3538,7 +3538,7 @@ const MUTATIONS = [
     name: "要求先定稿方案的单元要给出口",
     file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
-    from: "              等 agent 提出执行方案后，到「人工审核」页定稿它；没有在线 agent 时不会有人提方案。",
+    from: "              等 agent 提出执行方案后，到「待我审核」页定稿它；没有在线 agent 时不会有人提方案。",
     to: "",
     expect: "只说了在等什么、没说怎么往下走"
   },
@@ -14348,6 +14348,30 @@ const MUTATIONS = [
     from: '  return String(text || "").replace(/^\\d{3}\\s+/u, "").replace(/（\\/api\\/auth\\/login）$/u, "");',
     to: '  return String(text || "");',
     expect: "登录失败横幅要去掉「401」和「（/api/auth/login）」，并提示一次性令牌只能用一次"
+  },
+  {
+    name: "已激活成员的详情不得少了「重置登录」",
+    file: APP,
+    gate: "console",
+    from: '      : ["active", "disabled", "suspended"].includes(account.status)\n        ? `<button class="secondary-button" data-action="member-reset-login" data-account="${esc(account.accountId)}">重置登录</button>` : "",',
+    to: '      : "",',
+    expect: "已激活的普通成员详情里要有「重置登录」而不是只适用于待邀请账号的「重发邀请」"
+  },
+  {
+    name: "「重置登录」不得丢掉 resetLogin 标记（丢了服务端按重发邀请处理会 409）",
+    file: APP,
+    gate: "console",
+    from: '        method: "POST", body: JSON.stringify({resetLogin: true})',
+    to: '        method: "POST", body: "{}"',
+    expect: "「重置登录」要先确认、带 resetLogin 调重发接口，并把新令牌放进受保护弹窗"
+  },
+  {
+    name: "服务端：组织管理员不得重置初始管理员的登录",
+    file: "apps/control-plane-ui/server.mjs",
+    skip: "判别力由 doctor 覆盖（真的用组织管理员对初始管理员发 resetLogin，要得到 403）",
+    from: '    const mayResetMemberLogin = resetLogin && !initialAdminOrganization && member.accountType !== "org_admin"',
+    to: '    const mayResetMemberLogin = resetLogin && member.accountType !== "org_admin"',
+    expect: "组织管理员居然能重置初始管理员的登录"
   }
 ];
 

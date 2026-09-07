@@ -36,7 +36,7 @@
       pane("help", "监控说明", ["监控处置看板", "实时回送链路"])],
     // 人工审核：待办处理（汇总）/ 待我审核（确认卡）/ 审批与处置（权限审批 · 操作审批 · 发现处置）/ 审核历史。
     review: [pane("inbox", "待办处理", ["待你处理*"]), pane("pending", "待我审核", ["人工审核", "待人工确认"]),
-      pane("dispositions", "审批与处置", ["权限审批", "操作审批", "发现处置"]), pane("history", "审核历史", ["已答历史"]), pane("help", "审核说明")],
+      pane("dispositions", "审批与处置", ["权限审批", "操作审批", "发现处置"]), pane("history", "审核历史", ["审核历史"]), pane("help", "审核说明")],
     directives: [pane("compose", "下达指令", ["下达人工指令", "人工指令"]), pane("history", "指令流水", ["指令流水"]), pane("help", "指令说明")]
   };
   const fallback = {"sys-orgs": "help", "sys-settings": "help", "org-members": "help", "org-projects": "help", "org-agents": "help", "proj-agents": "help", "proj-members": "help", "proj-settings": "help", tasks: "discard", monitor: "barriers", review: "help", directives: "help"};

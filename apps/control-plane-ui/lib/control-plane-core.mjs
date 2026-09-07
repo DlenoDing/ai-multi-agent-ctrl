@@ -6706,16 +6706,16 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
         // 不说这一句，人会默认"它是按我当初定的规则做的"。
         const ruleChanged = (state.agentDispatches || []).some((item) => item.taskGroupId === taskGroup.id
           && item.workItemId === workItem.id && item.rulesChangedAfterContract === true);
-        if (ruleChanged) notes.push(`\n⚠ 本工作项的执行期间，生效规则发生过变更 —— 这份成果并不是完全在立项时那套规则下完成的，验收前请确认这一点是可接受的。`);
-        if (attested.length) notes.push(`\n⚠ 本工作项的 ${attested.length} 项证据制品，其内容摘要由执行方自行计算并声明，证据内容不上传控制面，因此控制面【未能独立核验】摘要与内容是否相符。可独立核验的是检查点里的提交与推送记录。`);
+        if (ruleChanged) notes.push(`\n⚠ 本任务的执行期间，生效规则发生过变更 —— 这份成果并不是完全在立项时那套规则下完成的，验收前请确认这一点是可接受的。`);
+        if (attested.length) notes.push(`\n⚠ 本任务的 ${attested.length} 项证据制品，其内容摘要由执行方自行计算并声明，证据内容不上传控制面，因此控制面【未能独立核验】摘要与内容是否相符。可独立核验的是检查点里的提交与推送记录。`);
         return notes.join("");
       })(),
     evidenceRefs: bundle.evidenceRefs,
     peerReview: {verdict, findings, reviewRecordRef: bundle.bundleId, alternativesConsidered: bundle.alternativesConsidered},
     content: {reviewBundleRef: bundle.bundleId, finalCommit: finalCommit || null},
     options: [
-      {optionId: "accept", label: "确认验收（定稿）", description: "确认该工作项通过验收；定稿后 AI 不得再自动更改。", recommended: true},
-      {optionId: "reject", label: "打回返工", description: "不认可本次结果，工作项回到人工决策通道等待重开或废弃。"}
+      {optionId: "accept", label: "确认验收（定稿）", description: "确认该任务通过验收；定稿后 AI 不得再自动更改。", recommended: true},
+      {optionId: "reject", label: "打回返工", description: "不认可本次结果，任务回到人工决策通道等待重开或废弃。"}
     ]
   });
   appendEvent(state, "review_result", "WorkItem", workItem.id, "reviewer", {verdict, reviewBundleRef: bundle.bundleId, awaitingHumanConfirmation: confirmation.requestId});

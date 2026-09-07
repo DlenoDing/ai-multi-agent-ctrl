@@ -17335,6 +17335,10 @@ function verifyConsoleHintsNameRealControls(output) {
   for (const hit of app.matchAll(/panel\("([^"]{1,24})"/gu)) realNames.add(hit[1]);
   for (const hit of app.matchAll(/<label[^>]*>([^<]{1,40})<\/label>/gu)) realNames.add(hit[1].trim());
   for (const hit of app.matchAll(/(?:label|title): "([^"]{1,24})"/gu)) realNames.add(hit[1]);
+  // 侧栏叶子与页内栏目条的标题也是屏幕上真有的名字（「待我审核」页、「审批与处置」页），它们住在
+  // navigation.js / workspaces.js 里而不在 app.js —— 只扫 app.js 等于把一整层导航判成「界面上没有」。
+  for (const hit of consoleNavSource().matchAll(/leaf\("[a-z-]+", "[a-z-]+", "([^"]+)"/gu)) realNames.add(hit[1]);
+  for (const hit of readFileSync(join(root, "apps/control-plane-ui/public/modules/workspaces.js"), "utf8").matchAll(/pane\("[a-z-]+", "([^"]+)"/gu)) realNames.add(hit[1]);
   // 整个文案就是一个占位（${esc(confirmText)}）的模板会变成 ^.* 什么都吃：至少要有两个字面字符才当模板（变异实测假绿）。
   const matchers = [...realNames].map((name) => {
     if (!name.includes("${")) return null;

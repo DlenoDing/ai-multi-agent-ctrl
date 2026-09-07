@@ -3543,7 +3543,10 @@ function organizationMemberActions(account) {
   return [
     `<button class="secondary-button" data-action="member-perms" data-account="${esc(account.accountId)}">调整账号能力</button>`,
     account.status === "invited" || account.invitationWithdrawn
-      ? `<button class="secondary-button" data-action="member-reissue-invite" data-account="${esc(account.accountId)}">重发邀请</button>` : "",
+      ? `<button class="secondary-button" data-action="member-reissue-invite" data-account="${esc(account.accountId)}">重发邀请</button>`
+      // 已激活的成员登不进来（令牌用过、密码没设或忘了）时，组织管理员要有办法救他：重置登录＝作废密码与会话、换一份一次性令牌。
+      : ["active", "disabled", "suspended"].includes(account.status)
+        ? `<button class="secondary-button" data-action="member-reset-login" data-account="${esc(account.accountId)}">重置登录</button>` : "",
     account.invitationWithdrawn ? "" : ["disabled", "suspended"].includes(account.status)
       ? `<button class="secondary-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="active">启用账号</button>`
       : `<button class="danger-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="suspended">停用账号</button>`,
@@ -5042,7 +5045,7 @@ function renderProjectOverview() {
             }
             if (!others) return "";
             return `<div class="small warn-text">另有 ${others} 项${todo.partial ? "+" : ""}等你处理`
-              + `（评审计划、发现项、授权请求…）—— 到「人工审核」页看汇总</div>`;
+              + `（评审计划、发现项、授权请求…）—— 到「待办处理」页看汇总</div>`;
           })()}</div>
       </div>
     `, {wide: true}),
@@ -5733,8 +5736,8 @@ function taskGroupSelector(selectedId, selectName, requirePermission = null) {
 // 照着指引走过去是一片空白 —— 有出口却指错门，和没有出口一样让人卡住。按类型说清去哪、
 // 或者说清"这一类不需要你动手，系统会自行清除"，后者同样重要：人不该守着一个不用他管的红点。
 const BLOCKER_GUIDE = {
-  HumanConfirmationRequest: "到「人工审核」页定稿或打回",
-  PermissionOrApprovalRequest: "到「人工审核」页批准或驳回",
+  HumanConfirmationRequest: "到「待我审核」页定稿或打回",
+  PermissionOrApprovalRequest: "到「审批与处置」页批准或驳回",
   HumanDirective: "到「人工指令」页确认该指令已被消费",
   ReviewPlan: "在本页下方「阻塞项人工处置」收尾评审计划",
   ReviewBundle: "在本页下方「阻塞项人工处置」收尾评审包",
@@ -5756,10 +5759,10 @@ const BLOCKER_GUIDE = {
 // 派发卡住时的出口。只收【不动手就不会好】的那几种：*_requeued 与 control_* 是自愈或
 // 操作员刚下达的瞬态，给它们写"出口"等于教人去做无用功。每条都对应代码里真实的解阻路径。
 const STUCK_EXIT_HINT = {
-  awaiting_human_confirmation: "到「人工审核」页定稿或打回对应的确认卡",
+  awaiting_human_confirmation: "到「待我审核」页定稿或打回对应的确认卡",
   human_confirmation_expired: "确认卡已超时：到「人工指令」页用「决策处置（重开 / 放弃）」处置",
   human_confirmation_expired_needs_decision: "确认卡已超时：到「人工指令」页用「决策处置（重开 / 放弃）」处置",
-  permission_request_pending: "到「人工审核」页批准或驳回对应的权限申请",
+  permission_request_pending: "到「审批与处置」页批准或驳回对应的权限申请",
   credential_required: "在承接它的运行节点上配置所需的凭据环境变量",
   agent_runtime_executor_required: "该节点上没有模型执行器：到那台机器上装 codex / claude / gemini / ollama 任一个"
     + "（节点会自动探测这四个命令），或用 --executor-command 指定自定义执行器后重新加入；"
@@ -5821,7 +5824,7 @@ const WORK_ITEM_EXIT_HINT = {
   model_selection_rejected: "没有可运行的模型满足它的硬性约束：让系统管理员到「系统管理」→「系统设置」核对模型能力注册，或放宽该任务的模型约束。",
   blocked_resource: "它等待的资源尚未就绪：让系统管理员到「系统管理」→「系统设置」核对模型与技能源状态。",
   credential_required: "执行需要凭据：在承接它的运行节点上配置所需的凭据环境变量后重试。",
-  permission_required: "需要先获得授权：到「人工审核」页批准对应的权限申请。",
+  permission_required: "需要先获得授权：到「审批与处置」页批准对应的权限申请。",
   execution_failed_repeatedly: "同一个任务连续多次执行失败，系统已停止自动重派（否则会一直空烧模型额度）：到「人工指令」页用「决策处置（重开 / 放弃）」处置，重开前先看阻塞提示里最近一次的失败原因。"
 };
 // 出口提示只说「到人工指令页处置」还不够：人得自己去找那一页、再选任务组、再选任务。
@@ -5862,12 +5865,12 @@ function topologyBlockerText(blocker) {
 // 每条都对应代码里真实的解阻路径；不需要人动手的，就明说它会自己好，而不是编一个出口。
 const CLOSE_GATE_GUIDE = {
   all_required_work_closed: "还有任务没收口：到任务组页看它们卡在哪，或取消不再需要的那些",
-  all_findings_terminal: "到「人工审核」页把未处置的发现项处置掉",
+  all_findings_terminal: "到「审批与处置」页把未处置的发现项处置掉",
   all_quality_gates_passed: "到“验收与收口”处理未通过的质量门（可豁免，需填理由）",
   all_changes_integrated: "还有改动没合入：等执行方推完，或终止对应的执行方案",
-  no_pending_permissions: "到「人工审核」页批准或驳回待处理的授权申请",
-  no_pending_approvals: "到「人工审核」页处理待处理的审批请求",
-  no_pending_human_confirmations: "到「人工审核」页定稿或打回待确认的卡",
+  no_pending_permissions: "到「审批与处置」页批准或驳回待处理的授权申请",
+  no_pending_approvals: "到「审批与处置」页处理待处理的审批请求",
+  no_pending_human_confirmations: "到「待我审核」页定稿或打回待确认的卡",
   no_pending_human_directives: "到「人工指令」页确认那些指令已被消费",
   no_open_execution_topologies: "在“验收与收口”终止卡住的执行方案",
   no_open_integration_batches: "还有集成批次没完成：等 release/qa 推进到合并、回滚或中止；卡住时到执行监控查看批次证据",
@@ -6288,10 +6291,10 @@ function renderReviewSummary({pending, pendingPermissions, pendingApprovals, ope
       ${summaryMetric("审批请求", pendingApprovals.length, "需要审核权限处理")}
       ${summaryMetric("待处置发现", openFindings.length, "会影响关闭门禁")}
       ${summaryMetric("涉及任务组", stats.affectedTaskGroups, "当前项目内需要关注的范围")}
-      ${summaryMetric("已答历史", answered.length, "已定稿或已作废的确认")}
+      ${summaryMetric("审核历史", answered.length, "已定稿或已作废的确认")}
       ${summaryMetric("最近定稿", finalizations.length, "真人收尾记录")}
     </div>
-    <div class="small muted">查看顺序：先看“待你处理”，再分别进入“待人工确认、权限审批、操作审批、发现处置”；历史结论在“已答历史”和“最近的人工定稿”里追溯。</div>
+    <div class="small muted">查看顺序：先看“待你处理”，再分别进入“待人工确认、权限审批、操作审批、发现处置”；历史结论在“审核历史”和“最近的人工定稿”里追溯。</div>
   `, {wide: true});
 }
 
@@ -6340,7 +6343,7 @@ function renderReviewActionBoard({pending, pendingPermissions, pendingApprovals,
         title: "历史追溯",
         metric: `${answered.length + finalizations.length}`,
         detail: "已答确认和最近真人收尾记录",
-        panelTitle: "已答历史",
+        panelTitle: "审核历史",
         tone: answered.length + finalizations.length ? "blue" : "gray",
         action: "查看历史"
       })}
@@ -6396,7 +6399,7 @@ function renderReviewLifecycleGuide({pending, pendingPermissions, pendingApprova
         title: "7 历史追溯",
         metric: answered.length + finalizations.length,
         detail: "已答确认和最近定稿用于追责、复盘和后续系统外升级依据",
-        panelTitle: "已答历史",
+        panelTitle: "审核历史",
         tone: answered.length + finalizations.length ? "blue" : "gray",
         action: "看历史"
       })}
@@ -6619,7 +6622,7 @@ function renderReview() {
     panel("权限审批", authDispositionHtmlFor("permissions"), {wide: true}),
     panel("操作审批", authDispositionHtmlFor("approvals"), {wide: true}),
     panel("发现处置", authDispositionHtmlFor("findings"), {wide: true}),
-    panel("已答历史", table([{label: "问题", c: "text-clip"}, "状态", "所选选项", {label: "确认内容", c: "text-clip"}, "确认人", {label: "确认时间", c: "nowrap"}], answeredRows), {wide: true})
+    panel("审核历史", table([{label: "问题", c: "text-clip"}, "状态", "所选选项", {label: "确认内容", c: "text-clip"}, "确认人", {label: "确认时间", c: "nowrap"}], answeredRows), {wide: true})
   ].join("");
 }
 
@@ -7473,7 +7476,7 @@ document.addEventListener("submit", async (event) => {
       // 所以当场把本地会话也清掉、回到登录页，并说清这是安全设计而不是故障。
       // clearSession 会清掉 modalHtml，必须先清会话再开弹窗。
       clearSession();
-      openModal("修改密码", `<div class="notice">密码已更新。为防止旧口令继续可用，
+      openModal("密码已更新", `<div class="notice">密码已更新。为防止旧口令继续可用，
         这个账号的所有登录会话（包括当前这一台）都已失效 —— 请用新密码重新登录。</div>`);
       return;
     }
@@ -9045,6 +9048,28 @@ document.addEventListener("click", async (event) => {
           <div class="command-box"><strong>登录账号</strong><pre>${esc(reissued.login?.email || "")}</pre></div>
           <div class="command-box"><strong>一次性令牌</strong><pre id="reissued-token">${esc(reissued.accountToken || "")}</pre></div>
           <div class="button-row"><button type="button" class="secondary-button" data-action="copy-el" data-copy-target="#reissued-token">复制令牌</button></div>
+        </div>
+      `, {protected: true});
+      return;
+    }
+    if (action === "member-reset-login") {
+      if (!(await confirmDialog({
+        title: "重置成员登录",
+        message: "确认作废该成员的密码和全部登录会话，并重新签发一次性登录令牌？",
+        sub: "该成员会被立即登出，原密码不再可用。新令牌只显示一次；成员用它登录后会被要求立即设置新密码。",
+        danger: true,
+        confirmText: "确认重置"
+      }))) return;
+      const reissued = await api(`/api/org/members/${encodeURIComponent(target.dataset.account)}/reissue-invite`, {
+        method: "POST", body: JSON.stringify({resetLogin: true})
+      });
+      await loadPage();
+      openModal("成员一次性登录凭据", `
+        <div class="stack">
+          <div class="notice warn-notice">原会话和密码已失效。以下凭据仅显示一次，请通过受控通道交给该成员。</div>
+          <div class="command-box"><strong>登录账号</strong><pre>${esc(reissued.login?.email || "")}</pre></div>
+          <div class="command-box"><strong>一次性令牌</strong><pre id="reset-member-token">${esc(reissued.accountToken || "")}</pre></div>
+          <div class="button-row"><button type="button" class="secondary-button" data-action="copy-el" data-copy-target="#reset-member-token">复制令牌</button></div>
         </div>
       `, {protected: true});
       return;

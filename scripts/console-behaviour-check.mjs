@@ -2379,7 +2379,7 @@ function runPlanFinalizationNoticeCase() {
     /必须先有人工定稿的执行方案才能开跑/.test(withRequirement),
     "人自己拉了这条杠杆，单元却停在原地一个字都没有 —— 他不知道在等谁、等什么");
   check("而且要给出口",
-    /人工审核/.test(withRequirement) && /改回「不强制」/.test(withRequirement),
+    /待我审核/.test(withRequirement) && /改回「不强制」/.test(withRequirement),
     "只说了在等什么、没说怎么往下走（等 agent 提方案后到哪定稿、不想等了怎么撤）");
   const withoutRequirement = probe.renderTaskGroupDetail({taskGroupId: "tg_pf", progress: {}, config: null, roomMessages: []},
     {id: "tg_pf", roles: [], workItems: [{id: "w_pf", title: "缓存策略", status: "in_progress", progress: 60,
@@ -5311,7 +5311,7 @@ function runNoVisibleProjectCase() {
       /另有 3 项等你处理/u.test(overview),
       "只显示了「待人工确认 0」—— 人当天就不会再去人工审核页，而那里正躺着三条等他收尾的评审计划");
     check("并且要给出去处（否则人知道有事却不知道去哪）",
-      /人工审核/u.test(overview),
+      /待办处理|待我审核|审批与处置/u.test(overview),
       "说了还有事，没说去哪看");
 
     // 反过来：这个数【不按权限过滤】（它是项目层面的事实），而旁边那句"等你处理"是按权限算的。
@@ -6666,6 +6666,13 @@ async function runPendingTruncationCase() {
     const orgMemberListPane = probe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["list"]);
     const orgMemberMatrixPane = probe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["grants"]);
     const orgMemberHelpPane = probe.renderOrgMembersInventoryWith(orgScopeState, orgAdmin, orgMembers, "p1", ["help"]);
+    {
+      const resetSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+      const resetBranch = resetSource.slice(resetSource.indexOf('if (action === "member-reset-login")'), resetSource.indexOf('if (action === "reset-initial-admin-login")'));
+      check("「重置登录」要先确认、带 resetLogin 调重发接口，并把新令牌放进受保护弹窗",
+        /confirmDialog\(/u.test(resetBranch) && /danger: true/u.test(resetBranch) && /resetLogin: true/u.test(resetBranch) && /protected: true/u.test(resetBranch) && /reset-member-token/u.test(resetBranch),
+        "重置登录的处理器缺确认、缺 resetLogin 标记或令牌没进受保护弹窗");
+    }
     const orgMemberMatrixText = textOf(orgMemberMatrixPane);
     const orgMemberGuide = /<details class="guide-bundle"( open)?>([\s\S]*?)<\/details>/u.exec(orgMemberHelpPane);
     // 【建成员表单的「默认项目」要说明它不等于授权】。选了默认项目、建完到权限矩阵一看「未分配项目」——
@@ -6725,6 +6732,11 @@ async function runPendingTruncationCase() {
           && /data-action="member-status" data-account="acct_member"/u.test(memberDetail)
           && /data-action="member-retire" data-account="acct_member"/u.test(memberDetail),
         "成员列表收起动作后，详情里必须完整保留账号能力、停用与注销入口");
+      // 【已激活的成员登不进来时组织管理员要有「重置登录」】（用户 09-08 走查：成员令牌用过、没设密码，管理员这边只有对待邀请账号的「重发邀请」）。
+      check("已激活的普通成员详情里要有「重置登录」而不是只适用于待邀请账号的「重发邀请」",
+        /data-action="member-reset-login" data-account="acct_member"/u.test(memberDetail)
+          && !/data-action="member-reissue-invite" data-account="acct_member"/u.test(memberDetail),
+        `成员详情动作：${(memberDetail.match(/data-action="member-[a-z-]+" data-account="acct_member"/gu) || []).join("，") || "无"}`);
       const unassignedState = {...orgScopeState,
         projects: [{...orgScopeState.projects[0], members: []}], accessGrants: []};
       const unassignedDetail = detailProbe.renderOrgMembersInventoryWith(unassignedState, orgAdmin, orgMembers, "p1", ["list"]);
@@ -7508,7 +7520,7 @@ function runBlockerGuideCase() {
     /无需你动手/.test(probe.blockerGuide("CommandEffect")) && /无需单独操作/.test(probe.blockerGuide("Lease")),
     "对系统会自行清除的阻塞没有明说不用人管 —— 人会守着一个他做不了任何事的红点");
   check("需要人处理的类型要指到具体页面",
-    /人工审核/.test(probe.blockerGuide("HumanConfirmationRequest")) && /人工指令/.test(probe.blockerGuide("HumanDirective")),
+    /待我审核/.test(probe.blockerGuide("HumanConfirmationRequest")) && /人工指令/.test(probe.blockerGuide("HumanDirective")),
     "把所有类型都指向同一个面板，而那个面板不处理它们 —— 人走过去是一片空白");
 }
 

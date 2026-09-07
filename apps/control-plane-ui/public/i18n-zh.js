@@ -61,6 +61,7 @@
     org_status_required: "改组织状态必须明确给出：启用还是停用（不给不会被当作启用）",
     agent_activation_flag_required: "启用还是停用这个智能体，必须明确给出",
     org_quota_update_empty: "没有要改的配额：至少给一项",
+    org_member_login_reset_forbidden: "只能重置本组织普通成员的登录：初始管理员由系统管理员重置，已注销的账号不能重置",
     org_initial_admin_reset_forbidden: "只有系统管理员可以重置组织初始管理员登录",
     org_initial_admin_replace: "更换初始组织管理员",
     org_initial_admin_disposition_required: "必须明确处置旧组织管理员",

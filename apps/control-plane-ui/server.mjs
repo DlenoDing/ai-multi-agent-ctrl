@@ -6862,11 +6862,22 @@ async function handleApi(req, res) {
       return json(res, 403, {error: "org_initial_admin_reset_forbidden",
         message: "只有系统管理员可以重置组织的初始管理员登录凭据，且目标必须是该组织登记的初始管理员"});
     }
+    // 已激活的普通成员也要有人能救：用一次性令牌登录过却没设密码的人，令牌已作废、密码没有，
+    // 两条登录路径都断了，而"先停用再重新邀请"是条死路（停用的账号照样 409，邮箱唯一性又拦住重建）。
+    // 组织管理员（或系统管理员）明确带 resetLogin 时，可为本组织【非初始管理员】的成员重置登录：
+    // 作废密码与全部会话，签发新的一次性令牌 —— 与系统管理员重置初始管理员同一口径。
+    const resetLogin = body.resetLogin === true;
+    const mayResetMemberLogin = resetLogin && !initialAdminOrganization && member.accountType !== "org_admin"
+      && ["active", "disabled", "suspended", "invited"].includes(member.status);
+    if (resetLogin && !mayResetMemberLogin) {
+      return json(res, 403, {error: "org_member_login_reset_forbidden",
+        message: "只能重置本组织普通成员的登录；组织的初始管理员由系统管理员重置，已注销的账号不能重置"});
+    }
     // 被撤回的邀请（invited→disabled）也走这里：它同样从没接受过，两条登录路径同样是断的，
     // 而"先停用再重新邀请"这句原话在没有这一支时是空的 —— 邮箱唯一性拦住重建、配额还占着。
-    if (member.status !== "invited" && !member.invitationWithdrawn && !mayResetActiveInitialAdmin) {
+    if (member.status !== "invited" && !member.invitationWithdrawn && !mayResetActiveInitialAdmin && !mayResetMemberLogin) {
       return json(res, 409, {error: "org_member_invite_reissue_not_applicable",
-        message: "只有尚未接受邀请的成员可以重发邀请；已激活的账号请让本人用「修改密码」自行设置，或先停用再重新邀请"});
+        message: "只有尚未接受邀请的成员可以重发邀请；已激活的账号请本人用「修改密码」自行设置，本人登不进来时由组织管理员「重置登录」"});
     }
     const reissuedToken = randomBytes(24).toString("base64url");
     const reissuedAt = now();
@@ -6878,7 +6889,7 @@ async function handleApi(req, res) {
     // 人拿着它登录时账号还是 disabled，登不进来。
     member.status = "invited";
     delete member.invitationWithdrawn;
-    if (mayResetActiveInitialAdmin) {
+    if (mayResetActiveInitialAdmin || mayResetMemberLogin) {
       delete member.passwordDigest;
       member.authPolicy = {...(member.authPolicy || {}), method: "invite_token", passwordSet: false};
     }
