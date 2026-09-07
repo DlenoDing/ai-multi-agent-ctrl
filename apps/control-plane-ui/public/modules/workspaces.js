@@ -21,7 +21,9 @@
     "proj-agents": [pane("profiles", "Agent 档案", ["可调配 Agent 档案"]), pane("create", "新建 Agent 档案", ["创建项目级 Agent 档案"]), pane("nodes", "运行节点", ["项目 agent 节点"]), pane("register", "注册运行节点", ["注册运行节点"]), pane("help", "接入与运行说明")],
     "proj-overview": [pane("overview", "项目概况", ["项目概况", "关键指标", "任务组一览"]), pane("activity", "最新执行", ["最新执行事件"]), pane("outputs", "仓库产出", ["仓库产出归属概览", "仓库产出归属"]), pane("help", "准备与操作", ["流程导航"])],
     "proj-members": [pane("list", "项目成员", ["项目成员列表"]), pane("add", "添加项目成员", ["项目成员授权"]), pane("groups", "任务组权限", ["任务组权限列表"]), pane("grant-group", "授予任务组权限", ["任务组权限授权"]), pane("help", "授权说明")],
-    "proj-settings": [pane("repositories", "项目仓库", ["项目基础配置"]), pane("baseline", "项目基线", ["基线资料"]), pane("default-roles", "项目默认角色", ["项目默认角色"]), pane("skills", "项目默认 Skill", ["角色 Skill 定制"]), pane("system-rules", "项目系统规则", ["系统规则"]), pane("business-rules", "项目业务规则", ["业务规则"]), pane("help", "配置说明")],
+    // 项目设置：仓库与基线 / 角色与 Skill / 规则。此前六个分项各占一个栏目（还各占一行侧栏）。
+    "proj-settings": [pane("repositories", "仓库与基线", ["项目基础配置", "基线资料"]), pane("roles", "角色与 Skill", ["项目默认角色", "角色 Skill 定制"]),
+      pane("rules", "规则", ["系统规则", "业务规则"]), pane("help", "配置说明")],
     tg: [pane("list", "任务组列表", ["任务组列表", "任务组详情"]), pane("create", "创建任务组", ["创建任务组"]), pane("help", "任务组说明", ["任务组总览", "任务组处置看板", "任务组生命周期", "创建工作项"])],
     tasks: [pane("list", "任务工作台", ["任务工作台", "任务详情"]), pane("create", "创建任务", ["创建工作项"])],
     // 执行监控：5 个栏目。此前 16 个栏目（会话/派发/载体/模型/放置/准入/事件/节点/命令/死信/检查点/质量/定稿/阻塞/关闭门）
@@ -32,11 +34,13 @@
       pane("nodes", "节点与命令", ["agent 节点", "控制通道", "死信队列"]),
       pane("acceptance", "验收与收口", ["检查点（Git 证据）", "质量门禁 / 测试证据", "最近的人工定稿", "阻塞项人工处置", "关闭门禁"]),
       pane("help", "监控说明", ["监控处置看板", "实时回送链路"])],
-    review: [pane("pending", "待我审核", ["人工审核", "待人工确认"]), pane("permissions", "权限审批", ["权限审批"]), pane("approvals", "操作审批", ["操作审批"]), pane("findings", "发现处置", ["发现处置"]), pane("history", "审核历史", ["已答历史"]), pane("inbox", "待办汇总", ["待你处理*"]), pane("help", "审核说明")],
+    // 人工审核：待办处理（汇总）/ 待我审核（确认卡）/ 审批与处置（权限审批 · 操作审批 · 发现处置）/ 审核历史。
+    review: [pane("inbox", "待办处理", ["待你处理*"]), pane("pending", "待我审核", ["人工审核", "待人工确认"]),
+      pane("dispositions", "审批与处置", ["权限审批", "操作审批", "发现处置"]), pane("history", "审核历史", ["已答历史"]), pane("help", "审核说明")],
     directives: [pane("compose", "下达指令", ["下达人工指令", "人工指令"]), pane("history", "指令流水", ["指令流水"]), pane("help", "指令说明")]
   };
   const fallback = {"sys-orgs": "help", "sys-settings": "help", "org-members": "help", "org-projects": "help", "org-agents": "help", "proj-agents": "help", "proj-members": "help", "proj-settings": "help", tasks: "discard", monitor: "barriers", review: "help", directives: "help"};
-  const legacyPaneAliases = {"review:decisions": "permissions", "proj-settings:roles": "default-roles", "sys-settings:protocol": "instruction-efficiency", "group-detail:config": "config", "group-detail:progress": "tasks", "group-detail:timeline": "tasks", "group-detail:roles": "config", "group-detail:inheritance": "config", "group-detail:skills": "config", "group-detail:system-rules": "config", "group-detail:business-rules": "config", "group-detail:admission": "control", "group-detail:blockers": "control", "monitor:runs": "execution", "monitor:sessions": "execution", "monitor:dispatches": "execution", "monitor:lanes": "execution", "monitor:models": "execution", "monitor:placements": "execution", "monitor:admissions": "execution", "monitor:nodes": "nodes", "monitor:node-control": "nodes", "monitor:commands": "nodes", "monitor:dlq": "nodes", "monitor:evidence": "acceptance", "monitor:checkpoints": "acceptance", "monitor:quality": "acceptance", "monitor:finalizations": "acceptance", "monitor:barriers": "acceptance", "monitor:blockers": "acceptance", "monitor:close-gates": "acceptance"};
+  const legacyPaneAliases = {"sys-settings:protocol": "instruction-efficiency", "group-detail:config": "config", "group-detail:progress": "tasks", "group-detail:timeline": "tasks", "group-detail:roles": "config", "group-detail:inheritance": "config", "group-detail:skills": "config", "group-detail:system-rules": "config", "group-detail:business-rules": "config", "group-detail:admission": "control", "group-detail:blockers": "control", "monitor:runs": "execution", "monitor:sessions": "execution", "monitor:dispatches": "execution", "monitor:lanes": "execution", "monitor:models": "execution", "monitor:placements": "execution", "monitor:admissions": "execution", "monitor:nodes": "nodes", "monitor:node-control": "nodes", "monitor:commands": "nodes", "monitor:dlq": "nodes", "monitor:evidence": "acceptance", "monitor:checkpoints": "acceptance", "monitor:quality": "acceptance", "monitor:finalizations": "acceptance", "monitor:barriers": "acceptance", "monitor:blockers": "acceptance", "monitor:close-gates": "acceptance", "review:decisions": "dispositions", "review:permissions": "dispositions", "review:approvals": "dispositions", "review:findings": "dispositions", "proj-settings:baseline": "repositories", "proj-settings:default-roles": "roles", "proj-settings:skills": "roles", "proj-settings:system-rules": "rules", "proj-settings:business-rules": "rules"};
   const storagePrefix = "aimac.workspaces";
   let accountId = "";
   let selections = {};

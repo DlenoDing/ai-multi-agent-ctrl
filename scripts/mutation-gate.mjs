@@ -13629,28 +13629,28 @@ const MUTATIONS = [
     expect: "父页面聚合仍污染叶子红点"
   },
   {
-    name: "权限请求、操作审批和发现项必须拆成三个审核页面",
-    file: "apps/control-plane-ui/public/modules/workspaces.js",
-    gate: "console",
-    from: 'pane("permissions", "权限审批", ["权限审批"]), pane("approvals", "操作审批", ["操作审批"]), pane("findings", "发现处置", ["发现处置"])',
-    to: 'pane("decisions", "授权与复核", ["权限审批", "操作审批", "发现处置"])',
-    expect: "必须是三个独立审核页面"
+    name: '「审批与处置」一栏必须含齐发现处置这一段',
+    file: 'apps/control-plane-ui/public/modules/workspaces.js',
+    gate: 'console',
+    from: 'pane("dispositions", "审批与处置", ["权限审批", "操作审批", "发现处置"])',
+    to: 'pane("dispositions", "审批与处置", ["权限审批", "操作审批"])',
+    expect: '「审批与处置」一栏含齐'
   },
   {
-    name: "操作审批必须有独立审核菜单入口",
-    file: "apps/control-plane-ui/public/modules/navigation.js",
-    gate: "console",
-    from: '    leaf("review", "approvals", "操作审批", "危险操作、阶段门和多方审批"),',
-    to: "",
-    expect: "低频页面虽不常驻侧栏但仍可从功能概览进入"
+    name: '审核的「审批与处置」叶子不许从菜单表里消失',
+    file: 'apps/control-plane-ui/public/modules/navigation.js',
+    gate: 'console',
+    from: '    leaf("review", "dispositions", "审批与处置", "权限审批、操作审批与发现处置"),\n',
+    to: '',
+    expect: '低频页面虽不常驻侧栏但仍可从功能概览进入'
   },
   {
-    name: "旧授权复核地址必须迁移到权限审批",
-    file: "apps/control-plane-ui/public/modules/workspaces.js",
-    gate: "workspace",
-    from: '"review:decisions": "permissions", "proj-settings:roles":',
-    to: '"proj-settings:roles":',
-    expect: "legacy review decisions pane migrates"
+    name: '旧授权复核地址（decisions）必须迁移到「审批与处置」',
+    file: 'apps/control-plane-ui/public/modules/workspaces.js',
+    gate: 'workspace',
+    from: '"review:decisions": "dispositions", "review:permissions": "dispositions",',
+    to: '"review:permissions": "dispositions",',
+    expect: 'legacy review decisions pane migrates to dispositions'
   },
   {
     name: "项目主操作的质量待办必须读取质量门叶子计数",
@@ -13661,20 +13661,20 @@ const MUTATIONS = [
     expect: "项目当前主操作必须直达准确待办叶子"
   },
   {
-    name: "项目默认角色与 Skill 定制必须拆成两个治理页面",
-    file: "apps/control-plane-ui/public/modules/workspaces.js",
-    gate: "console",
-    from: 'pane("default-roles", "项目默认角色", ["项目默认角色"]), pane("skills", "项目默认 Skill", ["角色 Skill 定制"])',
-    to: 'pane("roles", "项目默认角色与 Skill", ["项目默认角色", "角色 Skill 定制"])',
-    expect: "必须分属两个 pane"
+    name: '「角色与 Skill」一栏必须含齐角色 Skill 定制',
+    file: 'apps/control-plane-ui/public/modules/workspaces.js',
+    gate: 'console',
+    from: 'pane("roles", "角色与 Skill", ["项目默认角色", "角色 Skill 定制"]),',
+    to: 'pane("roles", "角色与 Skill", ["项目默认角色"]),',
+    expect: '项目默认角色与 Skill 定制同在「角色与 Skill」一栏'
   },
   {
-    name: "Skill 定制必须有独立项目治理菜单入口",
-    file: "apps/control-plane-ui/public/modules/navigation.js",
-    gate: "console",
-    from: '    leaf("proj-settings", "skills", "项目默认 Skill", "任务组未覆盖时继承的角色能力"),',
-    to: "",
-    expect: "项目默认 Skill"
+    name: '旧 Skill 定制地址（skills）必须迁移到「角色与 Skill」',
+    file: 'apps/control-plane-ui/public/modules/workspaces.js',
+    gate: 'workspace',
+    from: '"proj-settings:default-roles": "roles", "proj-settings:skills": "roles",',
+    to: '"proj-settings:default-roles": "roles",',
+    expect: 'legacy project settings pane skills migrates to roles'
   },
   {
     name: "项目成员与 Agent 必须归入明确资源分组",
@@ -13712,9 +13712,9 @@ const MUTATIONS = [
     name: "旧角色与 Skill 地址必须迁移到默认角色",
     file: "apps/control-plane-ui/public/modules/workspaces.js",
     gate: "workspace",
-    from: '"review:decisions": "permissions", "proj-settings:roles": "default-roles"',
-    to: '"review:decisions": "permissions"',
-    expect: "legacy project roles pane migrates"
+    from: '"proj-settings:default-roles": "roles", "proj-settings:skills": "roles",',
+    to: '"proj-settings:skills": "roles",',
+    expect: "legacy project settings pane default-roles migrates to roles"
   },
   {
     name: "指令效率、指令信封与共享定义必须拆成三个系统能力页面",
@@ -13744,8 +13744,8 @@ const MUTATIONS = [
     name: "旧调度协议地址必须迁移到指令效率",
     file: "apps/control-plane-ui/public/modules/workspaces.js",
     gate: "workspace",
-    from: '"proj-settings:roles": "default-roles", "sys-settings:protocol": "instruction-efficiency"',
-    to: '"proj-settings:roles": "default-roles"',
+    from: '"sys-settings:protocol": "instruction-efficiency", "group-detail:config": "config",',
+    to: '"group-detail:config": "config",',
     expect: "legacy system protocol pane migrates"
   },
   {

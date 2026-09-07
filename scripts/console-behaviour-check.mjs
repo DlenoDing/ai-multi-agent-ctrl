@@ -1563,13 +1563,13 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     const baselineText = baselinePane.replace(/<[^>]+>/gu, " ");
     const rolesText = rolesPane.replace(/<[^>]+>/gu, " ");
     const businessRulesText = businessRulesPane.replace(/<[^>]+>/gu, " ");
-    check("项目设置分栏后，仓库、基线和默认角色各自是独立可达的配置表单",
+    check("项目设置按「仓库与基线 / 角色与 Skill / 规则」三栏：仓库栏含基线不含角色，角色栏不含仓库",
       /data-config-fields="repositories"/u.test(repoPane)
-        && !/data-config-fields="baselineData"/u.test(repoPane)
-        && /data-config-fields="baselineData"/u.test(baselinePane)
-        && !/data-config-fields="repositories"/u.test(baselinePane)
-        && /data-config-fields="defaultRoles"/u.test(rolesPane),
-      "项目设置仍没有按 repositories / baselineData / defaultRoles 拆成各自 pane");
+        && /data-config-fields="baselineData"/u.test(repoPane)
+        && !/data-config-fields="defaultRoles"/u.test(repoPane)
+        && /data-config-fields="defaultRoles"/u.test(rolesPane)
+        && !/data-config-fields="repositories"/u.test(rolesPane),
+      "项目设置没有按三栏合并（仓库与基线 / 角色与 Skill / 规则）");
     check("项目设置配置表单都携带渲染快照的 immutable config version",
       [repoPane, baselinePane, rolesPane].every((html) => /data-config-version="probe-config"/u.test(html)),
       "拆分后的配置表单缺少 data-config-version，提交时会丢失乐观锁边界");
@@ -2876,7 +2876,7 @@ async function runErrorGuidanceCase() {
     "点击当前模块全部功能后标题仍像说明文档，或左侧没有展开用户刚才所在的业务分组");
   check("功能概览操作必须使用有目标名称的箭头",
     /class="icon-button domain-action-open primary"[^>]*aria-label="打开项目设置"[^>]*>→<\/button>/u.test(helpHtml)
-      && /class="icon-button domain-action-open"[^>]*aria-label="打开项目基线"[^>]*>→<\/button>/u.test(helpHtml)
+      && /class="icon-button domain-action-open"[^>]*aria-label="打开角色与 Skill"[^>]*>→<\/button>/u.test(helpHtml)
       && !/>打开<\/button>/u.test(helpHtml),
     "每一行都重复一个无法区分目标的“打开”按钮，扫描噪声高且辅助技术不知道要打开什么");
   const clarityMainStyles = readConsoleSource("styles.css");
@@ -2918,7 +2918,7 @@ async function runErrorGuidanceCase() {
     ["execution", "events", "nodes", "acceptance"]
       .every((workspace) => monitorHelpHtml.includes(`data-menu="monitor" data-menu-workspace="${workspace}"`))
       && ["activity", "outputs"].every((workspace) => String(overviewMoreRoot.innerHTML || "").includes(`data-menu="proj-overview" data-menu-workspace="${workspace}"`))
-      && ["pending", "permissions", "approvals", "findings", "history"].every((workspace) => String(reviewMoreRoot.innerHTML || "").includes(`data-menu="review" data-menu-workspace="${workspace}"`)),
+      && ["pending", "dispositions", "history"].every((workspace) => String(reviewMoreRoot.innerHTML || "").includes(`data-menu="review" data-menu-workspace="${workspace}"`)),
     "侧栏变短的同时把历史、事件、诊断或审核明细变成了不可达死路");
   const runPageRoot = el("div");
   loadConsole(runPageRoot, {realI18n: true}).renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "sessions");
@@ -3280,7 +3280,7 @@ async function runErrorGuidanceCase() {
   commandClickProbe.stubNavigation();
   await commandClickProbe.click({target: el("button", {dataset: {focusGroup: "tg", focusPage: "review", focusWorkspace: "permissions"}}), preventDefault: () => {}});
   check("项目当前主操作点击后必须真正选中精确叶子",
-    commandClickProbe.sessionState().page === "review" && commandClickProbe.workspaceCurrent("review") === "permissions"
+    commandClickProbe.sessionState().page === "review" && commandClickProbe.workspaceCurrent("review") === "dispositions"
       && commandClickProbe.sessionState().managementGroupId === "tg",
     `CTA 点击后的状态错误：${JSON.stringify(commandClickProbe.sessionState())}`);
   const commandHtml = objectProbe.projectCommandHtml(commandProject, commandResults[0].decision);
@@ -4653,7 +4653,7 @@ function runNoVisibleProjectCase() {
       permissionRequests: [], humanDirectives: [], agentDispatches: [], workSessions: [],
       executionTopologies: [], closeBarriers: [], qualityGates: [], truncatedCollections: []
     };
-    const reviewText = ["pending", "approvals", "findings"].map((pane) => renderAs({accountId: "u_rev", accountType: "member", displayName: "评审员",
+    const reviewText = ["pending", "dispositions"].map((pane) => renderAs({accountId: "u_rev", accountType: "member", displayName: "评审员",
       organizationId: "org_default", effectivePermissions: ["project:view", "task_group:read", "task_group:review"]},
       reviewScopeState, "review", "p1", undefined, pane)).join(" ");
     // 夹具没造出想测的情形也要能自报：两张卡都得渲染出来，断言才有意义。
@@ -5830,8 +5830,9 @@ async function runPendingTruncationCase() {
     check("项目设置说明卡分别直达仓库、基线、默认角色、Skill 和两类规则",
       ["项目基础配置", "基线资料", "项目默认角色", "角色 Skill 定制", "系统规则", "业务规则"]
         .every((title) => settingsHelpPane.includes(`data-jump-panel="${title}"`))
-        && probe.workspaceOwner("proj-settings", "基线资料") === "baseline"
-        && probe.workspaceOwner("proj-settings", "项目默认角色") === "default-roles",
+        && probe.workspaceOwner("proj-settings", "基线资料") === "repositories"
+        && probe.workspaceOwner("proj-settings", "项目默认角色") === "roles"
+        && probe.workspaceOwner("proj-settings", "业务规则") === "rules",
       "项目设置看板仍把基线、默认角色或规则卡错误地送到仓库页");
     check("基线配置 pane 保留名称、定位和摘要字段",
       /name="blName"[\s\S]*value="现状"/u.test(baselinePane)
@@ -5843,13 +5844,13 @@ async function runPendingTruncationCase() {
         && /name="roleSkillRef"[\s\S]*value="reviewer"/u.test(rolesPane)
         && /<option value="reviewer">/u.test(rolesPane),
       textOf(rolesPane).slice(0, 220));
-    check("项目默认角色与 Skill 定制必须分属两个 pane",
-      /项目默认角色/u.test(rolesPane) && !/角色 Skill 定制/u.test(rolesPane)
-        && /角色 Skill 定制/u.test(skillsPane) && !/项目默认角色/u.test(skillsPane)
+    check("项目默认角色与 Skill 定制同在「角色与 Skill」一栏（定制影响的正是这些角色）",
+      /项目默认角色/u.test(rolesPane) && /角色 Skill 定制/u.test(rolesPane)
         && /data-form="role-skill-overlay" data-scope="project"/u.test(skillsPane)
         && /放开 repo_read/u.test(skillsPane)
         && /禁掉 schema_change/u.test(skillsPane)
-        && /modelRequirementPatchRef/u.test(skillsPane),
+        && /modelRequirementPatchRef/u.test(skillsPane)
+        && !/data-config-fields="repositories"/u.test(rolesPane),
       `${textOf(rolesPane).slice(0, 140)} | ${textOf(skillsPane).slice(0, 180)}`);
     check("项目规则 pane 保留继承/本层语义和 readOnly 编辑边界",
       /data-rule-source="default"/u.test(systemRulesPane)
@@ -6692,16 +6693,18 @@ async function runPendingTruncationCase() {
         && !leafButton("monitor", "quality") && !leafButton("monitor", "blockers")
         && !/nav-badge/u.test(leafButton("monitor", "overview")),
       "隐藏的审核明细仍占侧栏红点，或待办汇总与质量门计数不准确");
-    const reviewDispositionPanes = [
-      ["permissions", "权限审批", "授权请求：", ["审批请求：", "发现："]],
-      ["approvals", "操作审批", "审批请求：", ["授权请求：", "发现："]],
-      ["findings", "发现处置", "发现：", ["授权请求：", "审批请求："]]
-    ].map(([pane, title, own, foreign]) => ({pane, title, own, foreign,
-      html: probe.renderReviewInventoryWith(routed, admin, "p1", [pane])}));
-    check("权限请求、操作审批和发现项必须是三个独立审核页面",
-      reviewDispositionPanes.every((item) => item.html.includes(`<h2>${item.title}</h2>`)
-        && item.html.includes(item.own) && item.foreign.every((text) => !item.html.includes(text))),
-      reviewDispositionPanes.map((item) => `${item.pane}:${String(item.html).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 100)}`).join(" | "));
+    // 权限审批 / 操作审批 / 发现处置同在「审批与处置」一栏，三段各自有标题、各含自己的记录；待我审核栏不混入它们。
+    const dispositionsPane = probe.renderReviewInventoryWith(routed, admin, "p1", ["dispositions"]);
+    const pendingOnlyPane = probe.renderReviewInventoryWith(routed, admin, "p1", ["pending"]);
+    check("「审批与处置」一栏含齐权限审批、操作审批、发现处置三段（各自标题与记录）",
+      ["权限审批", "操作审批", "发现处置"].every((title) => dispositionsPane.includes(`<h2>${title}</h2>`))
+        && ["授权请求：", "审批请求：", "发现："].every((text) => dispositionsPane.includes(text))
+        && !/<h2>待人工确认<\/h2>/u.test(dispositionsPane)
+        && /<h2>待人工确认<\/h2>/u.test(pendingOnlyPane) && !/<h2>权限审批<\/h2>/u.test(pendingOnlyPane),
+      String(dispositionsPane).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 200));
+    check("旧的审批明细栏目 id（permissions / approvals / findings）都落到「审批与处置」",
+      ["permissions", "approvals", "findings"].every((pane) => probe.renderReviewInventoryWith(routed, admin, "p1", [pane]).includes("<h2>发现处置</h2>")),
+      "旧栏目 id 没有迁到合并后的栏目 —— 待办按钮、旧书签会落到空页");
   }
 
   const scopeCapped = probe.renderPendingPanelWith(stateWith(["taskGroups"]), admin);

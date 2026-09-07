@@ -6359,13 +6359,15 @@ function renderReview() {
   // 默认选中它等于替人做了最重的判断。
   const dispositionSelectHtml = decisionSelect("dispositionClass",
     ["fixed_verified", "not_applicable", "scope_adjusted"].map((cls) => [cls, t(cls)]), "请选择处置类别…");
-  const reviewDecisionWorkspace = workspaces.current("review")?.id || "permissions";
-  const reviewDecisionCount = reviewDecisionWorkspace === "permissions"
-    ? pendingPermissions.length : reviewDecisionWorkspace === "approvals" ? pendingApprovals.length : openFindings.length;
-  const reviewDecisionLabel = reviewDecisionWorkspace === "permissions"
-    ? "权限请求" : reviewDecisionWorkspace === "approvals" ? "操作审批" : "待处置发现";
-  const reviewDecisionAllowed = reviewDecisionWorkspace === "permissions" ? canGrant : canReview;
-  const authDispositionHtml = `
+  // 权限审批 / 操作审批 / 发现处置此前是三个页面（同一份 HTML 按当前栏目二选一）：人处理待办要在三处来回。
+  // 现在同在「审批与处置」一个栏目里，三段各自渲染、各有标题。
+  const authDispositionHtmlFor = (reviewDecisionWorkspace) => {
+    const reviewDecisionCount = reviewDecisionWorkspace === "permissions"
+      ? pendingPermissions.length : reviewDecisionWorkspace === "approvals" ? pendingApprovals.length : openFindings.length;
+    const reviewDecisionLabel = reviewDecisionWorkspace === "permissions"
+      ? "权限请求" : reviewDecisionWorkspace === "approvals" ? "操作审批" : "待处置发现";
+    const reviewDecisionAllowed = reviewDecisionWorkspace === "permissions" ? canGrant : canReview;
+    return `
     <div class="stack">
       <div class="record-meta"><span>${reviewDecisionLabel} ${reviewDecisionCount} 项（未处置项会继续阻塞对应阶段门或关闭门禁）</span></div>
       ${!reviewDecisionAllowed ? `<div class="notice warn-notice">当前账号没有处理本页记录所需的权限，仅可查看。</div>` : ""}
@@ -6406,6 +6408,7 @@ function renderReview() {
         </div>`).join("") : ""}
       ${reviewDecisionCount === 0 ? `<div class="notice">当前范围没有待处理的${reviewDecisionLabel}。</div>` : ""}
     </div>`;
+  };
 
   const todoPanel = renderPendingForMePanel();
 
@@ -6421,9 +6424,9 @@ function renderReview() {
         ${pendingHtml}
       </div>
     `, {wide: true}),
-    panel("权限审批", authDispositionHtml, {wide: true}),
-    panel("操作审批", authDispositionHtml, {wide: true}),
-    panel("发现处置", authDispositionHtml, {wide: true}),
+    panel("权限审批", authDispositionHtmlFor("permissions"), {wide: true}),
+    panel("操作审批", authDispositionHtmlFor("approvals"), {wide: true}),
+    panel("发现处置", authDispositionHtmlFor("findings"), {wide: true}),
     panel("已答历史", table([{label: "问题", c: "text-clip"}, "状态", "所选选项", {label: "确认内容", c: "text-clip"}, "确认人", {label: "确认时间", c: "nowrap"}], answeredRows), {wide: true})
   ].join("");
 }

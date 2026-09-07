@@ -184,7 +184,7 @@ const expectedDefaults = {
   "tg": "list",
   "tasks": "list",
   "monitor": "overview",
-  "review": "pending",
+  "review": "inbox",
   "directives": "compose"
 };
 
@@ -243,35 +243,38 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
   check("monitor keeps five question-shaped panes plus help",
     workspaces.catalog.monitor.map((entry) => entry.id).join(",") === "overview,execution,events,nodes,acceptance,help",
     workspaces.catalog.monitor.map((entry) => entry.id).join(","));
-  check("legacy review decisions pane migrates to permission approvals", workspaces.select("review", "decisions") === true
-    && workspaces.current("review")?.id === "permissions");
-  check("legacy project roles pane migrates to default roles", workspaces.select("proj-settings", "roles") === true
-    && workspaces.current("proj-settings")?.id === "default-roles");
+  check("legacy review decisions pane migrates to dispositions", workspaces.select("review", "decisions") === true
+    && workspaces.current("review")?.id === "dispositions");
+  for (const legacy of ["permissions", "approvals", "findings"]) {
+    check(`legacy review pane ${legacy} migrates to dispositions`, workspaces.select("review", legacy) === true
+      && workspaces.current("review")?.id === "dispositions");
+  }
+  for (const [legacy, target] of [["roles", "roles"], ["default-roles", "roles"], ["skills", "roles"], ["baseline", "repositories"],
+    ["system-rules", "rules"], ["business-rules", "rules"]]) {
+    check(`legacy project settings pane ${legacy} migrates to ${target}`, workspaces.select("proj-settings", legacy) === true
+      && workspaces.current("proj-settings")?.id === target);
+  }
   check("legacy system protocol pane migrates to instruction efficiency", workspaces.select("sys-settings", "protocol") === true
     && workspaces.current("sys-settings")?.id === "instruction-efficiency");
   workspaces.select("monitor", "overview");
 }
 
 {
+  // 项目设置按「仓库与基线 / 角色与 Skill / 规则」三栏：仓库栏含基线、不含角色与规则；规则栏含两类规则。
   workspaces.select("proj-settings", "repositories");
   const repositoriesPane = workspaces.run("proj-settings", () => ({
-    repo: workspaces.allows("项目基础配置"),
-    baseline: workspaces.allows("基线资料"),
-    roles: workspaces.allows("默认角色")
+    repo: workspaces.allows("项目基础配置"), baseline: workspaces.allows("基线资料"),
+    roles: workspaces.allows("项目默认角色"), rules: workspaces.allows("业务规则")
   }));
-  check("project settings repositories pane only owns repository configuration",
-    repositoriesPane.repo && !repositoriesPane.baseline && !repositoriesPane.roles,
+  check("project settings repositories pane owns repositories and baseline only",
+    repositoriesPane.repo && repositoriesPane.baseline && !repositoriesPane.roles && !repositoriesPane.rules,
     JSON.stringify(repositoriesPane));
-
-  workspaces.select("proj-settings", "baseline");
-  const baselinePane = workspaces.run("proj-settings", () => ({
-    repo: workspaces.allows("项目基础配置"),
-    baseline: workspaces.allows("基线资料"),
-    rules: workspaces.allows("业务规则")
+  workspaces.select("proj-settings", "rules");
+  const rulesPane = workspaces.run("proj-settings", () => ({
+    system: workspaces.allows("系统规则"), business: workspaces.allows("业务规则"), repo: workspaces.allows("项目基础配置")
   }));
-  check("project baseline pane is isolated from repository and rule forms",
-    !baselinePane.repo && baselinePane.baseline && !baselinePane.rules,
-    JSON.stringify(baselinePane));
+  check("project settings rules pane owns both rule categories only",
+    rulesPane.system && rulesPane.business && !rulesPane.repo, JSON.stringify(rulesPane));
 }
 
 {

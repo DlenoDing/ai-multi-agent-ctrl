@@ -45,16 +45,11 @@
     leaf("monitor", "nodes", "节点与命令", "运行节点健康、控制命令与死信处置"),
     leaf("monitor", "acceptance", "验收与收口", "检查点证据、质量门禁、人工定稿、阻塞处置与关闭门禁"),
     leaf("review", "pending", "待我审核", "执行方案与确认卡"),
-    leaf("review", "permissions", "权限审批", "Agent 请求的临时权限与作用范围"),
-    leaf("review", "approvals", "操作审批", "危险操作、阶段门和多方审批"),
-    leaf("review", "findings", "发现处置", "评审发现、结论、状态和证据"),
+    leaf("review", "dispositions", "审批与处置", "权限审批、操作审批与发现处置"),
     leaf("review", "history", "审核历史", "已完成的人定记录"),
     leaf("directives", "history", "指令记录", "查看消费、拒绝和执行动作"),
-    leaf("proj-settings", "baseline", "项目基线", "任务组和任务可引用的稳定输入"),
-    leaf("proj-settings", "default-roles", "项目默认角色", "任务组未覆盖时继承的角色"),
-    leaf("proj-settings", "skills", "项目默认 Skill", "任务组未覆盖时继承的角色能力"),
-    leaf("proj-settings", "system-rules", "项目系统规则", "任务组默认继承的执行纪律和安全边界"),
-    leaf("proj-settings", "business-rules", "项目业务规则", "任务组默认继承的业务约束"),
+    leaf("proj-settings", "roles", "角色与 Skill", "项目默认角色与角色 Skill 定制"),
+    leaf("proj-settings", "rules", "规则", "系统规则与业务规则，任务组默认继承"),
     {divider: "使用说明"},
     leaf("proj-overview", "help", "项目操作说明", "项目准备、执行与处置路径"),
     leaf("proj-members", "help", "项目授权说明", "项目角色与任务组权限边界"),
@@ -166,7 +161,7 @@
     const scopedTitles = {
       tasks: {list: "任务组任务", create: "任务组新建任务"},
       monitor: {overview: "任务组监控", execution: "任务组会话与派发", events: "任务组实时事件", nodes: "任务组节点与命令", acceptance: "任务组验收与收口", help: "任务组监控全部功能"},
-      review: {pending: "任务组待审核", permissions: "任务组权限审批", approvals: "任务组操作审批", findings: "任务组发现处置", history: "任务组审核历史", inbox: "任务组待办汇总", help: "任务组审核全部功能"},
+      review: {inbox: "任务组待办处理", pending: "任务组待审核", dispositions: "任务组审批与处置", history: "任务组审核历史", help: "任务组审核全部功能"},
       directives: {compose: "任务组下达指令", history: "任务组指令记录", help: "任务组指令全部功能"}
     };
     const title = scopedTitles[pageId]?.[workspace];
