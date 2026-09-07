@@ -26,7 +26,7 @@
 
     for (const workItem of workItems) {
       entries.push(timelineItem({
-        kind: "工作项",
+        kind: "任务",
         title: workItem.title || workItem.id,
         status: workItem.status,
         at: eventTimeOf(workItem) || taskGroup.updatedAt,
@@ -194,8 +194,8 @@
       jumpModuleCard({title: "7 执行控制", metric: summary.canControl ? "可控" : "只读",
         detail: "暂停、恢复、评审和统一语言策略", panelTitle: "执行控制",
         tone: summary.canControl ? "blue" : "gray", action: "查看"}),
-      jumpModuleCard({title: "8 工作项", metric: String(summary.workItemCount || 0),
-        detail: "执行单元、模型、派发和实时事件入口", panelTitle: "工作项",
+      jumpModuleCard({title: "8 任务", metric: String(summary.workItemCount || 0),
+        detail: "执行单元、模型、派发和实时事件入口", panelTitle: "任务",
         tone: summary.workItemCount ? "blue" : "orange", action: "查看"}),
       jumpModuleCard({title: "9 准入与阻断", metric: summary.hasAdmission ? "已计算" : "待编排",
         detail: "可执行、等待、真实阻断和整体阻断规则", panelTitle: "准入与阻断分类",

@@ -1023,7 +1023,7 @@ const SUBMIT_SUCCESS = {
   "agent-create": "已创建智能体档案",
   "agent-profile-update": "已保存 Agent 档案",
   "task-group-create": "已创建任务组",
-  "work-item-create": "已添加工作项",
+  "work-item-create": "已创建任务",
   "language-policy": "已更新语言策略",
   "tg-config": "已保存任务组配置",
   "project-config": "已保存项目配置",
@@ -2281,7 +2281,9 @@ function renderSystemManagementHub(overview) {
     ],
     modules: [
       {pageId: "sys-orgs", title: "组织与配额", metric: `${orgCount}`, detail: "创建组织、调整配额、启停组织", action: "管理组织", tone: "blue"},
-      {pageId: "sys-settings", title: "执行节点", metric: `${overview?.runtime?.onlineNodes ?? 0}/${overview?.runtime?.totalNodes ?? 0}`, detail: "当前在线且可见的 Agent 节点", action: "查看运行参数", tone: Number(overview?.runtime?.onlineNodes || 0) ? "green" : "orange"},
+      // 节点归各组织管理，系统层没有跨组织节点清单：这张卡只能带人去组织列表看各组织的配额用量，
+      // 不能指到「运行参数」—— 那页是控制面旋钮，跟节点在不在线没关系。
+      {pageId: "sys-orgs", title: "执行节点", metric: `${overview?.runtime?.onlineNodes ?? 0}/${overview?.runtime?.totalNodes ?? 0}`, detail: "在线／全部 Agent 节点；节点归各组织管理", action: "按组织查看", tone: Number(overview?.runtime?.onlineNodes || 0) ? "green" : "orange"},
       {pageId: "sys-orgs", title: "活跃任务组", metric: `${overview?.runtime?.activeTaskGroups ?? 0}`, detail: "各组织当前仍在执行的任务组", action: "查看组织", tone: Number(overview?.runtime?.activeTaskGroups || 0) ? "blue" : "gray"},
       {pageId: "sys-settings", title: "模型与技能源", metric: `${mcpToolCount}`, detail: "模型能力、技能源同步、指令压缩指标", action: "查看设置", tone: "blue"}
     ]
@@ -4765,7 +4767,7 @@ function workflowGuidePanel(project, groups) {
             ? `已签发 ${pendingTokens} 张加入令牌待使用，还没有节点注册：到 agent 主机上执行安装命令`
             : "尚未接入：先签发加入令牌，再在 agent 主机上执行安装命令"))},
     {title: "创建任务组", done: groups.length > 0, page: "tg", workspace: groups.length ? "list" : "create", state: groups.length ? `${groups.length} 个任务组` : "还没有任务组"},
-    {title: "创建工作项（任务）", done: workItemCount > 0, page: "tasks", workspace: workItemCount ? "list" : "create", state: workItemCount ? `${workItemCount} 个工作项` : "还没有工作项：到任务组里创建任务"},
+    {title: "创建任务", done: workItemCount > 0, page: "tasks", workspace: workItemCount ? "list" : "create", state: workItemCount ? `${workItemCount} 个工作项` : "还没有工作项：到任务组里创建任务"},
     {title: "启动执行", done: dispatches > 0, page: "monitor", workspace: "overview",
       // 人在这里就能推一拍：同一个动作、同一套回执（被挡/推进 N 项/无事可做）；只对能编排的账号摆，看得到却按不动＝杠杆不可达。
       action: hasPerm("task_group:orchestrate") && workItemCount > 0 ? `<button class="secondary-button" data-action="orchestrator-run">推进一拍</button>` : "",
@@ -5074,7 +5076,7 @@ function renderTaskGroupLifecycleGuide(groups) {
         title: "2 拆工作项",
         metric: workItemCount || "拆分",
         detail: canControl ? "工作项绑定执行角色、要求和可选指定模型，进入就绪后由总控派发" : "工作项承载具体执行要求、角色、模型约束和验收条件",
-        panelTitle: canControl ? "创建工作项" : "任务组",
+        panelTitle: canControl ? "创建任务" : "任务组",
         tone: workItemCount ? "blue" : "gray",
         action: canControl ? "加工作项" : "看工作项"
       })}
@@ -5137,13 +5139,13 @@ function renderTaskGroups() {
         <div class="form-row"><label>目标描述</label><textarea name="objective" required placeholder="描述该任务组要达成的目标"></textarea></div>
         <div class="form-row"><label>统一语言</label><select name="languageTag">${languageSelectOptions("zh-CN")}</select></div>
         <label><input type="checkbox" name="startPaused" value="true"> 创建后等待手动启动</label>
-        <div class="form-row"><label>初始角色（逗号分隔；只认已登记的执行角色）</label><input name="roles" value="orchestrator,agent-runtime,reviewer" list="owner-role-options">
-          <datalist id="owner-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
+        <div class="form-row"><label>初始角色（勾选参与这个任务组的执行角色）</label>
+          <div class="check-list" data-role-choices="task-group-create">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<label><input type="checkbox" name="roles" value="${esc(roleId)}"${["orchestrator", "agent-runtime", "reviewer"].includes(roleId) ? " checked" : ""}> ${esc(roleId === "agent-runtime" ? "通用任务执行" : t(roleId))} <span class="muted">(${esc(roleId)})</span></label>`).join("")}</div></div>
         ${currentProjectId ? "" : noVisibleProjectNotice()}
         <button class="primary-button" type="submit" ${currentProjectId ? "" : "disabled"}>创建任务组</button>
       </form>
     ` : `<div class="notice">创建任务组需要当前项目的任务组控制权限。仅获某个任务组授权时，可在已有任务组内创建任务。</div>`),
-    panel("创建工作项", `
+    panel("创建任务", `
       <form class="form-grid" data-form="work-item-create">
         <div class="form-row"><label>所属任务组</label>
           ${(() => {
@@ -5165,7 +5167,7 @@ function renderTaskGroups() {
                 : ""}`;
           })()}
         </div>
-        <div class="form-row"><label>工作项标题</label><input name="title" required></div>
+        <div class="form-row"><label>任务标题</label><input name="title" required></div>
         <div class="form-row"><label>执行角色</label><select name="ownerRole">${roleOptions}</select></div>
         <div class="form-row"><label>指定模型（可选）</label>
           <select name="pinnedModelId">
@@ -5178,7 +5180,7 @@ function renderTaskGroups() {
         <div class="form-row"><label>机器可执行要求（每行一条）</label><textarea name="requirements" placeholder="每行一条约束或验收条件"></textarea></div>
         ${groups.length ? "" : `<div class="notice">先创建任务组后再追加工作项。</div>`}
         ${groups.length ? noOnlineAgentCreateNotice() : ""}
-        <button class="primary-button" type="submit" ${addableGroups.length ? "" : "disabled"}>创建工作项</button>
+        <button class="primary-button" type="submit" ${addableGroups.length ? "" : "disabled"}>创建任务</button>
       </form>
     `)
   ];
@@ -5189,6 +5191,9 @@ function renderTaskGroups() {
   const helpers = {row, table, badge, progressLine, fmtTime, languageLabel, t, controls: taskGroupControls, quickControl: taskGroupLifecycleControl,
     stats: taskGroupOperationalStats,
     project: currentProject(), projectLink: window.AIMAC_OBJECT_WORKSPACE.projectLink, groupLink: window.AIMAC_OBJECT_WORKSPACE.groupLink};
+  // 从任务组详情点「创建任务」：栏目已切到 tasks/create，但详情态（expandedTaskGroupId）还在 ——
+  // 这里若先按详情渲染，人点了按钮看到的仍是那张详情页，表单永远出不来。创建态优先。
+  if (creating && page === "tasks") return createPanels.filter((html) => html.includes('data-form="work-item-create"')).join("") || createPanels.join("");
   if (expandedTaskGroupId) {
     const taskGroup = groups.find((group) => group.id === expandedTaskGroupId);
     if (!taskGroup) return panel("任务组详情", `<button class="secondary-button" data-action="tg-list">返回任务组列表</button><div class="notice">该任务组未能加载或已不在可见范围内。</div>`, {wide: true});
@@ -6914,7 +6919,7 @@ function cfgRepoRow(repo = {}, readOnly = false) {
   const passwordPlaceholder = credential.passwordSet ? "已配置密码；留空保留原值" : "密码（账号密码模式）";
   const apiKeyPlaceholder = credential.apiKeySet ? "已配置 API Key；留空保留原值" : "API Key / Token";
   return `
-    <div class="cfg-row cfg-row-repo" data-cfg-kind="repo">
+    <div class="cfg-row cfg-row-repo" data-cfg-kind="repo" data-credential-mode="${esc(mode)}">
       <input name="repoId" placeholder="仓库 ID" value="${esc(repo.id || "")}" ${ro}>
       <input name="repoUrl" placeholder="仓库地址（git@... / https://...）" value="${esc(repo.url || "")}" ${ro}>
       <input name="repoBranch" placeholder="默认分支" value="${esc(repo.defaultBranch || "main")}" ${ro}>
@@ -6926,9 +6931,8 @@ function cfgRepoRow(repo = {}, readOnly = false) {
       <input name="repoUsername" placeholder="账号（账号密码模式）" value="${esc(username)}" ${ro}>
       <input name="repoPassword" type="password" placeholder="${esc(passwordPlaceholder)}" value="${esc(password)}" ${ro} autocomplete="new-password">
       <input name="repoApiKey" type="password" placeholder="${esc(apiKeyPlaceholder)}" value="${esc(apiKey)}" ${ro} autocomplete="new-password">
-      ${readOnly ? "" : `<button type="button" class="danger-button" data-action="cfg-del">删除</button>`}
-      ${!readOnly && repo.id ? `<button type="button" class="secondary-button" data-action="repo-test-connection" data-repo="${esc(repo.id)}" title="验证已保存的仓库地址和读取权限；推送权限请单独验证">测试连接</button>
-        <button type="button" class="secondary-button" data-action="repo-test-connection" data-repo="${esc(repo.id)}" data-verify-write="true" title="真实创建并清理临时测试分支，验证推送权限">验证推送</button>` : ""}
+      ${readOnly ? "" : `<div class="repo-row-actions">${repo.id ? `<button type="button" class="secondary-button" data-action="repo-test-connection" data-repo="${esc(repo.id)}" title="验证已保存的仓库地址和读取权限；推送权限请单独验证">测试连接</button>
+        <button type="button" class="secondary-button" data-action="repo-test-connection" data-repo="${esc(repo.id)}" data-verify-write="true" title="真实创建并清理临时测试分支，验证推送权限">验证推送</button>` : ""}<button type="button" class="danger-button" data-action="cfg-del">删除</button></div>`}
     </div>
   `;
 }
@@ -7404,6 +7408,9 @@ document.addEventListener("submit", async (event) => {
     }
     if (kind === "agent-create") {
       await api("/api/agents", {method: "POST", body: JSON.stringify(data)});
+      // 建完回到档案列表：留在填满的表单上，人看不到新档案落在哪，再点一下就是重复创建。
+      if (page === "org-agents" || page === "proj-agents") workspaces.select(page, "profiles");
+      formTouched = false;
       await loadPage();
       return;
     }
@@ -7429,7 +7436,8 @@ document.addEventListener("submit", async (event) => {
         languageTag: data.languageTag,
         languageName,
         startPaused: data.startPaused === "true",
-        roles: String(data.roles || "").split(/[\n,]/u).map((item) => item.trim()).filter(Boolean)
+        // 复选框同名多值：FormData 转对象只留最后一个，要用 getAll 收全。
+        roles: new FormData(form).getAll("roles").map((item) => String(item).trim()).filter(Boolean)
       };
       const result = await api("/api/task-groups", {method: "POST", body: JSON.stringify(payload)});
       expandedTaskGroupId = result.taskGroup?.id || expandedTaskGroupId;
@@ -7968,6 +7976,12 @@ async function navigateMenuTarget(nextPage, nextWorkspace = "") {
 document.addEventListener("change", async (event) => {
   const target = event.target;
   try {
+    // 仓库行只露出当前凭据方式要填的字段：三种方式的输入框同时摆着，人分不清该填哪几个。
+    if (target.name === "repoCredentialMode") {
+      const repoRow = target.closest?.(".cfg-row-repo");
+      if (repoRow) repoRow.dataset.credentialMode = target.value || "none";
+      return;
+    }
     if (target.dataset.menuSelect !== undefined) {
       const [nextPage, nextWorkspace = ""] = String(target.value).split("|");
       const previous = `${page}|${workspaces.current(page)?.id || ""}`;

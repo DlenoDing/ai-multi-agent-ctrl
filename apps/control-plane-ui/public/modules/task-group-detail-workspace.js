@@ -291,13 +291,13 @@ function render(taskGroup, context, helpers) {
       ${sectionBlock("系统规则", systemRulesHtml)}
       ${sectionBlock("业务规则", businessRulesHtml)}
       ${sectionBlock("执行控制", controlHtml)}
-      ${sectionBlock(`工作项${progressData.workItemsTruncated
+      ${sectionBlock(`任务${progressData.workItemsTruncated
         ? `（共 ${esc(progressData.workItemCount)} 个，当前展示 ${(progressData.workItems || []).length} 个）` : ""}`,
         `<div class="stack">${progressData.workItemsTruncated
-        ? `<div class="notice">工作项很多，这里只加载了最新的 ${(progressData.workItems || []).length} 个（共 ${esc(progressData.workItemCount)} 个）—— 下面的筛选只在已加载的这些里找。</div>`
+        ? `<div class="notice">任务很多，这里只加载了最新的 ${(progressData.workItems || []).length} 个（共 ${esc(progressData.workItemCount)} 个）—— 下面的筛选只在已加载的这些里找。</div>`
         : ""}${embeddedTruncated
         ? `<div class="notice warn-notice">进度接口没有加载出来，这里回落到列表视图里嵌的最新的 ${(taskGroup.workItems || []).length} 个（共 ${esc(taskGroup.workItemCount ?? "?")} 个）—— 不要据此判断"只有这些"。请刷新重试。</div>`
-        : ""}${workItems || `<div class="notice">暂无工作项。</div>`}</div>`)}
+        : ""}${workItems || `<div class="notice">暂无任务：点上方「创建任务」建第一个。</div>`}</div>`)}
       ${sectionBlock("准入与阻断分类", admissionHtml)}
       ${sectionBlock("阻塞", `<div class="stack">${blockers}</div>`)}
       ${sectionBlock("任务执行时间线", renderTaskGroupExecutionTimeline(taskGroup, progressData))}

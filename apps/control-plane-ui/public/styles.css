@@ -464,6 +464,9 @@ html, body {
 .form-row { display: flex; flex-direction: column; gap: 4px; }
 .form-row label { font-size: 13px; color: var(--text-sub); }
 .form-row-inline { display: flex; gap: 10px; flex-wrap: wrap; }
+.check-list { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 6px 0; }
+.check-list label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-main, inherit); }
+.check-list .muted { color: var(--text-sub); font-size: 12px; }
 .form-row-inline .form-row { flex: 1; min-width: 130px; }
 .form-grid:not([data-form="login"]) > button[type="submit"] { align-self: flex-start; min-width: 168px; }
 
@@ -648,6 +651,11 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 }
 .cfg-row-repo input, .cfg-row-repo select { width: 100%; min-width: 0; }
 .cfg-row-repo .danger-button { width: max-content; }
+.repo-row-actions { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; }
+/* 仓库行按凭据方式只露出要填的字段 */
+.cfg-row-repo[data-credential-mode="none"] input[name="repoUsername"], .cfg-row-repo[data-credential-mode="none"] input[name="repoPassword"], .cfg-row-repo[data-credential-mode="none"] input[name="repoApiKey"],
+.cfg-row-repo[data-credential-mode="account_password"] input[name="repoApiKey"],
+.cfg-row-repo[data-credential-mode="api_key"] input[name="repoUsername"], .cfg-row-repo[data-credential-mode="api_key"] input[name="repoPassword"] { display: none; }
 
 .status-line { display: flex; gap: 12px; flex-wrap: wrap; padding: 14px 24px 0; }
 .status-line .metric { min-width: 140px; }

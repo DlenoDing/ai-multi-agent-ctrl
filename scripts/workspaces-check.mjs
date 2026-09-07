@@ -281,12 +281,12 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
   workspaces.select("tasks", "list");
   const taskListPane = workspaces.run("tasks", () => ({
     list: workspaces.allows("任务工作台"),
-    create: workspaces.allows("创建工作项")
+    create: workspaces.allows("创建任务")
   }));
   workspaces.select("tasks", "create");
   const taskCreatePane = workspaces.run("tasks", () => ({
     list: workspaces.allows("任务工作台"),
-    create: workspaces.allows("创建工作项")
+    create: workspaces.allows("创建任务")
   }));
   check("tasks page list/create panes are independent",
     taskListPane.list && !taskListPane.create && !taskCreatePane.list && taskCreatePane.create,
@@ -296,7 +296,7 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
 {
   // 任务组详情 4 个栏目：任务与进度 / 角色与规则 / 执行控制 / 协作记录。每个小节标题都要落到其中一个。
   const detailOwners = [
-    ["工作项（共 4000 个，当前展示 300 个）", "tasks"], ["事项清单", "tasks"], ["任务执行时间线", "tasks"],
+    ["任务（共 4000 个，当前展示 300 个）", "tasks"], ["事项清单", "tasks"], ["任务执行时间线", "tasks"],
     ["角色列表", "config"], ["配置继承", "config"], ["角色 Skill 定制", "config"],
     ["系统规则", "config"], ["业务规则", "config"], ["执行控制", "control"],
     ["准入与阻断分类", "control"], ["阻塞", "control"], ["协作记录（Agent 房间消息）", "collaboration"]

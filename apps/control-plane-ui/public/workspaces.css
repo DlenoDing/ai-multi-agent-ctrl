@@ -29,7 +29,7 @@
 .workspace-heading { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--card-border); padding-bottom: 12px; }
 .workspace-heading h2 { margin: 0; font-size: 17px; }
 .directive-fields[hidden] { display: none; }
-.workspace-detail-nav { display: flex; gap: 4px; overflow-x: auto; padding: 10px 0; border-bottom: 1px solid var(--card-border); }
+.workspace-detail-nav { grid-column: 1 / -1; display: flex; gap: 4px; overflow-x: auto; padding: 10px 0; border-bottom: 1px solid var(--card-border); }
 .workspace-detail-nav .workspace-nav-item { color: var(--text-sub); flex: 0 0 auto; border-left: 0; border-bottom: 2px solid transparent; }
 .workspace-detail-nav .workspace-nav-item.active { color: var(--blue); background: var(--blue-bg); border-bottom-color: var(--blue); }
 .workspace-scope { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

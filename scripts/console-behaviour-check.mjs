@@ -199,6 +199,7 @@ class StubFormData {
     if (submitter?.name) this.pairs.push([submitter.name, submitter.value ?? ""]);
   }
   entries() { return this.pairs[Symbol.iterator](); }
+  getAll(name) { return this.pairs.filter(([key]) => key === name).map(([, value]) => value); }
 }
 if (!globalThis.FormData) globalThis.FormData = StubFormData;
 
@@ -326,6 +327,7 @@ globalThis.__probe = {
   renderSource: () => String(render),
   handlerSource: (type) => String(globalThis.__handlers[type]),
   click: (event) => globalThis.__handlers.click(event),
+  change: (event) => globalThis.__handlers.change(event),
   submit: (event) => globalThis.__handlers.submit(event),
   stubNavigation: () => { render = () => {}; loadPage = async () => {}; toast = {success: () => {}, error: () => {}, info: () => {}}; },
   // 第三个入参可选：明细里有几处要读 state（溯源引用要拿 humanDirectives 解析成人名）。
@@ -1230,6 +1232,65 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         probe.setFetch(previousFetch);
       }
     }
+    // 【建组表单的角色复选框是同名多值：提交要把勾上的全收齐】。FormData 转对象只留最后一个，
+    // 勾了三个角色只送出一个＝人勾的没生效，任务组少两个角色还不报错。
+    {
+      const recorded = [];
+      const previousFetch = globalThis.fetch;
+      probe.setFetch(async (url, init = {}) => {
+        recorded.push({url: String(url), method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null});
+        return {ok: true, status: 200, headers: {get: () => null}, json: async () => ({ok: true, taskGroup: {id: "tg_new"}})};
+      });
+      try {
+        probe.stubNavigation();
+        probe.setObjectLocation({page: "tg", projectId: "p1", groupId: "", expanded: false, workId: ""});
+        const form = el("form", {dataset: {form: "task-group-create"}}, [
+          el("input", {name: "name", value: "建组探针"}), el("textarea", {name: "objective", value: "目标"}),
+          el("select", {name: "languageTag", value: "zh-CN"}, []),
+          el("input", {type: "checkbox", name: "roles", value: "orchestrator", checked: true}),
+          el("input", {type: "checkbox", name: "roles", value: "agent-runtime", checked: true}),
+          el("input", {type: "checkbox", name: "roles", value: "qa", checked: false}),
+          el("input", {type: "checkbox", name: "roles", value: "reviewer", checked: true}),
+          el("button", {type: "submit"})
+        ]);
+        // 处理器读 select.selectedOptions[0]：桩的 querySelector 只会给一个空 div，这里按选择器给个像样的 select。
+        const baseQuery = form.querySelector.bind(form);
+        form.querySelector = (selector) => (selector === "select[name='languageTag']" ? {selectedOptions: [{textContent: "中文 · zh-CN"}]} : baseQuery(selector));
+        const errors = [];
+        probe.captureToastKind("error", (message) => errors.push(String(message)));
+        await probe.submit({target: form, submitter: form.children[7], preventDefault: () => {}});
+        const post = recorded.find((item) => item.method === "POST" && /\/api\/task-groups$/u.test(item.url));
+        check("建组提交要把勾上的角色全部送出（同名多值不能只剩最后一个）",
+          Boolean(post) && JSON.stringify(post.body.roles) === JSON.stringify(["orchestrator", "agent-runtime", "reviewer"]),
+          post ? `送出的 roles＝${JSON.stringify(post.body.roles)}` : `没记录到 POST /api/task-groups（错误提示：${errors.join(" / ").slice(0, 160) || "无"}）—— 这条什么也没验`);
+      } finally {
+        probe.setFetch(previousFetch);
+      }
+    }
+    // 【新建 Agent 档案提交成功后要回到档案列表】。留在填满的表单上，人看不到新档案落在哪，再点一下就是重复创建。
+    {
+      const recorded = [];
+      const previousFetch = globalThis.fetch;
+      probe.setFetch(async (url, init = {}) => {
+        recorded.push({url: String(url), method: init.method || "GET"});
+        return {ok: true, status: 200, headers: {get: () => null}, json: async () => ({ok: true, agent: {id: "ag_new"}})};
+      });
+      try {
+        probe.stubNavigation();
+        for (const pageId of ["proj-agents", "org-agents"]) {
+          probe.setPage(pageId);
+          probe.workspaceSelect(pageId, "create");
+          const form = el("form", {dataset: {form: "agent-create"}}, [el("input", {name: "name", value: "后端实现 Agent"}), el("button", {type: "submit"})]);
+          await probe.submit({target: form, submitter: form.children[1], preventDefault: () => {}});
+          const posted = recorded.some((item) => item.method === "POST" && /\/api\/agents$/u.test(item.url));
+          check(`${pageId}：新建 Agent 档案提交后要回到档案列表而不是留在表单上`,
+            posted && probe.workspaceCurrent(pageId) === "profiles",
+            posted ? `提交后栏目＝${probe.workspaceCurrent(pageId)}` : "没记录到 POST /api/agents —— 这条什么也没验");
+        }
+      } finally {
+        probe.setFetch(previousFetch);
+      }
+    }
     // 【人工定稿表单：action 只能来自点下去的按钮，认不出就拒，不缺省成 finalize】。定稿是整套闸门里最重、
     // 不可逆的一步；提交器丢了就当 finalize，等于替人做了最重的决定（确认框会问"确认定稿"，而人点的可能是打回）。
     {
@@ -1493,6 +1554,31 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         const extra = (list()?.innerHTML.match(/class="cfg-row/gu) || []).length - 1;
         check("认不出的 kind 不许插一行保存时会被丢掉的行", extra === 0, `未知 kind 插了 ${extra} 行 —— 人填了保存就丢`);
       }
+    }
+    // 【仓库行按凭据方式只露出要填的字段】。三种方式的账号/密码/API Key 同时摆着，人分不清该填哪几个；
+    // 行上要带 data-credential-mode，切换下拉要改它，样式再按它藏掉无关字段。
+    {
+      const cfgRoot = el("div");
+      const cfgList = el("div", {dataset: {cfgList: "probe-list"}}); cfgRoot.appendChild(cfgList);
+      const cfgProbe = loadConsole(cfgRoot, {realI18n: true});
+      const addButton = {dataset: {action: "cfg-add", target: "probe-list", kind: "repo"}, disabled: false, textContent: "添加", classList: {add() {}, remove() {}}};
+      addButton.closest = (selector) => (selector === "[data-action]" ? addButton : null);
+      await cfgProbe.click({target: addButton, preventDefault: () => {}});
+      const rowHtml = String(cfgRoot.querySelector("[data-cfg-list='probe-list']")?.innerHTML || "");
+      check("新插的仓库行要带凭据方式标记（无凭据）",
+        /class="cfg-row cfg-row-repo" data-cfg-kind="repo" data-credential-mode="none"/u.test(rowHtml),
+        `仓库行开头：${rowHtml.replace(/\s+/gu, " ").slice(0, 160)}`);
+      const rowStub = {dataset: {credentialMode: "none"}};
+      await cfgProbe.change({target: {name: "repoCredentialMode", value: "account_password", closest: (selector) => (selector === ".cfg-row-repo" ? rowStub : null)}});
+      check("切换凭据方式要改仓库行的标记，否则字段露出不跟着变",
+        rowStub.dataset.credentialMode === "account_password",
+        `切到账号密码后行标记＝${JSON.stringify(rowStub.dataset.credentialMode)}`);
+      const mainStyles = readConsoleSource("styles.css");
+      check("样式要按凭据方式藏掉无关字段（无凭据藏三个、账号密码藏 Key、Key 藏账号密码）",
+        mainStyles.includes('.cfg-row-repo[data-credential-mode="none"] input[name="repoApiKey"]')
+          && mainStyles.includes('.cfg-row-repo[data-credential-mode="account_password"] input[name="repoApiKey"]')
+          && mainStyles.includes('.cfg-row-repo[data-credential-mode="api_key"] input[name="repoPassword"] { display: none; }'),
+        "仓库行三种凭据方式的输入框仍同时露出");
     }
     const quotaHint = probe.requestFailureHint({error: "org_quota_exceeded", kind: "agents", quota: 3, usage: 3});
     if (process.env.AIMAC_PRINT_HINTS) console.log(`[hint] 配额: ${String(quotaHint).slice(0, 60)}`);
@@ -2800,6 +2886,10 @@ async function runErrorGuidanceCase() {
   const systemSplitProbe = loadConsole(el("div"), {realI18n: true});
   const systemOverviewMain = systemSplitProbe.renderSysOverviewInventoryWith(navState, systemAccount, technicalOverview, ["overview"]);
   const systemDetailsHtml = systemSplitProbe.renderSysOverviewInventoryWith(navState, systemAccount, technicalOverview, ["details"]);
+  check("系统概览的「执行节点」卡要带人去组织列表，不许指到运行参数",
+    /<button class="module-card tone-[a-z]+" data-menu="sys-orgs">\s*<span class="module-title">执行节点<\/span>/u.test(systemOverviewMain)
+      && !/data-menu="sys-settings">\s*<span class="module-title">执行节点/u.test(systemOverviewMain),
+    "执行节点卡指向了运行参数（控制面旋钮页），人点过去看不到任何节点");
   check("系统概览只显示健康与关键指标，技术明细独立查看",
     !/运行指标|服务器信息|资源占用|能耗估算|存储体量|系统服务/u.test(systemOverviewMain)
       && /运行指标/u.test(systemDetailsHtml) && /服务器信息/u.test(systemDetailsHtml) && /资源占用/u.test(systemDetailsHtml)
@@ -2898,6 +2988,9 @@ async function runErrorGuidanceCase() {
     clarityMainStyles.includes('.form-grid:not([data-form="login"]) > button[type="submit"] { align-self: flex-start; min-width: 168px; }')
       && clarityMainStyles.includes('.form-grid:not([data-form="login"]) > button[type="submit"] { align-self: stretch; width: 100%; }'),
     "桌面宽表单把一个提交动作拉成整页横幅，或窄屏没有恢复方便点击的整行按钮");
+  check("页内栏目条必须横跨整个内容栅格",
+    /\.workspace-detail-nav \{ grid-column: 1 \/ -1; display: flex;/u.test(clarityWorkspaceStyles),
+    "栏目条没有声明跨满栅格：在两栏布局的创建/表单页里会被挤进左列并竖着拉长，下划线也只画一半");
   check("窄屏对象上下文不得重复统计和快捷菜单",
     clarityWorkspaceStyles.includes('.sidebar-object-card > .sidebar-progress, .sidebar-object-card > .sidebar-object-counts, .sidebar-object-card > .sidebar-object-actions { display: none; }')
       && clarityWorkspaceStyles.includes('grid-template-columns: auto minmax(0, 1fr) auto'),
@@ -3875,7 +3968,7 @@ function runReviewAxisCase() {
     }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"},
       "p_arch", "tg", "create");
     const archHtml = String(archRoot.innerHTML || "");
-    check("已归档项目的任务组页不许摆着「创建任务组 / 创建工作项」表单",
+    check("已归档项目的任务组页不许摆着「创建任务组 / 创建任务」表单",
       /建不了新的任务组或工作项/u.test(archHtml)
         && !/data-form="task-group-create"/u.test(archHtml)
         && !/data-form="work-item-create"/u.test(archHtml),
@@ -4786,7 +4879,7 @@ function runNoVisibleProjectCase() {
     // renderAs 给的是【去掉标签之后的可见文本】，所以按可见文案分段核，不要去匹配 HTML 属性
     //（第一版就是这么写的，两边都数到 0，看起来像修复没生效）。
     const flat = rows.replace(/\s+/gu, " ");
-    // 用【最后一次出现】：这一页上面的「创建工作项」表单里有个下拉，把两个组名先列了一遍，
+    // 用【最后一次出现】：这一页上面的「创建任务」表单里有个下拉，把两个组名先列了一遍，
     // 取第一次出现会切到那段下拉文本上，两边都数不到按钮（第一版就是这么误判的）。
     const mineFrom = flat.lastIndexOf("我能控的");
     const theirsFrom = flat.lastIndexOf("别人的组");
@@ -5369,6 +5462,14 @@ async function runPendingTruncationCase() {
     check("有在线 agent 时建工作项表单不许喊「不会被领走」",
       withAgentForm.length > 0 && !/不会被领走/u.test(withAgentForm),
       "有节点在线仍在表单里喊没人领 —— 人会去白查节点");
+    // 【从任务组详情点「创建任务」要真的看到表单】。详情态（expandedTaskGroupId）还在时，tasks/create
+    // 原先仍按详情渲染 —— 人点了按钮，页面标题变成「任务组新建任务」，正文还是那张详情，表单永远出不来。
+    probe.setObjectLocation({page: "tasks", projectId: "p1", groupId: "tg1", expanded: true, workId: ""});
+    probe.renderFullPagePaneWith({...makeState("任务组"), fleet: {online: 1, total: 2}}, account, "p1", "tasks", "create");
+    check("任务组详情态下切到 tasks/create 要渲染建任务表单，而不是继续摆详情",
+      /data-form="work-item-create"/u.test(value) && !/class="task-group-object\b/u.test(value),
+      `${/data-form="work-item-create"/u.test(value) ? "有表单" : "没有表单"}；${/class="task-group-object\b/u.test(value) ? "仍是详情页" : "不是详情页"}`);
+    probe.setObjectLocation({page: "tasks", projectId: "p1", groupId: "", expanded: false, workId: ""});
     // 登录页绕过 render 自己写 DOM。缓存不作废的话，退出再登录会算出和上次一模一样的整页 HTML
     // 而被跳过，人就卡在登录页上 —— 这是本次改动最容易造出来的新故障。
     probe.renderLoginWith(null);
@@ -5992,7 +6093,7 @@ async function runPendingTruncationCase() {
         && !/<details class="guide-bundle" open[^>]*>[\s\S]*详情阅读路径/u.test(detailHelpPane),
       "「详情阅读路径」要收进默认关闭的折叠块");
     check("任务组详情关键小节在 owning panes 内保留可定位锚点",
-      /data-section-title="工作项"/u.test(detailTasksPane)
+      /data-section-title="任务"/u.test(detailTasksPane)
         && /data-section-title="事项清单"/u.test(detailProgressPane)
         && /data-section-title="角色列表"/u.test(detailRolesPane)
         && /data-section-title="配置继承"/u.test(detailInheritancePane)
@@ -6003,7 +6104,7 @@ async function runPendingTruncationCase() {
     check("任务组「角色与规则」栏目含齐配置继承、Skill 定制、系统规则和业务规则；任务栏目不混入配置",
       /配置来源/u.test(detailInheritancePane) && /角色 Skill 定制/u.test(detailInheritancePane)
         && /data-category="system"/u.test(detailInheritancePane) && /data-category="business"/u.test(detailInheritancePane)
-        && !/data-form="tg-rules"|角色 Skill 定制/u.test(detailTasksPane) && /data-section-title="工作项"/u.test(detailTasksPane),
+        && !/data-form="tg-rules"|角色 Skill 定制/u.test(detailTasksPane) && /data-section-title="任务"/u.test(detailTasksPane),
       "任务组配置四件事没有并在「角色与规则」一个栏目里，或任务栏目里又混进了配置");
     check("任务组详情跳转处理器支持小节锚点和动态标题前缀",
       /querySelectorAll\("\[data-section-title\]"\)/u.test(probe.handlerSource("click"))
@@ -6456,18 +6557,20 @@ async function runPendingTruncationCase() {
     if (!/创建任务组/u.test(createHtml)) {
       check("建组表单的夹具要真的渲染出「创建任务组」面板", false, "夹具没渲染出建组面板 —— 下面那条什么也没验");
     } else {
-      check("建组表单要列出已登记的执行角色（自由文本配登记册校验＝拼错一次就 400）",
-        /<datalist id="owner-role-options">/u.test(createHtml) && createHtml.includes('<option value="reviewer">'),
-        "建组表单没有执行角色的 datalist，或里面少了 reviewer");
+      check("建组表单的执行角色要用复选框列出（自由文本配登记册校验＝拼错一次就 400，英文 id 也没人认得）",
+        /<div class="check-list" data-role-choices="task-group-create">/u.test(createHtml)
+          && /<input type="checkbox" name="roles" value="reviewer" checked> [^<]+ <span class="muted">\(reviewer\)<\/span>/u.test(createHtml)
+          && !/<input name="roles"/u.test(createHtml),
+        "建组表单没有执行角色复选框，或 reviewer 没带可读标签／没默认勾上，或仍留着自由文本框");
     }
     // 判据要各自独立：标题与提示里都写着"共 4000 个"，用同一个模式匹配的话，
     // 删掉标题那一处它照样绿（第一版就是这样）。
     check("明细页的小节标题要带上真实总数",
-      /工作项（共 4000 个，当前展示 300 个）/.test(detailHtml),
-      "工作项被截断到 300 条，小节标题却没说共有多少 —— 人一眼看到的就是那个假数字");
-    check("截断后的工作项动态标题也要作为小节锚点",
-      /工作项（共 4000 个，当前展示 300 个）/.test(detailHtml)
-        && probe.workspaceOwner("group-detail", "工作项（共 4000 个，当前展示 300 个）") === "tasks",
+      /任务（共 4000 个，当前展示 300 个）/.test(detailHtml),
+      "任务被截断到 300 条，小节标题却没说共有多少 —— 人一眼看到的就是那个假数字");
+    check("截断后的任务动态标题也要作为小节锚点",
+      /任务（共 4000 个，当前展示 300 个）/.test(detailHtml)
+        && probe.workspaceOwner("group-detail", "任务（共 4000 个，当前展示 300 个）") === "tasks",
       "动态工作项标题没有归到任务列表 pane，截断集合就失去自己的工作区归属");
     check("提示里要写清只加载了最新的多少个",
       /只加载了最新的 300 个/.test(detailHtml),

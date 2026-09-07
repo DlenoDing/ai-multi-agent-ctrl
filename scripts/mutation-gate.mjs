@@ -1126,8 +1126,8 @@ const MUTATIONS = [
     name: "只读成员的配置行不许摆删除按钮",
     file: APP,
     gate: "console",
-    from: "      <input name=\"repoApiKey\" type=\"password\" placeholder=\"${esc(apiKeyPlaceholder)}\" value=\"${esc(apiKey)}\" ${ro} autocomplete=\"new-password\">\n      ${readOnly ? \"\" : `<button type=\"button\" class=\"danger-button\" data-action=\"cfg-del\">删除</button>`}",
-    to: "      <input name=\"repoApiKey\" type=\"password\" placeholder=\"${esc(apiKeyPlaceholder)}\" value=\"${esc(apiKey)}\" ${ro} autocomplete=\"new-password\">\n      <button type=\"button\" class=\"danger-button\" data-action=\"cfg-del\">删除</button>",
+    from: "      ${readOnly ? \"\" : `<div class=\"repo-row-actions\">${repo.id ? `<button",
+    to: "      ${`<div class=\"repo-row-actions\">${repo.id ? `<button",
     expect: "不许有「删除」按钮"
   },
   {
@@ -12167,6 +12167,86 @@ const MUTATIONS = [
     expect: "宽表单提交按钮不得拉成整行横幅"
   },
   {
+    name: "页内栏目条不得退回只占一列",
+    file: "apps/control-plane-ui/public/workspaces.css",
+    gate: "console",
+    from: ".workspace-detail-nav { grid-column: 1 / -1; display: flex;",
+    to: ".workspace-detail-nav { display: flex;",
+    expect: "页内栏目条必须横跨整个内容栅格"
+  },
+  {
+    name: "仓库行不得丢掉凭据方式标记",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '    <div class="cfg-row cfg-row-repo" data-cfg-kind="repo" data-credential-mode="${esc(mode)}">',
+    to: '    <div class="cfg-row cfg-row-repo" data-cfg-kind="repo">',
+    expect: "新插的仓库行要带凭据方式标记（无凭据）"
+  },
+  {
+    name: "切换凭据方式必须真的改行标记",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      if (repoRow) repoRow.dataset.credentialMode = target.value || "none";',
+    to: '      if (repoRow) repoRow.dataset.credentialModeChosen = target.value || "none";',
+    expect: "切换凭据方式要改仓库行的标记，否则字段露出不跟着变"
+  },
+  {
+    name: "仓库行样式不得把无关凭据字段全露出",
+    file: "apps/control-plane-ui/public/styles.css",
+    gate: "console",
+    from: '.cfg-row-repo[data-credential-mode="api_key"] input[name="repoPassword"] { display: none; }',
+    to: '.cfg-row-repo[data-credential-mode="api_key"] input[name="repoPassword"] { display: block; }',
+    expect: "样式要按凭据方式藏掉无关字段（无凭据藏三个、账号密码藏 Key、Key 藏账号密码）"
+  },
+  {
+    name: "新建 Agent 档案后不得留在表单上",
+    file: APP,
+    gate: "console",
+    from: '      if (page === "org-agents" || page === "proj-agents") workspaces.select(page, "profiles");',
+    to: '      if (page === "org-agents" || page === "proj-agents") workspaces.select(page, "create");',
+    expect: "新建 Agent 档案提交后要回到档案列表而不是留在表单上"
+  },
+  {
+    name: "建组表单不得退回自由文本角色框",
+    file: APP,
+    gate: "console",
+    from: '<div class="check-list" data-role-choices="task-group-create">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<label><input type="checkbox" name="roles"',
+    to: '<div class="check-list" data-role-choices="task-group-create"><input name="roles" value="orchestrator,agent-runtime,reviewer">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<label><input type="checkbox" name="roles"',
+    expect: "建组表单的执行角色要用复选框列出"
+  },
+  {
+    name: "建组提交不得只收最后一个角色",
+    file: APP,
+    gate: "console",
+    from: '        roles: new FormData(form).getAll("roles").map((item) => String(item).trim()).filter(Boolean)',
+    to: '        roles: String(data.roles || "").split(/[\\n,]/u).map((item) => item.trim()).filter(Boolean)',
+    expect: "建组提交要把勾上的角色全部送出"
+  },
+  {
+    name: "任务组详情的任务小节不得改回工作项",
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
+    gate: "console",
+    from: "      ${sectionBlock(`任务${progressData.workItemsTruncated",
+    to: "      ${sectionBlock(`工作项${progressData.workItemsTruncated",
+    expect: "明细页的小节标题要带上真实总数"
+  },
+  {
+    name: "详情态下的 tasks/create 不得退回渲染详情",
+    file: APP,
+    gate: "console",
+    from: '  if (creating && page === "tasks") return createPanels.filter((html) => html.includes(\'data-form="work-item-create"\')).join("") || createPanels.join("");',
+    to: '  if (creating && page === "tasks" && !expandedTaskGroupId) return createPanels.filter((html) => html.includes(\'data-form="work-item-create"\')).join("") || createPanels.join("");',
+    expect: "任务组详情态下切到 tasks/create 要渲染建任务表单"
+  },
+  {
+    name: "系统概览执行节点卡不得指回运行参数",
+    file: APP,
+    gate: "console",
+    from: '      {pageId: "sys-orgs", title: "执行节点", metric:',
+    to: '      {pageId: "sys-settings", title: "执行节点", metric:',
+    expect: "系统概览的「执行节点」卡要带人去组织列表"
+  },
+  {
     name: "窄屏对象上下文必须隐藏重复操作",
     file: "apps/control-plane-ui/public/workspaces.css",
     gate: "console",
@@ -13359,7 +13439,7 @@ const MUTATIONS = [
     gate: "console",
     from: '  const archivedProject = currentProject()?.status === "archived";',
     to: "  const archivedProject = false;",
-    expect: "不许摆着「创建任务组 / 创建工作项」表单"
+    expect: "不许摆着「创建任务组 / 创建任务」表单"
   },
   {
     name: "默认组织管理员必须与示例项目负责人分离",

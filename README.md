@@ -145,7 +145,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 
 需要**精确指定某个模型**时用 `pinnedModelId`（取值可以是注册表里的 modelId、providerId 或别名，如 `anthropic:claude-sonnet-4-5`），三条入口：
 
-- **界面**：任务组页「创建工作项」表单的「指定模型（可选）」下拉。默认「自动」；选定后写在工作项上，回显在工作项卡的「指定模型」一行。
+- **界面**：任务组页「创建任务」表单的「指定模型（可选）」下拉。默认「自动」；选定后写在工作项上，回显在工作项卡的「指定模型」一行。
 - **MCP**：给 `model_select` 传 `pinnedModelId` 立即钉住本次选型；给 `work_item_create` 传 `pinnedModelId` 把模型钉在工作项上，该工作项**每次派发都只用这个模型**。
 - **REST**：建工作项与选型决定的请求体都接受 `pinnedModelId`。
 
