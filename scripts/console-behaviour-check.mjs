@@ -1146,6 +1146,16 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         check("「添加项目成员」授权成功后要回到项目成员列表",
           Boolean(post) && probe.workspaceCurrent("proj-members") === "list",
           `提交${post ? "已发出" : "没发出"}，提交后栏目＝${probe.workspaceCurrent("proj-members")}`);
+        // 组织「项目授权」栏目里的同一张表单同理。
+        probe.setPage("org-projects");
+        probe.workspaceSelect("org-projects", "grants");
+        const orgForm = el("form", {dataset: {form: "project-member"}}, [
+          el("select", {name: "projectId", value: "p1"}), el("select", {name: "accountId", value: "acct_member"}), el("select", {name: "role", value: "viewer"}), el("button", {type: "submit"})
+        ]);
+        await probe.submit({target: orgForm, submitter: orgForm.children[3], preventDefault: () => {}});
+        check("组织「项目授权」授权成功后要回到项目列表",
+          probe.workspaceCurrent("org-projects") === "list",
+          `提交后栏目＝${probe.workspaceCurrent("org-projects")}`);
       } finally {
         probe.setFetch(previousFetch);
       }

@@ -14404,6 +14404,14 @@ const MUTATIONS = [
     from: '.cfg-row-repo[data-credential-mode="none"] .cfg-field:has(> input[name="repoUsername"]), .cfg-row-repo[data-credential-mode="none"] .cfg-field:has(> input[name="repoPassword"]), .cfg-row-repo[data-credential-mode="none"] .cfg-field:has(> input[name="repoApiKey"]),',
     to: '.cfg-row-repo[data-credential-mode="none"] .cfg-field:has(> input[name="repoUsername"]), .cfg-row-repo[data-credential-mode="none"] .cfg-field:has(> input[name="repoPassword"]),',
     expect: "仓库行每个字段要带标签，且隐藏字段时标签一起藏"
+  },
+  {
+    name: "组织「项目授权」成功后不得留在填满的表单上",
+    file: APP,
+    gate: "console",
+    from: '      if (page === "org-projects" && workspaces.current("org-projects")?.id === "grants") { workspaces.select("org-projects", "list"); memberGrantAccountId = ""; }',
+    to: '      if (false) { workspaces.select("org-projects", "list"); memberGrantAccountId = ""; }',
+    expect: "组织「项目授权」授权成功后要回到项目列表"
   }
 ];
 

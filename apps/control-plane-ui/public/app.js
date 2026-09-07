@@ -7593,6 +7593,8 @@ document.addEventListener("submit", async (event) => {
       // 「添加项目成员」授权成功后回到成员列表：留在填满的表单上，人看不到他被加进去了没有，再点一下就是重复授权。
       // 成员详情里改角色的那张同名表单不在此列（它本来就在详情里，保存后看到的就是新角色）。
       if (page === "proj-members" && workspaces.current("proj-members")?.id === "add") { workspaces.select("proj-members", "list"); memberGrantAccountId = ""; }
+      // 组织「项目授权」栏目里的同一张表单同理：授完回项目列表。
+      if (page === "org-projects" && workspaces.current("org-projects")?.id === "grants") { workspaces.select("org-projects", "list"); memberGrantAccountId = ""; }
       formTouched = false;
       await loadPage();
       return;
