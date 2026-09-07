@@ -41,7 +41,7 @@
       <span class="execution-event-point tone-${event.status === "failed" || event.status === "blocked" ? "red" : event.status === "completed" ? "green" : "blue"}"></span>
       <div class="execution-event-body"><div class="execution-event-title">${h.badge(event.eventType, "blue")} ${h.badge(event.status)}${Number.isFinite(Number(event.progressPercent)) ? `<strong>${esc(event.progressPercent)}%</strong>` : ""}</div>
         <div>${esc(h.agentEventSummaryZh(event.summary) || "未提供摘要")}</div>${h.evidenceRefsHint(event)}
-        <div class="small muted">${h.fmtTime(event.createdAt)}${event.nodeId ? ` · 节点 ${esc(event.nodeId)}` : ""}</div></div>
+        <div class="small muted">${h.fmtTime(event.createdAt)}${event.nodeId ? ` · 节点 ${esc((h.agentNodeLabel && h.agentNodeLabel(event.nodeId)) || event.nodeId)}` : ""}</div></div>
     </li>`).join("")}</ol>`;
   }
 
@@ -112,7 +112,7 @@
     return `<section class="execution-object-workspace wide" aria-label="${esc(titleFor(detail.objectType))}详情">
       <header class="execution-object-header" tabindex="-1" data-execution-object-heading>
         <button class="secondary-button" data-action="close-execution-object">${esc(backLabel || `返回${detail.taskGroup?.id ? "任务组监控" : "执行监控"}`)}</button>
-        <div class="execution-object-title"><div><span class="governance-eyebrow">${esc(titleFor(detail.objectType))}</span><h2>${esc(detail.objectId)}</h2></div>
+        <div class="execution-object-title"><div><span class="governance-eyebrow">${esc(titleFor(detail.objectType))}</span><h2>${esc(detail.workItem?.title || detail.objectId)}</h2>${detail.workItem?.title ? `<div class="small muted mono">${esc(detail.objectId)}</div>` : ""}</div>
           <div class="execution-object-state">${h.badge(target?.status)}${progress === null ? "" : `<strong>${esc(progress)}%</strong>`}</div></div>
         <div class="record-meta"><span>最近活动 ${h.fmtTime(dispatch.lastExecutionEventAt || target?.updatedAt || target?.createdAt)}</span><span>${detail.settled ? "已结束" : "执行链路仍在活动"}</span></div>
         ${progress === null ? "" : `<div class="execution-progress" aria-label="执行进度 ${esc(progress)}%"><span style="width:${Math.max(0, Math.min(100, progress))}%"></span></div>`}

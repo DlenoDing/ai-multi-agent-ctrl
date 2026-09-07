@@ -14276,6 +14276,38 @@ const MUTATIONS = [
     from: '    esc(t(service.serviceId)),',
     to: '    esc(service.serviceId),',
     expect: "审计表的对象列要写「类型：名字」，运行节点操作者要写节点名，系统服务表要用中文服务名"
+  },
+  {
+    name: "运行节点详情的可见项目不得退回项目 id",
+    file: "apps/control-plane-ui/public/modules/runtime-node-workspace.js",
+    gate: "console",
+    from: '<dt>可见项目</dt><dd>${chips((node.effectiveProjectIds || node.projectIds || []).map(projectName), "暂无")}</dd>',
+    to: '<dt>可见项目</dt><dd>${chips(node.effectiveProjectIds || node.projectIds || [], "暂无")}</dd>',
+    expect: "运行节点详情的范围、可见项目要写名字，近期事件要写它在做哪个任务而不是派发号"
+  },
+  {
+    name: "运行节点详情的事件脚注不得退回派发号",
+    file: "apps/control-plane-ui/public/modules/runtime-node-workspace.js",
+    gate: "console",
+    from: '${esc((h.dispatchTaskLabel && h.dispatchTaskLabel(event.dispatchId)) || event.sessionId || "节点事件")}',
+    to: '${esc(event.dispatchId || event.sessionId || "节点事件")}',
+    expect: "运行节点详情的范围、可见项目要写名字，近期事件要写它在做哪个任务而不是派发号"
+  },
+  {
+    name: "派发详情大标题不得退回派发号",
+    file: "apps/control-plane-ui/public/modules/execution-object-workspace.js",
+    gate: "console",
+    from: '<h2>${esc(detail.workItem?.title || detail.objectId)}</h2>',
+    to: '<h2>${esc(detail.objectId)}</h2>',
+    expect: "派发详情的大标题要是任务标题（派发号退到副行），事件脚注要写节点名而不是 node_ id"
+  },
+  {
+    name: "派发详情事件脚注不得退回 node_ id",
+    file: "apps/control-plane-ui/public/modules/execution-object-workspace.js",
+    gate: "console",
+    from: '· 节点 ${esc((h.agentNodeLabel && h.agentNodeLabel(event.nodeId)) || event.nodeId)}',
+    to: '· 节点 ${esc(event.nodeId)}',
+    expect: "派发详情的大标题要是任务标题（派发号退到副行），事件脚注要写节点名而不是 node_ id"
   }
 ];
 

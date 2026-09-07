@@ -3305,6 +3305,22 @@ function renderJoinTokenSection(options = {}) {
   `;
 }
 
+function organizationNameOf(orgId) {
+  if (!orgId) return "";
+  return [...(organizations || []), ...(state.organizations || []), state.organizationContext].filter(Boolean)
+    .find((org) => org.orgId === orgId || org.id === orgId)?.name || orgId;
+}
+
+// 节点详情、监控表格里一条派发给人看的是它在做哪个任务：反查派发 → 任务标题，查不到才落回派发号。
+function dispatchTaskLabel(dispatchId) {
+  if (!dispatchId) return "";
+  const dispatch = (state.agentDispatches || []).find((item) => item.dispatchId === dispatchId)
+    || (runtimeNodeDetail?.recentDispatches || []).find((item) => item.dispatchId === dispatchId)
+    || (runtimeNodeDetail?.activeDispatches || []).find((item) => item.dispatchId === dispatchId);
+  if (!dispatch) return dispatchId;
+  return dispatch.workItemTitle || workItemTitleOf(dispatch.taskGroupId, dispatch.workItemId);
+}
+
 function projectNameOf(projectId) {
   return (state.projects || []).find((project) => project.id === projectId)?.name || projectId || "-";
 }
@@ -3672,7 +3688,8 @@ function renderRuntimeNodeObject(scope) {
   return window.AIMAC_RUNTIME_NODE_WORKSPACE.render({
     detail: runtimeNodeDetail,
     controls: canControl ? agentActions(runtimeNodeDetail.node, {scope: scope === "organization" ? "org" : "project", showDanger, includeDispatchControl: false}) : "",
-    helpers: {badge, t, fmtTime, fmtBytes, explainCoded, evidenceRefsHint, agentEventSummaryZh, providerLabel, capabilityLabel}
+    helpers: {badge, t, fmtTime, fmtBytes, explainCoded, evidenceRefsHint, agentEventSummaryZh, providerLabel, capabilityLabel,
+      organizationNameOf, projectNameOf, dispatchTaskLabel}
   });
 }
 
@@ -7021,7 +7038,7 @@ function renderExecutionObjectDetail({backLabel = ""} = {}) {
     hasMoreEvents: execHasMore,
     historyTruncated: execEventsDropped,
     controls: executionObjectControlsHtml(executionObjectDetail),
-    helpers: {badge, t, fmtTime, explainCoded, evidenceRefsHint, ruleSummaryHtml, modelDecisionTextZh, agentEventSummaryZh,
+    helpers: {badge, t, fmtTime, explainCoded, evidenceRefsHint, ruleSummaryHtml, modelDecisionTextZh, agentEventSummaryZh, agentNodeLabel,
       reasoningLabel: (value) => REASONING_LEVEL_LABELS[value] || value || "-"}
   });
 }

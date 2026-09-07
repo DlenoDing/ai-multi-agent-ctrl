@@ -3550,9 +3550,10 @@ async function runErrorGuidanceCase() {
       taskGroup: outsideGroup, workItem: {id: "w_outside", title: "窗口外执行任务", status: "running", ownerRole: "reviewer", progress: 30},
       session: {sessionId: "sess_outside", taskGroupId: outsideGroup.id, workItemId: "w_outside", roleId: "reviewer", status: "active"},
       dispatch: {dispatchId: "adp_outside_window", taskGroupId: outsideGroup.id, workItemId: "w_outside", sessionId: "sess_outside", status: "running", progressPercent: 30},
-      agent: null, node: null, modelDecision: null, placementDecision: null, contractSummary: {found: false}, repositoryOutput: null,
+      agent: null, node: {nodeId: "node_outside_exec", nodeName: "窗口外执行节点", status: "online", admission: "full"}, modelDecision: null, placementDecision: null, contractSummary: {found: false}, repositoryOutput: null,
       relatedDispatches: [], relatedDispatchCount: 1, controlCommands: [], checkpoints: [], qualityGates: [], testResults: []
     };
+    if (target.pathname === "/api/agent-dispatches/adp_outside_window/events") payload = {events: [{eventId: "ev_outside", sequence: 1, eventType: "executor_started", status: "running", progressPercent: 25, summary: "Executor started.", createdAt: "2026-09-08T00:00:00Z", nodeId: "node_outside_exec", dispatchId: "adp_outside_window"}], nextCursor: 1};
     return {ok: true, status: 200, statusText: "OK", headers: {get: () => null}, json: async () => payload};
   });
   await executionProbe.loadObjectLocation();
@@ -3571,7 +3572,9 @@ async function runErrorGuidanceCase() {
     const target = new URL(String(url), "http://localhost");
     let payload = nodeState;
     if (target.pathname === "/api/skill-registry") payload = {roleSkillIndex: [], roleSkillOverlays: []};
-    if (target.pathname === `/api/agent-nodes/${routedNode.nodeId}/detail`) payload = {schemaVersion: "runtime-node-detail/v1", node: routedNode, projectId: "p1", scope: {type: "project", ids: ["p1"]}, activeDispatches: [], recentDispatches: [], assignedDispatchCount: 0, controlCommands: [], recentEvents: [], agentProfiles: []};
+    if (target.pathname === `/api/agent-nodes/${routedNode.nodeId}/detail`) payload = {schemaVersion: "runtime-node-detail/v1", node: routedNode, projectId: "p1", scope: {type: "project", ids: ["p1"]}, activeDispatches: [],
+      recentDispatches: [{dispatchId: "adp_node_recent", taskGroupId: "tg_node", workItemId: "w_node", workItemTitle: "写分派文档", taskGroupName: "工单分派", status: "completed"}], assignedDispatchCount: 1, controlCommands: [],
+      recentEvents: [{eventType: "checkpoint_submitted", status: "completed", progressPercent: 100, summary: "Checkpoint accepted by control plane.", createdAt: "2026-09-08T00:00:00Z", dispatchId: "adp_node_recent"}], agentProfiles: []};
     return {ok: true, status: 200, statusText: "OK", headers: {get: () => null}, json: async () => payload};
   });
   await nodeProbe.loadObjectLocation();
@@ -3580,6 +3583,14 @@ async function runErrorGuidanceCase() {
       && /aria-label="运行节点详情"/u.test(String(nodeRoot.innerHTML || ""))
       && /窗口外运行节点/u.test(String(nodeRoot.innerHTML || "")),
     `${JSON.stringify(nodeProbe.sessionState())} ${String(nodeRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").slice(0, 260)}`);
+  // 【节点详情给人看名字】（用户 09-08 走查）：注册范围与可见项目原先印 org_… / prj_… id，近期事件脚注印派发号。
+  {
+    const nodeText = String(nodeRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+    check("运行节点详情的范围、可见项目要写名字，近期事件要写它在做哪个任务而不是派发号",
+      nodeText.includes("项目专属 · 项目一") && nodeText.includes("可见项目 项目一") && nodeText.includes("· 写分派文档")
+        && !/可见项目 p1\b/u.test(nodeText) && !/· adp_node_recent/u.test(nodeText),
+      `节点详情：${nodeText.match(/注册范围.{0,80}/u)?.[0] || "没找到注册范围"}；事件脚注：${nodeText.match(/.{0,40}adp_node_recent|.{0,40}· 写分派文档/u)?.[0] || "没找到"}`);
+  }
   const browserRouteSource = objectProbe.browserRouteSource();
   check("浏览器历史恢复必须单飞并只排队最新路由",
     /if \(browserRouteBusy\)/u.test(browserRouteSource)
@@ -5928,6 +5939,17 @@ async function runPendingTruncationCase() {
         modelDecision: {selectedModel: {modelId: "model-a", reasoningLevel: "medium"}},
         placementDecision: {placement: "new_session"}, contractSummary: {found: false}, controlCommands: [], checkpoints: [], qualityGates: [], testResults: []
       };
+      // 【派发详情的大标题是任务名，事件脚注写节点名】（用户 09-08 走查）：原先大标题是 adp_ 派发号，脚注是 node_ id。
+      {
+        const nodeNamedState = {...multiState, agentRuntimeNodes: [...(multiState.agentRuntimeNodes || []), {nodeId: "node_named_exec", nodeName: "命名执行节点", organizationId: "org_default", status: "online"}]};
+        const titledHtml = String(objectProbe.renderExecutionObjectWith(nodeNamedState, orgAdmin, "p1", executionDetailBase,
+          [{eventId: "ev_named", sequence: 1, eventType: "executor_started", status: "running", progressPercent: 25, summary: "Executor started.", createdAt: "2026-09-08T00:00:00Z", nodeId: "node_named_exec", dispatchId: "run1"}]));
+        const titledText = titledHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+        check("派发详情的大标题要是任务标题（派发号退到副行），事件脚注要写节点名而不是 node_ id",
+          /<h2>执行任务<\/h2>/u.test(titledHtml) && !/<h2>run1<\/h2>/u.test(titledHtml)
+            && titledText.includes("· 节点 命名执行节点") && !/· 节点 node_named_exec/u.test(titledText),
+          `标题：${titledHtml.match(/<h2>[^<]*<\/h2>/u)?.[0] || "无"}；脚注：${titledText.match(/· 节点 [^ ]+/u)?.[0] || "无"}`);
+      }
       const runningDetail = objectProbe.renderExecutionObjectWith(multiState, orgAdmin, "p1", executionDetailBase);
       const blockedDetail = objectProbe.renderExecutionObjectWith(multiState, orgAdmin, "p1", {...executionDetailBase, objectId: "run2", dispatch: {
         ...executionDetailBase.dispatch, dispatchId: "run2", status: "blocked", blockedReason: "awaiting_human_confirmation",

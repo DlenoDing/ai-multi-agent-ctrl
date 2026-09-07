@@ -39,7 +39,7 @@
   function events(items, h) {
     if (!items.length) return `<div class="small muted">当前节点还没有近期执行事件。</div>`;
     return `<ol class="runtime-node-events">${items.slice(0, 30).map((event) => `<li><span></span><div><div>${h.badge(event.eventType, "blue")} ${h.badge(event.status)}${Number.isFinite(Number(event.progressPercent)) ? ` <strong>${esc(event.progressPercent)}%</strong>` : ""}</div>
-      <p>${esc(h.agentEventSummaryZh(event.summary) || "未提供摘要")}</p>${h.evidenceRefsHint(event)}<div class="small muted">${h.fmtTime(event.createdAt)} · ${esc(event.dispatchId || event.sessionId || "节点事件")}</div></div></li>`).join("")}</ol>`;
+      <p>${esc(h.agentEventSummaryZh(event.summary) || "未提供摘要")}</p>${h.evidenceRefsHint(event)}<div class="small muted">${h.fmtTime(event.createdAt)} · ${esc((h.dispatchTaskLabel && h.dispatchTaskLabel(event.dispatchId)) || event.sessionId || "节点事件")}</div></div></li>`).join("")}</ol>`;
   }
 
   function profiles(items, h) {
@@ -64,8 +64,11 @@
     const node = detail.node;
     const missing = node.selfCheckMissing || [];
     const failures = node.selfCheckFailures || [];
-    const scopeText = detail.scope?.type === "organization" ? `组织共享 · ${detail.scope.id || node.organizationId || "当前组织"}`
-      : `项目专属 · ${(detail.scope?.ids || node.projectIds || []).join("、") || detail.projectId || "未绑定项目"}`;
+    // 范围与可见项目给人看名字：原先印的是 org_… / prj_… 这种 id。
+    const orgName = (id) => (h.organizationNameOf ? h.organizationNameOf(id) : id) || id;
+    const projectName = (id) => (h.projectNameOf ? h.projectNameOf(id) : id) || id;
+    const scopeText = detail.scope?.type === "organization" ? `组织共享 · ${orgName(detail.scope.id || node.organizationId) || "当前组织"}`
+      : `项目专属 · ${(detail.scope?.ids || node.projectIds || []).map(projectName).join("、") || projectName(detail.projectId) || "未绑定项目"}`;
     return `<section class="runtime-node-workspace wide" aria-label="运行节点详情">
       <header class="runtime-node-header" tabindex="-1" data-runtime-node-heading><button class="secondary-button" data-action="close-runtime-node">返回运行节点列表</button>
         <div class="runtime-node-title"><div><span class="governance-eyebrow">${esc(scopeText)}</span><h2>${esc(node.nodeName || node.nodeId)}</h2><span class="mono">${esc(node.nodeId)}</span></div>
@@ -79,7 +82,7 @@
           <dt>最近心跳</dt><dd>${h.fmtTime(node.lastHeartbeatAt)}</dd><dt>最近自检</dt><dd>${h.fmtTime(node.lastSelfCheckAt)}</dd><dt>Runtime 版本</dt><dd class="mono">${esc(node.runtimeVersion || "-")}${node.runtimeOutdated ? " · 需要升级" : ""}</dd>
           <dt>缺少检查</dt><dd>${missing.length ? chips(missing.map((item) => h.t(item) || item)) : "无"}</dd><dt>失败检查</dt><dd>${failures.length ? chips(failures.map((item) => h.explainCoded(item.reason || item))) : "无"}</dd>
         </dl></section>
-        <section><span class="governance-eyebrow">调配边界</span><h3>项目与角色</h3><dl class="execution-kv"><dt>注册范围</dt><dd>${esc(scopeText)}</dd><dt>可见项目</dt><dd>${chips(node.effectiveProjectIds || node.projectIds || [], "暂无")}</dd><dt>可承担角色</dt><dd>${chips((node.allowedRoles || []).map((roleId) => (roleId === "*" ? "不限" : h.t(roleId))), "未声明")}</dd><dt>远程 MCP 工具</dt><dd>${collapsibleChips(node.allowedMcpTools || [], "工具", "按任务授权")}</dd></dl></section>
+        <section><span class="governance-eyebrow">调配边界</span><h3>项目与角色</h3><dl class="execution-kv"><dt>注册范围</dt><dd>${esc(scopeText)}</dd><dt>可见项目</dt><dd>${chips((node.effectiveProjectIds || node.projectIds || []).map(projectName), "暂无")}</dd><dt>可承担角色</dt><dd>${chips((node.allowedRoles || []).map((roleId) => (roleId === "*" ? "不限" : h.t(roleId))), "未声明")}</dd><dt>远程 MCP 工具</dt><dd>${collapsibleChips(node.allowedMcpTools || [], "工具", "按任务授权")}</dd></dl></section>
       </div>
       <section class="runtime-node-band"><span class="governance-eyebrow">主机能力</span><h3>模型、资源与工具</h3>${capability(detail, h)}</section>
       <section class="runtime-node-band"><div class="runtime-node-band-heading"><div><span class="governance-eyebrow">当前负载</span><h3>活动派发</h3></div><strong>${esc((detail.activeDispatches || []).length)} 个</strong></div>${dispatches(detail, h)}</section>
