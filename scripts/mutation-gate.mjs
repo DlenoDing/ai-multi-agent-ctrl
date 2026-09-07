@@ -12464,6 +12464,22 @@ const MUTATIONS = [
     expect: "那句提示要真的在屏幕上"
   },
   {
+    name: "证据引用不得原样上屏",
+    file: "apps/control-plane-ui/public/modules/labels.js",
+    gate: "console",
+    from: '    if (kind === "commit" && /^[0-9a-f]{7,64}$/u.test(rest)) return `提交 ${rest.slice(0, 12)}`;',
+    to: '    if (kind === "commit" && /^[0-9a-f]{7,64}$/u.test(rest)) return text;',
+    expect: "证据引用要按种类翻成中文"
+  },
+  {
+    name: "门清零时任务组详情不得少了关闭按钮",
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
+    gate: "console",
+    from: '      ? `<div class="record"><div class="record-title">关闭门禁：${customBadge("可关闭", "green")}</div>${canControl',
+    to: '      ? `<div class="record"><div class="record-title">关闭门禁：${customBadge("可关闭", "green")}</div>${false',
+    expect: "关闭门清零时任务组详情的执行控制栏要有「关闭任务组」按钮"
+  },
+  {
     name: "窄屏对象上下文必须隐藏重复操作",
     file: "apps/control-plane-ui/public/workspaces.css",
     gate: "console",

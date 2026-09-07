@@ -226,11 +226,31 @@
   }
 
   function skillCategoryLabel(value) { return SKILL_CATEGORY_LABELS[value] || String(value || "其他"); }
+  // 证据引用是 "种类:值" 的机器串（review-evidence:commit:<sha> / push:origin/refs/heads/main:<sha> / agent-node:<id>…）：
+  // 种类翻成中文，值（提交号、节点 id、路径）原样保留并截短。
+  const EVIDENCE_KIND_LABELS = {"agent-node": "节点", "skill-workset": "技能工作集", "content-bundle": "内容包", "remote-mcp": "远程 MCP",
+    commit: "提交", push: "推送", "git-path": "改动路径", "git-diff": "差异", prompt: "提示词", checkpoint: "检查点", dispatch: "派发",
+    session: "会话", run: "运行", "review-evidence": "评审证据", manifest: "产物清单", artifact: "产物", audit: "审计", decision: "决策记录"};
+  function evidenceRefLabel(ref) {
+    let text = String(ref || "");
+    if (text.startsWith("review-evidence:")) text = text.slice("review-evidence:".length);
+    const at = text.indexOf(":");
+    const kind = at > 0 ? text.slice(0, at) : "";
+    const rest = at > 0 ? text.slice(at + 1) : text;
+    if (kind === "push") {
+      const hit = /^(.+?)\/refs\/heads\/(.+?):([0-9a-f]{7,64})$/u.exec(rest);
+      if (hit) return `推送 ${hit[1]}/${hit[2]} @ ${hit[3].slice(0, 12)}`;
+    }
+    if (kind === "commit" && /^[0-9a-f]{7,64}$/u.test(rest)) return `提交 ${rest.slice(0, 12)}`;
+    const label = EVIDENCE_KIND_LABELS[kind];
+    return label ? `${label} ${rest.slice(0, 48)}` : text.slice(0, 60);
+  }
 
   global.AIMAC_CONSOLE_LABELS = {
     CAPABILITY_LABELS,
     PROVIDER_LABELS,
     skillCategoryLabel,
+    evidenceRefLabel,
     capabilityLabel,
     providerLabel,
     roleSkillLabel,

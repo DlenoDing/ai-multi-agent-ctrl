@@ -3122,6 +3122,11 @@ async function runErrorGuidanceCase() {
     check("选型判断要翻成中文（写入范围／任务类型／风险／模型／推理档）",
       labels.modelDecisionTextZh("modelDecision: bounded writeSet directed verification; no architecture裁决 -> openai:gpt-5.5 / medium") === "有界写入范围 · 任务类型：定向验证 · 风险：无架构裁决 · 模型：openai:gpt-5.5 · 推理档：中",
       `实际：${labels.modelDecisionTextZh("modelDecision: bounded writeSet directed verification; no architecture裁决 -> openai:gpt-5.5 / medium")}`);
+    check("证据引用要按种类翻成中文（提交号、节点 id 原样保留）",
+      labels.evidenceRefLabel("review-evidence:commit:30712276548838f7ede1ae2eafdd25f88cef06b5") === "提交 307122765488"
+        && labels.evidenceRefLabel("review-evidence:push:origin/refs/heads/main:30712276548838f7ede1ae2eafdd25f88cef06b5") === "推送 origin/main @ 307122765488"
+        && labels.evidenceRefLabel("agent-node:node_mtr4evse_6j83wm") === "节点 node_mtr4evse_6j83wm",
+      `实际：${labels.evidenceRefLabel("review-evidence:commit:30712276548838f7ede1ae2eafdd25f88cef06b5")} / ${labels.evidenceRefLabel("review-evidence:push:origin/refs/heads/main:30712276548838f7ede1ae2eafdd25f88cef06b5")}`);
     check("规则件引用要翻成中文（版本号保留）",
       labels.contractRefLabel("terminal-execution-manifest:v1") === "终态执行清单（v1）" && labels.contractRefLabel("effective-ruleset:sha256:633558a172e7ffa6a89ce0654e42d1bb") === "生效规则集（sha256:633558a172e7）",
       `实际：${labels.contractRefLabel("terminal-execution-manifest:v1")} / ${labels.contractRefLabel("effective-ruleset:sha256:633558a172e7ffa6a89ce0654e42d1bb")}`);
@@ -6251,6 +6256,18 @@ async function runPendingTruncationCase() {
       roomMessages: [{sequence: 1, senderRef: "agent_node:node1", createdAt: "2026-08-12T00:00:00Z", payload: {text: "执行中"}}]
     };
     const detailTasksPane = probe.renderTaskGroupDetailPane("tasks", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
+    // 【门清零时任务组详情要直接给出「关闭任务组」】：原先只写「可关闭」，按钮只在执行监控的验收栏目里，人在详情页无处可点。
+    {
+      const closableState = {...overviewState, closeBarriers: [{taskGroupId: detailTaskGroup.id, satisfied: true, blockingObjects: [], computedAt: "2026-09-08T00:00:00Z"}]};
+      const controlPane = probe.renderTaskGroupDetailPane("control", detail, detailTaskGroup, closableState, systemAdmin, "p1");
+      check("关闭门清零时任务组详情的执行控制栏要有「关闭任务组」按钮",
+        /可关闭/u.test(controlPane) && new RegExp(`data-action="close-task-group" data-task="${detailTaskGroup.id}"`, "u").test(controlPane) && /不能重新打开/u.test(controlPane),
+        `执行控制栏：${controlPane.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/关闭门禁.{0,80}/u)?.[0] || "没找到关闭门禁那行"}`);
+      const readOnlyPane = probe.renderTaskGroupDetailPane("control", detail, detailTaskGroup, closableState, {accountId: "read_only", accountType: "user_account", permissions: []}, "p1");
+      check("没有任务组控制权限的人看不到「关闭任务组」按钮",
+        !/data-action="close-task-group"/u.test(readOnlyPane),
+        "只读账号也看到了关闭按钮 —— 点下去只会被拒");
+    }
     const detailProgressPane = probe.renderTaskGroupDetailPane("progress", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
     const detailRolesPane = probe.renderTaskGroupDetailPane("roles", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
     const detailInheritancePane = probe.renderTaskGroupDetailPane("inheritance", detail, detailTaskGroup, overviewState, systemAdmin, "p1");

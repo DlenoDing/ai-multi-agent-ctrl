@@ -11,6 +11,7 @@
     dispatch: "Agent 派发",
     /* ---------- 任务契约里的枚举（禁止动作 / 验收要求 / 自检探针 / 执行器类型 / 运行档位）：界面上不出现内部 key ---------- */
     "model-registry": "模型注册",
+    checkpoint: "检查点",
     mutate_active_ruleset: "修改生效中的规则集",
     self_patch_control_plane: "自行修改控制面",
     auto_expand_mcp_grant: "自行扩大 MCP 授权",

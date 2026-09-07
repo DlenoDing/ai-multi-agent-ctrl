@@ -40,6 +40,7 @@ const {
   capabilityLabel,
   providerLabel,
   skillCategoryLabel,
+  evidenceRefLabel,
   roleSkillLabel,
   contractRefLabel,
   modelDecisionTextZh,
@@ -250,19 +251,9 @@ function evidenceRefsHint(event) {
   const ruleFiles = refs.filter((ref) => String(ref).startsWith("prompt-includes:"))
     .map((ref) => String(ref).slice("prompt-includes:".length));
   const others = refs.filter((ref) => !String(ref).startsWith("prompt-includes:"));
-  // 证据引用是 "种类:值" 的机器串：种类翻成中文，值（节点 id、摘要、提交号、路径）原样保留并截短。
-  const EVIDENCE_KIND_LABELS = {"agent-node": "节点", "skill-workset": "技能工作集", "content-bundle": "内容包", "remote-mcp": "远程 MCP",
-    commit: "提交", push: "推送", "git-path": "改动路径", "git-diff": "差异", prompt: "提示词", checkpoint: "检查点", dispatch: "派发", session: "会话", run: "运行"};
-  const describe = (ref) => {
-    const text = String(ref);
-    const at = text.indexOf(":");
-    const kind = at > 0 ? text.slice(0, at) : "";
-    const label = EVIDENCE_KIND_LABELS[kind];
-    return label ? `${label} ${text.slice(at + 1, at + 49)}` : text.slice(0, 60);
-  };
   return [
     ruleFiles.length ? `<div class="small muted">提示词实际包含：${ruleFiles.map((file) => esc(file)).join("、")}</div>` : "",
-    others.length ? `<div class="small muted">${others.slice(0, 4).map((ref) => `<span class="mono">${esc(describe(ref))}</span>`).join(" · ")}</div>` : ""
+    others.length ? `<div class="small muted">${others.slice(0, 4).map((ref) => `<span class="mono">${esc(evidenceRefLabel(ref))}</span>`).join(" · ")}</div>` : ""
   ].filter(Boolean).join("");
 }
 
@@ -6380,7 +6371,7 @@ function renderReview() {
             ? `（共 ${esc(carded)} 条，这里显示前 ${shown.length} 条${carded > evidence.length
               ? "；卡片创建时只留了前 " + evidence.length + " 条" : ""}）`
             : "";
-          parts.push(`<div class="record-meta"><span>证据引用：${shown.map((ref) => `<span class="mono">${esc(ref)}</span>`).join("、")}${note}</span></div>`);
+          parts.push(`<div class="record-meta"><span>证据引用：${shown.map((ref) => `<span class="mono" title="${esc(ref)}">${esc(evidenceRefLabel(ref))}</span>`).join("、")}${note}</span></div>`);
         }
         if (gates.length) {
           parts.push(`<div class="record-meta"><span>质量门：${gates.map((gate) => `${esc(t(gate.gateType) || gate.gateType)}${badge(gate.status)}`).join(" ")}</span></div>`);

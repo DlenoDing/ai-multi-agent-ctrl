@@ -207,7 +207,10 @@ function render(taskGroup, context, helpers) {
   const barrierSummary = !groupBarrier
     ? `<div class="record"><div class="record-title">关闭门禁：<strong>尚未计算</strong></div><div class="record-meta">进入“关闭门禁”重算，或等下一次编排周期，才会知道这个任务组能不能关闭。</div></div>`
     : groupBarrier.satisfied
-      ? `<div class="record"><div class="record-title">关闭门禁：${customBadge("可关闭", "green")}</div></div>`
+      // 门已经清零就把「关闭任务组」放在这里：原先只在执行监控的「验收与收口」栏目才有按钮，人在任务组详情看到「可关闭」却无处可点。
+      ? `<div class="record"><div class="record-title">关闭门禁：${customBadge("可关闭", "green")}</div>${canControl
+        ? `<div class="record-meta"><span>所有任务已收口，关闭后进入终态、不能重新打开。</span></div><div class="button-row"><button class="danger-button" data-action="close-task-group" data-task="${esc(taskGroup.id)}">关闭任务组</button></div>`
+        : ""}</div>`
       : `<div class="record">
           <div class="record-title">关闭门禁：${customBadge("存在阻塞", "red")}（${barrierBlockers.length} 项）</div>
           <div class="chip-row">${barrierBlockers.slice(0, 12).map((obj) => customBadge(`${t(obj.objectType) || obj.objectType}${obj.gate ? `·${t(obj.gate) || obj.gate}` : ""}`, "red")).join(" ")}</div>
@@ -224,9 +227,9 @@ function render(taskGroup, context, helpers) {
   const cellIds = (ids) => (ids || []).length ? (ids || []).map((id) => esc(id)).join("、") : "—";
   const admissionHtml = guard ? `
       <div class="record-meta">
-        <span>可执行 cell：${(guard.executableCells || []).length}</span>
-        <span>等待 cell：${(guard.waitingCells || []).length}</span>
-        <span>阻塞 cell：${(guard.blockedCells || []).length}</span>
+        <span>可执行任务：${(guard.executableCells || []).length}</span>
+        <span>等待中任务：${(guard.waitingCells || []).length}</span>
+        <span>受阻任务：${(guard.blockedCells || []).length}</span>
         <span>整体阻断：${guard.overallBlockedPermitted ? customBadge("允许", "red") : customBadge("不允许（仍有可推进项）", "green")}</span>
       </div>
       <div class="small muted">可执行：${cellIds(guard.executableCells)}</div>

@@ -6541,6 +6541,8 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
   // 但它必须出现在人看到的结论里 —— 那才是需要人判断的地方。
   const at = new Date().toISOString();
   const verdict = findings.length ? "changes_requested" : "passed";
+  // 这两句是拼给人看的：结论按中文说（passed / changes_requested 是状态取值，不是给人读的词）。
+  const verdictZh = {passed: "通过", changes_requested: "需修改", failed: "未通过"}[verdict] || verdict;
   const checkpointRef = `checkpoint:${checkpoint.runId}`;
   const previousRejections = (state.reviewBundles || []).filter((item) =>
     item.workItemId === workItem.id && item.verdict === "changes_requested" && !item.supersededByHumanDecision);
@@ -6571,7 +6573,7 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
         // 轨道二的本意是有人真的回到原始问题问"这个方案本身对不对"，而控制面结构上做不到这件事。
         scope: "control_plane_evidence_only",
         alternative: "维持当前实现方案，仅核验其证据完整性",
-        assessment: `控制面独立互审的考察边界为证据层（提交/推送/产物清单/变更路径合规），未评估方案层替代路径；方案是否为最优应由执行方在人工确认通道提出（本次证据结论：${verdict}）`
+        assessment: `控制面独立互审的考察边界为证据层（提交/推送/产物清单/变更路径合规），未评估方案层替代路径；方案是否为最优应由执行方在人工确认通道提出（本次证据结论：${verdictZh}）`
       }],
       verdict,
       findings,
@@ -6659,7 +6661,7 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
     decisionType: "work_item_verification",
     requestKey: `work_item_verification:${workItem.id}:${bundle.bundleId}`,
     summary: `验收确认：${workItem.title || workItem.id}`,
-    detail: `控制面独立互审结论：${verdict}。证据已就绪，等待人工定稿验收。互审只提供建议，不构成验收。` +
+    detail: `控制面独立互审结论：${verdictZh}。证据已就绪，等待人工定稿验收。互审只提供建议，不构成验收。` +
       // 让"曾经失败、后被重报为通过"的质量门对人可见：否则人看到的只是"质量门全通过"，
       // 看不到其中哪一条是被同一个 AI 重报翻过来的，知情同意就名不副实。
       (() => {
