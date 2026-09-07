@@ -70,6 +70,8 @@
 16. `spec/push-ref.schema.json` 补齐远端分支已前进但仍包含本次提交时由控制面写入的 `remoteAdvancedContained` 与 `observedRemoteSha` 字段。
 17. `scripts/contract-check.mjs` 增加“额外字段不污染 checkpoint 证据”的回归断言。
 18. `docs/machine-executable-artifacts.md` 已更正 checkpoint、commit-ref、push-ref 的消费者说明。
+19. 主设计文档和 README 中残留的“Agent 侧本地库增量镜像”已改为“Agent 端仅保留运行配置、缓存和 outbox，不承载项目数据库服务或权威数据镜像”。
+20. 主设计文档和自治范围文档中容易被误解为运行期自动改规则的“规则沉淀”口径已收敛为“规则候选收集、来源解析、互审、系统外升级导入和版本治理”；系统级重复问题只能形成 `RuntimeIssuePattern`、`SystemUpgradeCandidate` 和系统外升级证据包。
 
 ## 当前结论
 
@@ -80,5 +82,6 @@
 3. 任务组语言策略、指令信封、模型决策、共享定义和仓库产出目标仍存在。
 4. 项目/任务组/任务/派发/会话/事件监控入口仍存在。
 5. 运行期问题仍为 collect-only，真正升级仍在系统外完成。
+6. 文档基线不再要求或暗示 Agent 本地承载项目数据库镜像，避免后续实现把服务性组件下沉到 Agent 端。
 
 后续若再做 UI 或模块拆分，应先运行 `npm run validate`。其中 `node scripts/contract-check.mjs` 会检查文档接口是否真实存在，`node scripts/console-behaviour-check.mjs` 会检查系统管理入口是否再次漂移。

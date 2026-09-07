@@ -2,7 +2,7 @@
 
 ## 0. 文档导航和机器执行入口
 
-本文是系统终态蓝图。该系统面向 AI 模型、AI Agent 和程序执行器，不面向非系统执行路径。入口总控会话接收目标、边界和不可编程的外部能力信号；目标进入系统后的拆解、调度、执行、复验、提交、推送、发布准备、规则沉淀和关闭判断都必须由 Orchestrator、Decision Center、Scheduler、Agent Runtime、MCP Proxy、Policy Engine 和角色化 AI Agent 自动完成。
+本文是系统终态蓝图。该系统面向 AI 模型、AI Agent 和程序执行器，不面向非系统执行路径。入口总控会话接收目标、边界和不可编程的外部能力信号；目标进入系统后的拆解、调度、执行、复验、提交、推送、发布准备、规则候选收集和关闭判断都必须由 Orchestrator、Decision Center、Scheduler、Agent Runtime、MCP Proxy、Policy Engine 和角色化 AI Agent 自动完成。运行期不得自动改写系统规则、角色、策略、MCP grant 或控制面代码；系统升级只接受系统外维护后的版本化导入。
 
 当前仓库把终态设计拆为以下机器执行入口：
 
@@ -28,7 +28,7 @@
 3. 角色不是最小执行维度，最小执行维度是 `work session`。一个角色可以由多个 Agent 或多个会话并行承担。
 4. 一个 Agent 可能是公共网络上的不同主机地址。系统必须提供统一实时协作、状态同步和唤醒机制。
 5. 一个项目可以有多个任务组。每个任务组拥有独立协作房间、状态机、规则版本、证据和关闭屏障。
-6. 系统数据库与业务项目数据库严格分离。项目自己的数据库按项目配置，优先支持本地 PostgreSQL，也允许 Agent 侧本地库做增量镜像。
+6. 系统数据库与业务项目数据库严格分离。项目自己的业务数据库按项目/环境配置，由控制面通过凭据、租约、MCP/API 授权和审计访问；Agent 端只保留运行配置、缓存和 outbox，不承载项目数据库服务或权威数据镜像。
 7. 系统内置版本化 skill/rules；运行中只收集重复问题和升级证据，不自动修改 skill/rules。后续由人独立在系统外完成系统升级，再导入新版本。
 8. 开发期、验证期和终态线上质量要求要分层，不能把代码完成、开发 safeguard、静态审计或单接口通过误报成生产完成。
 9. 系统服务器必须集中提供全部 MCP Server 能力和项目/节点 principal 的 tool grant；Agent 端只运行轻量执行器并访问公网 MCP，不部署服务型组件。
@@ -128,7 +128,7 @@ flowchart LR
 | 实时协作 | Room、WS、消息序列、ACK、cursor、delta、checkpoint、wake |
 | MCP 能力 | 服务器集中托管系统/项目 MCP Server、节点 principal tool grant、schema、审计和统一升级 |
 | Git 管理 | 项目 Git 账号池、仓库配置、凭据绑定、checkout/worktree、commit/push/PR |
-| 规则治理 | ruleset、skill、动态规则沉淀、互审、版本、通知 |
+| 规则治理 | ruleset、skill、来源解析、规则候选、互审、版本、通知；系统级重复问题只形成升级候选，不在运行期自改 |
 | 资源和锁 | 文件/目录/仓库/DB/topic/Docker/MCP/tool/provider lease |
 | 权限和密钥 | OIDC、service identity、policy engine、secret ref、租约、轮换、撤销 |
 | 审批审计 | ApprovalRequest、quorum、超时、append-only audit、hash chain、读写审计 |
@@ -237,7 +237,7 @@ RepositoryOutputTarget
 6. 维护唯一权威游标：当前阶段、当前波次、开放事项、阻断、依赖和关闭条件。
 7. 监控所有角色和会话的状态、进度、输出质量、资源占用和成本。
 8. 处理冲突、角色缺口、主线偏移、重复工作、证据污染和阶段误判。
-9. 推动规则沉淀，把稳定问题转化为可执行规则。
+9. 推动规则候选收集、来源解析和互审，把稳定问题转化为可审查的规则或系统外升级候选；不在运行期自动发布系统规则。
 10. 在全部关闭条件满足后统一关闭任务组，而不是让单个会话自行结束全局任务。
 
 总控可以内置决策中心，也可以自动创建独立决策会话。建议实现为：
@@ -394,7 +394,7 @@ flowchart TD
 | Repair/Reverify | 根因修复、批量复验、回归 | 修复者与复验者分离 |
 | Release | 发布计划、回滚、监控、告警、数据迁移 | 发布风险可控且审批完成 |
 | Online Quality | 线上 SLO、错误率、性能、业务指标观察 | 达到终态质量门 |
-| Close | 关闭候选、剩余风险、文档、规则沉淀 | 总控统一关闭 |
+| Close | 关闭候选、剩余风险、文档、规则候选处置 | 总控统一关闭 |
 
 ### 7.2 维护、新功能和 bug 修复
 
@@ -1081,7 +1081,7 @@ projectDatabases:
 
 1. 系统库只保存协作、状态、规则和证据索引，不保存业务核心数据。
 2. 项目库由 Project Runtime Config 指向，支持 PostgreSQL、MySQL、SQLite 等。
-3. Agent 本地库只做镜像和缓存，不是全局权威。
+3. Agent 端只允许保存执行缓存、临时工作目录和断线 outbox；不得保存业务项目数据库的权威镜像，也不得把本地缓存当成恢复系统状态或项目状态的来源。
 4. 所有跨库操作通过 runId、checkpoint 和 evidence 关联。
 
 ### 11.3 项目 Git 账号池和仓库配置
@@ -1330,7 +1330,7 @@ System Base Rules
 | `code-owner` | 开发会话执行纪律 |
 | `reviewer` | 独立审查纪律 |
 | `qa-evidence` | 测试矩阵和证据要求 |
-| `rule-steward` | 规则沉淀和版本治理 |
+| `rule-steward` | 规则候选收集、来源解析、互审编排和版本治理 |
 | `release-manager` | 发布、回滚、线上观察 |
 | `maintenance-flow` | 功能修改、新功能和 bug 修复流程 |
 
@@ -1924,9 +1924,9 @@ ChangeSet -> MergeQueueItem -> IntegrationBatch
 6. schema/codegen 更新顺序、环境变量变更、seed data 变更和 feature flag 切换必须有 owner 和 evidence。
 7. 新增依赖和 lockfile 变更必须由 reviewer 或 Security Owner 复核。
 
-## 22. 规则沉淀闭环
+## 22. 规则候选与系统外升级闭环
 
-运行中出现以下情况应进入规则沉淀候选：
+运行中出现以下情况应进入规则候选或系统外升级候选：
 
 1. 同类 bug 多次出现。
 2. 不同会话反复误判同一边界。
@@ -1935,15 +1935,15 @@ ChangeSet -> MergeQueueItem -> IntegrationBatch
 5. 成本、上下文、调度方式导致明显浪费。
 6. 安全、资金、数据、权限或生产稳定性风险。
 
-沉淀流程：
+候选处置流程：
 
 ```text
-候选问题 -> Rule Steward 分析 -> 起草规则 -> 独立互审
--> 总控裁决 -> 版本化发布 -> 通知受影响 session
--> 后继任务验证规则是否减少返工
+候选问题 -> Rule Steward 分析 -> 起草规则或升级候选 -> 独立互审
+-> 总控裁决 -> 后台管理或入口总控确认导入 -> 版本化发布
+-> 通知受影响 session -> 后继任务验证规则是否减少返工
 ```
 
-规则不写事故流水账。流水账进入 history，当前规则只写可执行约束。
+规则不写事故流水账。流水账进入 history，当前规则只写可执行约束。系统级重复问题不得在运行期自动发布为 active rule，只能形成 `RuntimeIssuePattern`、`SystemUpgradeCandidate` 和系统外升级证据包；升级结果由系统外独立维护后导入。
 
 ## 23. 终态自治能力闭环
 
@@ -2493,7 +2493,7 @@ Agent 加入保持一条命令，但系统内部必须强制以下控制：
 10. 部署、回滚、监控、告警、备份和恢复演练已就绪。
 11. Artifact retention、脱敏、digest verify 和环境 snapshot 完整。
 12. 线上观察窗口达标。
-13. 规则沉淀候选已处理或登记。
+13. 规则候选已处理、登记、驳回或进入系统外升级包。
 14. 重复运行问题候选已导出系统外升级证据包、suppressed 或关闭，不触发运行期自动升级。
 15. 所有 ExecutionTopology 已 merged、downgraded 或 cancelled；没有未集成 branch result bundle。
 16. 所有 DerivedTaskRequest 已 absorbed、queued、backlog 或 rejected；没有 blocking topology effect。
@@ -2553,7 +2553,7 @@ Agent 加入保持一条命令，但系统内部必须强制以下控制：
 + PostgreSQL 权威状态
 + Agent 资源、工具、额度画像和控制面
 + Agent 模型能力识别、任务组模型策略和会话级模型指定
-+ Agent 本地增量镜像
++ Agent 端轻量缓存与断线 outbox
 + 项目 Git 账号池、仓库配置和凭据绑定
 + Contract Registry 和级联失效复验
 + ChangeSet、IntegrationBatch 和主线批量 CI

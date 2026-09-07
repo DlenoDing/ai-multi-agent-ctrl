@@ -1103,6 +1103,7 @@ run(verifyCommandBusLifecycle);
 run(verifyInitLedgerStartsHashed);
 run(verifyLedgerRowsGoThroughTheSharedBuilder);
 run(verifyOperatorKnobsAreDocumented);
+run(verifyPrimaryDocsDoNotReintroduceRetiredRequirements);
 run(verifyAgentctlUnknownCommandListsCommands);
 run(verifyConsoleRoleExamplesAreRegistered);
 run(verifyAgentRunAnnouncesItself);
@@ -16928,6 +16929,47 @@ function verifyOperatorKnobsAreDocumented(output) {
   } else if (agentUndocumented.length < AGENT_KNOBS_UNDOCUMENTED_CEILING) {
     output.push(`agent 节点侧旋钮无文档面的已降到 ${agentUndocumented.length}，把 AGENT_KNOBS_UNDOCUMENTED_CEILING 改成这个数 —— 棘轮留着松弛量，下一次回退就看不出来了`);
   }
+}
+
+// 【主需求文档不能把旧架构口径带回终态基线】。历史审计文档可以记录曾经的错误；
+// README、主设计、自动执行范围、核心控制平面和 Agent 协议是后续 Agent 会真正读取的基线。
+// 这些基线一旦重新出现"Agent 本地增量镜像"或泛化的"规则沉淀"，就会把实现带回
+// Agent 端承载服务/运行期自改规则的错误方向。
+function verifyPrimaryDocsDoNotReintroduceRetiredRequirements(output) {
+  const files = [
+    "README.md",
+    "docs/multi-agent-project-orchestration-system-design.md",
+    "docs/terminal-autonomous-execution-scope.md",
+    "docs/core-control-plane-spec.md",
+    "docs/agent-runtime-protocol.md",
+    "docs/runtime-management-ui-and-repository-output.md"
+  ];
+  const retiredTerms = [
+    "Agent 侧本地库",
+    "Agent 本地库只做镜像",
+    "Agent 本地增量镜像",
+    "动态规则沉淀",
+    "规则沉淀"
+  ];
+  const missingRequired = [];
+  for (const file of files) {
+    const text = readFileSync(join(root, file), "utf8");
+    for (const term of retiredTerms) {
+      if (text.includes(term)) {
+        output.push(`${file} 重新出现旧需求口径「${term}」—— 终态基线必须是 Agent 轻量、服务端集中、规则候选/系统外升级导入`);
+      }
+    }
+    if (file === "README.md" && !text.includes("系统升级结果只通过系统外维护后导入")) missingRequired.push(`${file}: 系统外升级导入口径`);
+    if (file === "docs/multi-agent-project-orchestration-system-design.md") {
+      if (!text.includes("Agent 端只保留运行配置、缓存和 outbox")) missingRequired.push(`${file}: Agent 轻量缓存/outbox 口径`);
+      if (!text.includes("系统级重复问题不得在运行期自动发布为 active rule")) missingRequired.push(`${file}: 运行期不自动发布系统规则口径`);
+    }
+    if (file === "docs/terminal-autonomous-execution-scope.md" && !text.includes("不自动发布系统规则")) {
+      missingRequired.push(`${file}: 规则候选不是自动发布`);
+    }
+  }
+  if (missingRequired.length) output.push(`主需求文档缺少后续明确过的终态约束：${missingRequired.join("、")}`);
+  else console.log(`主需求文档：${files.length} 份基线未重新引入 Agent 本地镜像或运行期自动改规则口径`);
 }
 
 // 【下发给界面的 runtime 常量只有一个写入点，且两条读路径都经过它】。readStateForRead 与 readState 原先各抄一份，

@@ -17,7 +17,7 @@
 | QA Agent | AI verification agent | 自动执行测试矩阵、证据采集和复验 |
 | Security Agent | AI security reviewer | 自动做权限、secret、依赖、MCP、网络、审计检查 |
 | Release Agent | AI release executor | 自动生成 release manifest、验证部署准备和回滚路径 |
-| Rule Steward Agent | AI rule governor | 自动处理项目规则候选；系统级重复问题只导出升级候选包 |
+| Rule Steward Agent | AI rule governor | 自动收集和解析项目规则候选；系统级重复问题只导出升级候选包，不运行期自改 |
 | Monitor Agent | autonomous monitor | 自动监控 heartbeat、DLQ、lease、成本、质量门和告警 |
 | RoleDriftGuard | control object + monitor loop | 锁定角色目标、职责、允许动作和禁止动作，检测并阻断任务跑偏 |
 
@@ -68,7 +68,7 @@
 | 集成合并 | IntegrationBatch 自动 rebase、batch CI、定位冲突 owner、生成 release manifest |
 | 权限阻断 | Permission Gateway 自动分类、路由、授权、改派、降级或中止 |
 | 审批裁决 | Approval Center 自动基于 policy/quorum/risk/evidence 产出 DecisionRecord |
-| 规则沉淀 | Rule Steward Agent 自动处理项目级规则候选；系统级重复问题只收集为 RuntimeIssuePattern 和 SystemUpgradeCandidate |
+| 规则候选 | Rule Steward Agent 自动收集、解析和互审项目级规则候选；系统级重复问题只收集为 RuntimeIssuePattern 和 SystemUpgradeCandidate，不自动发布系统规则 |
 | 来源解析 | MGP、ai-skills、外部 review 和工具输出必须经 RuleSourceResolution 分类，只有 generic 且通过冲突检查的机制可成为 active rule |
 | 系统升级候选 | Monitor 自动聚合重复运行问题并导出系统外升级证据包，不自动改造运行中的系统 |
 | 质量关闭 | Orchestrator 自动检查 close barrier 并关闭 TaskGroup |

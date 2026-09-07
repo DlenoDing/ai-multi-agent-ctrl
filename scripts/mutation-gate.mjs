@@ -13177,6 +13177,15 @@ const MUTATIONS = [
     expect: "运维要碰的环境旋钮没进 README 的表：AIMAC_MCP_AUDIT_ROTATIONS"
   },
   {
+    name: "主需求文档不得把运行期规则候选退回自动规则沉淀",
+    file: "README.md",
+    gate: "contract",
+    check: "verifyPrimaryDocsDoNotReintroduceRetiredRequirements",
+    from: "规则候选收集和关闭判断都必须由 AI Agent 和程序自动执行；运行期不得自动改写系统规则、角色、策略或控制面代码",
+    to: "规则沉淀和关闭判断都必须由 AI Agent 和程序自动执行；运行期不得自动改写系统规则、角色、策略或控制面代码",
+    expect: "README.md 重新出现旧需求口径「规则沉淀」"
+  },
+  {
     name: "agentctl 打错命令要列出可用命令（原先只回 unknown command）",
     file: "apps/agent-runtime/runtime.mjs",
     gate: "contract",
