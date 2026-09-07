@@ -2217,7 +2217,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     const overviewHtml = String(overviewRoot2.innerHTML || "");
     const text = overviewHtml.replace(/<[^>]+>/gu, " ");
     check("并排的两个百分比要各自说清是怎么算的",
-      /任务组平均进度/.test(text) && /按工作项平均/.test(text) && !/事项完成度/.test(text),
+      /任务组平均进度/.test(text) && /按任务平均/.test(text) && !/事项完成度/.test(text),
       "顶上 73%、下面 75%，标签却都读作「完成度」—— 人只能以为其中一个错了");
     check("项目关键指标必须占满内容宽度",
       /<article class="panel wide">[\s\S]*?<h2>关键指标<\/h2>/u.test(overviewHtml),
