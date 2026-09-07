@@ -4169,8 +4169,8 @@ const MUTATIONS = [
     name: "默认角色下拉必须选中配置里已有的角色",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '    .map((id) => `<option value="${esc(id)}"${id === roleId ? " selected" : ""}>${esc(id === "agent-runtime" ? "通用任务执行" : t(id))}</option>`).join("");',
-    to: '    .map((id) => `<option value="${esc(id)}">${esc(id === "agent-runtime" ? "通用任务执行" : t(id))}</option>`).join("");',
+    from: '    .map((id) => `<option value="${esc(id)}"${id === roleId ? " selected" : ""}>${esc(t(id))}</option>`).join("");',
+    to: '    .map((id) => `<option value="${esc(id)}">${esc(t(id))}</option>`).join("");',
     expect: "默认角色配置 pane 保留执行角色与 roleSkillRef 字段"
   },
   {
@@ -12483,7 +12483,7 @@ const MUTATIONS = [
     name: "已关闭的任务组不得被说成没权限",
     file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
-    from: '  ` : ["closed", "aborted"].includes(taskGroup.status)\n    // 已了结的任务组不再接受控制：说清是终态，而不是把人当成没权限。\n    ? `<div class="notice">这个任务组已',
+    from: '  ` : isSettledTaskGroup(taskGroup)\n    // 已了结的任务组不再接受控制：说清是终态，而不是把人当成没权限。\n    ? `<div class="notice">这个任务组已',
     to: '  ` : false\n    // 已了结的任务组不再接受控制：说清是终态，而不是把人当成没权限。\n    ? `<div class="notice">这个任务组已',
     expect: "已关闭的任务组要说是终态"
   },
@@ -13953,8 +13953,8 @@ const MUTATIONS = [
     name: '监控「节点与命令」栏目必须含齐死信队列小节',
     file: 'apps/control-plane-ui/public/modules/workspaces.js',
     gate: 'console',
-    from: '      pane("nodes", "节点与命令", ["agent 节点", "控制通道", "死信队列"]),',
-    to: '      pane("nodes", "节点与命令", ["agent 节点", "控制通道"]),',
+    from: '      pane("nodes", "节点与命令", ["运行节点", "控制通道", "死信队列"]),',
+    to: '      pane("nodes", "节点与命令", ["运行节点", "控制通道"]),',
     expect: '「节点与命令」栏目含齐'
   },
   {
@@ -14197,6 +14197,30 @@ const MUTATIONS = [
     to: "        ? renderTaskGroupGrantForm(chosenProject)",
     expect: "成员详情里的任务组授权锁定当前成员"
   },
+  {
+    name: "任务组时间线派发行不得少了档案名（节点不是 Agent）",
+    file: "apps/control-plane-ui/public/modules/task-group-insights.js",
+    gate: "console",
+    from: '          dispatchAgentLabel(dispatch) ? `档案：${dispatchAgentLabel(dispatch)}` : "",',
+    to: '          "",',
+    expect: "任务组时间线的派发行要写出档案、执行角色和节点，而不是把节点叫 Agent、再贴一串派发号"
+  },
+  {
+    name: "执行角色 agent-runtime 不得再回到「智能体运行时」这个只有档案页在用的名字",
+    file: "apps/control-plane-ui/public/i18n-zh.js",
+    gate: "console",
+    from: '    "agent-runtime": "通用任务执行",',
+    to: '    "agent-runtime": "智能体运行时",',
+    expect: "执行角色 agent-runtime 在档案列表与详情里统一叫「通用任务执行」，且详情不再贴英文角色 id"
+  },
+  {
+    name: "Agent 档案详情不得再贴英文角色 id",
+    file: "apps/control-plane-ui/public/modules/agent-profile-workspace.js",
+    gate: "console",
+    from: '<dt>执行角色</dt><dd>${esc(h.t(agent.role))}</dd>',
+    to: '<dt>执行角色</dt><dd>${esc(h.t(agent.role))}<div class="small muted mono">${esc(agent.role)}</div></dd>',
+    expect: "执行角色 agent-runtime 在档案列表与详情里统一叫「通用任务执行」，且详情不再贴英文角色 id"
+  }
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

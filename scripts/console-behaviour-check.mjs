@@ -2225,10 +2225,10 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
   }
 
   check("项目概览也要说出'没有在线 agent，这些活不会动'（它是被盯得最久的一页）",
-    /没有任何在线的 agent 节点/.test(overviewText({online: 0, total: 0})),
+    /没有任何在线的运行节点/.test(overviewText({online: 0, total: 0})),
     "概览页显示健康度 ok、进度在走，而实际一个单元都动不了 —— 另外两页说了，这一页不说");
   check("有 agent 在线时概览页不挂这条提示",
-    !/没有任何在线的 agent 节点/.test(overviewText({online: 1, total: 1})),
+    !/没有任何在线的运行节点/.test(overviewText({online: 1, total: 1})),
     "常亮的提示等于没有提示");
 }
 
@@ -3134,7 +3134,7 @@ async function runErrorGuidanceCase() {
       activeRuleRefs: ["terminal-execution-manifest:v1", "language-policy:v1"], forbiddenActions: ["mutate_active_ruleset", "self_patch_control_plane"],
       validationRequirements: ["schema_valid", "checkpoint_registered"], effectiveRulesDigest: "sha256:633558a17"});
     check("任务契约小节不许出现内部 key（角色技能／规则件／禁止动作／验收要求全部中文）",
-      /智能体运行时（系统内置技能）/u.test(contractHtml) && /终态执行清单（v1）/u.test(contractHtml) && /修改生效中的规则集/u.test(contractHtml) && /结构校验通过/u.test(contractHtml)
+      /通用任务执行（系统内置技能）/u.test(contractHtml) && /终态执行清单（v1）/u.test(contractHtml) && /修改生效中的规则集/u.test(contractHtml) && /结构校验通过/u.test(contractHtml)
         && !/mutate_active_ruleset|schema_valid|terminal-execution-manifest|system-agent-runtime/u.test(contractHtml.replace(/<[^>]+>/gu, " ")),
       `契约小节：${contractHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 260)}`);
     const passive = codedProbe.workItemExitHintHtml({id: "w2", status: "blocked", blockedReason: "blocked_dependency"}, "tg1");
@@ -3827,7 +3827,7 @@ async function runErrorGuidanceCase() {
   // 接线：三张【由独立接口取数】的表都要用它。少了这条，helper 写了没人用照样全绿。
   const appSrc2 = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
   const wired = (appSrc2.match(/listEmptyText\(/gu) || []).length;
-  check("三张独立取数的表都要接上（组织 / 成员 / agent 节点）",
+  check("三张独立取数的表都要接上（组织 / 成员 / 运行节点）",
     wired === 5,
     `listEmptyText 只被用了 ${wired - 1} 处（定义之外，应为 4）—— 有表还在说"暂无数据"`);
 }
@@ -5674,7 +5674,7 @@ async function runPendingTruncationCase() {
       "已完成的派发显示「0%」—— 它根本没上报过进度，人会以为它什么都没干成");
     const offlineView = probe.renderMonitorWith(structuredClone(base), admin, "p1");
     check("有活在排队却没有在线 agent 时要在监控页上说出来",
-      /没有任何在线的 agent 节点/.test(offlineView),
+      /没有任何在线的运行节点/.test(offlineView),
       "一个能干活的节点都没有，界面却只显示'执行中' —— 人会一直等一件永远不会发生的事");
     check("提示要说清已注册几个、以及该去哪儿看",
       /已注册 2 个/.test(offlineView)
@@ -5710,19 +5710,19 @@ async function runPendingTruncationCase() {
     const withNode = structuredClone(base);
     withNode.fleet = {online: 1, total: 2};
     check("有在线节点时不挂这条提示",
-      !/没有任何在线的 agent 节点/.test(probe.renderMonitorWith(withNode, admin, "p1")),
+      !/没有任何在线的运行节点/.test(probe.renderMonitorWith(withNode, admin, "p1")),
       "有节点在线还提示没有 —— 常亮的告警等于没有告警");
 
     const noWork = structuredClone(base);
     noWork.agentDispatches = [];
     check("没有活在等时不挂这条提示",
-      !/没有任何在线的 agent 节点/.test(probe.renderMonitorWith(noWork, admin, "p1")),
+      !/没有任何在线的运行节点/.test(probe.renderMonitorWith(noWork, admin, "p1")),
       "没有任何活在等却提示节点掉线 —— 项目还没开工就先吓人一跳");
 
     const otherProject = structuredClone(base);
     otherProject.agentDispatches = [{dispatchId: "adp9", taskGroupId: "tg_other", workItemId: "w9", status: "queued"}];
     check("只统计当前项目范围内的活",
-      !/没有任何在线的 agent 节点/.test(probe.renderMonitorWith(otherProject, admin, "p1")),
+      !/没有任何在线的运行节点/.test(probe.renderMonitorWith(otherProject, admin, "p1")),
       "拿别的项目的派发在这个项目上报警 —— 这一页整体以当前项目为抬头");
   }
 
@@ -5837,11 +5837,11 @@ async function runPendingTruncationCase() {
       const executionTitles = ["工作会话", "智能体派发", "可复用执行载体（Worker Lane）", "模型选择记录", "会话放置记录", "准入决策"];
       check("「会话与派发」栏目含齐会话、派发、执行载体、模型决策、会话放置和准入六个小节",
         executionTitles.every((title) => executionPane.includes(`<h2>${title}</h2>`))
-          && !/<h2>(?:agent 节点|控制通道|死信队列|关闭门禁)<\/h2>/u.test(executionPane),
+          && !/<h2>(?:运行节点|控制通道|死信队列|关闭门禁)<\/h2>/u.test(executionPane),
         textOf(executionPane).slice(0, 200));
       const nodesPane = objectProbe.renderMonitorInventoryWith(multiState, orgAdmin, "p1", ["nodes"]);
       check("「节点与命令」栏目含齐运行节点、控制命令和死信队列三个小节",
-        ["agent 节点", "控制通道", "死信队列"].every((title) => nodesPane.includes(`<h2>${title}</h2>`))
+        ["运行节点", "控制通道", "死信队列"].every((title) => nodesPane.includes(`<h2>${title}</h2>`))
           && !/<h2>(?:工作会话|智能体派发|关闭门禁)<\/h2>/u.test(nodesPane),
         textOf(nodesPane).slice(0, 200));
       const evidenceState = {...multiState,
@@ -5851,7 +5851,7 @@ async function runPendingTruncationCase() {
       const acceptancePane = objectProbe.renderMonitorInventoryWith(evidenceState, orgAdmin, "p1", ["acceptance"]);
       check("「验收与收口」栏目含齐检查点、质量门禁、人工定稿、阻塞处置和关闭门禁五个小节",
         ["检查点（Git 证据）", "质量门禁 / 测试证据", "最近的人工定稿", "阻塞项人工处置", "关闭门禁"].every((title) => acceptancePane.includes(`<h2>${title}</h2>`))
-          && !/<h2>(?:工作会话|智能体派发|agent 节点)<\/h2>/u.test(acceptancePane),
+          && !/<h2>(?:工作会话|智能体派发|运行节点)<\/h2>/u.test(acceptancePane),
         textOf(acceptancePane).slice(0, 200));
       check("旧的明细栏目地址（quality / blockers / node-control）都落到合并后的栏目",
         objectProbe.renderMonitorInventoryWith(evidenceState, orgAdmin, "p1", ["quality"]).includes("<h2>关闭门禁</h2>")
@@ -6085,6 +6085,12 @@ async function runPendingTruncationCase() {
         && ["项目开发 Agent", "agent-runtime", "auto_fast", "0.8", "reviewer"].every((value) => agentForm.includes(`value="${value}"`))
         && /data-action="toggle-agent" data-agent="agent_project_profile"/u.test(projectProfileDetail),
       textOf(projectProfileDetail).slice(0, 500));
+    // 【同一个执行角色不能在两处叫两个名字】：原先档案页把 agent-runtime 叫「智能体运行时」，建组／建任务／加入令牌却叫「通用任务执行」。
+    check("执行角色 agent-runtime 在档案列表与详情里统一叫「通用任务执行」，且详情不再贴英文角色 id",
+      textOf(profileList).includes("通用任务执行") && !textOf(profileList).includes("智能体运行时")
+        && textOf(projectProfileDetail).includes("执行角色 通用任务执行")
+        && !/<dd>[^<]*<div class="small muted mono">agent-runtime<\/div>/u.test(projectProfileDetail),
+      `档案列表：${textOf(profileList).slice(0, 200)}；详情：${textOf(projectProfileDetail).match(/执行角色.{0,40}/u)?.[0] || "没找到执行角色"}`);
     check("Agent 档案编辑页也必须使用登记值选择器并保留当前值",
       /<select name="role" required>[\s\S]*?value="agent-runtime" selected/u.test(agentForm)
         && /<select name="model" data-cascade-child="model" required>[\s\S]*?value="auto_fast" data-group="auto" selected/u.test(agentForm)
@@ -6272,6 +6278,26 @@ async function runPendingTruncationCase() {
         !/data-action="close-task-group"/u.test(readOnlyPane),
         "只读账号也看到了关闭按钮 —— 点下去只会被拒");
     }
+    // 【任务组时间线要说清是哪个档案、哪个角色在哪台节点上执行】（用户 09-08 组织共享 Agent 走查）：
+    // 原先派发行只写「Agent：<节点名>」外加一串 adp_ 派发号 —— 节点不是 Agent，档案与角色一个字没有。
+    {
+      const timelineProbe = loadConsole(el("div"), {realI18n: true});
+      const timelineState = {...overviewState,
+        agents: [{id: "agent_shared_reviewer", name: "组织共享评审 Agent", role: "reviewer", status: "active", organizationId: "org_default"}],
+        agentRuntimeNodes: [{nodeId: "node_shared", nodeName: "组织共享走查节点", organizationId: "org_default", status: "online"}],
+        workSessions: [{sessionId: "sess_shared", taskGroupId: detailTaskGroup.id, workItemId: "w1", agentId: "agent_shared_reviewer", roleId: "reviewer", status: "active"}],
+        agentDispatches: [{dispatchId: "adp_shared_timeline", taskGroupId: detailTaskGroup.id, workItemId: "w1", sessionId: "sess_shared", roleId: "reviewer",
+          assignedNodeId: "node_shared", status: "completed", createdAt: "2026-09-08T01:27:00Z", progressPercent: 100}]};
+      const timelinePane = textOf(timelineProbe.renderTaskGroupDetailPane("tasks", detail, detailTaskGroup, timelineState, systemAdmin, "p1"));
+      check("任务组时间线的派发行要写出档案、执行角色和节点，而不是把节点叫 Agent、再贴一串派发号",
+        timelinePane.includes("档案：组织共享评审 Agent") && timelinePane.includes("角色：评审员") && timelinePane.includes("节点：组织共享走查节点")
+          && !/派发：adp_/u.test(timelinePane) && !/Agent：组织共享走查节点/u.test(timelinePane),
+        `时间线：${timelinePane.match(/任务执行时间线[\s\S]{0,300}/u)?.[0] || timelinePane.slice(0, 300)}`);
+      const rolesPane = textOf(timelineProbe.renderTaskGroupDetailPane("roles", detail, detailTaskGroup, timelineState, systemAdmin, "p1"));
+      check("执行角色 agent-runtime 在任务组角色配置里也叫「通用任务执行」，与档案页同名",
+        rolesPane.includes("通用任务执行") && !rolesPane.includes("智能体运行时"),
+        `角色栏目：${rolesPane.slice(0, 300)}`);
+    }
     const detailProgressPane = probe.renderTaskGroupDetailPane("progress", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
     const detailRolesPane = probe.renderTaskGroupDetailPane("roles", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
     const detailInheritancePane = probe.renderTaskGroupDetailPane("inheritance", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
@@ -6371,12 +6397,12 @@ async function runPendingTruncationCase() {
 
     const projectNodesTable = probe.renderProjectAgentsInventoryWith(overviewState, systemAdmin, "p1", "table", ["nodes"]);
     const projectNodesCards = probe.renderProjectAgentsInventoryWith(overviewState, systemAdmin, "p1", "cards", ["nodes"]);
-    check("项目 agent 节点 pane 保留列表/卡片两种视图",
+    check("项目运行节点 pane 保留列表/卡片两种视图",
       /data-action="agent-view-mode" data-mode="table"/u.test(projectNodesTable)
         && /data-action="agent-view-mode" data-mode="cards"/u.test(projectNodesTable)
         && /class="agent-card"/u.test(projectNodesCards),
       "节点管理不能只剩一种视图");
-    check("项目 agent 节点表格保留节点级自检和关停动作",
+    check("项目运行节点表格保留节点级自检和关停动作",
       /data-action="agent-control" data-node-id="node1" data-command="refresh_profile"/u.test(projectNodesTable)
         && /data-command="shutdown"/u.test(projectNodesTable),
       "节点表格缺少刷新自检或关停入口");
@@ -8063,7 +8089,7 @@ await runCodedApiErrorCase();
   const probe = loadConsole(el("div"));
   const stalled = probe.renderTaskGroupsWith(withCells("assigned", {online: 0, total: 2}), account, "p1", null, {});
   check("单元已交给执行方而没有在线 agent 时，要在任务组页上说出来",
-    /没有任何在线的 agent 节点/.test(stalled),
+    /没有任何在线的运行节点/.test(stalled),
     "进度条不会再动，而这一页一个字都不说 —— 人会一直等，并且会以为是 agent 在慢慢做");
   check("要说清它们不会有进展、以及去哪儿看",
     /不会有任何进展/.test(stalled)
@@ -8085,10 +8111,10 @@ await runCodedApiErrorCase();
       && /data-menu="proj-agents" data-menu-workspace="nodes"/u.test(createHtml),
     "创建表单旁和页面顶部重复显示同一段离线告警，主表单被挤到侧面或下方");
   check("有在线 agent 时不挂这条提示",
-    !/没有任何在线的 agent 节点/.test(probe.renderTaskGroupsWith(withCells("assigned", {online: 1, total: 2}), account, "p1", null, {})),
+    !/没有任何在线的运行节点/.test(probe.renderTaskGroupsWith(withCells("assigned", {online: 1, total: 2}), account, "p1", null, {})),
     "有节点在线还提示 —— 常亮的告警等于没有告警");
   check("单元还没交出去时不挂这条提示",
-    !/没有任何在线的 agent 节点/.test(probe.renderTaskGroupsWith(withCells("draft", {online: 0, total: 2}), account, "p1", null, {})),
+    !/没有任何在线的运行节点/.test(probe.renderTaskGroupsWith(withCells("draft", {online: 0, total: 2}), account, "p1", null, {})),
     "单元还在 draft 就提示 agent 掉线 —— 这时它本来也不该动");
 
   // 提示里筛的状态名必须是状态机登记过的。这条不是洁癖：上一版这里写的是 "dispatched"，
@@ -8227,7 +8253,7 @@ await runCodedApiErrorCase();
   const probe = loadConsole(el("div"));
   const stalled = probe.renderReviewWith(baseState(), account);
   check("等 AI 再分析而没有在线 agent 时，要在人工确认页上说出来",
-    /没有任何在线的 agent 节点/.test(stalled),
+    /没有任何在线的运行节点/.test(stalled),
     "卡片停在'等待 AI 再分析'，而没有任何 agent 能回答 —— 人会一直等下去");
   check("要给出不必干等的出路",
     /直接在这里定稿或打回/.test(stalled)
@@ -8239,13 +8265,13 @@ await runCodedApiErrorCase();
   const online = baseState();
   online.fleet = {online: 1, total: 1};
   check("有在线 agent 时不挂这条提示",
-    !/没有任何在线的 agent 节点/.test(probe.renderReviewWith(online, account)),
+    !/没有任何在线的运行节点/.test(probe.renderReviewWith(online, account)),
     "有 agent 在线还说没有 —— 常亮的告警等于没有告警");
 
   const notWaiting = baseState();
   notWaiting.humanConfirmationRequests[0].awaitingAiAnalysis = false;
   check("没有卡在等 AI 时不挂这条提示",
-    !/没有任何在线的 agent 节点/.test(probe.renderReviewWith(notWaiting, account)),
+    !/没有任何在线的运行节点/.test(probe.renderReviewWith(notWaiting, account)),
     "没有人在等 AI 却提示 agent 掉线 —— 这一页不该替监控页操心");
 }
 
@@ -8632,7 +8658,7 @@ await runCodedApiErrorCase();
     // 都指向它）—— 门和被测代码共用了同一个漂掉的名字，于是"指向不存在的页"被当成合法出口。
     // 这里只要求卡片指到【某个】页，那个页名是不是真的，由 contract-check 的
     // verifyGuidanceNamesRealPages 按 PAGE_META 全量核对。
-    const hasExit = /人工指令|人工审核|「[^」]{2,16}」页|「[^」]{2,16}」→「[^」]{2,16}」|agent 节点/.test(card);
+    const hasExit = /人工指令|人工审核|「[^」]{2,16}」页|「[^」]{2,16}」→「[^」]{2,16}」|agent 节点|运行节点/.test(card);
     const saysSelfClearing = /自动放行|无需操作/.test(card);
     if (NO_PRODUCER[status]) continue;
     if (!hasExit && !saysSelfClearing) {

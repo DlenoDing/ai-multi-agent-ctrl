@@ -17,7 +17,7 @@
 
   function executionTimeline(taskGroup, progressData = {}, helpers) {
     const {state, terminalDispatchStatuses, t, explainCoded, modelDecisionSummaryZh, agentEventSummaryZh = (value) => value,
-      customBadge, badge, esc, fmtTime, agentNodeLabel} = helpers;
+      customBadge, badge, esc, fmtTime, agentNodeLabel, dispatchAgentLabel = () => ""} = helpers;
     const groupId = taskGroup.id;
     const workItems = progressData.workItems || taskGroup.workItems || [];
     const inGroup = (item) => item?.taskGroupId === groupId;
@@ -71,9 +71,10 @@
         tone: dispatch.status === "blocked" || dispatch.failureReason
           ? "red"
           : terminalDispatchStatuses.has(dispatch.status) ? "gray" : "blue",
-        detail: explainCoded(dispatch.blockedReason || dispatch.failureReason || dispatch.dispatchReason || ""),
-        meta: [`Agent：${agentNodeLabel(dispatch.assignedNodeId)}`,
-          `派发：${dispatch.dispatchId}`,
+        detail: (dispatch.blockedReason || dispatch.failureReason || dispatch.dispatchReason) ? explainCoded(dispatch.blockedReason || dispatch.failureReason || dispatch.dispatchReason) : "",
+        meta: [`节点：${agentNodeLabel(dispatch.assignedNodeId)}`,
+          dispatchAgentLabel(dispatch) ? `档案：${dispatchAgentLabel(dispatch)}` : "",
+          `角色：${t(dispatch.roleId) || dispatch.roleId || "-"}`,
           dispatch.progressPercent !== undefined ? `进度：${dispatch.progressPercent}%` : ""]
       }));
     }
@@ -86,7 +87,7 @@
         tone: event.status === "failed" || event.status === "error" ? "red" : "blue",
         detail: agentEventSummaryZh(event.summary || ""),
         meta: [`事件：${t(event.eventType) || event.eventType || "-"}`,
-          `Agent：${agentNodeLabel(event.nodeId)}`,
+          `节点：${agentNodeLabel(event.nodeId)}`,
           event.progressPercent !== undefined ? `进度：${event.progressPercent}%` : ""]
       }));
     }
@@ -124,7 +125,7 @@
     `).join("");
     return `
       <div class="timeline-list">
-        ${rows || `<div class="notice">当前任务组还没有可合并展示的执行记录。工作项进入派发、Agent 回送事件或提交 checkpoint 后，会按时间倒序出现在这里。</div>`}
+        ${rows || `<div class="notice">当前任务组还没有可合并展示的执行记录。任务进入派发、Agent 回送事件或提交检查点后，会按时间倒序出现在这里。</div>`}
       </div>
       ${entries.length > 40 ? `<div class="small muted">共 ${entries.length} 条，这里显示最新 40 条；更完整的事件仍在执行监控页按派发或任务组查看。</div>` : ""}
     `;

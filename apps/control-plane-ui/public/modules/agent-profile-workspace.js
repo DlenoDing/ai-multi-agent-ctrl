@@ -56,7 +56,7 @@
       </header>
       <div class="governance-object-columns">
         <section class="governance-object-band"><h3>执行身份</h3><dl class="kv-list">
-          <dt>执行角色</dt><dd>${esc(h.t(agent.role))}<div class="small muted mono">${esc(agent.role)}</div></dd>
+          <dt>执行角色</dt><dd>${esc(h.t(agent.role))}</dd>
           <dt>作用范围</dt><dd>${esc(scopeLabel)}</dd>
           <dt>当前状态</dt><dd>${h.statusBadge("agent", agent.status)}</dd>
           <dt>信任分</dt><dd>${Number.isFinite(Number(agent.trustScore)) ? `${Math.round(Number(agent.trustScore) * 100)}%` : "-"}</dd>

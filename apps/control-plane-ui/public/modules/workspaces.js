@@ -17,8 +17,8 @@
     "org-overview": [pane("overview", "组织概况"), pane("help", "组织操作说明", ["组织操作路径"])],
     "org-members": [pane("list", "成员列表", ["成员列表"]), pane("create", "创建成员", ["创建成员"]), pane("grants", "权限矩阵", ["子账户项目 / 任务组权限矩阵"]), pane("help", "授权说明")],
     "org-projects": [pane("list", "项目列表", ["项目列表"]), pane("create", "创建项目", ["创建项目"]), pane("grants", "项目授权", ["项目成员授权"]), pane("help", "项目治理说明")],
-    "org-agents": [pane("profiles", "共享 Agent 档案", ["组织级 Agent 档案"]), pane("create", "新建共享 Agent 档案", ["创建组织级 Agent 档案"]), pane("nodes", "共享运行节点", ["agent 节点"]), pane("register", "注册共享运行节点", ["注册共享运行节点"]), pane("tokens", "加入令牌", ["加入令牌审计"]), pane("help", "接入与管理说明")],
-    "proj-agents": [pane("profiles", "Agent 档案", ["可调配 Agent 档案"]), pane("create", "新建 Agent 档案", ["创建项目级 Agent 档案"]), pane("nodes", "运行节点", ["项目 agent 节点"]), pane("register", "注册运行节点", ["注册运行节点"]), pane("help", "接入与运行说明")],
+    "org-agents": [pane("profiles", "共享 Agent 档案", ["组织级 Agent 档案"]), pane("create", "新建共享 Agent 档案", ["创建组织级 Agent 档案"]), pane("nodes", "共享运行节点", ["运行节点"]), pane("register", "注册共享运行节点", ["注册共享运行节点"]), pane("tokens", "加入令牌", ["加入令牌审计"]), pane("help", "接入与管理说明")],
+    "proj-agents": [pane("profiles", "Agent 档案", ["可调配 Agent 档案"]), pane("create", "新建 Agent 档案", ["创建项目级 Agent 档案"]), pane("nodes", "运行节点", ["项目运行节点"]), pane("register", "注册运行节点", ["注册运行节点"]), pane("help", "接入与运行说明")],
     "proj-overview": [pane("overview", "项目概况", ["项目概况", "关键指标", "任务组一览"]), pane("activity", "最新执行", ["最新执行事件"]), pane("outputs", "仓库产出", ["仓库产出归属概览", "仓库产出归属"]), pane("help", "准备与操作", ["流程导航"])],
     "proj-members": [pane("list", "项目成员", ["项目成员列表"]), pane("add", "添加项目成员", ["项目成员授权"]), pane("groups", "任务组权限", ["任务组权限列表"]), pane("grant-group", "授予任务组权限", ["任务组权限授权"]), pane("help", "授权说明")],
     // 项目设置：仓库与基线 / 角色与 Skill / 规则。此前六个分项各占一个栏目（还各占一行侧栏）。
@@ -31,7 +31,7 @@
     monitor: [pane("overview", "进度总览", ["执行监控", "执行监控总览", "任务组监控矩阵", "自治控制"]),
       pane("execution", "会话与派发", ["工作会话", "智能体派发", "可复用执行载体（Worker Lane）", "模型选择记录", "会话放置记录", "准入决策"]),
       pane("events", "实时事件", ["实时事件流"]),
-      pane("nodes", "节点与命令", ["agent 节点", "控制通道", "死信队列"]),
+      pane("nodes", "节点与命令", ["运行节点", "控制通道", "死信队列"]),
       pane("acceptance", "验收与收口", ["检查点（Git 证据）", "质量门禁 / 测试证据", "最近的人工定稿", "阻塞项人工处置", "关闭门禁"]),
       pane("help", "监控说明", ["监控处置看板", "实时回送链路"])],
     // 人工审核：待办处理（汇总）/ 待我审核（确认卡）/ 审批与处置（权限审批 · 操作审批 · 发现处置）/ 审核历史。

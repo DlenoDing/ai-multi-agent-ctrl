@@ -439,7 +439,7 @@ function render(context, helpers) {
         ? table(["条目", "命令", "作用对象", "原因", "状态", {label: "更新时间", c: "nowrap"}, "处置"], dlqRows)
         : `<div class="small muted">没有待处置的死信条目。命令重试超限时才会在这里出现，非终态会挡住任务组关闭。</div>`, {wide: true});
     })(),
-    panel("agent 节点", table(["节点", "状态", "准入", {label: "最近心跳", c: "nowrap"}, "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…", "runtime-nodes")}),
+    panel("运行节点", table(["节点", "状态", "准入", {label: "最近心跳", c: "nowrap"}, "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…", "runtime-nodes")}),
     panel("模型选择记录", table(["角色", "Agent 档案", "工作项", "实际模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText(decisionsInScope.length, 10, "modelSelectionDecisions")})),
     panel("会话放置记录", table(["工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态"], placements, {moreText: moreText(placementsInScope.length, 10, "sessionPlacementDecisions")})),
     panel("准入决策", table(["工作项", "判定", "分类", {label: "原因", c: "text-clip"}], admissions, {moreText: moreText(admissionsInScope.length, 12, "admissionDecisions")}), {wide: true}),

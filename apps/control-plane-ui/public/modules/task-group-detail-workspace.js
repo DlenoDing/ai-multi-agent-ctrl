@@ -9,7 +9,8 @@ function render(taskGroup, context, helpers) {
     languageLabel, languageSelectOptions, orchestratorCadenceText, percentCell, progressBar,
     progressLine, repositoryFailureAction, roleSkillOverlayForm, roleSkillOverlayTable,
     ruleEditorForm, sectionBlock, taskGroupRoleSkillOverlays,
-    workItemExitHint, workItemResultHtml, renderTaskGroupExecutionTimeline, jumpModuleCard, t
+    workItemExitHint, workItemResultHtml, renderTaskGroupExecutionTimeline, jumpModuleCard, t,
+    isSettledTaskGroup = (group) => false
   } = helpers;
   if (!tgDetail || tgDetail.taskGroupId !== taskGroup.id) {
     return `<div class="notice">正在加载任务组详情…</div>`;
@@ -73,7 +74,7 @@ function render(taskGroup, context, helpers) {
             // 角色只能从已登记的执行角色里勾，不让人手打内部 id；原值放在 data-orig 上供「没改动」判断。
             const current = (config.defaultRoles || []).map((role) => role.roleId || role);
             const choices = [...new Set([...current, ...WORK_ITEM_OWNER_ROLE_CHOICES])];
-            return `<div class="check-list" data-default-roles data-orig="${esc(current.join(","))}">${choices.map((roleId) => `<label><input type="checkbox" name="defaultRoles" value="${esc(roleId)}"${current.includes(roleId) ? " checked" : ""} ${editDisabled}> ${esc(roleId === "agent-runtime" ? "通用任务执行" : t(roleId))}</label>`).join("")}</div>`;
+            return `<div class="check-list" data-default-roles data-orig="${esc(current.join(","))}">${choices.map((roleId) => `<label><input type="checkbox" name="defaultRoles" value="${esc(roleId)}"${current.includes(roleId) ? " checked" : ""} ${editDisabled}> ${esc(t(roleId))}</label>`).join("")}</div>`;
           })()}
         </div>
         <div class="record-meta">
@@ -121,7 +122,7 @@ function render(taskGroup, context, helpers) {
         <button class="primary-button" type="submit">保存语言策略</button>
       </form>
     </div>
-  ` : ["closed", "aborted"].includes(taskGroup.status)
+  ` : isSettledTaskGroup(taskGroup)
     // 已了结的任务组不再接受控制：说清是终态，而不是把人当成没权限。
     ? `<div class="notice">这个任务组已${taskGroup.status === "closed" ? "关闭" : "中止"}（终态），不再接受暂停、恢复、评审等控制操作。统一语言：${esc(languageLabel(languagePolicy))}。</div>`
     : `<div class="notice">当前账号无“任务组控制”权限，仅可查看。当前统一语言：${esc(languageLabel(languagePolicy))}。</div>`;
@@ -211,7 +212,7 @@ function render(taskGroup, context, helpers) {
     ? `<div class="record"><div class="record-title">关闭门禁：<strong>尚未计算</strong></div><div class="record-meta">进入“关闭门禁”重算，或等下一次编排周期，才会知道这个任务组能不能关闭。</div></div>`
     : groupBarrier.satisfied
       // 门已经清零就把「关闭任务组」放在这里：原先只在执行监控的「验收与收口」栏目才有按钮，人在任务组详情看到「可关闭」却无处可点。
-      ? ["closed", "aborted"].includes(taskGroup.status)
+      ? isSettledTaskGroup(taskGroup)
         ? `<div class="record"><div class="record-title">关闭门禁：${customBadge(taskGroup.status === "closed" ? "已关闭" : "已中止", "gray")}</div></div>`
         : `<div class="record"><div class="record-title">关闭门禁：${customBadge("可关闭", "green")}</div>${canControl
         ? `<div class="record-meta"><span>所有任务已收口，关闭后进入终态、不能重新打开。</span></div><div class="button-row"><button class="danger-button" data-action="close-task-group" data-task="${esc(taskGroup.id)}">关闭任务组</button></div>`

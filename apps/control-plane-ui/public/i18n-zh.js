@@ -858,7 +858,7 @@
 
     /* ---------- 角色 ---------- */
     orchestrator: "总控编排",
-    "agent-runtime": "智能体运行时",
+    "agent-runtime": "通用任务执行",
     "policy-engine": "策略引擎",
     "room-broker": "协作室代理",
     "decision-center": "决策中心",
