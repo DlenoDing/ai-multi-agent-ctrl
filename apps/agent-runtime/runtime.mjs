@@ -2449,9 +2449,29 @@ function assertAllowedPaths(paths, target) {
   }
 }
 
+// 与控制面 lib/path-policy.mjs 的 pathMatchesAllowlist 同一套语义：`**` 整仓、`dir/**` 目录及其下所有、
+// 带 `*` 的按段匹配（`*` 一段、`**` 任意多段）、其余逐字相等。控制面给项目自己的仓库缺省发 ["**"]，
+// 这边原先只认 dir/** 与逐字，整仓白名单会被判成「不在允许改的路径里」（实测）。
 function pathMatches(rule, path) {
-  if (rule.endsWith("/**")) return path === rule.slice(0, -3) || path.startsWith(rule.slice(0, -2));
-  return rule === path;
+  if (rule === "**") return true;
+  if (rule.endsWith("/**") && !rule.slice(0, -3).includes("*")) return path === rule.slice(0, -3) || path.startsWith(rule.slice(0, -2));
+  if (!rule.includes("*")) return rule === path;
+  return globSegmentsMatch(rule.split("/"), path.split("/"), 0, 0);
+}
+
+function globSegmentsMatch(pattern, segments, patternIndex, pathIndex) {
+  if (patternIndex === pattern.length) return pathIndex === segments.length;
+  const token = pattern[patternIndex];
+  if (token === "**") {
+    for (let skip = pathIndex; skip <= segments.length; skip += 1) {
+      if (globSegmentsMatch(pattern, segments, patternIndex + 1, skip)) return true;
+    }
+    return false;
+  }
+  if (pathIndex >= segments.length) return false;
+  const regex = new RegExp(`^${token.split("*").map((part) => part.replace(/[.+?^${}()|[\]\\]/gu, "\\$&")).join("[^/]*")}$`, "u");
+  if (!regex.test(segments[pathIndex])) return false;
+  return globSegmentsMatch(pattern, segments, patternIndex + 1, pathIndex + 1);
 }
 
 function parseArgs(argv) {

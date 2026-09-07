@@ -4,6 +4,7 @@ execFileSync, spawn, spawnSync } from "node:child_process";
 import { dockerFailureAdvice } from "./lib/docker-failure-advice.mjs";
 import { mcpToolInputKeys } from "../apps/control-plane-ui/lib/mcp-tool-catalog.mjs";
 import { sealSecret, openSecret, isSealed, resetCredentialKeyCache } from "../apps/control-plane-ui/lib/credential-seal.mjs";
+import { repositoryAuthEnvironment } from "../apps/control-plane-ui/lib/git-connection-test.mjs";
 import { SCHEMA_FILE_ALIASES, UNCOVERED_CEILINGS, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 import { HUMAN_ONLY_MCP_TOOL_REFUSALS } from "./lib/known-second-doors.mjs";
 import { OPERATOR_CLIS, OPERATOR_SHELL_ENTRIES, OPERATOR_ENTRY_FILES, ENV_READING_SUPPORT_FILES } from "./lib/operator-entries.mjs";
@@ -827,6 +828,9 @@ run(verifyMcpSummaryIsActuallyASummary);
 run(verifyHeartbeatDoesNotHideFailedSelfCheck);
 run(verifyTaskGroupBlockersStayBounded);
 run(verifyPerScopeRecordsSurviveTheirCap);
+run(verifyRegisteredProjectRepositoryOwnsOutputTarget);
+run(verifyCheckpointVerificationFetchUsesRepositoryCredential);
+run(verifyRuntimePathAllowlistMatchesControlPlane);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 // 【项目仓库测试连接】：用已保存的地址与凭证跑 git ls-remote，把 git 的英文归成人能处置的原因；
 // 密钥只走 askpass 环境变量（脚本不含密钥、跑完即删）、响应里的 detail 不含密钥。
@@ -1982,12 +1986,25 @@ function verifyHumanAndOrganizationContracts(output) {
     const decisionTg = decisionState.taskGroups.find((item) => item.id === "tg_runtime_management");
     decisionTg.workItems = [{id: "wi_decide", title: "决策项", status: "needs_decision", blockedReason: "independent_review_changes_requested", ownerRole: "agent-runtime", progress: 40}];
     decisionState.reviewBundles = [{bundleId: "rvb_x", workItemId: "wi_decide", verdict: "changes_requested", status: "consumed"}];
+    // 上一次尝试留下的受阻派发：重开必须把它了结，否则编排一直复用它的契约、永远不再派新的（实测：人按了重开，
+    // 任务停在「就绪」纹丝不动）。
+    const stuckAt = new Date().toISOString();
+    decisionState.agentDispatches = [{schemaVersion: "agent-dispatch/v1", dispatchId: "adp_stuck", projectId: decisionTg.projectId, taskGroupId: "tg_runtime_management",
+      workItemId: "wi_decide", sessionId: "sess_stuck", runId: "run_stuck", status: "blocked", blockedReason: "agent_reported_blocked", attempts: 1, createdAt: stuckAt, updatedAt: stuckAt}];
     createHumanDirective(decisionState, {taskGroupId: "tg_runtime_management", directiveType: "resolve_decision", workItemId: "wi_decide", resolution: "reopen"}, {actor: "acct_ct"});
     consumeQueuedHumanDirectives(decisionState);
     const reopened = decisionTg.workItems.find((item) => item.id === "wi_decide");
     if (reopened.status !== "ready") output.push("resolve_decision reopen did not return the needs_decision cell to ready");
     if (reopened.blockedReason) output.push("resolve_decision reopen left a blockedReason");
     if (!decisionState.reviewBundles.every((item) => item.workItemId !== "wi_decide" || item.supersededByHumanDecision)) output.push("resolve_decision reopen did not reset the rework count");
+    const stuck = decisionState.agentDispatches.find((item) => item.dispatchId === "adp_stuck");
+    if (!stuck || !["failed", "cancelled", "completed", "superseded", "revoked"].includes(stuck.status)) {
+      output.push(`重开后上一次受阻的派发仍是非终态（${stuck?.status}）—— 编排会一直复用它，人按了重开也不会再派新的`);
+    } else {
+      runAutonomousCycle(decisionState, {root, mode: "all", taskGroupId: "tg_runtime_management", autoSyncSkills: false});
+      const fresh = decisionState.agentDispatches.find((item) => item.workItemId === "wi_decide" && item.dispatchId !== "adp_stuck");
+      if (!fresh) output.push(`重开后下一拍没有为该工作项派出新的派发（工作项状态 ${reopened.status}）`);
+    }
     const abandonState = structuredClone(seedState);
     ensureRuntimeCollections(abandonState, {root});
     const abandonTg = abandonState.taskGroups.find((item) => item.id === "tg_runtime_management");
@@ -15792,6 +15809,113 @@ function verifyHumanWrittenTextIsNeverSilentlyTruncated(output) {
       + "agent 写的用 clampVisibleText（拒掉等于这次上报整个落不了地，所以照截但把切口留给人看见）");
   }
   console.log(`人写文本不许静默截断：${guarded} 处走了长度校验，${truncated.length} 处仍在 slice 截断（应为 0）`);
+}
+
+// 【产出目标必须落在项目登记的仓库上】。ensureRepositoryTarget 原先一律先取服务端工作区的 origin：
+// 控制面从 git 检出目录里起来时，【所有】项目的产出目标都被改指到控制面自己的远端、基准提交是控制面的
+// HEAD、白名单是控制面的目录布局 —— 实测一个新项目的 agent 把产出直接推到了控制面仓库的 main 上。
+// 只有自管项目（没登记仓库，或登记的就是 repo_control_plane 那份自检仓）才许由工作区推导。
+function verifyRegisteredProjectRepositoryOwnsOutputTarget(output) {
+  const workspace = mkdtempSync(join(tmpdir(), "cc-repo-target-"));
+  try {
+    const repo = join(workspace, "server-checkout");
+    const serverRemote = join(workspace, "server-remote.git");
+    execFileSync("git", ["init", "--bare", "-q", serverRemote]);
+    const git = (...args) => execFileSync("git", args, {cwd: repo, encoding: "utf8"}).trim();
+    mkdirSync(repo, {recursive: true});
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "contract@local");
+    git("config", "user.name", "contract");
+    writeFileSync(join(repo, "README.md"), "server\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "server base");
+    git("remote", "add", "origin", serverRemote);
+    const targetFor = (mutateProject) => {
+      const st = structuredClone(seedState);
+      const project = st.projects.find((item) => item.id === "prj_control_plane");
+      mutateProject(project);
+      ensureRuntimeCollections(st, {root: repo});
+      // 产出目标在编排周期建契约时才生成/刷新（种子里那份是占位）。
+      runAutonomousCycle(st, {root: repo, mode: "all", autoSyncSkills: false});
+      const taskGroup = st.taskGroups.find((item) => item.id === "tg_runtime_management");
+      return st.repositoryOutputs.filter((item) => item.taskGroupId === taskGroup.id);
+    };
+    const registeredUrl = "git@example.com:acme/app.git";
+    // 既有的种子占位目标（existing 分支）与本轮新建的目标（新建分支）都要核：两条路各自有一行取地址的代码。
+    const owns = targetFor((project) => { project.repositories = [{id: "main-repo", url: registeredUrl, defaultBranch: "release"}]; });
+    if (owns.length < 2) output.push(`登记了自己仓库的项目只生成了 ${owns.length} 个产出目标（要同时覆盖既有占位目标与新建目标）—— 下面的断言验不全`);
+    for (const own of owns) {
+      if (own.repositoryUrl !== registeredUrl) output.push(`项目登记了自己的仓库（${registeredUrl}），${own.workItemId} 的产出目标却指向 ${own.repositoryUrl} —— agent 会把这个项目的产出推到控制面自己的远端`);
+      if (own.repositoryId !== "main-repo" || own.branch !== "release") output.push(`${own.workItemId} 的产出目标没有带上登记仓库的 id/默认分支（实际 ${own.repositoryId}/${own.branch}）`);
+      if (own.baseRef) output.push(`项目自己的仓库服务端并没有检出，${own.workItemId} 的产出目标 baseRef 却写成了控制面工作区的 ${own.baseRef} —— 校验会拿它去比对别人的仓库`);
+      if (JSON.stringify(own.pathAllowlist) !== JSON.stringify(["**"])) output.push(`别人仓库的产出白名单不该是控制面的目录布局（${own.workItemId} 实际 ${JSON.stringify(own.pathAllowlist)}）：人的仓库里写 src/ 会被判越界`);
+    }
+    // 自管项目（种子登记的就是 repo_control_plane）照旧由工作区推导：这是 doctor 与本地部署依赖的路径。
+    const selfs = targetFor(() => {});
+    if (!selfs.length) output.push("自管项目没有生成产出目标");
+    for (const self of selfs) {
+      if (self.repositoryUrl !== serverRemote || !self.baseRef) output.push(`自管项目的产出目标应由服务端工作区推导（远端 ${serverRemote}、基准 HEAD），${self.workItemId} 实际 ${self.repositoryUrl} / ${self.baseRef || "无基准"}`);
+    }
+    // 既有目标切到登记仓库：上面「own」那条里种子占位目标（指向 github、状态 selected）被刷成登记地址，
+    // 正是 ensureRepositoryTarget 的 existing 分支在起作用 —— 人改了仓库地址、还没推过的目标就是这样跟上的。
+  } finally {
+    rmSync(workspace, {recursive: true, force: true});
+  }
+}
+
+// 校验检查点前对项目仓库的 fetch 要带项目登记的凭据：私有仓库不带凭据 fetch 会被拒，检查点永远
+// 「commit 找不到」。这里验 repositoryAuthEnvironment 真的把凭据接进 askpass（脚本不含密钥），
+// 以及服务端那条路真的把认领时投递的同一份凭据传给了校验 fetch。
+function verifyCheckpointVerificationFetchUsesRepositoryCredential(output) {
+  const dir = mkdtempSync(join(tmpdir(), "cc-repo-auth-"));
+  try {
+    const env = repositoryAuthEnvironment({mode: "account_password", username: "bot", secret: "s3cr3t"}, join(dir, "auth"));
+    if (!env.GIT_ASKPASS || !existsSync(env.GIT_ASKPASS)) output.push("带凭据时 repositoryAuthEnvironment 没有给出 GIT_ASKPASS 脚本 —— fetch 私有仓库会被拒");
+    else if (readFileSync(env.GIT_ASKPASS, "utf8").includes("s3cr3t")) output.push("askpass 脚本里写进了密钥明文（应只经环境变量）");
+    if (env.AIMAC_GIT_USERNAME !== "bot" || env.AIMAC_GIT_SECRET !== "s3cr3t") output.push("askpass 环境变量没有带上账号/密钥");
+    if (env.GIT_TERMINAL_PROMPT !== "0") output.push("校验 fetch 没有关掉交互提示：远端要密码时会挂住请求");
+    const plain = repositoryAuthEnvironment({mode: "none"}, join(dir, "plain"));
+    if (plain.GIT_ASKPASS) output.push("无凭据时不该给出 askpass");
+    const serverSource = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+    const fn = serverSource.slice(serverSource.indexOf("async function prepareRemoteGitVerification("), serverSource.indexOf("const serveStatic = "));
+    if (!fn.includes("repositoryAuthEnvironment(credential || {mode: \"none\"}, authDir)")) output.push("prepareRemoteGitVerification 没有用 repositoryAuthEnvironment 构造 fetch 环境");
+    // 传输白名单是这条 fetch 的安全底线：环境由别的模块构造，服务端要对着真实值再核一遍、少了就拒绝校验（失败关闭）。
+    if (!fn.includes('gitEnv.GIT_ALLOW_PROTOCOL !== "file:https:ssh:git"') || !fn.includes('new Error("git_verification_transport_policy_missing")')) {
+      output.push("prepareRemoteGitVerification 没有对 fetch 环境的传输白名单做失败关闭核验（git_verification_transport_policy_missing）");
+    }
+    if (!/prepareRemoteGitVerification\(target, body, repositoryCredential\)/u.test(serverSource) || !/repositoryCredential = dispatchRepositoryCredential\(state, dispatch, target, \{runtimeDir\}\)/u.test(serverSource)) {
+      output.push("检查点路由没有把认领时投递的那份仓库凭据传给校验 fetch —— 私有仓库的检查点会一直 commit 找不到");
+    }
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+}
+
+// 【两端白名单语义必须一致】。控制面（path-policy.mjs）认 `**`／`*` 通配，agent 运行时原先只认 dir/** 与逐字：
+// 控制面给项目自己的仓库缺省发 ["**"]，运行时把每个改动都判成「不在允许改的路径里」（实测三次派发全失败）。
+// 直接拿运行时源码里的那两个函数跑同一张表，与控制面逐条比对。
+function verifyRuntimePathAllowlistMatchesControlPlane(output) {
+  const runtimeSource = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  const start = runtimeSource.indexOf("function pathMatches(");
+  const end = runtimeSource.indexOf("function parseArgs(");
+  if (start < 0 || end < start) { output.push("运行时源码里找不到 pathMatches / parseArgs 锚点 —— 这条什么也没验"); return; }
+  let runtimePathMatches;
+  try {
+    runtimePathMatches = new Function(`${runtimeSource.slice(start, end)}; return pathMatches;`)();
+  } catch (error) {
+    output.push(`运行时 pathMatches 无法独立求值：${error.message}`); return;
+  }
+  const table = [
+    ["**", "src/a/b.js"], ["**", "README.md"], ["docs/**", "docs/a/b.md"], ["docs/**", "src/a.js"], ["docs/**", "docs"],
+    ["docs/*.md", "docs/a.md"], ["docs/*.md", "docs/a/b.md"], ["apps/*/src/**", "apps/x/src/y/z.js"], ["apps/*/src/**", "apps/x/lib/z.js"],
+    ["package.json", "package.json"], ["package.json", "package.jsonx"], ["**/*.test.js", "a/b/c.test.js"], ["**/*.test.js", "a/b/c.js"]
+  ];
+  for (const [rule, path] of table) {
+    const server = pathMatchesAllowlist(path, [rule]);
+    const runtime = runtimePathMatches(rule, path);
+    if (server !== runtime) output.push(`白名单规则 ${rule} 对 ${path}：控制面判 ${server}，运行时判 ${runtime} —— 两端不一致，agent 会按另一套边界改文件`);
+  }
+  if (!runtimePathMatches("**", "docs/agent-output/tg/work.md")) output.push("运行时不认整仓白名单 `**`：项目自己的仓库里每个改动都会被判越界");
 }
 
 function verifyLocalGitWorkerRefusesUnsafeRepositoryState(output) {

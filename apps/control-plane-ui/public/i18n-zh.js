@@ -128,6 +128,7 @@
     permission_request_status_invalid: "无法识别的处置结果：授权请求只能被批准或拒绝",
     repository_output_target_repository_not_registered_for_project: "该仓库地址不属于本项目已登记的仓库：请先在项目设置里登记它",
     repository_output_target_unsafe_repository_url: "仓库地址不安全，已拒绝：不接受可执行任意命令的传输方式",
+    git_verification_transport_policy_missing: "校验用的 git 环境缺少传输白名单，已拒绝校验：这是服务端配置故障，请联系系统管理员",
     /* ---------- 权限码：授权列表与徽标可能直接走 t(code) ---------- */
     "project:view": "查看项目",
     "project:grant": "项目授权管理",

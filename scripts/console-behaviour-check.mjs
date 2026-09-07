@@ -529,6 +529,8 @@ globalThis.__probe = {
   },
   renderFullPagePaneWith: (nextState, account, projectId, pageId, paneId) => { state = nextState; currentAccount = account; currentProjectId = projectId; page = pageId; authToken = authToken || "probe-token"; if (paneId) workspaces.select(pageId, paneId); render(); },
   workspaceOwner: (pageId, title) => workspaces.owner(pageId, title),
+  explainCodedText: (value) => explainCoded(value),
+  workItemExitHintHtml: (workItem, taskGroupId) => workItemExitHint(workItem, taskGroupId),
   // 「待人工确认」那个数不在 state 里：它由 loadPage 从计数接口取回来放进模块级变量。
   // 不给探针一个入口的话，凡是依赖它的那一格都只能在 0 上被验，而真实产品里它常常不是 0。
   setPendingConfirmCount: (count) => { pendingConfirmCount = Number(count) || 0; },
@@ -2434,6 +2436,13 @@ function runWorkItemResultCase() {
   const pushedText = pushed.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
   const resultStart = pushed.indexOf('class="task-result-summary"');
   const pushedResult = resultStart < 0 ? "" : pushed.slice(resultStart, pushed.indexOf("</dl>", resultStart));
+  // 【卡住的任务不能还写着「正在生成仓库产出」】。待决策／受阻而一次都没推过时，人看到的应该是产出没落地。
+  const stalledDetail = probe.renderTaskGroupDetail(detail, {...group, workItems: group.workItems.map((item) => ({...item, status: "needs_decision", blockedReason: "agent_reported_blocked"}))}, {...baseState,
+    repositoryOutputs: [{taskGroupId: "tg_r", workItemId: "w_r", repositoryId: "repo_x", branch: "main", status: "lease_bound", updatedAt: "2026-09-07T00:00:00Z"}]});
+  const stalledText = stalledDetail.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+  check("待决策的任务结果标题要说产出未落地，不能写着正在生成",
+    /结果：产出未落地（执行已卡住）/u.test(stalledText) && !/结果：正在生成仓库产出/u.test(stalledText),
+    `卡住的任务结果标题：${(/结果：[^ ]{0,20}/u.exec(stalledText) || ["没找到结果标题"])[0]}`);
   check("工作项卡：结果要说清仓库产出到哪一步与检查点的 Git 证据",
     /结果：已推送到远端/u.test(pushedText) && pushedText.includes("repo_x") && pushedText.includes("feat/x")
       && /检查点 1 个/u.test(pushedText) && /有提交/u.test(pushedText) && /已推送/u.test(pushedText),
@@ -2993,6 +3002,37 @@ async function runErrorGuidanceCase() {
     clarityMainStyles.includes('.form-grid:not([data-form="login"]) > button[type="submit"] { align-self: flex-start; min-width: 168px; }')
       && clarityMainStyles.includes('.form-grid:not([data-form="login"]) > button[type="submit"] { align-self: stretch; width: 100%; }'),
     "桌面宽表单把一个提交动作拉成整页横幅，或窄屏没有恢复方便点击的整行按钮");
+  // 【对象页头程序聚焦不许画蓝框】。三张对象页头（治理对象／执行对象／运行节点）打开时由程序 focus() 一下方便读屏，
+  // 原先 :focus 就画 2px 蓝框 —— 用鼠标点进去的人看到整块页头被框住，以为是什么可编辑区。键盘用户靠 :focus-visible 仍有框。
+  for (const [file, cls] of [["object-workspace.css", ".governance-object-header"], ["execution-objects.css", ".execution-object-header"], ["runtime-node-workspace.css", ".runtime-node-header"]]) {
+    const css = readConsoleSource(file);
+    check(`${cls} 程序聚焦不画框、键盘聚焦才画框`,
+      css.includes(`${cls}:focus { outline: none; }`) && css.includes(`${cls}:focus-visible { outline: 2px solid #2458b8; outline-offset: 4px; }`),
+      `${file} 里 ${cls} 的 :focus 仍画蓝框，或丢了 :focus-visible 的键盘可见框`);
+  }
+  // 【原因码链要逐段翻译、去掉末尾的 HTTP 状态】。真实故障给人的是
+  // "checkpoint_replay_recover_required: changed_paths_outside_repository_target_allowlist: 409"，
+  // 只翻第一段等于把真正说明原因的那段英文码原样甩给人。
+  {
+    const codedProbe = loadConsole(el("div"), {realI18n: true});
+    const chain = codedProbe.explainCodedText("checkpoint_replay_recover_required: changed_paths_outside_repository_target_allowlist: 409");
+    check("原因码链要逐段翻成中文并去掉末尾的 HTTP 状态码",
+      chain === "检查点重放需要人工恢复：改动路径落在写入边界的允许清单之外",
+      `实际：${chain}`);
+    check("原因码后面跟着数据（路径／id）时，数据要原样保留",
+      codedProbe.explainCodedText("checkpoint_replay_recover_required: docs/设计.md") === "检查点重放需要人工恢复：docs/设计.md",
+      `实际：${codedProbe.explainCodedText("checkpoint_replay_recover_required: docs/设计.md")}`);
+    // 【要人处置的任务，出口提示要带着预选好目标的人工指令入口】，不能只说「到人工指令页」让人自己找。
+    codedProbe.setObjectLocation({page: "tasks", projectId: "p1", groupId: "tg1", expanded: false, workId: "w1"});
+    const hint = codedProbe.workItemExitHintHtml({id: "w1", status: "needs_decision", blockedReason: "agent_reported_blocked"}, "tg1");
+    check("待决策任务的出口提示要带预选了任务组与任务的人工指令入口",
+      /href="#\/project\/p1\/directives\/tg1\/w1\?pane=compose"/u.test(hint) && /去人工指令处置这个任务/u.test(hint),
+      `出口提示：${hint.slice(0, 240)}`);
+    const passive = codedProbe.workItemExitHintHtml({id: "w2", status: "blocked", blockedReason: "blocked_dependency"}, "tg1");
+    check("无需人操作的阻塞（依赖等待）不许摆人工指令入口",
+      !/directives/u.test(passive) && /无需操作/u.test(passive),
+      `依赖等待的提示：${passive.slice(0, 160)}`);
+  }
   check("页内栏目条必须横跨整个内容栅格",
     /\.workspace-detail-nav \{ grid-column: 1 \/ -1; display: flex;/u.test(clarityWorkspaceStyles),
     "栏目条没有声明跨满栅格：在两栏布局的创建/表单页里会被挤进左列并竖着拉长，下划线也只画一半");

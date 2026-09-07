@@ -7,7 +7,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { gzipSync } from "node:zlib";
-import { accessSync, constants as fsConstants, appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants as fsConstants, appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { arch, cpus, freemem, hostname, loadavg, platform, totalmem } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,7 +43,7 @@ import {
   requestAgentNodeRevocation,
   revokeDispatchMcpGrants,
   selfCheckAgentNode,
-  validateDispatchClaim, nodeHeartbeatTimeoutMs, agentNodeHealthSummary, agentNodeHeartbeatOverdue} from "./lib/agent-gateway.mjs";
+  validateDispatchClaim, nodeHeartbeatTimeoutMs, agentNodeHealthSummary, agentNodeHeartbeatOverdue, dispatchRepositoryCredential} from "./lib/agent-gateway.mjs";
 import { approvalResolve, assignWorkItem, handleMcpJsonRpc, isWriteTool, permissionResolve, createMcpToolDefinitions, mcpAuditFault } from "../mcp-server/server.mjs";
 import {
   recordOrchestratorTickOutcome,
@@ -151,7 +151,7 @@ import {
   isSafeGitRef,
   noteWorkItemExecutionFailure, normalizePinnedModelId, newestWindow, dispatchContractSummary} from "./lib/control-plane-core.mjs";
 import { sealSecret, isSealed, openSecret } from "./lib/credential-seal.mjs";
-import { testRepositoryConnection } from "./lib/git-connection-test.mjs";
+import { repositoryAuthEnvironment, testRepositoryConnection } from "./lib/git-connection-test.mjs";
 import { isTerminalDispatchStatus } from "./lib/lifecycle-states.mjs";
 import { listProjectWorkItems, parseWorkItemListQuery } from "./lib/work-item-pagination.mjs";
 import {
@@ -3044,7 +3044,9 @@ function delay(ms) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
-async function prepareRemoteGitVerification(target, checkpointInput) {
+// credential：该项目仓库登记的凭据（认领响应里投递给 agent 的同一份）。私有仓库没有它 fetch 就会被拒，
+// 检查点只能一直「commit 找不到」——而这份凭据是人按项目配好的，校验这一侧也必须用它。
+async function prepareRemoteGitVerification(target, checkpointInput, credential = null) {
   // Fail-closed on untrusted git input: a repository output target is tenant-controlled, so an
   // unvalidated repositoryUrl reaching `git fetch` on the shared control-plane host is remote code
   // execution (ext::/fd: transports) or SSRF. Mirror the agent-runtime hardening: validate the URL,
@@ -3080,13 +3082,24 @@ async function prepareRemoteGitVerification(target, checkpointInput) {
     error.status = 400;
     throw error;
   }
-  const gitEnv = {...process.env, GIT_ALLOW_PROTOCOL: "file:https:ssh:git", GIT_TERMINAL_PROMPT: "0"};
-  // 命中网络的 fetch（下面对远端拉分支/提交）必须有墙钟超时：execFileAsync 默认无超时，挂死的远端会让
-  // 这次检查点验证请求永远悬挂、git 子进程堆积。到点 execFileAsync 会杀进程并 reject，请求干净失败。
-  const git = (args) => execFileAsync("git", args, {timeout: clampEnvNumber(process.env.AIMAC_GIT_COMMAND_TIMEOUT_MS, 60000, 600000), env: gitEnv});
   const safeTargetId = String(target.targetId).replace(/[^A-Za-z0-9._-]+/gu, "_");
   const verificationRoot = join(runtimeDir, "git-verification", `${safeTargetId}.git`);
   mkdirSync(dirname(verificationRoot), {recursive: true});
+  // 与「测试连接」同一套隔离环境：凭据只经 askpass 环境变量，不进脚本、不碰全局 git 配置；用完即删。
+  const authDir = join(runtimeDir, "git-verification", `${safeTargetId}.auth-${randomBytes(4).toString("hex")}`);
+  const gitEnv = repositoryAuthEnvironment(credential || {mode: "none"}, authDir);
+  // 传输白名单是这条 fetch 的安全底线（ext::/fd:: 这类能执行任意命令的传输必须被挡在外面）：
+  // 环境由别的模块构造，这里对着真实值再核一遍，少了就拒绝校验而不是带着缺口去 fetch。
+  if (gitEnv.GIT_ALLOW_PROTOCOL !== "file:https:ssh:git" || gitEnv.GIT_TERMINAL_PROMPT !== "0") {
+    rmSync(authDir, {recursive: true, force: true});
+    const error = new Error("git_verification_transport_policy_missing");
+    error.status = 500;
+    throw error;
+  }
+  // 命中网络的 fetch（下面对远端拉分支/提交）必须有墙钟超时：execFileAsync 默认无超时，挂死的远端会让
+  // 这次检查点验证请求永远悬挂、git 子进程堆积。到点 execFileAsync 会杀进程并 reject，请求干净失败。
+  const git = (args) => execFileAsync("git", args, {timeout: clampEnvNumber(process.env.AIMAC_GIT_COMMAND_TIMEOUT_MS, 60000, 600000), env: gitEnv});
+  try {
   if (!existsSync(join(verificationRoot, "HEAD"))) await git(["init", "--bare", verificationRoot]);
   const remotes = (await git(["-C", verificationRoot, "remote"])).stdout.trim().split("\n").filter(Boolean);
   if (remotes.includes(remote)) await git(["-C", verificationRoot, "remote", "set-url", remote, "--", target.repositoryUrl]);
@@ -3103,6 +3116,9 @@ async function prepareRemoteGitVerification(target, checkpointInput) {
     }
   }
   return verificationRoot;
+  } finally {
+    rmSync(authDir, {recursive: true, force: true});
+  }
 }
 
 const serveStatic = createStaticAssetHandler(publicDir);
@@ -3489,7 +3505,13 @@ async function handleApi(req, res) {
     }
     const target = state.repositoryOutputs.find((item) => item.targetId === dispatch.repositoryOutputTargetRef);
     if (!target) return json(res, 409, {error: "repository_output_target_missing"});
-    const verificationRoot = await prepareRemoteGitVerification(target, body);
+    let repositoryCredential = null;
+    try {
+      repositoryCredential = dispatchRepositoryCredential(state, dispatch, target, {runtimeDir});
+    } catch (error) {
+      return json(res, error.status || 409, {...(error.details || {}), error: error.message});
+    }
+    const verificationRoot = await prepareRemoteGitVerification(target, body, repositoryCredential);
     // 路由按 dispatchId + assignedNodeId 认证到派发 A，然后把【整个 body】交给 acceptAgentCheckpoint —— 
     // 而后者完全按 body 里的 taskGroupId/workId/sessionId/runId 另行查找派发 B，从不与 A 比对。
     // 于是：一个曾经持有过 B（claim 过期被回收，runId/sessionId/targetId 全部保留）的节点，

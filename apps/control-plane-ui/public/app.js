@@ -5474,7 +5474,9 @@ function workItemResultHtml(taskGroupId, workItemId, workStatus = "") {
   const changedPaths = distinct(target?.changedPaths || []);
   const repository = target?.repositoryId || refValue(latest?.commitRefs?.[0], ["repo"]) || "未记录";
   const branch = target?.branch || refValue(latest?.commitRefs?.[0], ["branch"]) || "未记录";
-  const headline = pushRefs.length ? "已推送到远端" : commitRefs.length ? "已提交，尚未确认推送" : "正在生成仓库产出";
+  // 任务已经卡住（待决策／受阻）时不能还写着「正在生成」：产出没落地，人看到的应该是这一点。
+  const stalled = ["needs_decision", "blocked"].includes(workStatus) && !pushRefs.length;
+  const headline = pushRefs.length ? "已推送到远端" : commitRefs.length ? "已提交，尚未确认推送" : stalled ? "产出未落地（执行已卡住）" : "正在生成仓库产出";
   const refs = (values, limit = 4) => values.length
     ? values.slice(0, limit).map((value) => `<span class="mono" title="${esc(value)}">${esc(value.length > 56 ? `${value.slice(0, 53)}...` : value)}</span>`).join("、")
       + (values.length > limit ? ` 等 ${esc(values.length)} 项` : "")
@@ -5658,9 +5660,18 @@ const WORK_ITEM_EXIT_HINT = {
   permission_required: "需要先获得授权：到「人工审核」页批准对应的权限申请。",
   execution_failed_repeatedly: "同一个工作项连续多次执行失败，系统已停止自动重派（否则会一直空烧模型额度）：到「人工指令」页用「决策处置（重开 / 放弃）」处置，重开前先看阻塞提示里最近一次的失败原因。"
 };
-function workItemExitHint(workItem) {
-  const hint = WORK_ITEM_EXIT_HINT[workItem.blockedReason] || WORK_ITEM_EXIT_HINT[workItem.status];
-  return hint ? `<div class="notice warn-notice">${esc(hint)}</div>` : "";
+// 出口提示只说「到人工指令页处置」还不够：人得自己去找那一页、再选任务组、再选任务。
+// 要人处置的那几种，直接给一个带着任务组与任务的入口，落地就是预选好目标的下达表单。
+const WORK_ITEM_EXIT_DIRECTIVE_KEYS = new Set(["needs_decision", "execution_failed_repeatedly", "agent_reported_blocked"]);
+function workItemExitHint(workItem, taskGroupId = "") {
+  const key = WORK_ITEM_EXIT_HINT[workItem.blockedReason] ? workItem.blockedReason : workItem.status;
+  const hint = WORK_ITEM_EXIT_HINT[key];
+  if (!hint) return "";
+  const groupId = taskGroupId || workItem.taskGroupId || selectedWork?.taskGroupId || "";
+  const directiveLink = WORK_ITEM_EXIT_DIRECTIVE_KEYS.has(key) && currentProjectId && groupId && window.AIMAC_WORKSPACE_ROUTE
+    ? `<a class="secondary-button" href="${esc(window.AIMAC_WORKSPACE_ROUTE.build({page: "directives", projectId: currentProjectId, groupId, workId: workItem.id, workspace: "compose"}))}">去人工指令处置这个任务</a>`
+    : "";
+  return `<div class="notice warn-notice">${esc(hint)}${directiveLink ? `<div class="button-row">${directiveLink}</div>` : ""}</div>`;
 }
 
 

@@ -1084,7 +1084,7 @@ const MUTATIONS = [
     name: "工作项结果行必须如实区分已推送与未推送",
     file: APP,
     gate: "console",
-    from: '  const headline = pushRefs.length ? "已推送到远端" : commitRefs.length ? "已提交，尚未确认推送" : "正在生成仓库产出";',
+    from: '  const headline = pushRefs.length ? "已推送到远端" : commitRefs.length ? "已提交，尚未确认推送" : stalled ? "产出未落地（执行已卡住）" : "正在生成仓库产出";',
     to: '  const headline = "已推送到远端";',
     expect: "没推送却说已推送"
   },
@@ -1739,8 +1739,8 @@ const MUTATIONS = [
     name: "带细节的失败原因要拆开翻译",
     file: APP_I18N_UTILS,
     gate: "console",
-    from: "  if (prefix && Object.prototype.hasOwnProperty.call(dict, prefix)) return `${t(prefix)}：${text.slice(at + 1)}`;",
-    to: "  if (false) return text;",
+    from: "    if (parts.length > 1 && known(parts[0])) {",
+    to: "    if (false) {",
     expect: "屏幕上摆着一串英文键"
   },
   {
@@ -10176,8 +10176,8 @@ const MUTATIONS = [
     name: "读项目仓库不许绕开统一入口（两个字段会再次分叉）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyProjectRepositoriesHaveOneReader",
-    from: '  const repository = projectRepositories(project)[0] || {id: "repo_control_plane"',
-    to: '  const repository = project?.repositories?.[0] || {id: "repo_control_plane"',
+    from: '  const registered = projectRepositories(project)[0] || null;',
+    to: '  const registered = project?.repositories?.[0] || null;',
     expect: "绕开了统一入口"
   },
   {
@@ -12261,6 +12261,101 @@ const MUTATIONS = [
     from: '          <span class="small muted">默认项目只决定他登录后先打开哪个项目，不等于授权：项目与任务组权限建完后在「权限矩阵」→「管理授权」里授予。</span>',
     to: '          <span class="small muted">默认项目：他登录后先打开哪个项目。</span>',
     expect: "建成员表单的「默认项目」要说清不等于授权"
+  },
+  {
+    name: "治理对象页头程序聚焦不得画蓝框",
+    file: "apps/control-plane-ui/public/object-workspace.css",
+    gate: "console",
+    from: ".governance-object-header:focus { outline: none; }",
+    to: ".governance-object-header:focus { outline: 2px solid #2458b8; outline-offset: 4px; }",
+    expect: ".governance-object-header 程序聚焦不画框、键盘聚焦才画框"
+  },
+  {
+    name: "登记了仓库的项目，产出目标不得指回控制面自己的远端",
+    file: CORE,
+    gate: "contract",
+    check: "verifyRegisteredProjectRepositoryOwnsOutputTarget",
+    from: '  const remoteUrl = selfManaged ? (gitRemoteUrl(request.root, remote) || repository.url) : repository.url;',
+    to: '  const remoteUrl = gitRemoteUrl(request.root, remote) || repository.url;',
+    expect: "产出目标却指向"
+  },
+  {
+    name: "别人仓库的产出白名单不得退回控制面目录布局",
+    file: CORE,
+    gate: "contract",
+    check: "verifyRegisteredProjectRepositoryOwnsOutputTarget",
+    from: '      : (Array.isArray(repository.pathAllowlist) && repository.pathAllowlist.length ? repository.pathAllowlist : ["**"])),',
+    to: '      : ["apps/control-plane-ui/**", "spec/**", "docs/**", "scripts/**", "data/**", "package.json", "Dockerfile", "docker-compose.yml"]),',
+    expect: "别人仓库的产出白名单不该是控制面的目录布局"
+  },
+  {
+    name: "改了仓库地址后未推送的目标必须跟上",
+    file: CORE,
+    gate: "contract",
+    check: "verifyRegisteredProjectRepositoryOwnsOutputTarget",
+    from: '    } else if (registered && existing.status !== "pushed" && existing.repositoryUrl !== registered.url) {',
+    to: '    } else if (registered && existing.status === "pushed" && existing.repositoryUrl !== registered.url) {',
+    expect: "产出目标却指向"
+  },
+  {
+    name: "校验 fetch 不得丢掉项目仓库凭据",
+    file: SERVER,
+    gate: "contract",
+    check: "verifyCheckpointVerificationFetchUsesRepositoryCredential",
+    from: '    const verificationRoot = await prepareRemoteGitVerification(target, body, repositoryCredential);',
+    to: '    const verificationRoot = await prepareRemoteGitVerification(target, body);',
+    expect: "没有把认领时投递的那份仓库凭据传给校验 fetch"
+  },
+  {
+    name: "带凭据的隔离 git 环境必须真的接上 askpass",
+    file: "apps/control-plane-ui/lib/git-connection-test.mjs",
+    gate: "contract",
+    check: "verifyCheckpointVerificationFetchUsesRepositoryCredential",
+    from: '  const authEnv = mode !== "none" && secret\n    ? writeAskpass(authDir, username || (mode === "api_key" ? "x-access-token" : ""), secret)\n    : {};',
+    to: '  const authEnv = {};',
+    expect: "没有给出 GIT_ASKPASS 脚本"
+  },
+  {
+    name: "原因码链不得只翻第一段",
+    file: "apps/control-plane-ui/public/modules/i18n-utils.js",
+    gate: "console",
+    from: '      return [t(parts[0]), ...rest.map((part) => (known(part) ? t(part) : part))].filter(Boolean).join("：");',
+    to: '      return [t(parts[0]), ...rest].filter(Boolean).join("：");',
+    expect: "原因码链要逐段翻成中文并去掉末尾的 HTTP 状态码"
+  },
+  {
+    name: "待决策任务的出口提示不得丢掉人工指令入口",
+    file: APP,
+    gate: "console",
+    from: '  const directiveLink = WORK_ITEM_EXIT_DIRECTIVE_KEYS.has(key) && currentProjectId && groupId && window.AIMAC_WORKSPACE_ROUTE',
+    to: '  const directiveLink = false && WORK_ITEM_EXIT_DIRECTIVE_KEYS.has(key) && currentProjectId && groupId && window.AIMAC_WORKSPACE_ROUTE',
+    expect: "待决策任务的出口提示要带预选了任务组与任务的人工指令入口"
+  },
+  {
+    name: "卡住的任务结果标题不得写着正在生成",
+    file: APP,
+    gate: "console",
+    from: '  const stalled = ["needs_decision", "blocked"].includes(workStatus) && !pushRefs.length;',
+    to: '  const stalled = false;',
+    expect: "待决策的任务结果标题要说产出未落地"
+  },
+  {
+    name: "重开必须了结上一次受阻的派发",
+    file: CORE,
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '            terminateCellRuntime(state, taskGroup.id, workItem.id, "work_item_reopened_by_human_decision");',
+    to: '            void "work_item_reopened_by_human_decision";',
+    expect: "重开后上一次受阻的派发仍是非终态"
+  },
+  {
+    name: "运行时不得丢掉整仓白名单 **",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "contract",
+    check: "verifyRuntimePathAllowlistMatchesControlPlane",
+    from: '  if (!rule.includes("*")) return rule === path;\n  return globSegmentsMatch(rule.split("/"), path.split("/"), 0, 0);',
+    to: '  return rule === path;',
+    expect: "两端不一致"
   },
   {
     name: "窄屏对象上下文必须隐藏重复操作",

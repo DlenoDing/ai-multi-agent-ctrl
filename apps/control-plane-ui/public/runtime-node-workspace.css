@@ -1,6 +1,7 @@
 .runtime-node-workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; min-width: 0; }
 .runtime-node-header { padding: 4px 0 18px; border-bottom: 1px solid var(--card-border); }
-.runtime-node-header:focus { outline: 2px solid #2458b8; outline-offset: 4px; }
+.runtime-node-header:focus { outline: none; }
+.runtime-node-header:focus-visible { outline: 2px solid #2458b8; outline-offset: 4px; }
 .runtime-node-title, .runtime-node-band-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-top: 14px; }
 .runtime-node-title h2 { margin: 4px 0; font-size: 22px; overflow-wrap: anywhere; }
 .runtime-node-state { display: flex; flex-wrap: wrap; gap: 8px; }

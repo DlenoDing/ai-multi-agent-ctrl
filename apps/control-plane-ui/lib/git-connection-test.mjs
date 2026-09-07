@@ -312,6 +312,17 @@ async function verifyRepositoryWrite({url, authRoot, env, deadline, totalTimeout
  * @param {number} input.timeoutMs 墙钟超时
  * @param {boolean} [input.verifyWrite=false] 为 true 时会创建并清理唯一临时 ref 来验证写权限
  */
+// 供服务端在校验检查点前 fetch 项目仓库时用：与「测试连接」同一套 askpass 隔离环境
+// （凭据只在环境变量里、脚本不含密钥、不碰全局 git 配置）。不给凭据就是纯隔离环境。
+// 调用方用完要把 authDir 删掉。
+export function repositoryAuthEnvironment({mode = "none", username = "", secret = null} = {}, authDir) {
+  mkdirSync(authDir, {recursive: true, mode: 0o700});
+  const authEnv = mode !== "none" && secret
+    ? writeAskpass(authDir, username || (mode === "api_key" ? "x-access-token" : ""), secret)
+    : {};
+  return connectionEnv(authDir, authEnv, {isolateHome: mode !== "none", homeDir: authDir});
+}
+
 export async function testRepositoryConnection(input) {
   const {url, defaultBranch = "main", mode = "none", username = "", secret = null, runtimeDir, timeoutMs, verifyWrite = false} = input;
   const startedAt = Date.now();

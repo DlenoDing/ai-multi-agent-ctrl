@@ -4659,23 +4659,44 @@ function inferWorkSignals(workItem = {}, taskGroup = {}) {
   return unique(signals);
 }
 
+// 产出目标落在哪个仓库，按项目登记的仓库定；只有【控制面自管项目】（没登记仓库，或登记的就是
+// repo_control_plane 那份自检仓）才由服务端自己的工作区推导（远端地址、基准提交、控制面目录白名单）。
+// 原先一律先取服务端工作区的 origin：控制面从 git 检出目录里起来时，【所有】项目的产出目标都被
+// 改指到控制面自己的远端 —— 实测一个新项目的 agent 把产出直接推到了控制面仓库的 main 上。
+function selfManagedRepositoryProject(project) {
+  const registered = projectRepositories(project);
+  return !registered.length || registered[0]?.id === "repo_control_plane";
+}
+
 function ensureRepositoryTarget(state, project, taskGroup, workItem, request) {
+  const selfManaged = selfManagedRepositoryProject(project);
+  const registered = projectRepositories(project)[0] || null;
   const existing = state.repositoryOutputs.find((target) => target.taskGroupId === taskGroup?.id && target.workItemId === workItem?.id && target.status !== "superseded");
   if (existing) {
     existing.remote ||= request.remote || "origin";
-    const existingRemoteUrl = gitRemoteUrl(request.root, existing.remote);
-    if (existingRemoteUrl) existing.repositoryUrl = existingRemoteUrl;
-    if (!existing.baseRef || existing.baseRef === "HEAD") {
-      existing.baseRef = gitHead(request.root);
+    if (selfManaged) {
+      const existingRemoteUrl = gitRemoteUrl(request.root, existing.remote);
+      if (existingRemoteUrl) existing.repositoryUrl = existingRemoteUrl;
+      if (!existing.baseRef || existing.baseRef === "HEAD") {
+        existing.baseRef = gitHead(request.root);
+        existing.updatedAt = new Date().toISOString();
+      }
+    } else if (registered && existing.status !== "pushed" && existing.repositoryUrl !== registered.url) {
+      // 人在项目设置里改了仓库地址：还没推过的目标要跟上，否则 agent 仍往旧地址推。
+      existing.repositoryUrl = registered.url;
+      existing.repositoryId = registered.id;
+      existing.branch = registered.defaultBranch || existing.branch || "main";
+      existing.baseRef = "";
+      existing.pathAllowlist = Array.isArray(registered.pathAllowlist) && registered.pathAllowlist.length ? registered.pathAllowlist : ["**"];
       existing.updatedAt = new Date().toISOString();
     }
     if (!existing.leaseRef && ["lease_bound", "writing", "committed", "pushed"].includes(existing.status)) ensureLease(state, existing);
     return existing;
   }
   const at = new Date().toISOString();
-  const repository = projectRepositories(project)[0] || {id: "repo_control_plane", url: "git@github.com:dleno/ai-multi-agent-ctrl.git", defaultBranch: "main"};
+  const repository = registered || {id: "repo_control_plane", url: "git@github.com:dleno/ai-multi-agent-ctrl.git", defaultBranch: "main"};
   const remote = request.remote || "origin";
-  const remoteUrl = gitRemoteUrl(request.root, remote) || repository.url;
+  const remoteUrl = selfManaged ? (gitRemoteUrl(request.root, remote) || repository.url) : repository.url;
   const target = {
     schemaVersion: "repository-output-target/v1",
     targetId: createId("rot"),
@@ -4686,8 +4707,12 @@ function ensureRepositoryTarget(state, project, taskGroup, workItem, request) {
     repositoryUrl: remoteUrl,
     remote,
     branch: repository.defaultBranch || "main",
-    baseRef: gitHead(request.root),
-    pathAllowlist: request.pathAllowlist || ["apps/control-plane-ui/**", "spec/**", "docs/**", "scripts/**", "data/**", "package.json", "Dockerfile", "docker-compose.yml"],
+    // 自管项目的基准提交是服务端工作区的 HEAD；项目自己的仓库服务端没有检出，留空让校验按 finalCommit^ 比对，
+    // agent 侧则按 origin/<branch> 起分支。白名单同理：控制面目录布局对别人的仓库毫无意义，登记里没写就整仓可写。
+    baseRef: selfManaged ? gitHead(request.root) : "",
+    pathAllowlist: request.pathAllowlist || (selfManaged
+      ? ["apps/control-plane-ui/**", "spec/**", "docs/**", "scripts/**", "data/**", "package.json", "Dockerfile", "docker-compose.yml"]
+      : (Array.isArray(repository.pathAllowlist) && repository.pathAllowlist.length ? repository.pathAllowlist : ["**"])),
     pathDenylist: effectivePathDenylist({pathDenylist: request.pathDenylist, forbiddenPathRules: request.forbiddenPathRules}),
     status: "selected",
     outputPolicy: "project_git_repository_only",
@@ -6386,6 +6411,10 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
             for (const bundle of (state.reviewBundles || [])) {
               if (bundle.workItemId === workItem.id && bundle.verdict === "changes_requested") bundle.supersededByHumanDecision = true;
             }
+            // 上一次尝试的残留（受阻的派发、会话、租约、产出目标）必须先了结：留着一个非终态的派发，
+            // 编排会一直复用它的契约、永远不再派新的 —— 人按了「重开」，任务停在「就绪」上纹丝不动（实测）。
+            // 了结之后下一拍按当前登记的仓库重新建目标、重新派发。
+            terminateCellRuntime(state, taskGroup.id, workItem.id, "work_item_reopened_by_human_decision");
             workItem.status = "ready";
             // 失败计数必须由这一下清零，否则下一拍又按老账把它打回 needs_decision ——
             // 人按了「重开」却什么也没发生（实测过）。
