@@ -17,7 +17,7 @@ function render(context, helpers) {
     projectTaskGroups, recentHumanFinalizations, renderExecutionObjectDetail,
     renderMonitorActionBoard, renderMonitorRealtimeGuide, renderMonitorSummary,
     renderTaskGroupMonitorMatrix, repositoryFailureAction, row, selfCheckFailureHint,
-    sinceText, stuckExitNotice, t, table, taskGroupById, taskGroupNameOf,
+    sinceText, stuckExitNotice, t, table, taskGroupById, taskGroupNameOf, workItemTitleOf = (groupId, workId) => workId, agentNodeLabel = (nodeId) => nodeId, dispatchTaskLabel = (dispatchId) => dispatchId,
     taskGroupOperationalStats, terminalDispatchStatuses, topologyBlockerText
   } = helpers;
   // 一个项目都没有时，这一页原先摆出十一张"暂无数据"的空表和一个空的监听范围下拉 ——
@@ -70,7 +70,7 @@ function render(context, helpers) {
   const sessions = sessionsAll.slice(0, 20).map((session) => row([
     `<span class="mono">${esc(session.sessionId)}</span>`,
     esc(t(session.roleId)),
-    `<span class="mono">${esc(session.workItemId || "-")}</span>`,
+    esc(workItemTitleOf(session.taskGroupId, session.workItemId) || "-"),
     badge(session.placement),
     session.laneId ? {v: `<span class="mono">${esc(session.laneId)}</span>`, c: "nowrap"} : "-",
     badge(session.status),
@@ -84,7 +84,7 @@ function render(context, helpers) {
     const controls = `<button class="primary-button" data-action="open-execution-object" data-execution-type="dispatch" data-execution-id="${esc(dispatch.dispatchId)}" data-task="${esc(dispatch.taskGroupId)}">查看详情</button>`;
     return row([
     `<span class="mono">${esc(dispatch.dispatchId)}</span>`,
-    `<span class="mono">${esc(dispatch.workItemId || "-")}</span>`,
+    esc(workItemTitleOf(dispatch.taskGroupId, dispatch.workItemId) || "-"),
     badge(dispatch.status),
     {v: percentCell(dispatch.progressPercent), c: "num"},
     // 「最近动静」＝上一条执行事件到现在有多久。进度百分比是【最高水位】（只增不减），
@@ -124,9 +124,10 @@ function render(context, helpers) {
   const commandsInScope = (state.agentControlCommands || []).filter(inScope);
   const commands = commandsInScope.slice(0, 16).map((command) => row([
     {v: esc(command.sequence), c: "num"},
-    `<span class="mono">${esc(command.nodeId)}</span>`,
+    // 节点与作用对象给人看名字：原先是 node_… 与 adp_… 两串 id。
+    esc(agentNodeLabel(command.nodeId)),
     badge(command.commandType, "blue"),
-    `<span class="mono">${esc(command.dispatchId || command.sessionId || "-")}</span>`,
+    esc(command.dispatchId ? (dispatchTaskLabel(command.dispatchId) || command.dispatchId) : (command.sessionId || "-")),
     badge(command.status),
     // 节点报回来的原因（ackResult.reason）：网关一直在存，全仓零处读 ——
     // 屏幕上只有一个「已拒绝」，人无处可查为什么。code:detail 形态交给 explainCoded 查词表。
@@ -405,7 +406,7 @@ function render(context, helpers) {
         ${execHistoryMode ? `<div class="button-row"><button class="secondary-button" data-event-page="previous"${execHistoryStack.length ? "" : " disabled"}>上一页</button><span class="small muted">第 ${execHistoryStack.length + 1} 页</span><button class="secondary-button" data-event-page="next"${execHasMore ? "" : " disabled"}>下一页</button></div>` : ""}
       </div>
     `, {wide: true, headerSide: filterInput("按事件、摘要过滤…", "events")}),
-    panel("可复用执行载体（Worker Lane）", table(["角色", "功能", "状态", {label: "复用代数", c: "num"}, "当前会话", {label: "更新时间", c: "nowrap"}], laneRows, {moreText: moreText(lanesAll.length, 20, "workerLanes")}), {wide: true, headerSide: filterInput("按角色、会话过滤…", "worker-lanes")}),
+    panel("可复用执行载体（执行通道）", table(["角色", "功能", "状态", {label: "复用代数", c: "num"}, "当前会话", {label: "更新时间", c: "nowrap"}], laneRows, {moreText: moreText(lanesAll.length, 20, "workerLanes")}), {wide: true, headerSide: filterInput("按角色、会话过滤…", "worker-lanes")}),
     panel("工作会话", table(["会话", "角色", "任务", "放置方式", {label: "执行载体", c: "nowrap"}, "状态", "原因", "详情"], sessions, {moreText: moreText(sessionsAll.length, 20, "workSessions")}), {wide: true, headerSide: filterInput("按会话、任务过滤…", "sessions")}),
     panel("智能体派发", stuckExitNotice(dispatchesAll, sessionsAll) + table(["派发", "任务", "状态", {label: "进度", c: "num"}, {label: "最近动静", c: "nowrap"}, "原因", "详情"], dispatches, {moreText: moreText(dispatchesAll.length, 20, "agentDispatches")}), {wide: true, headerSide: filterInput("按派发、任务过滤…", "dispatches")}),
     // 节点为什么拒/为什么失败，此前写进 command.ackResult 就再没人读过（全仓只有网关那一处写、

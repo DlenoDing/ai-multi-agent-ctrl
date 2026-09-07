@@ -13921,8 +13921,8 @@ const MUTATIONS = [
     name: '监控「会话与派发」栏目必须含齐模型决策小节',
     file: 'apps/control-plane-ui/public/modules/workspaces.js',
     gate: 'console',
-    from: '"可复用执行载体（Worker Lane）", "模型选择记录", "会话放置记录", "准入决策"]),',
-    to: '"可复用执行载体（Worker Lane）", "会话放置记录", "准入决策"]),',
+    from: '"可复用执行载体（执行通道）", "模型选择记录", "会话放置记录", "准入决策"]),',
+    to: '"可复用执行载体（执行通道）", "会话放置记录", "准入决策"]),',
     expect: '「会话与派发」栏目含齐'
   },
   {
@@ -14372,6 +14372,22 @@ const MUTATIONS = [
     from: '    const mayResetMemberLogin = resetLogin && !initialAdminOrganization && member.accountType !== "org_admin"',
     to: '    const mayResetMemberLogin = resetLogin && member.accountType !== "org_admin"',
     expect: "组织管理员居然能重置初始管理员的登录"
+  },
+  {
+    name: "工作会话表的任务列不得退回 work_ id",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
+    gate: "console",
+    from: '    esc(workItemTitleOf(session.taskGroupId, session.workItemId) || "-"),',
+    to: '    esc(session.workItemId || "-"),',
+    expect: "会话与派发表的「任务」列、控制通道的节点与作用对象要写名字而不是 id"
+  },
+  {
+    name: "控制通道表的节点列不得退回 node_ id",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
+    gate: "console",
+    from: '    esc(agentNodeLabel(command.nodeId)),',
+    to: '    esc(command.nodeId),',
+    expect: "会话与派发表的「任务」列、控制通道的节点与作用对象要写名字而不是 id"
   }
 ];
 

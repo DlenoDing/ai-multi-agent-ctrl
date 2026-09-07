@@ -5976,11 +5976,27 @@ async function runPendingTruncationCase() {
       // 监控栏目按人要回答的问题合并：会话与派发（谁在跑、为什么这么派）/ 节点与命令（载体）/ 验收与收口（收得了口吗）。
       // 每个合并后的栏目要含齐自己的小节，且不串进别的栏目的小节。
       const executionPane = objectProbe.renderMonitorInventoryWith(multiState, orgAdmin, "p1", ["execution"]);
-      const executionTitles = ["工作会话", "智能体派发", "可复用执行载体（Worker Lane）", "模型选择记录", "会话放置记录", "准入决策"];
+      const executionTitles = ["工作会话", "智能体派发", "可复用执行载体（执行通道）", "模型选择记录", "会话放置记录", "准入决策"];
       check("「会话与派发」栏目含齐会话、派发、执行载体、模型决策、会话放置和准入六个小节",
         executionTitles.every((title) => executionPane.includes(`<h2>${title}</h2>`))
           && !/<h2>(?:运行节点|控制通道|死信队列|关闭门禁)<\/h2>/u.test(executionPane),
         textOf(executionPane).slice(0, 200));
+      // 【监控表格给人看名字】（用户 09-08 走查）：会话与派发表的「任务」列、控制通道的节点与作用对象原先都是 id。
+      {
+        const namedMonitorState = {...multiState,
+          agentRuntimeNodes: (multiState.agentRuntimeNodes || []).map((node) => ({...node, nodeName: "空闲节点"})),
+          taskGroups: (multiState.taskGroups || []).map((group) => group.id === "tg1" ? {...group, workItems: [...(group.workItems || []), {id: "w_named", title: "命名的任务", status: "assigned"}]} : group),
+          workSessions: [{sessionId: "sess_named", taskGroupId: "tg1", workItemId: "w_named", roleId: "reviewer", placement: "new_session", status: "active"}],
+          agentDispatches: [...multiState.agentDispatches, {dispatchId: "adp_named", taskGroupId: "tg1", workItemId: "w_named", sessionId: "sess_named", assignedNodeId: "idle", status: "running"}],
+          agentControlCommands: [{commandId: "cmd_named", sequence: 1, nodeId: "idle", commandType: "cancel_dispatch", dispatchId: "adp_named", status: "acknowledged", taskGroupId: "tg1", createdAt: "2026-09-08T00:00:00Z"}]};
+        const sessionsText = String(objectProbe.renderMonitorInventoryWith(namedMonitorState, orgAdmin, "p1", ["sessions"])).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+        const nodesText = String(objectProbe.renderMonitorInventoryWith(namedMonitorState, orgAdmin, "p1", ["nodes"])).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+        const idleNodeName = "空闲节点";
+        check("会话与派发表的「任务」列、控制通道的节点与作用对象要写名字而不是 id",
+          /sess_named 评审员 命名的任务/u.test(sessionsText) && /adp_named 命名的任务/u.test(sessionsText)
+            && Boolean(idleNodeName) && nodesText.includes(`1 ${idleNodeName} `) && /取消派发 命名的任务/u.test(nodesText),
+          `会话行：${sessionsText.match(/sess_named.{0,40}/u)?.[0] || "无"}；派发行：${sessionsText.match(/adp_named.{0,40}/u)?.[0] || "无"}；控制通道：${nodesText.match(/控制通道.{0,120}/u)?.[0] || "无"}`);
+      }
       const nodesPane = objectProbe.renderMonitorInventoryWith(multiState, orgAdmin, "p1", ["nodes"]);
       check("「节点与命令」栏目含齐运行节点、控制命令和死信队列三个小节",
         ["运行节点", "控制通道", "死信队列"].every((title) => nodesPane.includes(`<h2>${title}</h2>`))

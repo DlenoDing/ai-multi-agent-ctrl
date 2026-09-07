@@ -253,7 +253,7 @@ function evidenceRefsHint(event) {
   const others = refs.filter((ref) => !String(ref).startsWith("prompt-includes:"));
   return [
     ruleFiles.length ? `<div class="small muted">提示词实际包含：${ruleFiles.map((file) => esc(file)).join("、")}</div>` : "",
-    others.length ? `<div class="small muted">${others.slice(0, 4).map((ref) => `<span class="mono">${esc(evidenceRefLabel(ref))}</span>`).join(" · ")}</div>` : ""
+    others.length ? `<div class="small muted">${others.slice(0, 4).map((ref) => `<span class="mono">${esc(evidenceRefLabel(ref).replace(/^节点 (node_[A-Za-z0-9_-]+)$/u, (whole, nodeId) => `节点 ${agentNodeLabel(nodeId)}`))}</span>`).join(" · ")}</div>` : ""
   ].filter(Boolean).join("");
 }
 
@@ -3395,7 +3395,7 @@ function renderOrgOverview() {
       `)
     : panel("配额用量", `<div class="notice">未找到当前账号归属的组织记录。</div>`);
   const projectRows = projects.map((project) => row([
-    `<strong>${esc(project.name)}</strong><div class="small muted mono">${esc(project.id)}</div>`,
+    `<strong>${esc(project.name)}</strong>`,
     badge(project.status),
     progressLine(project.progress?.percent),
     badge(project.progress?.phase),
@@ -7083,7 +7083,7 @@ function renderMonitor() {
     projectTaskGroups, recentHumanFinalizations, renderExecutionObjectDetail,
     renderMonitorActionBoard, renderMonitorRealtimeGuide, renderMonitorSummary,
     renderTaskGroupMonitorMatrix, repositoryFailureAction, row, selfCheckFailureHint,
-    sinceText, stuckExitNotice, t, table, taskGroupById, taskGroupNameOf,
+    sinceText, stuckExitNotice, t, table, taskGroupById, taskGroupNameOf, workItemTitleOf, agentNodeLabel, dispatchTaskLabel,
     taskGroupOperationalStats, terminalDispatchStatuses, topologyBlockerText
   });
 }
