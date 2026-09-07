@@ -58,7 +58,14 @@
       route.executionType = parts[4];
       route.executionId = parts[5];
     }
-    if (segment === "tasks") route.workId = parts[4] || "";
+    if (segment === "tasks") {
+      route.workId = parts[4] || "";
+      // 任务详情里打开的执行详情：/tasks/<组>/<任务>/dispatch/<派发>，刷新与后退都回到同一处。
+      if (route.workId && ["session", "dispatch"].includes(parts[5]) && parts[6]) {
+        route.executionType = parts[5];
+        route.executionId = parts[6];
+      }
+    }
     if (segment === "directives") route.workId = parts[4] || "";
     if (segment === "members") route.accountId = parts[3] || "";
     if (segment === "agents" && parts[3] === "runtime") route.nodeId = parts[4] || "";
@@ -87,7 +94,8 @@
     const account = route.accountId && route.page === "proj-members" ? `/${encoded(route.accountId)}` : "";
     const agent = route.agentId && route.page === "proj-agents" ? `/${encoded(route.agentId)}` : "";
     const node = route.nodeId && route.page === "proj-agents" ? `/runtime/${encoded(route.nodeId)}` : "";
-    const execution = route.page === "monitor" && route.groupId && ["session", "dispatch"].includes(route.executionType) && route.executionId
+    const executionHost = (route.page === "monitor" && route.groupId) || (route.page === "tasks" && route.groupId && route.workId);
+    const execution = executionHost && ["session", "dispatch"].includes(route.executionType) && route.executionId
       ? `/${encoded(route.executionType)}/${encoded(route.executionId)}` : "";
     return `#/project/${project}/${segment}${node || agent || account || group}${work}${execution}${pane}`;
   }

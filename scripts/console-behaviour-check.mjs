@@ -482,6 +482,15 @@ globalThis.__probe = {
   repositoryWriteResultHtml,
   renderMonitorWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; selectedExecutionObject = {type: "", id: ""}; executionObjectDetail = null; return __workspaceInventory("monitor", () => renderMonitor()); },
   renderMonitorInventoryWith: (nextState, account, projectId, panes) => { state = nextState; currentAccount = account; currentProjectId = projectId; selectedExecutionObject = {type: "", id: ""}; executionObjectDetail = null; return __workspaceInventory("monitor", () => renderMonitor(), panes); },
+  // 任务页里内嵌的执行详情：按任务路由（含派发）还原会话状态，再喂任务详情与执行对象详情。
+  renderTaskExecutionWith: (nextState, account, route, taskDetail, executionDetail, events = []) => {
+    state = nextState; currentAccount = account; authToken = authToken || "probe-token";
+    workspaces.setAccount(account?.accountId || "");
+    restoreWorkspaceRoute(route);
+    taskWorkDetail = taskDetail; executionObjectDetail = executionDetail; execEvents = events;
+    render();
+    return document.body.innerHTML;
+  },
   renderExecutionObjectWith: (nextState, account, projectId, detail, events = []) => {
     state = nextState; currentAccount = account; currentProjectId = projectId;
     selectedExecutionObject = {type: detail.objectType, id: detail.objectId}; executionObjectDetail = detail; execEvents = events;
@@ -3062,6 +3071,40 @@ async function runErrorGuidanceCase() {
     {taskGroup: group, workItem: group.workItems[0], events: [], eventCount: 0, returnedEventCount: 0, eventTotalExact: true});
   const objectAside = String(objectHtml).split("</aside>")[0] || "";
   const objectTopbar = String(objectHtml).split('<header class="topbar">')[1]?.split("</header>")[0] || "";
+  {
+    // 【任务详情里点「查看执行详情」不再跳到执行监控】：执行从属于任务，留在任务页、地址带上派发、返回键回任务详情。
+    const stayRoot = el("div");
+    const stayProbe = loadConsole(stayRoot, {realI18n: true});
+    stayProbe.renderObjectShellWith(objectState,
+      {accountId: "sys", email: "sys@local", displayName: "系统管理员", accountType: "system_admin", permissions: ["system:*"], organizationId: null},
+      {page: "tasks", projectId: "p1", groupId: group.id, workId: "work_context", workspace: "list"},
+      {taskGroup: group, workItem: group.workItems[0], events: [], eventCount: 0, returnedEventCount: 0, eventTotalExact: true});
+    stayProbe.stubNavigation();
+    stayProbe.setFetch(async (url) => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+      json: async () => String(url).includes("/detail")
+        ? {objectType: "dispatch", objectId: "adp_context", projectId: "p1", taskGroup: {id: group.id, name: group.name}, workItem: group.workItems[0],
+          dispatch: {dispatchId: "adp_context", status: "running"}, session: null, settled: false}
+        : {events: [], nextSequence: 0, hasMore: false}}));
+    await stayProbe.click({target: el("button", {dataset: {action: "open-execution-object", executionType: "dispatch", executionId: "adp_context", task: group.id}}), preventDefault: () => {}});
+    check("任务详情里打开执行详情要留在任务页（不跳到执行监控）",
+      stayProbe.sessionState().page === "tasks" && stayProbe.sessionState().selectedExecutionObject?.id === "adp_context"
+        && stayProbe.sessionState().selectedWork?.workItemId === "work_context",
+      `点了「查看执行详情」之后：${JSON.stringify({page: stayProbe.sessionState().page, execution: stayProbe.sessionState().selectedExecutionObject, work: stayProbe.sessionState().selectedWork})}`);
+    check("任务页里的执行详情要写进地址（/tasks/组/任务/dispatch/派发），刷新与后退能回到同一处",
+      /\/tasks\/tg_context\/work_context\/dispatch\/adp_context/u.test(stayProbe.routeBuild(stayProbe.routeSnapshot())),
+      `地址是 ${stayProbe.routeBuild(stayProbe.routeSnapshot()) || "空"}`);
+    // stubNavigation 把 render 换成了空函数：渲染断言要用一个没被桩过的探针。
+    const stayRenderProbe = loadConsole(el("div"), {realI18n: true});
+    const stayHtml = stayRenderProbe.renderTaskExecutionWith(objectState,
+      {accountId: "sys", email: "sys@local", displayName: "系统管理员", accountType: "system_admin", permissions: ["system:*"], organizationId: null},
+      {page: "tasks", projectId: "p1", groupId: group.id, workId: "work_context", workspace: "list", executionType: "dispatch", executionId: "adp_context"},
+      {taskGroup: group, workItem: group.workItems[0], events: [], eventCount: 0, returnedEventCount: 0, eventTotalExact: true},
+      {objectType: "dispatch", objectId: "adp_context", projectId: "p1", taskGroup: {id: group.id, name: group.name}, workItem: group.workItems[0],
+        dispatch: {dispatchId: "adp_context", status: "running"}, session: null, settled: false});
+    check("任务页里的执行详情要有「返回任务详情」而不是「返回任务组监控」",
+      /data-action="close-execution-object"[^>]*>返回任务详情<\/button>/u.test(stayHtml) && !/返回任务组监控/u.test(stayHtml),
+      `返回键：${(stayHtml.match(/data-action="close-execution-object"[^>]*>[^<]*<\/button>/u) || ["没渲染"])[0]}`);
+  }
   check("对象详情页头必须直接说清当前对象类型",
     /<h1>任务详情<\/h1>/u.test(objectTopbar) && /执行顺序、Agent、角色、规则、结果与证据/u.test(objectTopbar),
     "进入任务后页头仍只写父级“任务”，用户要到内容区才能判断自己是否在详情页");

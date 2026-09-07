@@ -1128,7 +1128,8 @@ async function ensureManagementGroupContext(currentRead) {
 
 async function loadExecutionObjectDetail(currentRead) {
   executionObjectUnavailable = false;
-  if (page !== "monitor" || !selectedExecutionObject.id) {
+  // 执行对象详情在两个地方看：执行监控页，和任务详情里（点「查看执行详情」不再跳走）。
+  if (!executionDetailPage() || !selectedExecutionObject.id) {
     executionObjectDetail = null;
     return;
   }
@@ -1288,6 +1289,7 @@ async function loadPage() {
       ensureProjectSelection();
       if (page === "tasks" && workspaces.current("tasks")?.id !== "create") await loadTaskWorkbenchData();
       else if (expandedTaskGroupId) await loadTaskGroupDetail(expandedTaskGroupId);
+      if (page === "tasks" && selectedExecutionObject.id) await loadExecutionObjectDetail(currentRead);
     } else if (page === "review") {
       const nextState = await fetchState("tasks", {projectId: currentProjectId});
       if (!currentRead()) return;
@@ -1576,9 +1578,9 @@ function stopExecPolling() {
 
 function startExecPolling() {
   stopExecPolling();
-  if (page !== "monitor" || !execScope.id || execHistoryMode || (!selectedExecutionObject.id && workspaces.current("monitor")?.id !== "events")) return;
+  if (!executionDetailPage() || !execScope.id || execHistoryMode || (!selectedExecutionObject.id && workspaces.current("monitor")?.id !== "events")) return;
   execTimer = setInterval(async () => {
-    if (!authToken || page !== "monitor" || execHistoryMode || (!selectedExecutionObject.id && workspaces.current("monitor")?.id !== "events")) {
+    if (!authToken || !executionDetailPage() || execHistoryMode || (!selectedExecutionObject.id && workspaces.current("monitor")?.id !== "events")) {
       stopExecPolling();
       return;
     }
@@ -1777,9 +1779,15 @@ function workspaceRouteSnapshot() {
       : page === "proj-members" ? selectedProjectMemberId : "",
     agentId: ["org-agents", "proj-agents"].includes(page) ? selectedAgentProfileId : "",
     nodeId: ["org-agents", "proj-agents"].includes(page) ? selectedRuntimeNodeId : "",
-    executionType: page === "monitor" ? selectedExecutionObject.type : "",
-    executionId: page === "monitor" ? selectedExecutionObject.id : ""
+    executionType: executionDetailPage() ? selectedExecutionObject.type : "",
+    executionId: executionDetailPage() ? selectedExecutionObject.id : ""
   };
+}
+
+// 执行对象（会话 / 派发）详情能在哪些页里打开：执行监控页，以及任务详情里（任务从属于任务组、执行从属于任务，
+// 看一次执行不该把人跳到别的栏目）。
+function executionDetailPage() {
+  return page === "monitor" || (page === "tasks" && Boolean(selectedWork));
 }
 
 function requestRoutePush() {
@@ -1804,7 +1812,7 @@ function restoreWorkspaceRoute(route = window.AIMAC_WORKSPACE_ROUTE?.parse()) {
   selectedRuntimeNodeId = ["org-agents", "proj-agents"].includes(page) ? route.nodeId || "" : "";
   runtimeNodeDetail = null;
   runtimeNodeUnavailable = false;
-  selectedExecutionObject = page === "monitor" && ["session", "dispatch"].includes(route.executionType) && route.executionId
+  selectedExecutionObject = (page === "monitor" || (page === "tasks" && route.workId)) && ["session", "dispatch"].includes(route.executionType) && route.executionId
     ? {type: route.executionType, id: route.executionId} : {type: "", id: ""};
   executionObjectDetail = null;
   executionObjectUnavailable = false;
@@ -1874,7 +1882,7 @@ function reconcileRoutedObjectSelection() {
     execCursor = 0;
     missing = "任务组";
   }
-  if (!missing && page === "monitor" && selectedExecutionObject.id && executionObjectUnavailable) {
+  if (!missing && executionDetailPage() && selectedExecutionObject.id && executionObjectUnavailable) {
     selectedExecutionObject = {type: "", id: ""};
     executionObjectDetail = null;
     executionObjectUnavailable = false;
@@ -2034,7 +2042,7 @@ function renderContent() {
     || (page === "proj-members" && selectedProjectMemberId)
     || (["org-agents", "proj-agents"].includes(page) && (selectedAgentProfileId || selectedRuntimeNodeId));
   if (PROJECT_PAGES.has(page) && hasNoVisibleProject()) return context + renderPanel(functionalPageLabel || "项目管理", noVisibleProjectNotice(), {wide: true});
-  const executionObjectOpen = page === "monitor" && selectedExecutionObject.id;
+  const executionObjectOpen = executionDetailPage() && selectedExecutionObject.id;
   const groupDetail = page === "tg" && expandedTaskGroupId;
   const activeWorkspace = groupDetail ? "list" : workspaces.current(page)?.id || "";
   const functionalMenu = menuForCurrentSection(perspective, page).filter((item) => item.divider || menuItemAvailable(item));
@@ -2115,6 +2123,7 @@ function managementScopeBar() {
 function renderTaskWorkbench() {
   if (hasNoVisibleProject()) return panel("任务工作台", noVisibleProjectNotice(), {wide: true});
   if (workspaces.current("tasks")?.id === "create") return renderTaskGroups();
+  if (selectedWork && selectedExecutionObject.id) return renderExecutionObjectDetail({backLabel: "返回任务详情"});
   if (selectedWork && (taskWorkDetail?.workItem?.id !== selectedWork.workItemId || taskWorkDetail?.taskGroup?.id !== selectedWork.taskGroupId || taskWorkDetail?.taskGroup?.projectId !== currentProjectId)) {
     return panel("任务详情", `<button class="secondary-button" data-close-work>返回任务列表</button><div class="notice">${taskPageLoading ? "正在加载完整任务详情…" : "任务详情尚未加载成功，请刷新重试。"}</div>`, {wide: true});
   }
@@ -6855,12 +6864,13 @@ function executionObjectControlsHtml(detail) {
   return controls.join("");
 }
 
-function renderExecutionObjectDetail() {
+function renderExecutionObjectDetail({backLabel = ""} = {}) {
   if (!executionObjectDetail) {
-    return panel("执行对象", `<div class="notice">正在读取会话或派发详情；若对象已删除或当前账号无权查看，系统会返回所属监控范围。</div>`, {wide: true});
+    return panel("执行对象", `${backLabel ? `<button class="secondary-button" data-action="close-execution-object">${esc(backLabel)}</button>` : ""}<div class="notice">正在读取会话或派发详情；若对象已删除或当前账号无权查看，系统会返回所属监控范围。</div>`, {wide: true});
   }
   return window.AIMAC_EXECUTION_OBJECT_WORKSPACE.render({
     detail: executionObjectDetail,
+    backLabel,
     events: execEvents,
     eventHistory: execHistoryMode,
     eventPage: execHistoryStack.length + 1,
@@ -7801,8 +7811,12 @@ async function focusExecutionObject(type, id, groupId, {history = false, project
   managementGroupId = groupId || (type === "session"
     ? (state.workSessions || []).find((item) => item.sessionId === id)?.taskGroupId
     : (state.agentDispatches || []).find((item) => item.dispatchId === id)?.taskGroupId) || managementGroupId;
-  page = "monitor";
-  workspaces.select("monitor", "events");
+  // 从任务详情里打开的执行详情留在任务页（任务从属于任务组、执行从属于任务）；别处打开的仍进执行监控页。
+  const stayOnTask = page === "tasks" && Boolean(selectedWork);
+  if (!stayOnTask) {
+    page = "monitor";
+    workspaces.select("monitor", "events");
+  }
   execScope = selectedExecutionObject;
   execHistoryMode = history;
   execHistoryStart = 0;
@@ -7828,7 +7842,7 @@ async function navigateWorkspace(nextPage, nextSection, options = {}) {
     || (nextPage === "org-members" && selectedOrgMemberId)
     || (nextPage === "proj-members" && selectedProjectMemberId)
     || (["org-agents", "proj-agents"].includes(nextPage) && selectedAgentProfileId)
-    || (nextPage === "monitor" && selectedExecutionObject.id)
+    || (["monitor", "tasks"].includes(nextPage) && selectedExecutionObject.id)
     || (["org-agents", "proj-agents"].includes(nextPage) && selectedRuntimeNodeId);
   if (closesObjectDetail) {
     selectedOrganizationId = "";
@@ -9148,7 +9162,7 @@ function rememberWorkspaceLocation() {
     workspace: workspaces.current(page)?.id, groupWorkspace: workspaces.current("group-detail")?.id,
     groupId: managementGroupId || (page === "tg" ? expandedTaskGroupId : ""), groupDetail: Boolean(page === "tg" && expandedTaskGroupId),
     workId: page === "tasks" ? selectedWork?.workItemId : "", directiveWorkId: page === "directives" ? directiveWorkItemId : "",
-    executionType: page === "monitor" ? selectedExecutionObject.type : "", executionId: page === "monitor" ? selectedExecutionObject.id : "",
+    executionType: executionDetailPage() ? selectedExecutionObject.type : "", executionId: executionDetailPage() ? selectedExecutionObject.id : "",
     nodeId: ["org-agents", "proj-agents"].includes(page) ? selectedRuntimeNodeId : "",
     search: taskSearch, status: taskStatus, cursor: taskPageCursor, stack: taskCursorStack,
     listGroupId: workListGroupId, listCursor: workListState?.cursor, listStack: workListState?.stack});
@@ -9164,7 +9178,7 @@ function restoreWorkspaceLocation() {
   managementGroupId = ["tg", "tasks", "monitor", "review", "directives"].includes(page) ? saved.groupId : "";
   expandedTaskGroupId = page === "tg" && saved.groupDetail ? managementGroupId : "";
   selectedWork = page === "tasks" && saved.workId && managementGroupId ? {taskGroupId: managementGroupId, workItemId: saved.workId} : null;
-  selectedExecutionObject = page === "monitor" && saved.executionId && ["session", "dispatch"].includes(saved.executionType)
+  selectedExecutionObject = (page === "monitor" || (page === "tasks" && selectedWork)) && saved.executionId && ["session", "dispatch"].includes(saved.executionType)
     ? {type: saved.executionType, id: saved.executionId} : {type: "", id: ""};
   executionObjectDetail = null;
   executionObjectUnavailable = false;

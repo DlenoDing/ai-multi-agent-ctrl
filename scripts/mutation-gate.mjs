@@ -903,6 +903,22 @@ const MUTATIONS = [
     expect: "任务组列表页出现了只有一项的栏目条"
   },
   {
+    name: "任务详情里打开执行详情必须留在任务页（改回跳监控＝又在栏目间交叉）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const stayOnTask = page === \"tasks\" && Boolean(selectedWork);",
+    to: "  const stayOnTask = false;",
+    expect: "任务详情里打开执行详情要留在任务页"
+  },
+  {
+    name: "任务页里的执行详情必须写进地址",
+    file: "apps/control-plane-ui/public/modules/workspace-route.js",
+    gate: "console",
+    from: "    const executionHost = (route.page === \"monitor\" && route.groupId) || (route.page === \"tasks\" && route.groupId && route.workId);",
+    to: "    const executionHost = route.page === \"monitor\" && route.groupId;",
+    expect: "任务页里的执行详情要写进地址"
+  },
+  {
     name: "工作项卡的定稿要求表单必须默认收起",
     file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
     gate: "console",
@@ -12290,7 +12306,7 @@ const MUTATIONS = [
     name: "执行对象深链接必须保留会话或派发身份",
     file: "apps/control-plane-ui/public/modules/workspace-route.js",
     gate: "console",
-    from: '    const execution = route.page === "monitor" && route.groupId && ["session", "dispatch"].includes(route.executionType) && route.executionId\n      ? `/${encoded(route.executionType)}/${encoded(route.executionId)}` : "";',
+    from: '    const execution = executionHost && ["session", "dispatch"].includes(route.executionType) && route.executionId\n      ? `/${encoded(route.executionType)}/${encoded(route.executionId)}` : "";',
     to: '    const execution = "";',
     expect: "工作会话和派发必须是可复制、可恢复的执行对象地址"
   },

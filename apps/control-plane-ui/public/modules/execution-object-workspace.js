@@ -98,7 +98,7 @@
     return `<section class="execution-object-band execution-integrity-band"><span class="governance-eyebrow">执行完整性</span><h3>需要核对</h3><div class="stack">${warnings.join("")}</div></section>`;
   }
 
-  function render({detail, events = [], eventHistory = false, eventPage = 1, hasMoreEvents = false, historyTruncated = false, controls = "", helpers: h}) {
+  function render({detail, events = [], eventHistory = false, eventPage = 1, hasMoreEvents = false, historyTruncated = false, controls = "", backLabel = "", helpers: h}) {
     const target = detail.objectType === "session" ? detail.session : detail.dispatch;
     const session = detail.session || {};
     const dispatch = detail.dispatch || {};
@@ -111,7 +111,7 @@
     const eventList = events.slice().sort((left, right) => Number(right.sequence || 0) - Number(left.sequence || 0));
     return `<section class="execution-object-workspace wide" aria-label="${esc(titleFor(detail.objectType))}详情">
       <header class="execution-object-header" tabindex="-1" data-execution-object-heading>
-        <button class="secondary-button" data-action="close-execution-object">返回${detail.taskGroup?.id ? "任务组监控" : "执行监控"}</button>
+        <button class="secondary-button" data-action="close-execution-object">${esc(backLabel || `返回${detail.taskGroup?.id ? "任务组监控" : "执行监控"}`)}</button>
         <div class="execution-object-title"><div><span class="governance-eyebrow">${esc(titleFor(detail.objectType))}</span><h2>${esc(detail.objectId)}</h2></div>
           <div class="execution-object-state">${h.badge(target?.status)}${progress === null ? "" : `<strong>${esc(progress)}%</strong>`}</div></div>
         <div class="record-meta"><span>最近活动 ${h.fmtTime(dispatch.lastExecutionEventAt || target?.updatedAt || target?.createdAt)}</span><span>${detail.settled ? "已结束" : "执行链路仍在活动"}</span></div>
