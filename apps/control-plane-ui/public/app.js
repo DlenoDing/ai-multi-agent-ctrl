@@ -2841,7 +2841,7 @@ function renderSysSettingsLifecycleGuide(runtime, metrics) {
 function renderSysSettings() {
   const runtime = state.runtime || {};
   const models = (state.modelCapabilities || []).slice(0, 40).map((profile) => row([
-    esc(t(profile.providerClass)),
+    esc(providerLabel(profile.providerClass)),
     `<span class="mono">${esc(profile.modelId)}</span>`,
     esc((profile.strengths || []).slice(0, 4).map((item) => strengthLabel(item)).join("、")),
     {v: esc(profile.limits?.contextWindowTokens ?? "-"), c: "num"},
@@ -2893,7 +2893,7 @@ function renderSysSettings() {
     renderSysSettingsLifecycleGuide(runtime, metrics),
     panel("运行参数（只读）", `
       <dl class="kv-list">
-        <dt>运行档案</dt><dd class="mono">${esc(runtime.profileId || "-")}</dd>
+        <dt>运行档案</dt><dd>${esc(runtime.profileId ? t(runtime.profileId) : "-")}</dd>
         <dt>运行状态</dt><dd>${badge(runtime.status)}</dd>
         ${/* 兜一个 "-" 进 executionProfileLabel，它会拿这个显示文本去查词条、查不到再原样吐出来：
               结果看着对，代价是开发期的"未映射枚举值"告警里多一条噪声，把真正漏译的埋掉。
@@ -3704,7 +3704,7 @@ const AGENT_MODEL_PRESET_LABEL = {auto_best: "自动最优", auto_fast: "自动�
 function agentModelCell(model) {
   const id = String(model || "auto_best");
   const label = AGENT_MODEL_PRESET_LABEL[id];
-  return label ? `${esc(label)}<div class="small muted mono">${esc(id)}</div>` : `<span class="mono">${esc(id)}</span>`;
+  return label ? esc(label) : `<span class="mono">${esc(id)}</span>`;
 }
 
 function agentProfileRows(agents, {showScope = true} = {}) {
@@ -3725,7 +3725,7 @@ function renderAgentProfileDetail(agent, {editable, scopeLabel}) {
     helpers: {
       statusBadge, t, modelCell: agentModelCell, fmtTime,
       roleOptions: ownerRoleOptionsHtml(agent.role),
-      modelOptions: modelOptionsHtml(agent.model),
+      modelOptions: modelOptionsHtml(agent.model), modelPicker: modelPickerHtml("model", agent.model || "auto_best"), skillPicker: roleSkillPickerHtml("roleSkillRef", agent.roleSkillRef || "", {firstLabel: "按执行角色集中解析"}),
       skillOptions: roleSkillOptionsHtml(agent.roleSkillRef)
     }
   });
@@ -7063,7 +7063,7 @@ function cfgBaselineRow(item = {}, readOnly = false) {
   return `
     <div class="cfg-row" data-cfg-kind="baseline">
       <input name="blName" placeholder="名称" value="${esc(item.name || "")}" ${ro}>
-      <input name="blLocator" placeholder="定位（如 git:docs/baseline/...）" value="${esc(item.locator || "")}" ${ro}>
+      <input name="blLocator" placeholder="仓库内路径（例如 docs/baseline/需求说明.md）" value="${esc(String(item.locator || "").replace(/^git:/u, ""))}" ${ro}>
       <input name="blDigest" placeholder="内容摘要（可选）" value="${esc(item.digest || "")}" ${ro}>
       ${readOnly ? "" : `<button type="button" class="danger-button" data-action="cfg-del">删除</button>`}
     </div>
@@ -7662,7 +7662,8 @@ document.addEventListener("submit", async (event) => {
       })).filter((repo) => repo.id || repo.url);
       const baselineData = [...form.querySelectorAll("[data-cfg-kind='baseline']")].map((rowEl) => ({
         name: rowEl.querySelector("input[name='blName']")?.value?.trim() || "",
-        locator: rowEl.querySelector("input[name='blLocator']")?.value?.trim() || "",
+        // 人只填仓库内路径；存储形态是 git:<路径>（别的定位方式保留原样）。
+        locator: (() => { const raw = rowEl.querySelector("input[name='blLocator']")?.value?.trim() || ""; return raw && !/^[a-z]+:/u.test(raw) ? `git:${raw}` : raw; })(),
         digest: rowEl.querySelector("input[name='blDigest']")?.value?.trim() || ""
       })).filter((item) => item.name || item.locator);
       const defaultRoles = [...form.querySelectorAll("[data-cfg-kind='role']")].map((rowEl) => ({

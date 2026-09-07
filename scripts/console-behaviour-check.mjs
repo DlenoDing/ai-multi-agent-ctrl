@@ -6067,8 +6067,8 @@ async function runPendingTruncationCase() {
       textOf(projectProfileDetail).slice(0, 500));
     check("Agent 档案编辑页也必须使用登记值选择器并保留当前值",
       /<select name="role" required>[\s\S]*?value="agent-runtime" selected/u.test(agentForm)
-        && /<select name="model" required>[\s\S]*?value="auto_fast" selected/u.test(agentForm)
-        && /<select name="roleSkillRef">[\s\S]*?value="reviewer" selected/u.test(agentForm)
+        && /<select name="model" data-cascade-child="model" required>[\s\S]*?value="auto_fast" data-group="auto" selected/u.test(agentForm)
+        && /<select name="roleSkillRef" data-cascade-child="roleSkillRef" >[\s\S]*?value="reviewer"[^>]* selected/u.test(agentForm)
         && !/<input name="(?:role|model|roleSkillRef)"/u.test(agentForm)
         && !/agent-profile-role-options|agent-profile-model-options/u.test(agentForm),
       "Agent 档案编辑仍使用自由输入或遗留 datalist，创建与编辑两套交互不一致");
@@ -6160,7 +6160,7 @@ async function runPendingTruncationCase() {
       "项目设置看板仍把基线、默认角色或规则卡错误地送到仓库页");
     check("基线配置 pane 保留名称、定位和摘要字段",
       /name="blName"[\s\S]*value="现状"/u.test(baselinePane)
-        && /name="blLocator"[\s\S]*value="git:docs\/baseline\.md"/u.test(baselinePane)
+        && /name="blLocator"[\s\S]*value="docs\/baseline\.md"/u.test(baselinePane) && !/value="git:docs/u.test(baselinePane)
         && /name="blDigest"[\s\S]*value="sha256:abc"/u.test(baselinePane),
       textOf(baselinePane).slice(0, 220));
     check("默认角色配置 pane 保留执行角色与 roleSkillRef 字段",
@@ -6302,7 +6302,7 @@ async function runPendingTruncationCase() {
     const profileRowAt = projectProfiles.indexOf("agent_1");
     const profileRow = profileRowAt < 0 ? "" : projectProfiles.slice(profileRowAt, profileRowAt + 900);
     check("逻辑 Agent 默认模型预设显示中文标签",
-      /自动最优/u.test(profileRow) && /auto_best/u.test(profileRow),
+      /自动最优/u.test(profileRow) && !/auto_best/u.test(textOf(profileRow)),
       `档案表里默认模型仍是原始码：${textOf(profileRow).slice(0, 240)}`);
     check("项目可调配角色先汇总项目专属与组织共享档案构成",
       /项目专属档案/u.test(projectProfiles) && /组织共享档案/u.test(projectProfiles)
