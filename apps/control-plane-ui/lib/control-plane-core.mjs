@@ -63,6 +63,7 @@ import {
   projectRepositories,
   repositoryUrlRegisteredForProject
 } from "./path-policy.mjs";
+import { createSchemaValidator } from "../../../scripts/lib/schema-validate.mjs";
 export { REGISTERED_OWNER_ROLES, providerClasses } from "./model-catalog.mjs";
 export { languagePolicyDirective, normalizeTaskGroupLanguagePolicy } from "./language-policy.mjs";
 export { clone, digestOf, stableJson } from "./digest-utils.mjs";
@@ -94,6 +95,9 @@ export {
 
 const controlPlaneRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "../../..");
 const specDigestCache = new Map();
+const runtimeSchemaValidator = createSchemaValidator(join(controlPlaneRoot, "spec"));
+const runtimeSchemaCache = new Map();
+const CHECKPOINT_SCHEMA_REF_FILES = ["commit-ref.schema.json", "push-ref.schema.json"];
 
 export function specContentDigest(specRelativePath) {
   if (specDigestCache.has(specRelativePath)) return specDigestCache.get(specRelativePath);
@@ -105,6 +109,20 @@ export function specContentDigest(specRelativePath) {
   }
   specDigestCache.set(specRelativePath, digest);
   return digest;
+}
+
+function runtimeRecordSchemaErrors(specRelativePath, record, label) {
+  let schema = runtimeSchemaCache.get(specRelativePath);
+  if (!schema) {
+    schema = JSON.parse(readFileSync(join(controlPlaneRoot, specRelativePath), "utf8"));
+    runtimeSchemaCache.set(specRelativePath, schema);
+  }
+  if (specRelativePath === "spec/checkpoint.schema.json") {
+    for (const refFile of CHECKPOINT_SCHEMA_REF_FILES) runtimeSchemaValidator.siblingSchema(refFile);
+  }
+  const errors = [];
+  runtimeSchemaValidator.validateSchema(record, schema, label, errors);
+  return errors;
 }
 
 // 字符串清单的上限：REST 与 MCP 各有一份归一实现（normalizeStringList / normalizeMcpStringList），
@@ -2755,6 +2773,11 @@ export function acceptAgentCheckpoint(state, checkpointInput = {}, serverOptions
     createdAt: at,
     ...(checkpointInput.createdAt ? {reportedCreatedAt: String(checkpointInput.createdAt)} : {})
   };
+  const schemaErrors = runtimeRecordSchemaErrors("spec/checkpoint.schema.json", checkpoint, "Checkpoint");
+  if (schemaErrors.length) {
+    return {accepted: false, status: 409, error: "checkpoint_schema_validation_failed",
+      schemaErrors: schemaErrors.slice(0, 12)};
+  }
   state.checkpoints.unshift(checkpoint);
   target.status = "pushed";
   target.commitRefs = evidence.normalizedCommitRefs.map((commit) => `commit:${commit.commit}`);
@@ -3127,7 +3150,13 @@ function validateCheckpointGitEvidence(state, request) {
     }
     const fullCommit = git(root, ["rev-parse", "--verify", `${commitRef.commit}^{commit}`], "");
     if (!fullCommit) return {valid: false, status: 409, error: "commit_ref_not_found"};
-    normalizedCommitRefs.push({...commitRef, commit: fullCommit});
+    normalizedCommitRefs.push({
+      repo: target.repositoryId,
+      branch: target.branch,
+      commit: fullCommit,
+      treeDigest: commitRef.treeDigest,
+      createdAt: commitRef.createdAt
+    });
   }
   const commitSet = new Set(normalizedCommitRefs.map((item) => item.commit));
   const finalCommit = normalizedCommitRefs.at(-1)?.commit;
@@ -3157,7 +3186,17 @@ function validateCheckpointGitEvidence(state, request) {
     if (recordedRemoteSha !== sourceCommit || recordedRemoteSha !== finalCommit) {
       return {valid: false, status: 409, error: "push_ref_must_point_to_final_commit"};
     }
-    normalizedPushRefs.push({...pushRef, sourceCommit, remoteSha: recordedRemoteSha, ...(remoteAdvancedContained ? {remoteAdvancedContained: true, observedRemoteSha: liveRemoteSha} : {})});
+    normalizedPushRefs.push({
+      repo: target.repositoryId,
+      remote: target.remote || "origin",
+      ref: `refs/heads/${target.branch}`,
+      sourceCommit,
+      remoteSha: recordedRemoteSha,
+      providerOperationId: pushRef.providerOperationId,
+      verifiedAt: pushRef.verifiedAt,
+      rewriteRelation: pushRef.rewriteRelation || "same_commit",
+      ...(remoteAdvancedContained ? {remoteAdvancedContained: true, observedRemoteSha: liveRemoteSha} : {})
+    });
   }
   const changedPaths = git(root, ["diff", "--name-only", target.baseRef || `${finalCommit}^`, finalCommit], "")
     .split("\n")

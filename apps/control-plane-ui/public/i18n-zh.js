@@ -241,6 +241,7 @@
     checkpoint_language_policy_digest_required: "检查点必须带上语言策略摘要",
     checkpoint_missing_git_evidence: "检查点缺少 Git 证据（提交/推送）",
     checkpoint_run_id_required: "检查点必须带上运行编号",
+    checkpoint_schema_validation_failed: "检查点记录不符合机器契约",
     content_bundle_git_transfer_unsafe_repository_url: "内容包要拉的仓库地址不安全",
     content_bundle_git_transfer_escapes_session: "内容包要写的位置在本会话目录之外",
     content_bundle_git_transfer_unsafe_ref: "内容包指定的 git 引用不安全",

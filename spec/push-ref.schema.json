@@ -38,6 +38,15 @@
       "type": "string",
       "enum": ["same_commit", "merge_commit", "rebased_commit"],
       "default": "same_commit"
+    },
+    "remoteAdvancedContained": {
+      "type": "boolean",
+      "description": "提交检查点后远端分支已前进，但仍包含本检查点 remoteSha 时由控制面写入。"
+    },
+    "observedRemoteSha": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{7,64}$",
+      "description": "控制面复核时看到的当前远端 SHA，仅在 remoteAdvancedContained 为 true 时出现。"
     }
   }
 }

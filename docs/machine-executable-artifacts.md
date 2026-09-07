@@ -36,9 +36,9 @@
 | `spec/language-policy.schema.json` | Orchestrator、Instruction Optimizer、Agent Runtime、UI Console Service | 校验任务组统一语言及其对指令、事件、checkpoint、仓库输出和 review 材料的覆盖 |
 | `spec/agent-task-contract.schema.json` | Orchestrator、Agent Runtime、WorkSession | 校验每次 session_start 的任务契约 |
 | `spec/control-events.schema.json` | Room Broker、Command Bus、MCP Proxy | 校验 room event、command event、checkpoint event 和 permission event envelope |
-| `spec/checkpoint.schema.json` | Evidence MCP、Agent Runtime、Close Barrier | 校验 checkpoint、commitRefs、pushRefs 和 evidenceRefs |
-| `spec/commit-ref.schema.json` | （当前无消费者） | 由 `checkpoint.schema.json` 以外部 `$ref` 引用，contract-check 已能真正解析该引用；但目前没有任何 checkpoint 实例被按 schema 校验，因此这份约束实际尚未生效 |
-| `spec/push-ref.schema.json` | （当前无消费者） | 同 `commit-ref`：引用已能解析，但没有 checkpoint 实例被校验，约束实际尚未生效 |
+| `spec/checkpoint.schema.json` | Agent Gateway、Agent Runtime、Close Barrier、Spec Validator | Agent Gateway 在接受检查点后、落库前校验完整 checkpoint；Spec Validator 复扫运行产物；commitRefs、pushRefs 和 evidenceRefs 不能只靠自然语言解释通过 |
+| `spec/commit-ref.schema.json` | Agent Gateway、Spec Validator | 由 `checkpoint.schema.json` 以外部 `$ref` 引用；Agent Gateway 先把执行方自报字段归一化为白名单字段，再通过 checkpoint schema 校验提交引用 |
+| `spec/push-ref.schema.json` | Agent Gateway、Spec Validator | 由 `checkpoint.schema.json` 以外部 `$ref` 引用；Agent Gateway 先核对远端 SHA、目标仓库和最终提交，再通过 checkpoint schema 校验推送引用 |
 | `spec/mcp-grant.schema.json` | MCP Proxy、Permission Gateway、Security Agent | 校验 MCP tool grant 的参数策略、结果过滤、风险和过期 |
 | `spec/git-automation-policy.schema.json` | （当前无消费者） | git 自动化实际由 RepositoryOutputTarget（分支/远端）＋租约＋push 前 claim 复核＋`assertAllowedPaths`（路径范围）管住，不读这份策略记录 |
 | `spec/git-command.schema.json` | （当前无消费者） | 同上：运行时直接执行 git 并以 checkpoint 的 commit/push 证据留档，不经过 GitCommand 记录 |

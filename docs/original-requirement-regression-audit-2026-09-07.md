@@ -34,6 +34,16 @@
 
 系统外升级结果导入属于系统管理动作，必须由真人系统管理员执行。补上 REST 入口后，`human-only-parity-gate` 继续发现 MCP 同名工具仍可由机器主体进入。若不修复，服务令牌或 Agent 节点可绕过管理界面导入升级记录，破坏“运行时只收集问题、不进行系统升级”的边界。
 
+### checkpoint 证据 schema 在运行时没有落到入口
+
+原始 AI-native 要求强调“机器可执行制品优先”，尤其是任务产出必须写入项目 Git 仓库，并由 checkpoint 证据闭环进入总控和审核。当前实现已有大量手写校验，也有 `spec/checkpoint.schema.json` 引用 `commit-ref` 与 `push-ref`，但运行入口在归一化后没有对最终落库 checkpoint 跑 schema：
+
+1. `commitRefs`、`pushRefs` 由调用方对象展开后再补写核心字段，额外字段可能被一起落库。
+2. `commit-ref.schema.json` 与 `push-ref.schema.json` 的 `additionalProperties:false` 因此只在事后扫产物时生效，不能在接受入口形成稳定边界。
+3. `docs/machine-executable-artifacts.md` 仍写着 commit/push 引用没有消费者，已与当前 validator 和入口职责不一致。
+
+这类问题不一定立刻导致执行失败，但会让机器契约从“运行时强制”退化成“事后发现”，容易在多轮修改中再次漂移。
+
 ## 已完成修复
 
 1. 新增系统管理员 REST 入口 `POST /api/system-upgrade-candidates/import-external-result`。
@@ -55,6 +65,11 @@
 11. `scripts/console-behaviour-check.mjs` 新增系统导航和 UI 表单断言，防止入口再次被删掉。
 12. `governance-mcp.system_upgrade_external_import` 增加白名单式真人系统管理员守卫，机器主体统一返回 `system_upgrade_external_import_forbidden_for_machine_principal`。
 13. `scripts/lib/known-second-doors.mjs` 与 `scripts/contract-check.mjs` 增加该 MCP 第二道门登记，防止 REST/MCP 同权边界再次漂移。
+14. `acceptAgentCheckpoint` 在落库前校验完整 `spec/checkpoint.schema.json`，使 `commit-ref`、`push-ref` 的 `$ref` 与 `additionalProperties:false` 在运行入口生效。
+15. checkpoint 证据归一化改为白名单字段写入，执行方额外字段不会进入 `commitRefs` 或 `pushRefs`。
+16. `spec/push-ref.schema.json` 补齐远端分支已前进但仍包含本次提交时由控制面写入的 `remoteAdvancedContained` 与 `observedRemoteSha` 字段。
+17. `scripts/contract-check.mjs` 增加“额外字段不污染 checkpoint 证据”的回归断言。
+18. `docs/machine-executable-artifacts.md` 已更正 checkpoint、commit-ref、push-ref 的消费者说明。
 
 ## 当前结论
 

@@ -15817,13 +15817,16 @@ function verifyLocalGitWorkerRefusesUnsafeRepositoryState(output) {
       // 每个用例都先撞 checkpoint_commit_has_no_changed_paths。
       target.baseRef = execFileSync("git", ["rev-parse", "HEAD"], {cwd: repo, encoding: "utf8"}).trim();
       target.artifactManifestPath = "docs/artifact-manifests/probe.json";
+      const contractDigest = digestOf({fixture: "local-git-worker", sessionId: "ws_worker", runId: "run_worker"});
       st.workSessions = [{sessionId: "ws_worker", taskGroupId: taskGroup.id, projectId: taskGroup.projectId,
         workItemId: workItem.id, status: "active"}];
       st.agentDispatches = [{dispatchId: "dsp_worker", sessionId: "ws_worker", runId: "run_worker",
         taskGroupId: taskGroup.id, projectId: taskGroup.projectId, workItemId: workItem.id,
-        repositoryOutputTargetRef: target.targetId, status: "queued", requiredCredentialEnvNames: []}];
+        repositoryOutputTargetRef: target.targetId, status: "queued", requiredCredentialEnvNames: [],
+        taskContractDigest: contractDigest}];
       st.agentTaskContracts = [{sessionId: "ws_worker", runId: "run_worker", projectId: taskGroup.projectId,
-        taskGroupId: taskGroup.id, workId: workItem.id, roleId: "agent-runtime", roleSkill: {}, actionBasis: {}}];
+        taskGroupId: taskGroup.id, workId: workItem.id, roleId: "agent-runtime", roleSkill: {}, actionBasis: {},
+        contractDigest}];
       // 检查点校验要求这次会话确实持着这个产出目标的租约 —— 少了它，每个用例都会先撞
       // active_session_lease_required，正面对照与三条反面用例一起空转。
       const lease = {leaseId: "lease_worker", resourceRef: `RepositoryOutputTarget:${target.targetId}`,
@@ -17805,13 +17808,16 @@ function verifyExecutorBackedWorkerRefusesUnsafeOutput(output) {
       target.artifactManifestPath = "docs/executor-manifest.json";
       target.repositoryUrl = remote;
       target.baseRef = execFileSync("git", ["rev-parse", "HEAD"], {cwd: repo, encoding: "utf8"}).trim();
+      const contractDigest = digestOf({fixture: "executor-backed-worker", sessionId: "ws_exec", runId: "run_exec"});
       st.workSessions = [{sessionId: "ws_exec", taskGroupId: taskGroup.id, projectId: taskGroup.projectId,
         workItemId: workItem.id, status: "active"}];
       st.agentDispatches = [{dispatchId: "dsp_exec", sessionId: "ws_exec", runId: "run_exec",
         taskGroupId: taskGroup.id, projectId: taskGroup.projectId, workItemId: workItem.id,
-        repositoryOutputTargetRef: target.targetId, status: "queued", requiredCredentialEnvNames: []}];
+        repositoryOutputTargetRef: target.targetId, status: "queued", requiredCredentialEnvNames: [],
+        taskContractDigest: contractDigest}];
       st.agentTaskContracts = [{sessionId: "ws_exec", runId: "run_exec", projectId: taskGroup.projectId,
-        taskGroupId: taskGroup.id, workId: workItem.id, roleId: "agent-runtime", roleSkill: {}, actionBasis: {}}];
+        taskGroupId: taskGroup.id, workId: workItem.id, roleId: "agent-runtime", roleSkill: {}, actionBasis: {},
+        contractDigest}];
       const lease = {leaseId: "lease_exec", resourceRef: `RepositoryOutputTarget:${target.targetId}`,
         holderRef: "session:ws_exec", status: "active", fencingToken: 1,
         acquiredAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString()};
@@ -20223,7 +20229,8 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     foreignSession, omitLanguageDigest, forgeLanguageDigest, targetAlreadyPushed,
     targetFromAnotherWorkItem, twoTargetRefs,
     pushRefWrongTarget, emptyFinalCommit, manifestDeleted, outputDeleted, outputOutsideAllowlist,
-    dispatchPaused, noTargetRef, targetRefsReversed, manifestAbsolutePath}) => {
+    dispatchPaused, noTargetRef, targetRefsReversed, manifestAbsolutePath, extraCheckpointRefFields,
+    omitCommitRefCreatedAt}) => {
     // 这段建置对每个用例完全相同，而它是本项检查里最贵的一块：实测 324ms/次 × 19 个用例 ≈ 6.2 秒
     // （对比：一次完整编排只要 61ms，克隆状态 1ms）。改成"建一次模板、之后按目录拷贝"。
     const {repo, remote, baseRef, caseRoot} = checkoutFromTemplate();
@@ -20363,6 +20370,20 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     const remoteSha = execFileSync("git", ["ls-remote", remote, "refs/heads/main"], {encoding: "utf8"}).trim().split(/\s+/)[0];
 
     const contract = (state.agentTaskContracts || []).find((item) => item.sessionId === session.sessionId);
+    const commitRef = {repo: target.repositoryId, branch: forgeCommitBranch ? "not-the-target-branch" : "main",
+      commit: forgeCommit ? "0123456789abcdef0123456789abcdef01234567" : commit,
+      // forgeTree：树摘要谎报。它标的是"这次提交到底改出了什么内容"，
+      // 控制面拿它和真实提交对照 —— 谎报能过的话，提交里的内容就与它自称的无关了。
+      treeDigest: forgeTree ? "git-tree:0000000000000000000000000000000000000000"
+        : `git-tree:${git("rev-parse", `${commit}^{tree}`)}`,
+      ...(omitCommitRefCreatedAt ? {} : {createdAt: new Date().toISOString()}),
+      ...(extraCheckpointRefFields ? {callerInjectedCommitField: "must_not_be_persisted"} : {})};
+    const pushRef = {repo: target.repositoryId, remote: "origin",
+      ref: pushRefWrongTarget ? "refs/heads/not-the-target-branch" : "refs/heads/main", sourceCommit: commit,
+      remoteSha: forgePush ? "0123456789abcdef0123456789abcdef01234567" : remoteSha,
+      providerOperationId: `git-push:cc:${remoteSha}`, verifiedAt: new Date().toISOString(),
+      rewriteRelation: "same_commit",
+      ...(extraCheckpointRefFields ? {callerInjectedPushField: "must_not_be_persisted"} : {})};
     const result = acceptAgentCheckpoint(state, {
       projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workId: workItem.id,
       // foreignSession：拿【别的工作项】的会话来交这份检查点 —— 证据挂到了它没做过的那件事上。
@@ -20381,21 +20402,12 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       // 谎报分支就等于把一份别处的提交算成本目标的成果。
       // omitCommitEvidence：一条提交证据都不给就宣布干完了。这是这套证据链最外面那一圈 ——
       // 它塌了，上面所有"证据必须对得上"的守卫都无从谈起，因为根本没有证据要对。
-      commitRefs: omitCommitEvidence ? [] : [{repo: target.repositoryId, branch: forgeCommitBranch ? "not-the-target-branch" : "main",
-        commit: forgeCommit ? "0123456789abcdef0123456789abcdef01234567" : commit,
-        // forgeTree：树摘要谎报。它标的是"这次提交到底改出了什么内容"，
-        // 控制面拿它和真实提交对照 —— 谎报能过的话，提交里的内容就与它自称的无关了。
-        treeDigest: forgeTree ? "git-tree:0000000000000000000000000000000000000000"
-          : `git-tree:${git("rev-parse", `${commit}^{tree}`)}`, createdAt: new Date().toISOString()}],
+      commitRefs: omitCommitEvidence ? [] : [commitRef],
       // forgePush：声称推上去了，而远端根本没有那个提交。这与"凭空的 commit"是一对 ——
       // 前者问"这次提交存不存在"，这条问"它到底有没有真的交出去"。控制面自己 ls-remote 对照。
       // pushRefWrongTarget：推送记录指向【别的分支】。产出目标钉的是仓库+分支，
       // 对不上就等于拿另一处的推送来充当本目标的交付。
-      pushRefs: [{repo: target.repositoryId, remote: "origin",
-        ref: pushRefWrongTarget ? "refs/heads/not-the-target-branch" : "refs/heads/main", sourceCommit: commit,
-        remoteSha: forgePush ? "0123456789abcdef0123456789abcdef01234567" : remoteSha,
-        providerOperationId: `git-push:cc:${remoteSha}`, verifiedAt: new Date().toISOString(),
-        rewriteRelation: "same_commit"}],
+      pushRefs: [pushRef],
       // twoTargetRefs：一次交上来两个产出目标。会话只对一个目标持有租约，多报一个就是趁机夹带。
       // noTargetRef：一个产出目标都不报 —— 那就没人知道这次提交该落到哪个仓库。
       // targetRefsReversed：报了两个真实存在的目标（第一个是别处那一个）。用编造的 id 不行 ——
@@ -20638,6 +20650,26 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
   if (!compliant.skipped && compliant.result.accepted !== true) {
     output.push(`一份如实上报、且只改了批准范围内路径的检查点没有被受理（${compliant.result.error}）——`
       + " 下面所有'谎报会被拒'的用例都建立在这条之上，它不成立时那些用例证明不了任何东西");
+  }
+  const extraFields = runCase({stray: false, finalized: true, extraCheckpointRefFields: true});
+  if (extraFields.skipped) { output.push(`检查点证据额外字段断言无从验证：${extraFields.skipped}`); }
+  else if (extraFields.result.accepted !== true) {
+    output.push(`合规检查点只因 commit/push 引用带额外字段就没有被受理（${extraFields.result.error}）——`
+      + " 运行时应先把证据归一化为白名单字段，再按 schema 验落库对象");
+  } else {
+    const persisted = extraFields.result.checkpoint;
+    const polluted = persisted.commitRefs?.some((ref) => Object.prototype.hasOwnProperty.call(ref, "callerInjectedCommitField"))
+      || persisted.pushRefs?.some((ref) => Object.prototype.hasOwnProperty.call(ref, "callerInjectedPushField"));
+    if (polluted) {
+      output.push("检查点证据归一化没有丢弃调用方额外字段 —— commit-ref/push-ref 的 additionalProperties:false 没有在运行态生效");
+    }
+  }
+  const missingCommitRefField = runCase({stray: false, finalized: true, omitCommitRefCreatedAt: true});
+  if (missingCommitRefField.skipped) { output.push(`检查点 schema 必填字段断言无从验证：${missingCommitRefField.skipped}`); }
+  else if (missingCommitRefField.result.accepted !== false
+    || missingCommitRefField.result.error !== "checkpoint_schema_validation_failed") {
+    output.push(`commitRef 缺少 schema 必填字段时检查点没有被 schema 门拦下（实际：`
+      + `${missingCommitRefField.result.error || "已受理"}）—— checkpoint schema 没有在运行入口生效`);
   }
 
   // 提交引用必须落在产出目标钉住的那个仓库与分支上。这条守卫此前【一条判据都没有】——
