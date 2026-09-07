@@ -2699,7 +2699,7 @@ function renderSysOrgs() {
           <div class="form-row"><label>成员上限</label><input name="maxMembers" type="number" min="1" value="50"></div>
           <div class="form-row"><label>项目上限</label><input name="maxProjects" type="number" min="1" value="20"></div>
           <div class="form-row"><label>任务组上限</label><input name="maxTaskGroups" type="number" min="1" value="200"></div>
-          <div class="form-row"><label>智能体上限</label><input name="maxAgents" type="number" min="1" value="100"></div>
+          <div class="form-row"><label>运行节点上限</label><input name="maxAgents" type="number" min="1" value="100"></div>
         </div>
         <div class="notice">创建成功后将弹窗展示初始组织管理员的一次性登录令牌，请务必保存。</div>
         <button class="primary-button" type="submit">创建组织并签发管理员账号</button>
@@ -8920,7 +8920,7 @@ document.addEventListener("click", async (event) => {
           <div class="form-row"><label>成员上限</label><input name="maxMembers" type="number" min="1" value="${esc(org.quotas?.maxMembers ?? 50)}"></div>
           <div class="form-row"><label>项目上限</label><input name="maxProjects" type="number" min="1" value="${esc(org.quotas?.maxProjects ?? 20)}"></div>
           <div class="form-row"><label>任务组上限</label><input name="maxTaskGroups" type="number" min="1" value="${esc(org.quotas?.maxTaskGroups ?? 200)}"></div>
-          <div class="form-row"><label>智能体上限</label><input name="maxAgents" type="number" min="1" value="${esc(org.quotas?.maxAgents ?? 100)}"></div>
+          <div class="form-row"><label>运行节点上限</label><input name="maxAgents" type="number" min="1" value="${esc(org.quotas?.maxAgents ?? 100)}"></div>
           <button class="primary-button" type="submit">保存配额</button>
         </form>
       `);
@@ -8928,7 +8928,7 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "org-status") {
       const status = target.dataset.status;
-      if (status === "suspended" && !(await confirmDialog({title: "停用组织", message: "确认停用该组织？", sub: "停用后组织内账号与智能体将无法工作。", danger: true, confirmText: "停用"}))) return;
+      if (status === "suspended" && !(await confirmDialog({title: "停用组织", message: "确认停用该组织？", sub: "停用后这个组织的成员登不进来、运行节点领不到活、项目里也建不了新东西；已有数据保留，重新启用即可恢复。", danger: true, confirmText: "停用"}))) return;
       await api(`/api/orgs/${encodeURIComponent(target.dataset.org)}/status`, {method: "POST", body: JSON.stringify({status})});
       await loadPage();
       toast.success(status === "suspended" ? "已停用组织" : "已启用组织");

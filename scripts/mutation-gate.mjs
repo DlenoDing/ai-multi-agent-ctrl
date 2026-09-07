@@ -14452,6 +14452,22 @@ const MUTATIONS = [
     from: 'sub: "节点会先做完或交回手上的派发，再自行离线（期间显示为「撤出中」）；不作废它的凭据，之后在那台机器上重新启动即可再接入。要作废凭据请用「吊销」或「立即切断」。"',
     to: 'sub: "节点将进入 draining，完成或围栏当前派发后离线（区别于硬吊销）。"',
     expect: "关停节点的确认弹窗要说人话：先交回派发再离线、不作废凭据、要作废用吊销／切断"
+  },
+  {
+    name: "调整配额表单的 maxAgents 不得退回「智能体上限」",
+    file: APP,
+    gate: "console",
+    from: '<div class="form-row"><label>运行节点上限</label><input name="maxAgents" type="number" min="1" value="${esc(org.quotas?.maxAgents ?? 100)}"></div>',
+    to: '<div class="form-row"><label>智能体上限</label><input name="maxAgents" type="number" min="1" value="${esc(org.quotas?.maxAgents ?? 100)}"></div>',
+    expect: "组织配额里 maxAgents 在开通与调配额表单上都叫「运行节点上限」，与用量列同名"
+  },
+  {
+    name: "停用组织弹窗不得退回一句「账号与智能体将无法工作」",
+    file: APP,
+    gate: "console",
+    from: 'sub: "停用后这个组织的成员登不进来、运行节点领不到活、项目里也建不了新东西；已有数据保留，重新启用即可恢复。", danger: true, confirmText: "停用"',
+    to: 'sub: "停用后组织内账号与智能体将无法工作。", danger: true, confirmText: "停用"',
+    expect: "停用组织的确认弹窗要说清后果与可逆性"
   }
 ];
 

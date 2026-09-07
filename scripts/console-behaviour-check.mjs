@@ -945,6 +945,17 @@ function check(name, condition, detail) {
       && /data-action="org-quota" data-org="org_workspace"/u.test(html)
       && /data-action="org-status" data-org="org_workspace"/u.test(html),
     String(html).replace(/<[^>]+>/gu, " ").slice(0, 500));
+  // 【配额四项叫法要与用量列一致】（用户 09-08 走查）：用量列叫「运行节点」，开通与调配额表单却叫「智能体上限」。
+  {
+    const quotaSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+    check("组织配额里 maxAgents 在开通与调配额表单上都叫「运行节点上限」，与用量列同名",
+      (quotaSource.match(/<label>运行节点上限<\/label><input name="maxAgents"/gu) || []).length === 2 && !/<label>智能体上限<\/label>/u.test(quotaSource),
+      "开通组织／调整配额表单里 maxAgents 仍叫「智能体上限」，与用量列的「运行节点」对不上");
+    const suspendDialog = quotaSource.match(/status === "suspended" && !\(await confirmDialog\(\{[^\n]*/u)?.[0] || "";
+    check("停用组织的确认弹窗要说清后果与可逆性",
+      /成员登不进来/u.test(suspendDialog) && /运行节点领不到活/u.test(suspendDialog) && /重新启用即可恢复/u.test(suspendDialog),
+      `停用弹窗：${suspendDialog.slice(0, 200) || "没找到"}`);
+  }
   check("系统组织详情区分初始管理员与组织子账户并展示状态构成",
     /组织子账户概况/u.test(html) && /子账户总数[\s\S]*1/u.test(html) && /已停用[\s\S]*1/u.test(html),
     "系统管理员需要看到子账户数量与状态，但不能在系统空间直接管理这些账号");
