@@ -3,20 +3,13 @@
   const {esc} = window.AIMAC_CONSOLE_DOM_UTILS;
   const pane = (id, label, titles = [], group = "") => ({id, label, titles, group});
   const catalog = {
+    // 任务组详情：4 个栏目。此前 12 个栏目分 3 组，展开一个任务组要先在左侧一列里找栏目 —— 人来任务组是看任务、看执行、改配置。
     "group-detail": [
-      pane("tasks", "任务列表", ["工作项*"], "工作推进"),
-      pane("progress", "事项拆解", ["事项清单"], "工作推进"),
-      pane("timeline", "执行时间线", ["任务执行时间线"], "工作推进"),
-      pane("roles", "任务组角色", ["角色列表"], "任务组配置"),
-      pane("inheritance", "继承与覆盖", ["配置继承"], "任务组配置"),
-      pane("skills", "任务组 Skill", ["角色 Skill 定制"], "任务组配置"),
-      pane("system-rules", "任务组系统规则", ["系统规则"], "任务组配置"),
-      pane("business-rules", "任务组业务规则", ["业务规则"], "任务组配置"),
-      pane("control", "执行控制", ["执行控制"], "执行与审计"),
-      pane("admission", "准入与阻断", ["准入与阻断分类"], "执行与审计"),
-      pane("blockers", "阻塞处置", ["阻塞"], "执行与审计"),
-      pane("collaboration", "协作记录", ["协作记录*"], "执行与审计"),
-      pane("help", "详情说明", [], "执行与审计")
+      pane("tasks", "任务与进度", ["工作项*", "事项清单", "任务执行时间线"]),
+      pane("config", "角色与规则", ["角色列表", "配置继承", "角色 Skill 定制", "系统规则", "业务规则"]),
+      pane("control", "执行控制", ["执行控制", "准入与阻断分类", "阻塞"]),
+      pane("collaboration", "协作记录", ["协作记录*"]),
+      pane("help", "详情说明", [])
     ],
     "sys-overview": [pane("overview", "运行状态"), pane("details", "技术状态", ["运行指标", "服务器信息", "资源占用", "能耗估算", "存储体量", "系统服务"]), pane("audit", "审计日志", ["审计日志"]), pane("maintenance", "维护操作", ["维护操作"])],
     "sys-orgs": [pane("list", "组织列表", ["组织列表"]), pane("create", "开通组织", ["创建组织"]), pane("help", "职责与配额说明")],
@@ -31,12 +24,19 @@
     "proj-settings": [pane("repositories", "项目仓库", ["项目基础配置"]), pane("baseline", "项目基线", ["基线资料"]), pane("default-roles", "项目默认角色", ["项目默认角色"]), pane("skills", "项目默认 Skill", ["角色 Skill 定制"]), pane("system-rules", "项目系统规则", ["系统规则"]), pane("business-rules", "项目业务规则", ["业务规则"]), pane("help", "配置说明")],
     tg: [pane("list", "任务组列表", ["任务组列表", "任务组详情"]), pane("create", "创建任务组", ["创建任务组"]), pane("help", "任务组说明", ["任务组总览", "任务组处置看板", "任务组生命周期", "创建工作项"])],
     tasks: [pane("list", "任务工作台", ["任务工作台", "任务详情"]), pane("create", "创建任务", ["创建工作项"])],
-    monitor: [pane("overview", "进度总览", ["执行监控", "执行监控总览", "任务组监控矩阵", "自治控制"]), pane("sessions", "工作会话", ["工作会话"]), pane("dispatches", "Agent 派发", ["智能体派发"]), pane("lanes", "执行载体", ["可复用执行载体（Worker Lane）"]), pane("models", "模型决策", ["模型选择记录"]), pane("placements", "会话放置", ["会话放置记录"]), pane("admissions", "准入决策", ["准入决策"]), pane("events", "实时事件", ["实时事件流"]), pane("node-control", "运行节点", ["agent 节点"]), pane("commands", "控制命令", ["控制通道"]), pane("dlq", "死信队列", ["死信队列"]), pane("checkpoints", "检查点证据", ["检查点（Git 证据）"]), pane("quality", "质量门禁", ["质量门禁 / 测试证据"]), pane("finalizations", "人工定稿", ["最近的人工定稿"]), pane("blockers", "阻塞处置", ["阻塞项人工处置"]), pane("close-gates", "关闭门禁", ["关闭门禁"]), pane("help", "监控说明", ["监控处置看板", "实时回送链路"])],
+    // 执行监控：5 个栏目。此前 16 个栏目（会话/派发/载体/模型/放置/准入/事件/节点/命令/死信/检查点/质量/定稿/阻塞/关闭门）
+    // 一字排开；按人要回答的问题合并：跑到哪了 / 谁在跑、为什么这么派 / 过程回送 / 载体与命令 / 收得了口吗。
+    monitor: [pane("overview", "进度总览", ["执行监控", "执行监控总览", "任务组监控矩阵", "自治控制"]),
+      pane("execution", "会话与派发", ["工作会话", "智能体派发", "可复用执行载体（Worker Lane）", "模型选择记录", "会话放置记录", "准入决策"]),
+      pane("events", "实时事件", ["实时事件流"]),
+      pane("nodes", "节点与命令", ["agent 节点", "控制通道", "死信队列"]),
+      pane("acceptance", "验收与收口", ["检查点（Git 证据）", "质量门禁 / 测试证据", "最近的人工定稿", "阻塞项人工处置", "关闭门禁"]),
+      pane("help", "监控说明", ["监控处置看板", "实时回送链路"])],
     review: [pane("pending", "待我审核", ["人工审核", "待人工确认"]), pane("permissions", "权限审批", ["权限审批"]), pane("approvals", "操作审批", ["操作审批"]), pane("findings", "发现处置", ["发现处置"]), pane("history", "审核历史", ["已答历史"]), pane("inbox", "待办汇总", ["待你处理*"]), pane("help", "审核说明")],
     directives: [pane("compose", "下达指令", ["下达人工指令", "人工指令"]), pane("history", "指令流水", ["指令流水"]), pane("help", "指令说明")]
   };
   const fallback = {"sys-orgs": "help", "sys-settings": "help", "org-members": "help", "org-projects": "help", "org-agents": "help", "proj-agents": "help", "proj-members": "help", "proj-settings": "help", tasks: "discard", monitor: "barriers", review: "help", directives: "help"};
-  const legacyPaneAliases = {"group-detail:config": "inheritance", "monitor:runs": "sessions", "monitor:nodes": "node-control", "monitor:evidence": "checkpoints", "monitor:barriers": "blockers", "review:decisions": "permissions", "proj-settings:roles": "default-roles", "sys-settings:protocol": "instruction-efficiency"};
+  const legacyPaneAliases = {"review:decisions": "permissions", "proj-settings:roles": "default-roles", "sys-settings:protocol": "instruction-efficiency", "group-detail:config": "config", "group-detail:progress": "tasks", "group-detail:timeline": "tasks", "group-detail:roles": "config", "group-detail:inheritance": "config", "group-detail:skills": "config", "group-detail:system-rules": "config", "group-detail:business-rules": "config", "group-detail:admission": "control", "group-detail:blockers": "control", "monitor:runs": "execution", "monitor:sessions": "execution", "monitor:dispatches": "execution", "monitor:lanes": "execution", "monitor:models": "execution", "monitor:placements": "execution", "monitor:admissions": "execution", "monitor:nodes": "nodes", "monitor:node-control": "nodes", "monitor:commands": "nodes", "monitor:dlq": "nodes", "monitor:evidence": "acceptance", "monitor:checkpoints": "acceptance", "monitor:quality": "acceptance", "monitor:finalizations": "acceptance", "monitor:barriers": "acceptance", "monitor:blockers": "acceptance", "monitor:close-gates": "acceptance"};
   const storagePrefix = "aimac.workspaces";
   let accountId = "";
   let selections = {};
@@ -64,6 +64,11 @@
     const entries = catalog[page] || [];
     const selected = legacyPaneAliases[`${page}:${selections?.[page]}`] || selections?.[page];
     return entries.find((entry) => entry.id === selected) || entries[0] || null;
+  }
+
+  function resolve(page, id) {
+    const target = legacyPaneAliases[`${page}:${id}`] || id;
+    return (catalog[page] || []).some((entry) => entry.id === target) ? target : "";
   }
 
   function select(page, id) {
@@ -132,5 +137,5 @@
     return entry.titles.includes(entry.label) ? "" : `<div class="workspace-heading"><h2>${esc(entry.label)}</h2></div>`;
   }
 
-  window.AIMAC_WORKSPACES = {catalog, current, select, setAccount, owner, allows, run, showGuide, showHub, navigation, objectNavigation, heading};
+  window.AIMAC_WORKSPACES = {catalog, current, select, resolve, setAccount, owner, allows, run, showGuide, showHub, navigation, objectNavigation, heading};
 })();

@@ -2247,9 +2247,9 @@ function runWorkflowGuideCase() {
       && /data-menu="tasks" data-menu-workspace="create"/u.test(freshGuide)
       && /data-menu="review" data-menu-workspace="inbox"/u.test(freshGuide)
       && /data-menu="directives" data-menu-workspace="compose"/u.test(freshGuide)
-      && /data-menu="monitor" data-menu-workspace="blockers"/u.test(freshGuide)
-      && /data-menu="monitor" data-menu-workspace="close-gates"/u.test(freshGuide),
-    "流程导航没有「前往」：知道在第几步却点不过去，等于还是几个 tab");
+      && /data-menu="monitor" data-menu-workspace="acceptance"/u.test(freshGuide)
+      && !/data-menu="monitor" data-menu-workspace="(?:close-gates|blockers)"/u.test(freshGuide),
+    "流程导航没有「前往」（或仍指向已合并掉的旧栏目 id）：知道在第几步却点不过去，等于还是几个 tab");
   check("项目设置 / 成员权限的入口没有并进流程导航",
     /data-menu="proj-settings" data-menu-workspace="repositories"/u.test(freshGuide)
       && /data-menu="proj-members" data-menu-workspace="list"/u.test(freshGuide),
@@ -2915,7 +2915,7 @@ async function runErrorGuidanceCase() {
   const reviewMoreRoot = el("div");
   loadConsole(reviewMoreRoot, {realI18n: true}).renderFullPagePaneWith(navState, projectAccount, "p1", "review", "help");
   check("低频页面虽不常驻侧栏但仍可从功能概览进入",
-    ["sessions", "lanes", "models", "placements", "admissions", "events", "node-control", "commands", "dlq", "checkpoints", "finalizations"]
+    ["execution", "events", "nodes", "acceptance"]
       .every((workspace) => monitorHelpHtml.includes(`data-menu="monitor" data-menu-workspace="${workspace}"`))
       && ["activity", "outputs"].every((workspace) => String(overviewMoreRoot.innerHTML || "").includes(`data-menu="proj-overview" data-menu-workspace="${workspace}"`))
       && ["pending", "permissions", "approvals", "findings", "history"].every((workspace) => String(reviewMoreRoot.innerHTML || "").includes(`data-menu="review" data-menu-workspace="${workspace}"`)),
@@ -2925,14 +2925,14 @@ async function runErrorGuidanceCase() {
   const runPageTopbar = String(runPageRoot.innerHTML || "").split('<header class="topbar">')[1]?.split("</header>")[0] || "";
   const runPageAside = String(runPageRoot.innerHTML || "").split("</aside>")[0] || "";
   check("页面标题直接使用具体功能名而不是父页面名",
-    /<h1>工作会话<\/h1>/u.test(runPageTopbar) && /持续多轮执行的会话状态/u.test(runPageTopbar)
+    /<h1>会话与派发<\/h1>/u.test(runPageTopbar) && /工作会话、Agent 派发、执行载体、模型决策与准入/u.test(runPageTopbar)
       && !/<h1>执行监控<\/h1>/u.test(runPageTopbar),
     "打开执行会话后页头仍写父页面“执行监控”，用户无法确认当前位置");
   check("切换功能后自动展开新的业务分组并收起旧分组",
     (runPageAside.match(/<details class="nav-group" open>/gu) || []).length === 1
       && /<details class="nav-group" open>[\s\S]*?<span>资源与设置<\/span>[\s\S]*?data-menu="monitor" data-menu-workspace="overview"/u.test(runPageAside)
-      && !/data-menu="monitor" data-menu-workspace="sessions"/u.test(runPageAside)
-      && /工作会话（更多功能）/u.test(String(runPageRoot.innerHTML || "")),
+      && !/data-menu="monitor" data-menu-workspace="(?:sessions|execution)"/u.test(runPageAside)
+      && /会话与派发（更多功能）/u.test(String(runPageRoot.innerHTML || "")),
     "进入工作会话后侧栏没有把焦点收敛到执行监控组");
   const nodeControlRoot = el("div");
   loadConsole(nodeControlRoot, {realI18n: true}).renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "node-control");
@@ -2940,7 +2940,7 @@ async function runErrorGuidanceCase() {
   check("低频节点页面必须继续归入执行监控分组",
     (nodeControlAside.match(/<details class="nav-group" open>/gu) || []).length === 1
       && /<details class="nav-group" open>[\s\S]*?<span>资源与设置<\/span>/u.test(nodeControlAside)
-      && /运行节点（更多功能）/u.test(String(nodeControlRoot.innerHTML || "")),
+      && /节点与命令（更多功能）/u.test(String(nodeControlRoot.innerHTML || "")),
     "节点控制、控制命令或死信页被放进了没有常用入口的独立分组，深链接打开后侧栏没有任何分组展开");
   const menuActionProbe = loadConsole(el("div"), {realI18n: true});
   menuActionProbe.renderFullPageWith(navState, projectAccount, "p1", "proj-overview");
@@ -2948,8 +2948,8 @@ async function runErrorGuidanceCase() {
   menuActionProbe.stubNavigation();
   await menuActionProbe.navigateMenuTarget("monitor", "sessions");
   check("稳定功能菜单点击会同时切换页面与具体功能",
-    menuActionProbe.sessionState().page === "monitor" && menuActionProbe.workspaceCurrent("monitor") === "sessions"
-      && menuActionProbe.routeSnapshot().workspace === "sessions" && menuActionProbe.sessionState().managementGroupId === ""
+    menuActionProbe.sessionState().page === "monitor" && menuActionProbe.workspaceCurrent("monitor") === "execution"
+      && menuActionProbe.routeSnapshot().workspace === "execution" && menuActionProbe.sessionState().managementGroupId === ""
       && menuActionProbe.sessionState().selectedWork === null,
     JSON.stringify(menuActionProbe.sessionState()));
   await menuActionProbe.navigateMenuTarget("tg", "create");
@@ -3030,7 +3030,7 @@ async function runErrorGuidanceCase() {
   jumpProbe.stubNavigation();
   await jumpProbe.click({target: el("button", {dataset: {jumpPanel: "工作会话"}}), preventDefault: () => {}});
   check("功能看板跨叶子跳转必须写入浏览器历史",
-    jumpProbe.workspaceCurrent("monitor") === "sessions" && jumpProbe.sessionState().routeWriteMode === "push",
+    jumpProbe.workspaceCurrent("monitor") === "execution" && jumpProbe.sessionState().routeWriteMode === "push",
     `看板跳到了 ${jumpProbe.workspaceCurrent("monitor")}，历史写入模式却是 ${jumpProbe.sessionState().routeWriteMode}`);
 
   const objectProbe = loadConsole(el("div"), {realI18n: true});
@@ -3090,8 +3090,8 @@ async function runErrorGuidanceCase() {
     {page: "monitor", projectId: "p1", groupId: group.id, workspace: "quality"});
   const scopedMonitorTopbar = String(scopedMonitorHtml).split('<header class="topbar">')[1]?.split("</header>")[0] || "";
   check("任务组范围的监控页头必须直接显示范围",
-    /<h1>任务组质量门禁<\/h1>/u.test(scopedMonitorTopbar) && /当前任务组范围/u.test(scopedMonitorTopbar),
-    "任务组范围仍显示项目级“质量门禁”，审核者必须再找范围选择器才能确认对象");
+    /<h1>任务组验收与收口<\/h1>/u.test(scopedMonitorTopbar) && /当前任务组范围/u.test(scopedMonitorTopbar),
+    "任务组范围仍显示项目级“验收与收口”，审核者必须再找范围选择器才能确认对象");
   const groupObjectHtml = objectProbe.renderObjectShellWith(objectState,
     {accountId: "sys", accountType: "system_admin", permissions: ["system:*"], organizationId: null},
     {page: "tg", projectId: "p1", groupId: group.id, workspace: "tasks"});
@@ -5432,8 +5432,9 @@ async function runPendingTruncationCase() {
         {taskGroupId: "tg1", progress: {taskGroup: objectGroups.taskGroups[0], workItems: []}, config: {}, roomMessages: []});
       check("任务组详情使用对象局部功能栏而不是丢失入口或恢复横向 Tab",
         /class="object-detail-layout"/u.test(groupShell) && /class="object-section-nav"/u.test(groupShell)
-          && /工作推进/u.test(groupShell) && /任务组配置/u.test(groupShell) && /执行与审计/u.test(groupShell)
-          && /任务列表/u.test(groupShell) && /任务组 Skill/u.test(groupShell) && /执行控制/u.test(groupShell),
+          && /任务与进度/u.test(groupShell) && /角色与规则/u.test(groupShell) && /执行控制/u.test(groupShell) && /协作记录/u.test(groupShell)
+          && !/object-section-group-title/u.test(groupShell)
+          && (String(groupShell).match(/class="object-section-nav-item/gu) || []).length === 4,
         textOf(groupShell).slice(0, 420));
       const stalePermissionProbe = loadConsole(el("div"), {realI18n: true});
       stalePermissionProbe.renderTaskGroupsWith(objectGroups, orgAdmin, "p1", "tg1", {taskGroupId: "tg1", progress: {taskGroup: {...objectGroups.taskGroups[0], canControl: true}, workItems: []}, config: {}, roomMessages: []}, ["list"]);
@@ -5468,46 +5469,33 @@ async function runPendingTruncationCase() {
         /data-execution-id="run1"[^>]*data-task="tg1"/u.test(multiMonitor)
           && /data-execution-id="run2"[^>]*data-task="tg1"/u.test(multiMonitor)
           && !/data-command="(?:pause_dispatch|resume_dispatch|cancel_dispatch)"/u.test(multiMonitor), textOf(multiMonitor).slice(0, 500));
-      const monitorObjectPanes = [
-        ["sessions", "工作会话"],
-        ["dispatches", "智能体派发"],
-        ["lanes", "可复用执行载体（Worker Lane）"],
-        ["models", "模型选择记录"],
-        ["placements", "会话放置记录"],
-        ["admissions", "准入决策"]
-      ].map(([pane, title]) => ({pane, title, html: objectProbe.renderMonitorInventoryWith(multiState, orgAdmin, "p1", [pane])}));
-      check("会话、派发、执行载体、模型决策、会话放置和准入必须是六个独立监控页面",
-        monitorObjectPanes.every((current) => current.html.includes(`<h2>${current.title}</h2>`)
-          && monitorObjectPanes.filter((other) => other.pane !== current.pane).every((other) => !current.html.includes(`<h2>${other.title}</h2>`))),
-        monitorObjectPanes.map((item) => `${item.pane}:${textOf(item.html).slice(0, 80)}`).join(" | "));
-      const monitorControlPanes = [
-        ["node-control", "agent 节点"],
-        ["commands", "控制通道"],
-        ["dlq", "死信队列"]
-      ].map(([pane, title]) => ({pane, title, html: objectProbe.renderMonitorInventoryWith(multiState, orgAdmin, "p1", [pane])}));
-      check("运行节点、控制命令和死信队列必须是三个独立监控页面",
-        monitorControlPanes.every((current) => current.html.includes(`<h2>${current.title}</h2>`)
-          && monitorControlPanes.filter((other) => other.pane !== current.pane).every((other) => !current.html.includes(`<h2>${other.title}</h2>`))),
-        monitorControlPanes.map((item) => `${item.pane}:${textOf(item.html).slice(0, 80)}`).join(" | "));
+      // 监控栏目按人要回答的问题合并：会话与派发（谁在跑、为什么这么派）/ 节点与命令（载体）/ 验收与收口（收得了口吗）。
+      // 每个合并后的栏目要含齐自己的小节，且不串进别的栏目的小节。
+      const executionPane = objectProbe.renderMonitorInventoryWith(multiState, orgAdmin, "p1", ["execution"]);
+      const executionTitles = ["工作会话", "智能体派发", "可复用执行载体（Worker Lane）", "模型选择记录", "会话放置记录", "准入决策"];
+      check("「会话与派发」栏目含齐会话、派发、执行载体、模型决策、会话放置和准入六个小节",
+        executionTitles.every((title) => executionPane.includes(`<h2>${title}</h2>`))
+          && !/<h2>(?:agent 节点|控制通道|死信队列|关闭门禁)<\/h2>/u.test(executionPane),
+        textOf(executionPane).slice(0, 200));
+      const nodesPane = objectProbe.renderMonitorInventoryWith(multiState, orgAdmin, "p1", ["nodes"]);
+      check("「节点与命令」栏目含齐运行节点、控制命令和死信队列三个小节",
+        ["agent 节点", "控制通道", "死信队列"].every((title) => nodesPane.includes(`<h2>${title}</h2>`))
+          && !/<h2>(?:工作会话|智能体派发|关闭门禁)<\/h2>/u.test(nodesPane),
+        textOf(nodesPane).slice(0, 200));
       const evidenceState = {...multiState,
         checkpoints: [{checkpointId: "cp1", taskGroupId: "tg1", workId: "w1", commitRefs: [], pushRefs: [], artifactManifestRefs: []}],
         qualityGates: [{gateId: "qg1", taskGroupId: "tg1", workItemId: "w1", gateType: "tests_passed", status: "passed"}],
         reviewPlans: [{reviewPlanId: "rp1", taskGroupId: "tg1", status: "closed", resolvedBy: "org", resolutionJustification: "复验完成"}]};
-      const monitorEvidencePanes = [
-        ["checkpoints", "检查点（Git 证据）"],
-        ["quality", "质量门禁 / 测试证据"],
-        ["finalizations", "最近的人工定稿"]
-      ].map(([pane, title]) => ({pane, title, html: objectProbe.renderMonitorInventoryWith(evidenceState, orgAdmin, "p1", [pane])}));
-      check("检查点、质量门禁和人工定稿必须是三个独立监控页面",
-        monitorEvidencePanes.every((current) => current.html.includes(`<h2>${current.title}</h2>`)
-          && monitorEvidencePanes.filter((other) => other.pane !== current.pane).every((other) => !current.html.includes(`<h2>${other.title}</h2>`))),
-        monitorEvidencePanes.map((item) => `${item.pane}:${textOf(item.html).slice(0, 80)}`).join(" | "));
-      const blockerPane = objectProbe.renderMonitorInventoryWith(evidenceState, orgAdmin, "p1", ["blockers"]);
-      const closeGatePane = objectProbe.renderMonitorInventoryWith(evidenceState, orgAdmin, "p1", ["close-gates"]);
-      check("阻塞处置和关闭门禁必须是两个独立监控页面",
-        /<h2>阻塞项人工处置<\/h2>/u.test(blockerPane) && !/<h2>关闭门禁<\/h2>/u.test(blockerPane)
-          && /<h2>关闭门禁<\/h2>/u.test(closeGatePane) && !/<h2>阻塞项人工处置<\/h2>/u.test(closeGatePane),
-        `${textOf(blockerPane).slice(0, 100)} | ${textOf(closeGatePane).slice(0, 100)}`);
+      const acceptancePane = objectProbe.renderMonitorInventoryWith(evidenceState, orgAdmin, "p1", ["acceptance"]);
+      check("「验收与收口」栏目含齐检查点、质量门禁、人工定稿、阻塞处置和关闭门禁五个小节",
+        ["检查点（Git 证据）", "质量门禁 / 测试证据", "最近的人工定稿", "阻塞项人工处置", "关闭门禁"].every((title) => acceptancePane.includes(`<h2>${title}</h2>`))
+          && !/<h2>(?:工作会话|智能体派发|agent 节点)<\/h2>/u.test(acceptancePane),
+        textOf(acceptancePane).slice(0, 200));
+      check("旧的明细栏目地址（quality / blockers / node-control）都落到合并后的栏目",
+        objectProbe.renderMonitorInventoryWith(evidenceState, orgAdmin, "p1", ["quality"]).includes("<h2>关闭门禁</h2>")
+          && objectProbe.renderMonitorInventoryWith(evidenceState, orgAdmin, "p1", ["blockers"]).includes("<h2>检查点（Git 证据）</h2>")
+          && objectProbe.renderMonitorInventoryWith(multiState, orgAdmin, "p1", ["node-control"]).includes("<h2>死信队列</h2>"),
+        "旧栏目 id 没有迁到合并后的栏目 —— 旧书签、待办按钮会落到空页");
       const executionDetailBase = {
         objectType: "dispatch", objectId: "run1", settled: false,
         taskGroup: {id: "tg1", name: "任务组一"}, workItem: {id: "w1", title: "执行任务"},
@@ -5560,7 +5548,7 @@ async function runPendingTruncationCase() {
       nodeTaskProbe.stubNavigation();
       await nodeTaskProbe.click({target: el("button", {dataset: {action: "open-node-tasks"}}), preventDefault: () => {}});
       check("多派发节点进入项目级执行会话而不遗留单任务组范围", nodeTaskProbe.sessionState().page === "monitor"
-        && nodeTaskProbe.workspaceCurrent("monitor") === "dispatches"
+        && nodeTaskProbe.workspaceCurrent("monitor") === "execution"
         && nodeTaskProbe.sessionState().managementGroupId === "", JSON.stringify(nodeTaskProbe.sessionState()));
       const overdueState = {...idleNodeState, fleet: {online: 0, total: 1}, agentRuntimeNodes: [{...idleNodeState.agentRuntimeNodes[0], lastHeartbeatAt: "2000-01-01T00:00:00Z"}]};
       const overdueHelp = objectProbe.renderProjectAgentsInventoryWith(overdueState, orgAdmin, "p1", "table", ["help"]);
@@ -5919,12 +5907,11 @@ async function runPendingTruncationCase() {
         && /data-section-title="系统规则"/u.test(detailSystemRulesPane)
         && /data-section-title="业务规则"/u.test(detailBusinessRulesPane),
       "详情小节没有在实际 pane 中输出 data-section-title，卡片无法定位到具体明细");
-    check("任务组配置对象分别进入独立 pane",
-      !/角色 Skill 定制|data-form="tg-rules"/u.test(detailInheritancePane)
-        && !/配置来源|data-form="tg-rules"/u.test(detailSkillsPane)
-        && /data-category="system"/u.test(detailSystemRulesPane) && !/data-category="business"/u.test(detailSystemRulesPane)
-        && /data-category="business"/u.test(detailBusinessRulesPane) && !/data-category="system"/u.test(detailBusinessRulesPane),
-      "配置继承、Skill、系统规则或业务规则仍混在同一任务组页面");
+    check("任务组「角色与规则」栏目含齐配置继承、Skill 定制、系统规则和业务规则；任务栏目不混入配置",
+      /配置来源/u.test(detailInheritancePane) && /角色 Skill 定制/u.test(detailInheritancePane)
+        && /data-category="system"/u.test(detailInheritancePane) && /data-category="business"/u.test(detailInheritancePane)
+        && !/data-form="tg-rules"|角色 Skill 定制/u.test(detailTasksPane) && /data-section-title="工作项"/u.test(detailTasksPane),
+      "任务组配置四件事没有并在「角色与规则」一个栏目里，或任务栏目里又混进了配置");
     check("任务组详情跳转处理器支持小节锚点和动态标题前缀",
       /querySelectorAll\("\[data-section-title\]"\)/u.test(probe.handlerSource("click"))
         && /sectionTitle\.startsWith\(title\)/u.test(probe.handlerSource("click")),
@@ -6637,7 +6624,7 @@ async function runPendingTruncationCase() {
     check("待办按钮必须直达阻塞门禁和指令记录",
       /data-menu="monitor" data-menu-workspace="blockers"/u.test(panel)
         && /data-menu="directives" data-menu-workspace="history"/u.test(panel)
-        && /处置入口：阻塞处置/u.test(panel) && /处置入口：指令记录/u.test(panel),
+        && /处置入口：验收与收口/u.test(panel) && /处置入口：指令记录/u.test(panel),
       "待办卡仍只携带父页面，点击后会落到项目监控或下达指令");
   }
 

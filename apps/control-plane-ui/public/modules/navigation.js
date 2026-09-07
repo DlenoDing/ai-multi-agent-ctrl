@@ -40,21 +40,10 @@
     leaf("proj-agents", "create", "新建 Agent 档案", "创建当前项目专属逻辑角色", {requires: "agent:activate"}),
     leaf("proj-agents", "nodes", "项目运行节点", "项目专属与组织共享运行载体"),
     leaf("proj-agents", "register", "注册运行节点", "签发一次性令牌和安装脚本", {requires: "agent:activate"}),
-    leaf("monitor", "sessions", "工作会话", "持续多轮执行的会话状态"),
-    leaf("monitor", "dispatches", "Agent 派发", "任务派发、进度、阻塞和结果"),
-    leaf("monitor", "lanes", "执行载体", "可复用 Worker Lane 与当前会话"),
-    leaf("monitor", "models", "模型决策", "实际模型、Agent 偏好和选型理由"),
-    leaf("monitor", "placements", "会话放置", "新会话、子 Agent 与准入判定"),
-    leaf("monitor", "admissions", "准入决策", "阶段门、容量和执行准入理由"),
+    leaf("monitor", "execution", "会话与派发", "工作会话、Agent 派发、执行载体、模型决策与准入"),
     leaf("monitor", "events", "实时事件", "Agent 执行过程持续回送"),
-    leaf("monitor", "node-control", "运行节点", "执行节点健康、准入和控制入口"),
-    leaf("monitor", "commands", "控制命令", "暂停、恢复、取消和节点 ACK"),
-    leaf("monitor", "dlq", "死信队列", "控制命令重试超限后的处置"),
-    leaf("monitor", "checkpoints", "检查点证据", "Git 提交、推送和产出清单"),
-    leaf("monitor", "quality", "质量门禁", "测试结果、质量门和人工豁免"),
-    leaf("monitor", "finalizations", "人工定稿", "收尾裁决、责任人、时间和理由"),
-    leaf("monitor", "blockers", "阻塞处置", "评审计划、共享定义和卡住方案"),
-    leaf("monitor", "close-gates", "关闭门禁", "任务组关闭条件与阻塞对象"),
+    leaf("monitor", "nodes", "节点与命令", "运行节点健康、控制命令与死信处置"),
+    leaf("monitor", "acceptance", "验收与收口", "检查点证据、质量门禁、人工定稿、阻塞处置与关闭门禁"),
     leaf("review", "pending", "待我审核", "执行方案与确认卡"),
     leaf("review", "permissions", "权限审批", "Agent 请求的临时权限与作用范围"),
     leaf("review", "approvals", "操作审批", "危险操作、阶段门和多方审批"),
@@ -176,7 +165,7 @@
     if (!context.taskGroupScope) return base;
     const scopedTitles = {
       tasks: {list: "任务组任务", create: "任务组新建任务"},
-      monitor: {overview: "任务组监控", sessions: "任务组工作会话", dispatches: "任务组 Agent 派发", lanes: "任务组执行载体", models: "任务组模型决策", placements: "任务组会话放置", admissions: "任务组准入决策", events: "任务组实时事件", "node-control": "任务组运行节点", commands: "任务组控制命令", dlq: "任务组死信队列", checkpoints: "任务组检查点证据", quality: "任务组质量门禁", finalizations: "任务组人工定稿", blockers: "任务组阻塞处置", "close-gates": "任务组关闭门禁", help: "任务组监控全部功能"},
+      monitor: {overview: "任务组监控", execution: "任务组会话与派发", events: "任务组实时事件", nodes: "任务组节点与命令", acceptance: "任务组验收与收口", help: "任务组监控全部功能"},
       review: {pending: "任务组待审核", permissions: "任务组权限审批", approvals: "任务组操作审批", findings: "任务组发现处置", history: "任务组审核历史", inbox: "任务组待办汇总", help: "任务组审核全部功能"},
       directives: {compose: "任务组下达指令", history: "任务组指令记录", help: "任务组指令全部功能"}
     };

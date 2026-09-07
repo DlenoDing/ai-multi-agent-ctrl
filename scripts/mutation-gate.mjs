@@ -782,12 +782,12 @@ const MUTATIONS = [
     expect: "「详情阅读路径」要收进默认关闭的折叠块"
   },
   {
-    name: "任务组配置继承、Skill 和两类规则必须拆成独立对象栏目",
-    file: "apps/control-plane-ui/public/modules/workspaces.js",
-    gate: "console",
-    from: '      pane("inheritance", "继承与覆盖", ["配置继承"], "任务组配置"),\n      pane("skills", "任务组 Skill", ["角色 Skill 定制"], "任务组配置"),\n      pane("system-rules", "任务组系统规则", ["系统规则"], "任务组配置"),\n      pane("business-rules", "任务组业务规则", ["业务规则"], "任务组配置"),',
-    to: '      pane("config", "任务组角色与规则", ["配置继承", "角色 Skill 定制", "系统规则", "业务规则"], "任务组配置"),',
-    expect: "配置继承、Skill、系统规则或业务规则仍混在同一任务组页面"
+    name: '任务组「角色与规则」栏目必须含齐系统规则（少一个小节＝那段配置没处看）',
+    file: 'apps/control-plane-ui/public/modules/workspaces.js',
+    gate: 'console',
+    from: '      pane("config", "角色与规则", ["角色列表", "配置继承", "角色 Skill 定制", "系统规则", "业务规则"]),',
+    to: '      pane("config", "角色与规则", ["角色列表", "配置继承", "角色 Skill 定制", "业务规则"]),',
+    expect: '任务组「角色与规则」栏目含齐'
   },
   {
     name: "任务组详情阅读卡必须按对象局部栏目跳转",
@@ -11983,12 +11983,12 @@ const MUTATIONS = [
     expect: "切换功能后自动展开新的业务分组并收起旧分组"
   },
   {
-    name: "低频节点页面必须归入执行监控分组",
-    file: "apps/control-plane-ui/public/modules/navigation.js",
-    gate: "console",
-    from: '    leaf("monitor", "events", "实时事件", "Agent 执行过程持续回送"),\n    leaf("monitor", "node-control", "运行节点", "执行节点健康、准入和控制入口"),',
-    to: '    leaf("monitor", "events", "实时事件", "Agent 执行过程持续回送"),\n    {divider: "节点与控制"},\n    leaf("monitor", "node-control", "运行节点", "执行节点健康、准入和控制入口"),',
-    expect: "低频节点页面必须继续归入执行监控分组"
+    name: '监控的「节点与命令」叶子不许从菜单表里消失（说明页与页头标题都靠它）',
+    file: 'apps/control-plane-ui/public/modules/navigation.js',
+    gate: 'console',
+    from: '    leaf("monitor", "nodes", "节点与命令", "运行节点健康、控制命令与死信处置"),\n',
+    to: '',
+    expect: '低频页面虽不常驻侧栏但仍可从功能概览进入'
   },
   {
     name: "页面标题必须跟随具体功能菜单",
@@ -13525,28 +13525,28 @@ const MUTATIONS = [
     expect: "成员定向授权保留成员和选择的项目"
   },
   {
-    name: "执行会话复合页必须拆成六个监控对象页面",
-    file: "apps/control-plane-ui/public/modules/workspaces.js",
-    gate: "console",
-    from: 'pane("sessions", "工作会话", ["工作会话"]), pane("dispatches", "Agent 派发", ["智能体派发"]), pane("lanes", "执行载体", ["可复用执行载体（Worker Lane）"]), pane("models", "模型决策", ["模型选择记录"]), pane("placements", "会话放置", ["会话放置记录"]), pane("admissions", "准入决策", ["准入决策"])',
-    to: 'pane("runs", "执行会话", ["工作会话", "智能体派发", "可复用执行载体（Worker Lane）", "模型选择记录", "会话放置记录", "准入决策"])',
-    expect: "必须是六个独立监控页面"
+    name: '监控「会话与派发」栏目必须含齐模型决策小节',
+    file: 'apps/control-plane-ui/public/modules/workspaces.js',
+    gate: 'console',
+    from: '"可复用执行载体（Worker Lane）", "模型选择记录", "会话放置记录", "准入决策"]),',
+    to: '"可复用执行载体（Worker Lane）", "会话放置记录", "准入决策"]),',
+    expect: '「会话与派发」栏目含齐'
   },
   {
-    name: "模型决策必须保留独立监控入口",
-    file: "apps/control-plane-ui/public/modules/navigation.js",
-    gate: "console",
-    from: '    leaf("monitor", "models", "模型决策", "实际模型、Agent 偏好和选型理由"),',
-    to: "",
-    expect: "低频页面虽不常驻侧栏但仍可从功能概览进入"
+    name: '监控「验收与收口」叶子不许从菜单表里消失',
+    file: 'apps/control-plane-ui/public/modules/navigation.js',
+    gate: 'console',
+    from: '    leaf("monitor", "acceptance", "验收与收口", "检查点证据、质量门禁、人工定稿、阻塞处置与关闭门禁"),\n',
+    to: '',
+    expect: '低频页面虽不常驻侧栏但仍可从功能概览进入'
   },
   {
-    name: "旧执行会话地址必须迁移到工作会话",
-    file: "apps/control-plane-ui/public/modules/workspaces.js",
-    gate: "workspace",
-    from: '"monitor:runs": "sessions", "monitor:nodes":',
-    to: '"monitor:nodes":',
-    expect: "legacy monitor runs pane migrates"
+    name: '旧执行会话地址（runs）必须迁移到「会话与派发」',
+    file: 'apps/control-plane-ui/public/modules/workspaces.js',
+    gate: 'workspace',
+    from: '"monitor:runs": "execution", "monitor:sessions": "execution",',
+    to: '"monitor:runs": "overview", "monitor:sessions": "execution",',
+    expect: 'legacy monitor pane runs migrates to execution'
   },
   {
     name: "节点当前任务入口必须直达 Agent 派发",
@@ -13557,52 +13557,52 @@ const MUTATIONS = [
     expect: "多派发节点进入项目级执行会话"
   },
   {
-    name: "节点、控制命令和死信必须拆成三个监控页面",
-    file: "apps/control-plane-ui/public/modules/workspaces.js",
-    gate: "console",
-    from: 'pane("node-control", "运行节点", ["agent 节点"]), pane("commands", "控制命令", ["控制通道"]), pane("dlq", "死信队列", ["死信队列"])',
-    to: 'pane("nodes", "节点控制", ["agent 节点", "控制通道", "死信队列"])',
-    expect: "必须是三个独立监控页面"
+    name: '监控「节点与命令」栏目必须含齐死信队列小节',
+    file: 'apps/control-plane-ui/public/modules/workspaces.js',
+    gate: 'console',
+    from: '      pane("nodes", "节点与命令", ["agent 节点", "控制通道", "死信队列"]),',
+    to: '      pane("nodes", "节点与命令", ["agent 节点", "控制通道"]),',
+    expect: '「节点与命令」栏目含齐'
   },
   {
-    name: "控制命令必须保留独立监控入口",
-    file: "apps/control-plane-ui/public/modules/navigation.js",
-    gate: "console",
-    from: '    leaf("monitor", "commands", "控制命令", "暂停、恢复、取消和节点 ACK"),',
-    to: "",
-    expect: "低频页面虽不常驻侧栏但仍可从功能概览进入"
+    name: '任务组范围下的监控页头要按合并后的栏目给标题',
+    file: 'apps/control-plane-ui/public/modules/navigation.js',
+    gate: 'console',
+    from: 'nodes: "任务组节点与命令", acceptance: "任务组验收与收口", help: "任务组监控全部功能"},',
+    to: 'nodes: "任务组节点与命令", help: "任务组监控全部功能"},',
+    expect: '任务组范围的监控页头必须直接显示范围'
   },
   {
-    name: "旧节点控制地址必须迁移到运行节点",
-    file: "apps/control-plane-ui/public/modules/workspaces.js",
-    gate: "workspace",
-    from: '"monitor:runs": "sessions", "monitor:nodes": "node-control"',
-    to: '"monitor:runs": "sessions"',
-    expect: "legacy monitor nodes pane migrates"
+    name: '旧节点控制地址（node-control）必须迁移到「节点与命令」',
+    file: 'apps/control-plane-ui/public/modules/workspaces.js',
+    gate: 'console',
+    from: '"monitor:node-control": "nodes", "monitor:commands": "nodes",',
+    to: '"monitor:commands": "nodes",',
+    expect: '旧的明细栏目地址（quality / blockers / node-control）都落到合并后的栏目'
   },
   {
-    name: "检查点、质量门和人工定稿必须拆成三个监控页面",
-    file: "apps/control-plane-ui/public/modules/workspaces.js",
-    gate: "console",
-    from: 'pane("checkpoints", "检查点证据", ["检查点（Git 证据）"]), pane("quality", "质量门禁", ["质量门禁 / 测试证据"]), pane("finalizations", "人工定稿", ["最近的人工定稿"])',
-    to: 'pane("evidence", "产出验收", ["检查点（Git 证据）", "质量门禁 / 测试证据", "最近的人工定稿"])',
-    expect: "必须是三个独立监控页面"
+    name: '监控「验收与收口」栏目必须含齐关闭门禁小节',
+    file: 'apps/control-plane-ui/public/modules/workspaces.js',
+    gate: 'console',
+    from: '"最近的人工定稿", "阻塞项人工处置", "关闭门禁"]),',
+    to: '"最近的人工定稿", "阻塞项人工处置"]),',
+    expect: '「验收与收口」栏目含齐'
   },
   {
-    name: "质量门禁必须有独立监控菜单入口",
-    file: "apps/control-plane-ui/public/modules/navigation.js",
-    gate: "console",
-    from: '    leaf("monitor", "quality", "质量门禁", "测试结果、质量门和人工豁免"),',
-    to: "",
-    expect: "质量门禁"
+    name: '流程导航的「前往」要按合并后的栏目落点（旧栏目 id 直接发出去＝点不过去）',
+    file: 'apps/control-plane-ui/public/app.js',
+    gate: 'console',
+    from: '    const target = (workspaces.resolve(id, workspace) || workspace || "");',
+    to: '    const target = workspace || "";',
+    expect: '流程导航没有「前往」'
   },
   {
-    name: "旧产出验收地址必须迁移到检查点证据",
-    file: "apps/control-plane-ui/public/modules/workspaces.js",
-    gate: "workspace",
-    from: '"monitor:nodes": "node-control", "monitor:evidence": "checkpoints"',
-    to: '"monitor:nodes": "node-control"',
-    expect: "legacy monitor evidence pane migrates"
+    name: '旧质量门禁地址（quality）必须迁移到「验收与收口」',
+    file: 'apps/control-plane-ui/public/modules/workspaces.js',
+    gate: 'console',
+    from: '"monitor:checkpoints": "acceptance", "monitor:quality": "acceptance",',
+    to: '"monitor:checkpoints": "acceptance",',
+    expect: '旧的明细栏目地址（quality / blockers / node-control）都落到合并后的栏目'
   },
   {
     name: "质量门待办必须直达质量门禁页面",
@@ -13733,28 +13733,28 @@ const MUTATIONS = [
     expect: "legacy system protocol pane migrates"
   },
   {
-    name: "阻塞处置与关闭门禁必须拆成两个监控页面",
-    file: "apps/control-plane-ui/public/modules/workspaces.js",
-    gate: "console",
-    from: 'pane("blockers", "阻塞处置", ["阻塞项人工处置"]), pane("close-gates", "关闭门禁", ["关闭门禁"])',
-    to: 'pane("barriers", "阻塞与门禁", ["阻塞项人工处置", "关闭门禁"])',
-    expect: "必须是两个独立监控页面"
+    name: '菜单跳转要先把旧栏目 id 归到合并后的栏目（否则旧按钮点了没反应）',
+    file: 'apps/control-plane-ui/public/app.js',
+    gate: 'console',
+    from: '  nextWorkspace = (nextWorkspace && workspaces.resolve(nextPage, nextWorkspace)) || nextWorkspace;\n',
+    to: '',
+    expect: '稳定功能菜单点击会同时切换页面与具体功能'
   },
   {
-    name: "关闭门禁必须有独立监控菜单入口",
-    file: "apps/control-plane-ui/public/modules/navigation.js",
-    gate: "console",
-    from: '    leaf("monitor", "close-gates", "关闭门禁", "任务组关闭条件与阻塞对象"),',
-    to: "",
-    expect: "关闭门禁"
+    name: '待办卡的处置入口要写合并后的栏目名',
+    file: 'apps/control-plane-ui/public/app.js',
+    gate: 'console',
+    from: '处置入口：${esc(menuMeta(perspectiveOf(currentAccount), bucket.page, workspaces.resolve(bucket.page, bucket.workspace) || bucket.workspace)[0])}',
+    to: '处置入口：${esc(menuMeta(perspectiveOf(currentAccount), bucket.page, bucket.workspace)[0])}',
+    expect: '待办按钮必须直达阻塞门禁和指令记录'
   },
   {
-    name: "旧阻塞与门禁地址必须迁移到阻塞处置",
-    file: "apps/control-plane-ui/public/modules/workspaces.js",
-    gate: "workspace",
-    from: '"monitor:evidence": "checkpoints", "monitor:barriers": "blockers"',
-    to: '"monitor:evidence": "checkpoints"',
-    expect: "legacy monitor barriers pane migrates"
+    name: '旧任务组配置地址（inheritance）必须迁移到「角色与规则」',
+    file: 'apps/control-plane-ui/public/modules/workspaces.js',
+    gate: 'workspace',
+    from: '"group-detail:inheritance": "config", "group-detail:skills": "config",',
+    to: '"group-detail:skills": "config",',
+    expect: 'legacy task-group pane inheritance migrates to config'
   },
   {
     name: "项目主操作的执行阻塞必须直达阻塞处置",

@@ -231,14 +231,18 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
 }
 
 {
-  check("legacy monitor runs pane migrates to the work-session page", workspaces.select("monitor", "runs") === true
-    && workspaces.current("monitor")?.id === "sessions");
-  check("legacy monitor nodes pane migrates to the runtime-node page", workspaces.select("monitor", "nodes") === true
-    && workspaces.current("monitor")?.id === "node-control");
-  check("legacy monitor evidence pane migrates to the checkpoint page", workspaces.select("monitor", "evidence") === true
-    && workspaces.current("monitor")?.id === "checkpoints");
-  check("legacy monitor barriers pane migrates to blocker handling", workspaces.select("monitor", "barriers") === true
-    && workspaces.current("monitor")?.id === "blockers");
+  // 监控栏目已按问题合并为 5 个：旧的 16 个明细栏目 id（以及更早的 runs/nodes/evidence/barriers）都要落到合并后的栏目。
+  for (const [legacy, target] of [["runs", "execution"], ["sessions", "execution"], ["dispatches", "execution"], ["lanes", "execution"],
+    ["models", "execution"], ["placements", "execution"], ["admissions", "execution"], ["nodes", "nodes"], ["node-control", "nodes"],
+    ["commands", "nodes"], ["dlq", "nodes"], ["evidence", "acceptance"], ["checkpoints", "acceptance"], ["quality", "acceptance"],
+    ["finalizations", "acceptance"], ["barriers", "acceptance"], ["blockers", "acceptance"], ["close-gates", "acceptance"]]) {
+    check(`legacy monitor pane ${legacy} migrates to ${target}`, workspaces.select("monitor", legacy) === true
+      && workspaces.current("monitor")?.id === target && workspaces.resolve("monitor", legacy) === target,
+      JSON.stringify(workspaces.current("monitor")));
+  }
+  check("monitor keeps five question-shaped panes plus help",
+    workspaces.catalog.monitor.map((entry) => entry.id).join(",") === "overview,execution,events,nodes,acceptance,help",
+    workspaces.catalog.monitor.map((entry) => entry.id).join(","));
   check("legacy review decisions pane migrates to permission approvals", workspaces.select("review", "decisions") === true
     && workspaces.current("review")?.id === "permissions");
   check("legacy project roles pane migrates to default roles", workspaces.select("proj-settings", "roles") === true
@@ -287,27 +291,39 @@ for (const [page, firstPane] of Object.entries(expectedDefaults)) {
 }
 
 {
+  // 任务组详情 4 个栏目：任务与进度 / 角色与规则 / 执行控制 / 协作记录。每个小节标题都要落到其中一个。
   const detailOwners = [
-    ["工作项（共 4000 个，当前展示 300 个）", "tasks"], ["事项清单", "progress"], ["任务执行时间线", "timeline"],
-    ["角色列表", "roles"], ["配置继承", "inheritance"], ["角色 Skill 定制", "skills"],
-    ["系统规则", "system-rules"], ["业务规则", "business-rules"], ["执行控制", "control"],
-    ["准入与阻断分类", "admission"], ["阻塞", "blockers"], ["协作记录（Agent 房间消息）", "collaboration"]
+    ["工作项（共 4000 个，当前展示 300 个）", "tasks"], ["事项清单", "tasks"], ["任务执行时间线", "tasks"],
+    ["角色列表", "config"], ["配置继承", "config"], ["角色 Skill 定制", "config"],
+    ["系统规则", "config"], ["业务规则", "config"], ["执行控制", "control"],
+    ["准入与阻断分类", "control"], ["阻塞", "control"], ["协作记录（Agent 房间消息）", "collaboration"]
   ];
   for (const [title, expected] of detailOwners) {
     const owner = workspaces.owner("group-detail", title);
     check(`group detail title maps to ${expected}: ${title}`, owner === expected, `owner=${owner}`);
   }
+  check("task-group detail keeps four panes plus help",
+    workspaces.catalog["group-detail"].map((entry) => entry.id).join(",") === "tasks,config,control,collaboration,help",
+    workspaces.catalog["group-detail"].map((entry) => entry.id).join(","));
   workspaces.select("group-detail", "inheritance");
   const objectNav = workspaces.objectNavigation("group-detail");
-  check("task-group detail has a grouped desktop object rail and one mobile local picker",
+  check("task-group detail has a flat four-item object rail and one mobile local picker",
     /class="object-section-nav"/u.test(objectNav) && /class="workspace-mobile-picker"/u.test(objectNav)
       && (objectNav.match(/object-section-nav-item active/gu) || []).length === 1
-      && /data-workspace="inheritance" aria-current="page"/u.test(objectNav)
-      && ["工作推进", "任务组配置", "执行与审计"].every((label) => objectNav.includes(`<div class="object-section-group-title">${label}</div>`))
-      && ["任务组角色", "继承与覆盖", "任务组 Skill", "任务组系统规则", "任务组业务规则"].every((label) => objectNav.includes(label)), objectNav);
-  workspaces.select("group-detail", "config");
-  check("legacy task-group config pane migrates to inheritance",
-    workspaces.current("group-detail")?.id === "inheritance", JSON.stringify(workspaces.current("group-detail")));
+      && (objectNav.match(/class="object-section-nav-item/gu) || []).length === 4
+      && /data-workspace="config" aria-current="page"/u.test(objectNav)
+      && !/object-section-group-title/u.test(objectNav)
+      && ["任务与进度", "角色与规则", "执行控制", "协作记录"].every((label) => objectNav.includes(label)), objectNav);
+  for (const legacy of ["config", "inheritance", "roles", "skills", "system-rules", "business-rules"]) {
+    workspaces.select("group-detail", legacy);
+    check(`legacy task-group pane ${legacy} migrates to config`,
+      workspaces.current("group-detail")?.id === "config", JSON.stringify(workspaces.current("group-detail")));
+  }
+  for (const [legacy, target] of [["progress", "tasks"], ["timeline", "tasks"], ["admission", "control"], ["blockers", "control"]]) {
+    workspaces.select("group-detail", legacy);
+    check(`legacy task-group pane ${legacy} migrates to ${target}`,
+      workspaces.current("group-detail")?.id === target, JSON.stringify(workspaces.current("group-detail")));
+  }
   workspaces.select("group-detail", "tasks");
 }
 

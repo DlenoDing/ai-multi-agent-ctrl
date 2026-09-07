@@ -4716,8 +4716,12 @@ function workflowGuidePanel(project, groups) {
   const openBarriers = (state.closeBarriers || []).filter((item) => groupIds.has(item.taskGroupId) && (item.blockers || []).length).length;
   const visible = new Set(menuForCurrentSection(perspectiveOf(currentAccount), page)
     .filter((item) => item.id).map((item) => `${item.id}|${item.workspace || ""}`));
-  const go = (id, workspace) => visible.has(`${id}|${workspace || ""}`)
-    ? `<button class="secondary-button" data-menu="${esc(id)}" data-menu-workspace="${esc(workspace || "")}">前往</button>` : "";
+  // 步骤里记的是明细栏目（blockers / close-gates…），页内栏目已按问题合并（acceptance…）：按合并后的栏目找入口、发跳转。
+  const go = (id, workspace) => {
+    const target = (workspaces.resolve(id, workspace) || workspace || "");
+    return visible.has(`${id}|${target}`)
+      ? `<button class="secondary-button" data-menu="${esc(id)}" data-menu-workspace="${esc(target)}">前往</button>` : "";
+  };
   // 「项目操作路径」并入后的两步：仓库没配时 agent 的产出没有落点；选了凭证模式却没填密钥的仓库要点名（配了等于没配）。
   const repos = projectRepositoryConfigs(project);
   const credentialMissing = repos.filter((repo) => {
@@ -4845,7 +4849,7 @@ function renderProjectOverview() {
             const stuck = (state.agentDispatches || []).filter((item) => item.status === "blocked").length;
             if (!stuck) return "";
             return `<div class="small warn-text">另有 ${stuck}${countSuffix("agentDispatches")} 个派发被挡住 ——`
-              + " 到“Agent 派发”或“阻塞处置”看它们卡在哪</div>";
+              + " 到“会话与派发”或“验收与收口”看它们卡在哪</div>";
           })()}
         </div>
         <div class="metric"><span>待人工确认</span><strong>${pendingConfirmCount}</strong>
@@ -5659,19 +5663,19 @@ function topologyBlockerText(blocker) {
 const CLOSE_GATE_GUIDE = {
   all_required_work_closed: "还有工作项没收口：到任务组页看它们卡在哪，或取消不再需要的那些",
   all_findings_terminal: "到「人工审核」页把未处置的发现项处置掉",
-  all_quality_gates_passed: "到“质量门禁”处理未通过的质量门（可豁免，需填理由）",
+  all_quality_gates_passed: "到“验收与收口”处理未通过的质量门（可豁免，需填理由）",
   all_changes_integrated: "还有改动没合入：等执行方推完，或终止对应的执行方案",
   no_pending_permissions: "到「人工审核」页批准或驳回待处理的授权申请",
   no_pending_approvals: "到「人工审核」页处理待处理的审批请求",
   no_pending_human_confirmations: "到「人工审核」页定稿或打回待确认的卡",
   no_pending_human_directives: "到「人工指令」页确认那些指令已被消费",
-  no_open_execution_topologies: "在“阻塞处置”终止卡住的执行方案",
+  no_open_execution_topologies: "在“验收与收口”终止卡住的执行方案",
   no_open_integration_batches: "还有集成批次没完成：等 release/qa 推进到合并、回滚或中止；卡住时到执行监控查看批次证据",
-  all_review_plans_closed: "在“阻塞处置”收尾评审计划",
-  no_pending_review_bundles: "在“阻塞处置”收尾评审包",
-  all_rule_sources_resolved: "在“阻塞处置”判定规则来源",
-  all_shared_definitions_active: "在“阻塞处置”处置共享定义契约",
-  rules_candidates_processed: "在“阻塞处置”判定系统升级候选项",
+  all_review_plans_closed: "在“验收与收口”收尾评审计划",
+  no_pending_review_bundles: "在“验收与收口”收尾评审包",
+  all_rule_sources_resolved: "在“验收与收口”判定规则来源",
+  all_shared_definitions_active: "在“验收与收口”处置共享定义契约",
+  rules_candidates_processed: "在“验收与收口”判定系统升级候选项",
   artifacts_verified: "还有产物没核验：等执行方补齐证据，或取消对应工作项",
   all_repository_output_targets_terminal: "还有写入目标没终结：等对应会话结束，或取消它的派发",
   all_leases_terminal: "写锁随持有它的会话一起释放：处理掉那个会话即可",
@@ -5687,7 +5691,7 @@ const CLOSE_GATE_GUIDE = {
     + "注意不要到项目「成员权限」撤销项目或任务组访问授权 —— 那是另一类，撤销它不会解开这道门",
   completion_readiness_clear: "完成度尚未就绪：看上面列出的其它阻塞项，它们清完这条自然就过",
   no_active_role_drift_blockers: "角色漂移守卫随对应会话终结自动关闭：处理掉那个会话即可",
-  runtime_issue_candidates_exported: "到“阻塞处置”把运行时问题候选导出或处置掉",
+  runtime_issue_candidates_exported: "到“验收与收口”把运行时问题候选导出或处置掉",
   all_contracts_compatible: "契约不兼容：需要重新签发契约，通常伴随规则变更 —— 看规则页的变更记录"
 };
 
@@ -5989,6 +5993,10 @@ function todoCountsByPage() {
       };
       addCount(bucket.page);
       addCount(`${bucket.page}|${bucket.workspace}`);
+      // 待办桶记的是明细栏目（quality / permissions…），侧栏与页内栏目已按问题合并（acceptance / dispositions…）：
+      // 红点要落在合并后的栏目上，否则合并之后红点就没了。
+      const resolved = workspaces.resolve(bucket.page, bucket.workspace);
+      if (resolved && resolved !== bucket.workspace) addCount(`${bucket.page}|${resolved}`);
       addCount("__all");
     }
   } catch { /* 计数是提示性的，任何异常都不该挡住导航渲染 */ }
@@ -6039,7 +6047,7 @@ function renderPendingForMePanel() {
   const todo = pendingForMe();
   return panel("待你处理", `
     ${!todo.known
-      ? `<div class="notice">这一页没有加载待办所需的数据，因此这里不做统计（这不表示没有待办）。到“待办汇总”或“阻塞处置”查看。</div>`
+      ? `<div class="notice">这一页没有加载待办所需的数据，因此这里不做统计（这不表示没有待办）。到“待办处理”或“验收与收口”查看。</div>`
       : todo.total === 0
       ? `<div class="notice">当前没有需要你处置的项。（只统计你有权处置的；别人负责的部分不会出现在这里。）</div>`
       : `<div class="notice warn-notice">共 ${todo.total}${todo.partial ? "+" : ""} 项等待你处理，按当前项目视图统计。等人拍板的东西分布在两个页面上，这里是当前项目的汇总入口。${todo.partial ? "<br><strong>带 + 的类别数据量超过本页加载上限，实际项数只多不少 —— 处置完这里列出的也未必清空。</strong>" : ""}</div>
@@ -6047,7 +6055,7 @@ function renderPendingForMePanel() {
            ${todo.buckets.map((bucket) => `
              <div class="record">
                <div class="record-title"><strong>${esc(bucket.label)}</strong> ${customBadge(`${bucket.count}${bucket.capped ? "+" : ""}`, "red")}</div>
-               <div class="record-meta"><span>处置入口：${esc(menuMeta(perspectiveOf(currentAccount), bucket.page, bucket.workspace)[0])}${bucketNeedsProjectJump(bucket)
+               <div class="record-meta"><span>处置入口：${esc(menuMeta(perspectiveOf(currentAccount), bucket.page, workspaces.resolve(bucket.page, bucket.workspace) || bucket.workspace)[0])}${bucketNeedsProjectJump(bucket)
                  ? ` · 先进入项目：${bucket.projectIds.slice(0, 3).map(projectNameOf).map(esc).join("、")}${bucket.projectIds.length > 3 ? "…" : ""}`
                  : ""}</span></div>
                <div class="button-row">${bucketNeedsProjectJump(bucket)
@@ -7884,6 +7892,8 @@ function clearGlobalMenuObjectContext() {
 
 async function navigateMenuTarget(nextPage, nextWorkspace = "") {
   const perspective = perspectiveOf(currentAccount);
+  // 旧的明细栏目 id（sessions / quality / blockers…）先归到合并后的栏目，再找菜单项：旧按钮、旧书签都还能进。
+  nextWorkspace = (nextWorkspace && workspaces.resolve(nextPage, nextWorkspace)) || nextWorkspace;
   const targetItem = allowedMenuItemsFor(perspective).find((item) => !item.divider && item.id === nextPage
     && (!nextWorkspace || item.workspace === nextWorkspace));
   if (!targetItem || !menuItemAvailable(targetItem)) return false;
