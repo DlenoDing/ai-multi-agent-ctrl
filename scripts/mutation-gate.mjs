@@ -6001,8 +6001,8 @@ const MUTATIONS = [
     name: "溯源里也要显示人名",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "? `<span>由人工指令重开：${esc(accountName(directive.issuedBy))} · ${esc(fmtTime(directive.createdAt))}</span>`",
-    to: '? `<span>由人工指令重开：${esc(directive.issuedBy || "?")} · ${esc(fmtTime(directive.createdAt))}</span>`',
+    from: "? `<span>由人工指令${verb}：${esc(accountName(directive.issuedBy))} · ${esc(fmtTime(directive.createdAt))}",
+    to: '? `<span>由人工指令${verb}：${esc(directive.issuedBy || "?")} · ${esc(fmtTime(directive.createdAt))}',
     expect: "溯源里要显示人名而不是账号 id"
   },
   {
