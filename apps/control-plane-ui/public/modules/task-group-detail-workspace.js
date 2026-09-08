@@ -21,17 +21,19 @@ function render(taskGroup, context, helpers) {
   }
   const progressData = tgDetail.progress || {};
   const analysis = progressData.taskAnalysis;
+  // 事项清单的备注由服务端拼成「受阻原因：<原因码>」：码要过词表再给人看（execution_failed_repeatedly 这种不是人话）。
+  const noteText = (note) => String(note || "").replace(/^受阻原因：([A-Za-z0-9_:.\-]+)$/u, (whole, code) => `受阻原因：${explainCoded(code)}`);
   const analysisCount = (analysis?.items || []).length;
   const analysisHtml = analysis && analysisCount
     ? `<div class="tree">${(analysis.items || []).map((item) => `
         <div class="tree-item">
           <div class="tree-head">${customBadge(kindLabel(item.kind), "gray")} <strong>${esc(item.title)}</strong> ${badge(item.status)} <em class="small muted">${item.progress ?? 0}%</em></div>
           ${progressBar(item.progress)}
-          ${item.note ? `<div class="tree-note">${esc(item.note)}</div>` : ""}
+          ${item.note ? `<div class="tree-note">${esc(noteText(item.note))}</div>` : ""}
           ${(item.children || []).length ? `<div class="tree-children">${item.children.map((child) => `
             <div class="tree-item minor">
               <div class="tree-head">${customBadge(kindLabel(child.kind), "gray")} ${esc(child.title)} ${badge(child.status)} <em class="small muted">${child.progress ?? 0}%</em></div>
-              ${child.note ? `<div class="tree-note">${esc(child.note)}</div>` : ""}
+              ${child.note ? `<div class="tree-note">${esc(noteText(child.note))}</div>` : ""}
             </div>
           `).join("")}</div>` : ""}
         </div>

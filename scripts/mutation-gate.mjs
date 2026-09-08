@@ -14500,6 +14500,14 @@ const MUTATIONS = [
     from: '  const defaultDirectiveType = targetWork?.status === "needs_decision" ? "resolve_decision" : "free_text";',
     to: '  const defaultDirectiveType = "free_text";',
     expect: "从待决策的任务进人工指令页时，指令类型要预选「决策处置」并露出处置方式栏"
+  },
+  {
+    name: "事项清单的受阻原因不得退回原因码",
+    file: "apps/control-plane-ui/public/modules/task-group-detail-workspace.js",
+    gate: "console",
+    from: '          ${item.note ? `<div class="tree-note">${esc(noteText(item.note))}</div>` : ""}',
+    to: '          ${item.note ? `<div class="tree-note">${esc(item.note)}</div>` : ""}',
+    expect: "事项清单里服务端拼的「受阻原因：<码>」要过词表翻成中文"
   }
 ];
 

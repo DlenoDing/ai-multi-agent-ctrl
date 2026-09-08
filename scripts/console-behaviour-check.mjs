@@ -6542,6 +6542,15 @@ async function runPendingTruncationCase() {
         controlPane.includes("在上方工具条") && !/data-task-action="(?:pause|resume)"/u.test(controlPane),
         `执行控制栏目：${controlPane.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/执行控制.{0,160}/u)?.[0] || controlPane.slice(0, 200)}`);
     }
+    // 【事项清单的受阻原因要翻中文】（用户 09-09 走查：反复失败后事项清单写着「受阻原因：execution_failed_repeatedly」）。
+    {
+      const codedDetail = {...detail, progress: {...detail.progress, taskAnalysis: {items: [{kind: "task", title: "被拦下的任务", status: "blocked", progress: 99, note: "受阻原因：execution_failed_repeatedly",
+        children: [{kind: "subtask", title: "小项", status: "blocked", progress: 99, note: "受阻原因：human_verification_rejected"}]}]}}};
+      const codedPane = String(loadConsole(el("div"), {realI18n: true}).renderTaskGroupDetailPane("tasks", codedDetail, detailTaskGroup, overviewState, systemAdmin, "p1")).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+      check("事项清单里服务端拼的「受阻原因：<码>」要过词表翻成中文",
+        codedPane.includes("受阻原因：连续多次执行失败，已停止自动重派") && codedPane.includes("受阻原因：人工验收未通过·待返工决策") && !/execution_failed_repeatedly|human_verification_rejected/u.test(codedPane),
+        `事项清单：${codedPane.match(/受阻原因.{0,80}/u)?.[0] || "没找到受阻原因"}`);
+    }
     const detailProgressPane = probe.renderTaskGroupDetailPane("progress", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
     const detailRolesPane = probe.renderTaskGroupDetailPane("roles", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
     const detailInheritancePane = probe.renderTaskGroupDetailPane("inheritance", detail, detailTaskGroup, overviewState, systemAdmin, "p1");
