@@ -6398,6 +6398,8 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
           if (directive.resolution === "abandon") {
             workItem.status = "superseded";
             workItem.splitStatus = workItem.splitStatus || "abandoned_by_human_decision";
+            // 放弃与重开同规：留下是哪条人工指令定的，任务页才写得出「由谁、何时放弃」（原先只有重开留了引用）。
+            workItem.humanDecisionRef = directive.directiveId;
             delete workItem.blockedReason;
             // Terminalize the cell's runtime residue (dispatch/session/lease/target/guard) so the
             // abandoned cell cannot keep blocking the close barrier with no operator lever.

@@ -2009,8 +2009,15 @@ function verifyHumanAndOrganizationContracts(output) {
     ensureRuntimeCollections(abandonState, {root});
     const abandonTg = abandonState.taskGroups.find((item) => item.id === "tg_runtime_management");
     abandonTg.workItems = [{id: "wi_abandon", title: "放弃项", status: "needs_decision", blockedReason: "role_drift_guard_blocked", ownerRole: "agent-runtime", progress: 10}];
-    createHumanDirective(abandonState, {taskGroupId: "tg_runtime_management", directiveType: "resolve_decision", workItemId: "wi_abandon", resolution: "abandon"}, {actor: "acct_ct"});
+    const abandonDirective = createHumanDirective(abandonState, {taskGroupId: "tg_runtime_management", directiveType: "resolve_decision", workItemId: "wi_abandon", resolution: "abandon"}, {actor: "acct_ct"});
     consumeQueuedHumanDirectives(abandonState);
+    {
+      const abandoned = abandonState.taskGroups.find((item) => item.id === "tg_runtime_management").workItems.find((item) => item.id === "wi_abandon");
+      const abandonId = abandonDirective?.directiveId || abandonDirective?.directive?.directiveId;
+      if (abandoned?.status !== "superseded" || !abandonId || abandoned.humanDecisionRef !== abandonId) {
+        output.push(`放弃之后工作项没有留下是哪条人工指令定的（status=${abandoned?.status}，humanDecisionRef=${abandoned?.humanDecisionRef}，指令 ${abandonId}）—— 任务页写不出由谁、何时放弃`);
+      }
+    }
     // 【放弃不得碰已终结的工作项】：点名一个 verified 的格子去放弃，abandonable 过滤应把它挡在外面，
     // 否则一条人工指令能把已验收/已关闭的工作项重新掀成 superseded（终态被改写）。
     {

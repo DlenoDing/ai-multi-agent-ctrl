@@ -7311,6 +7311,16 @@ async function runPendingTruncationCase() {
       const rejectedWork = {...rejectedGroup.workItems[0], taskGroupId: "tg1", ownerRole: "agent-runtime", requirements: []};
       const workbenchHtml = String(workbenchProbe.renderTaskWorkbenchModule({groups: [rejectedGroup], nextState: {...decisionState, agentDispatches: [], workSessions: [], agentRuntimeNodes: [], agents: [], agentExecutionEvents: [], repositoryOutputs: [], checkpoints: [], qualityGates: []},
         selected: {taskGroupId: "tg1", workItemId: "w_nd"}, workDetail: {taskGroup: rejectedGroup, workItem: rejectedWork, events: [], eventCount: 0, returnedEventCount: 0}}));
+      {
+        const abandonedWork = {...rejectedWork, status: "superseded", humanDecisionRef: "hd_abandon"};
+        const abandonedState = {...decisionState, agentDispatches: [], workSessions: [], agentRuntimeNodes: [], agents: [], agentExecutionEvents: [], repositoryOutputs: [], checkpoints: [], qualityGates: [],
+          humanDirectives: [{directiveId: "hd_abandon", taskGroupId: "tg1", workItemId: "w_nd", directiveType: "resolve_decision", resolution: "abandon", instruction: "执行器无法产出改动，先放弃。", issuedBy: "acct_u1", status: "applied", createdAt: "2026-09-09T02:50:00Z"}]};
+        const abandonedHtml = String(loadConsole(el("div"), {realI18n: true}).renderTaskWorkbenchModule({groups: [rejectedGroup], nextState: abandonedState,
+          selected: {taskGroupId: "tg1", workItemId: "w_nd"}, workDetail: {taskGroup: rejectedGroup, workItem: abandonedWork, events: [], eventCount: 0, returnedEventCount: 0}}));
+        check("被人放弃的任务详情要写出是谁、什么时候、为什么放弃（不能把放弃说成重开）",
+          /由人工指令放弃：/u.test(abandonedHtml) && /执行器无法产出改动，先放弃。/u.test(abandonedHtml) && !/由人工指令重开/u.test(abandonedHtml),
+          `任务详情：${abandonedHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/由人工指令.{0,80}/u)?.[0] || "没找到溯源行"}`);
+      }
       check("被打回的任务详情要写出是谁、什么时候、为什么打回",
         /打回意见（/u.test(workbenchHtml) && /说明文档没有目录，请补上目录后重新提交。/u.test(workbenchHtml),
         `任务详情：${workbenchHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/人工验收未通过.{0,200}/u)?.[0] || "没找到"}`);

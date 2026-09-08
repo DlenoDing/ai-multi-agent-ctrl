@@ -6025,7 +6025,7 @@ const MUTATIONS = [
     name: "溯源记录被顶掉时不许当成没发生过",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '      : `<span>由人工指令重开（指令 ${esc(workItem.humanDecisionRef)} 已不在当前列表里，查不到是谁下的）</span>`);',
+    from: '      : `<span>由人工指令${verb}（指令 ${esc(workItem.humanDecisionRef)} 已不在当前列表里，查不到是谁下的）</span>`);',
     to: '      : "");',
     expect: "溯源引用查不到对应记录时要说「查不到」"
   },
@@ -14508,6 +14508,23 @@ const MUTATIONS = [
     from: '          ${item.note ? `<div class="tree-note">${esc(noteText(item.note))}</div>` : ""}',
     to: '          ${item.note ? `<div class="tree-note">${esc(item.note)}</div>` : ""}',
     expect: "事项清单里服务端拼的「受阻原因：<码>」要过词表翻成中文"
+  },
+  {
+    name: "放弃之后工作项不得少了人工指令引用",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '            workItem.humanDecisionRef = directive.directiveId;\n            delete workItem.blockedReason;',
+    to: '            delete workItem.blockedReason;',
+    expect: "放弃之后工作项没有留下是哪条人工指令定的"
+  },
+  {
+    name: "任务详情不得把放弃说成重开",
+    file: APP,
+    gate: "console",
+    from: '    const verb = directive?.resolution === "abandon" || workItem.status === "superseded" ? "放弃" : "重开";',
+    to: '    const verb = "重开";',
+    expect: "被人放弃的任务详情要写出是谁、什么时候、为什么放弃（不能把放弃说成重开）"
   }
 ];
 

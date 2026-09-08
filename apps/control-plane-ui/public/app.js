@@ -5091,9 +5091,10 @@ function humanTraceHtml(workItem) {
   }
   if (workItem.humanDecisionRef) {
     const directive = (state.humanDirectives || []).find((item) => item.directiveId === workItem.humanDecisionRef);
+    const verb = directive?.resolution === "abandon" || workItem.status === "superseded" ? "放弃" : "重开";
     parts.push(directive
-      ? `<span>由人工指令重开：${esc(accountName(directive.issuedBy))} · ${esc(fmtTime(directive.createdAt))}</span>`
-      : `<span>由人工指令重开（指令 ${esc(workItem.humanDecisionRef)} 已不在当前列表里，查不到是谁下的）</span>`);
+      ? `<span>由人工指令${verb}：${esc(accountName(directive.issuedBy))} · ${esc(fmtTime(directive.createdAt))}${directive.instruction ? `（${esc(directive.instruction)}）` : ""}</span>`
+      : `<span>由人工指令${verb}（指令 ${esc(workItem.humanDecisionRef)} 已不在当前列表里，查不到是谁下的）</span>`);
   }
   if (workItem.planFinalizationRef) {
     const request = (state.humanConfirmationRequests || [])
