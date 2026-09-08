@@ -14468,6 +14468,30 @@ const MUTATIONS = [
     from: 'sub: "停用后这个组织的成员登不进来、运行节点领不到活、项目里也建不了新东西；已有数据保留，重新启用即可恢复。", danger: true, confirmText: "停用"',
     to: 'sub: "停用后组织内账号与智能体将无法工作。", danger: true, confirmText: "停用"',
     expect: "停用组织的确认弹窗要说清后果与可逆性"
+  },
+  {
+    name: "待决策的任务不得从待办里消失",
+    file: APP,
+    gate: "console",
+    from: '      .filter((item) => item.status === "needs_decision")\n      .map((item) => ({...item, taskGroupId: taskGroup.id}))), canControlGroup, "taskGroups");',
+    to: '      .filter((item) => false)\n      .map((item) => ({...item, taskGroupId: taskGroup.id}))), canControlGroup, "taskGroups");',
+    expect: "打回后停在「待决策」的任务要进待办，并指到人工指令的下达页"
+  },
+  {
+    name: "人工指令页不得丢掉打回意见",
+    file: APP,
+    gate: "console",
+    from: '        ${directiveWorkItemId ? rejectionNoteHtml(directiveTargetWorks.find((work) => work.id === directiveWorkItemId) || {id: directiveWorkItemId}) : ""}',
+    to: '        ${""}',
+    expect: "从被打回的任务进人工指令页时，要把打回意见摆在表单上方"
+  },
+  {
+    name: "任务详情不得丢掉打回意见",
+    file: APP,
+    gate: "console",
+    from: '    if (note) parts.push(`<span>打回意见（${esc(note.by)} · ${esc(fmtTime(note.at))}）：${note.text ? esc(note.text) : "（打回时没有留意见）"}</span>`);',
+    to: '    if (false) parts.push("");',
+    expect: "被打回的任务详情要写出是谁、什么时候、为什么打回"
   }
 ];
 

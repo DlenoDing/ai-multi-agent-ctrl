@@ -377,6 +377,12 @@ function pendingForMe() {
   add("topologies", "待你终止的卡住执行方案", "monitor", "blockers",
     (state.executionTopologies || []).filter((item) => inScope(item)
       && ["blocked", "needs_reconcile"].includes(item.status)), canControlGroup, "executionTopologies");
+  // 打回返工／反复失败之后停在「待决策」的任务，编排不会再碰它，只有人能重开或放弃 ——
+  // 此前它不在待办里：人看到"0 待处理"，任务却在等他去「人工指令」下决策处置（用户 09-08 走查时真的被这么漏掉）。
+  add("decisions", "待你决策处置的任务（重开／放弃）", "directives", "compose",
+    groups.flatMap((taskGroup) => (taskGroup.workItems || [])
+      .filter((item) => item.status === "needs_decision")
+      .map((item) => ({...item, taskGroupId: taskGroup.id}))), canControlGroup, "taskGroups");
   add("directives", "待你确认已被消费的人工指令", "directives", "history",
     (state.humanDirectives || []).filter((item) => inScope(item)
       && ["queued", "acknowledged"].includes(item.status)), canControlGroup, "humanDirectives");
@@ -5062,8 +5068,27 @@ function renderProjectOverview() {
 //（humanDecisionRef / planFinalizationRef，core 里注释写明是【溯源引用】），
 // 而全仓零处读：屏幕上被人重开过的任务和从没卡过的长得一模一样。
 // 引用指向的记录可能已经被集合上限顶掉 —— 那时要说「查不到那条记录」，不能当成没有过这件事。
+// 人打回验收时写的意见：给之后决定重开／放弃的人看（原先只存在已答的确认单里，任务页与指令页都看不到为什么被打回）。
+function latestRejectionNote(workItem) {
+  const request = (state.humanConfirmationRequests || [])
+    .filter((item) => item.workItemId === workItem?.id && item.decision?.action === "reject")
+    .sort((left, right) => String(right.decision?.decidedAt || "").localeCompare(String(left.decision?.decidedAt || "")))[0];
+  if (!request) return null;
+  return {by: accountName(request.decision.decidedBy), at: request.decision.decidedAt, text: request.decision.inputText || ""};
+}
+
+function rejectionNoteHtml(workItem) {
+  const note = latestRejectionNote(workItem);
+  if (!note) return "";
+  return `<div class="notice warn-notice"><strong>打回意见</strong>（${esc(note.by)} · ${esc(fmtTime(note.at))}）：${note.text ? esc(note.text) : "（打回时没有留意见）"}</div>`;
+}
+
 function humanTraceHtml(workItem) {
   const parts = [];
+  if (workItem.blockedReason === "human_verification_rejected" || workItem.status === "needs_decision") {
+    const note = latestRejectionNote(workItem);
+    if (note) parts.push(`<span>打回意见（${esc(note.by)} · ${esc(fmtTime(note.at))}）：${note.text ? esc(note.text) : "（打回时没有留意见）"}</span>`);
+  }
   if (workItem.humanDecisionRef) {
     const directive = (state.humanDirectives || []).find((item) => item.directiveId === workItem.humanDecisionRef);
     parts.push(directive
@@ -6839,6 +6864,7 @@ function renderDirectives() {
     panel("下达人工指令", `
       <div class="stack">
         <div class="notice">总控与调度会话不接受人工直接输入。所有人工操作通过本通道生成结构化指令，由编排周期作为决策输入消费并全程留审计。</div>
+        ${directiveWorkItemId ? rejectionNoteHtml(directiveTargetWorks.find((work) => work.id === directiveWorkItemId) || {id: directiveWorkItemId}) : ""}
         ${formHtml}
       </div>
     `, {wide: true})

@@ -7276,6 +7276,31 @@ async function runPendingTruncationCase() {
       qualityGates: [], reviewPlans: [], reviewBundles: [], ruleSourceResolutions: [],
       systemUpgradeCandidates: [], sharedDefinitions: [], truncatedCollections: []
     };
+    // 【待决策的任务要进待办】（用户 09-08 走查：打回返工后任务停在「待决策」，待办却说"当前没有需要你处置的项"）。
+    {
+      const decisionState = {...withBlockers,
+        taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", workItems: [{id: "w_nd", title: "被打回的任务", status: "needs_decision", blockedReason: "human_verification_rejected"}]}],
+        humanConfirmationRequests: [{requestId: "h_rej", taskGroupId: "tg1", workItemId: "w_nd", status: "answered", decisionType: "work_item_verification",
+          decision: {selectedOptionId: "reject", selectedLabel: "打回返工", action: "reject", inputText: "说明文档没有目录，请补上目录后重新提交。", decidedBy: "acct_u1", decidedAt: "2026-09-08T18:33:54.845Z"}}]};
+      const decisionPanel = probe.renderPendingPanelWith(decisionState, admin);
+      check("打回后停在「待决策」的任务要进待办，并指到人工指令的下达页",
+        /待你决策处置的任务（重开／放弃）/u.test(decisionPanel) && /data-menu="directives" data-menu-workspace="compose"/u.test(decisionPanel),
+        `待办面板：${decisionPanel.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 200)}`);
+      const decisionProbe = loadConsole(el("div"), {realI18n: true});
+      decisionProbe.restoreRoute({page: "directives", projectId: "p1", groupId: "tg1", workId: "w_nd", workspace: "compose"});
+      const directivesHtml = String(decisionProbe.renderDirectivesWith({...decisionState, projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}]}, admin, "p1", []));
+      check("从被打回的任务进人工指令页时，要把打回意见摆在表单上方",
+        /打回意见/u.test(directivesHtml) && /说明文档没有目录，请补上目录后重新提交。/u.test(directivesHtml),
+        `指令页：${directivesHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/下达人工指令.{0,200}/u)?.[0] || "没找到"}`);
+      const workbenchProbe = loadConsole(el("div"), {realI18n: true});
+      const rejectedGroup = decisionState.taskGroups[0];
+      const rejectedWork = {...rejectedGroup.workItems[0], taskGroupId: "tg1", ownerRole: "agent-runtime", requirements: []};
+      const workbenchHtml = String(workbenchProbe.renderTaskWorkbenchModule({groups: [rejectedGroup], nextState: {...decisionState, agentDispatches: [], workSessions: [], agentRuntimeNodes: [], agents: [], agentExecutionEvents: [], repositoryOutputs: [], checkpoints: [], qualityGates: []},
+        selected: {taskGroupId: "tg1", workItemId: "w_nd"}, workDetail: {taskGroup: rejectedGroup, workItem: rejectedWork, events: [], eventCount: 0, returnedEventCount: 0}}));
+      check("被打回的任务详情要写出是谁、什么时候、为什么打回",
+        /打回意见（/u.test(workbenchHtml) && /说明文档没有目录，请补上目录后重新提交。/u.test(workbenchHtml),
+        `任务详情：${workbenchHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/人工验收未通过.{0,200}/u)?.[0] || "没找到"}`);
+    }
     const panel = probe.renderPendingPanelWith(withBlockers, admin);
     check("卡住的执行方案要进待办",
       /待你终止的卡住执行方案/.test(panel),
