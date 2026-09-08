@@ -14492,6 +14492,14 @@ const MUTATIONS = [
     from: '    if (note) parts.push(`<span>打回意见（${esc(note.by)} · ${esc(fmtTime(note.at))}）：${note.text ? esc(note.text) : "（打回时没有留意见）"}</span>`);',
     to: '    if (false) parts.push("");',
     expect: "被打回的任务详情要写出是谁、什么时候、为什么打回"
+  },
+  {
+    name: "待决策任务进人工指令页不得退回默认「自由指令」",
+    file: APP,
+    gate: "console",
+    from: '  const defaultDirectiveType = targetWork?.status === "needs_decision" ? "resolve_decision" : "free_text";',
+    to: '  const defaultDirectiveType = "free_text";',
+    expect: "从待决策的任务进人工指令页时，指令类型要预选「决策处置」并露出处置方式栏"
   }
 ];
 

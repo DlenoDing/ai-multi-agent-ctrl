@@ -7289,6 +7289,11 @@ async function runPendingTruncationCase() {
       const decisionProbe = loadConsole(el("div"), {realI18n: true});
       decisionProbe.restoreRoute({page: "directives", projectId: "p1", groupId: "tg1", workId: "w_nd", workspace: "compose"});
       const directivesHtml = String(decisionProbe.renderDirectivesWith({...decisionState, projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}]}, admin, "p1", []));
+      check("从待决策的任务进人工指令页时，指令类型要预选「决策处置」并露出处置方式栏",
+        /<option value="resolve_decision" selected>/u.test(directivesHtml)
+          && /data-directive-types="resolve_decision"><label>决策处置方式/u.test(directivesHtml)
+          && !/<option value="free_text" selected>/u.test(directivesHtml),
+        `类型下拉：${directivesHtml.match(/<select name="directiveType">[\s\S]{0,400}?<\/select>/u)?.[0]?.replace(/\s+/gu, " ").slice(0, 300) || "没找到"}`);
       check("从被打回的任务进人工指令页时，要把打回意见摆在表单上方",
         /打回意见/u.test(directivesHtml) && /说明文档没有目录，请补上目录后重新提交。/u.test(directivesHtml),
         `指令页：${directivesHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/下达人工指令.{0,200}/u)?.[0] || "没找到"}`);

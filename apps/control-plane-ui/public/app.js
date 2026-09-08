@@ -6828,19 +6828,24 @@ function renderDirectives() {
   const canControl = managementGroupId ? hasGroupPerm(managementGroupId, "task_group:control") : hasPerm("task_group:control");
   const directiveTargetWorks = taskGroupById(directiveTaskGroupId)?.workItems || [];
   const targetWorkKnown = directiveTargetWorks.some((work) => work.id === directiveWorkItemId);
+  // 从待决策的任务进来（待办／任务页的「去人工指令处置」），人要做的就是重开或放弃：类型直接预选「决策处置」，
+  // 处置方式那一栏当场露出来，而不是让他先在下拉里找到这一项。其余情况仍默认「自由指令」。
+  const targetWork = directiveTargetWorks.find((work) => work.id === directiveWorkItemId);
+  const defaultDirectiveType = targetWork?.status === "needs_decision" ? "resolve_decision" : "free_text";
+  const fieldHidden = (types) => (types.split(" ").includes(defaultDirectiveType) ? "" : " hidden");
   const formHtml = canControl ? `
         <form class="form-grid" data-form="directive-create">
           <div class="form-row"><label>目标任务组</label>${taskGroupSelector(directiveTaskGroupId, "directive-tg", "task_group:control")}</div>
           <div class="form-row"><label>指令类型</label>
-            <select name="directiveType">${DIRECTIVE_TYPES.map(([value, label]) => `<option value="${esc(value)}"${value === "free_text" ? " selected" : ""}>${esc(label)}</option>`).join("")}</select>
+            <select name="directiveType">${DIRECTIVE_TYPES.map(([value, label]) => `<option value="${esc(value)}"${value === defaultDirectiveType ? " selected" : ""}>${esc(label)}</option>`).join("")}</select>
           </div>
-          <div class="form-row directive-fields" data-directive-types="resolve_decision" hidden><label>决策处置方式</label>
+          <div class="form-row directive-fields" data-directive-types="resolve_decision"${fieldHidden("resolve_decision")}><label>决策处置方式</label>
             <!-- 不带 required：这个下拉只对「决策处置」类型生效，而浏览器的约束校验不看类型 ——
                  带上就连提交「补充要求」也会被拦住，逼人选一个随后被丢掉的处置方式。空着提交由处理器按类型拒。 -->
             ${decisionSelect("resolution", [["reopen", "重开（返回就绪，重置返工计数）"], ["abandon", "放弃（置为已替代，解除关闭阻塞）"]], "请选择处置方式…", {required: false})}
             <span class="small muted">仅“决策处置”类型生效</span>
           </div>
-          <div class="form-row directive-fields" data-directive-types="adjust_priority" hidden><label>优先级档位</label>
+          <div class="form-row directive-fields" data-directive-types="adjust_priority"${fieldHidden("adjust_priority")}><label>优先级档位</label>
             <!-- 仅「调整优先级」类型生效；不 required（浏览器约束不看类型）。空着提交由服务端拒：
                  调优先级落到调度器真读的 admissionPriorityClass，不选档位又不写关键词就是静默无效。 -->
             ${decisionSelect("priorityClass", [["p0_safety", t("p0_safety")], ["unblock_many", t("unblock_many")], ["available_window", t("available_window")], ["current_condition", t("current_condition")], ["capability_data", t("capability_data")], ["readiness_preflight", t("readiness_preflight")], ["formal_gate", t("formal_gate")]], "请选择优先级档位…", {required: false})}
