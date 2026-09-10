@@ -9014,13 +9014,19 @@ document.addEventListener("click", async (event) => {
       // 原先这里两样都不说：弹窗写"该成员"，随后 loadPage 撞 401 弹"会话已过期"，
       // 紧接着又弹一个"已停用成员"的成功提示 —— 两条自相矛盾的话，而人始终不知道自己停用了自己。
       const isSelf = Boolean(currentAccount?.accountId) && target.dataset.account === currentAccount.accountId;
+      // 停用一个还没接受邀请的成员，实际是撤回邀请（令牌作废）；停用已激活的成员是登出并拦住登录。两种后果要分开说，
+      // 原先只有一句「其活动会话将被立即吊销」—— 对待邀请的人来说他根本没有会话。
+      const targetAccount = [...(orgMembers || []), ...(state.accounts || [])].find((item) => item.accountId === target.dataset.account);
+      const invitedTarget = targetAccount?.status === "invited";
       if (status === "suspended" && !(await confirmDialog({
-        title: isSelf ? "停用你自己的账号" : "停用成员",
-        message: isSelf ? "这是你当前登录的账号，确认停用它？" : "确认停用该成员？",
+        title: isSelf ? "停用你自己的账号" : invitedTarget ? "撤回邀请" : "停用成员",
+        message: isSelf ? "这是你当前登录的账号，确认停用它？" : invitedTarget ? "确认撤回对该成员的邀请？" : "确认停用该成员？",
         sub: isSelf
           ? "你会被立即登出，之后只能由另一位组织管理员把你启用回来。"
-          : "其活动会话将被立即吊销。",
-        danger: true, confirmText: "停用"
+          : invitedTarget
+            ? "那份一次性登录令牌会作废，他将登不进来；之后可以「重发邀请」重新签发。"
+            : "该成员会被立即登出、之后登不进来；已授予的项目与任务组角色保留但不生效，随时可以再启用。",
+        danger: true, confirmText: invitedTarget ? "撤回邀请" : "停用"
       }))) return;
       await api(`/api/org/members/${encodeURIComponent(target.dataset.account)}/status`, {method: "POST", body: JSON.stringify({status})});
       if (isSelf && status === "suspended") {

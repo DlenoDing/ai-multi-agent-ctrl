@@ -6841,6 +6841,14 @@ async function runPendingTruncationCase() {
           && /data-action="member-retire" data-account="acct_member"/u.test(memberDetail),
         "成员列表收起动作后，详情里必须完整保留账号能力、停用与注销入口");
       // 【已激活的成员登不进来时组织管理员要有「重置登录」】（用户 09-08 走查：成员令牌用过、没设密码，管理员这边只有对待邀请账号的「重发邀请」）。
+      {
+        const statusSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+        const statusBranch = statusSource.slice(statusSource.indexOf('if (action === "member-status")'), statusSource.indexOf('if (action === "member-retire")'));
+        check("停用成员的确认弹窗要分清撤回邀请与停用已激活成员，并说清后果与可逆性",
+          /invitedTarget \? "撤回邀请" : "停用成员"/u.test(statusBranch) && /那份一次性登录令牌会作废/u.test(statusBranch)
+            && /该成员会被立即登出、之后登不进来；已授予的项目与任务组角色保留但不生效，随时可以再启用/u.test(statusBranch),
+          "停用弹窗仍是一句「其活动会话将被立即吊销」—— 待邀请的人根本没有会话，已激活的人也不知道能不能再启用");
+      }
       check("已激活的普通成员详情里要有「重置登录」而不是只适用于待邀请账号的「重发邀请」",
         /data-action="member-reset-login" data-account="acct_member"/u.test(memberDetail)
           && !/data-action="member-reissue-invite" data-account="acct_member"/u.test(memberDetail),
