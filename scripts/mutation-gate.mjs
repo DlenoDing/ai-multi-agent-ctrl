@@ -14558,6 +14558,14 @@ const MUTATIONS = [
     from: '    if (snapshot === null || reason?.cancel === true) {',
     to: '    if (snapshot === null) {',
     expect: "放弃任务之后它的验收卡没有作废"
+  },
+  {
+    name: "提交修改意见的回执不得退回「被它挂起的执行将继续」",
+    file: APP,
+    gate: "console",
+    from: '      toast.success(action === "revise"\n        ? "已提交修改意见：AI 再分析的结论会出现在这张卡的协商记录里，卡片仍待你定稿"',
+    to: '      toast.success(action === "revise"\n        ? "已提交人工确认：被它挂起的执行将在下一次编排周期（约一分钟内）继续"',
+    expect: "三个按钮三种回执：提交修改意见不得说成「被它挂起的执行将继续」"
   }
 ];
 

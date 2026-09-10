@@ -1448,6 +1448,8 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         return {ok: true, status: 200, headers: {get: () => null}, json: async () => ({ok: true})};
       });
       probe.captureToastKind("error", (message) => toasts.push(String(message)));
+      const successToasts = [];
+      probe.captureToastKind("success", (message) => successToasts.push(String(message)));
       const mkForm = () => el("form", {dataset: {form: "hcr-decide", request: "hcr_1", round: "2"}}, [
         el("input", {name: "selectedOptionId", type: "radio", value: "opt_a", checked: true}),
         el("textarea", {name: "inputText", value: "我的意见"}),
@@ -1470,6 +1472,9 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         ]);
         await probe.submit({target: noOptionForm, submitter: noOptionForm.children[1], preventDefault: () => {}});
         const noOptionPost = recorded.find((item) => item.method === "POST" && /human-confirmations\/hcr_1\/decide$/u.test(item.url));
+        check("三个按钮三种回执：提交修改意见不得说成「被它挂起的执行将继续」",
+          successToasts.some((message) => /已提交修改意见/u.test(message)) && !successToasts.some((message) => /挂起的执行/u.test(message)),
+          `成功回执：${JSON.stringify(successToasts).slice(0, 160)}`);
         check("没勾任何选项也能「提交修改意见」，按「不选择（自定义输入）」发出去",
           noOptionPost?.body?.action === "revise" && noOptionPost?.body?.selectedOptionId === "none" && noOptionPost?.body?.inputText === "请补充成本对比表" && !toasts.length,
           `发出去的是 ${JSON.stringify(noOptionPost?.body) || "什么也没发"}；toast：${JSON.stringify(toasts).slice(0, 120)}`);

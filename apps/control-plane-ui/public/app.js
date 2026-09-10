@@ -7866,7 +7866,13 @@ document.addEventListener("submit", async (event) => {
       await api(`/api/human-confirmations/${encodeURIComponent(form.dataset.request)}/decide`, {method: "POST", body: JSON.stringify({action, selectedOptionId, inputText: data.inputText || "", expectedRound: Number(form.dataset.round || 1)})});
       formTouched = false;
       await loadPage();
-      return;
+      // 三个按钮三种后果，回执不能共用一句「已提交人工确认」：交 AI 再分析没有挂起任何执行，打回则把任务退到待决策。
+      toast.success(action === "revise"
+        ? "已提交修改意见：AI 再分析的结论会出现在这张卡的协商记录里，卡片仍待你定稿"
+        : action === "reject"
+          ? "已打回：任务退到「待决策」，到「人工指令」用「决策处置」重开或放弃"
+          : "已定稿：被它挂起的执行将在下一次编排周期（约一分钟内）继续");
+      return "__skip_success__";
     }
     if (kind === "directive-create") {
       if (["add_requirement", "free_text"].includes(data.directiveType) && !String(data.instruction || "").trim()) {
