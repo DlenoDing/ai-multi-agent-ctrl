@@ -3293,6 +3293,30 @@ async function runErrorGuidanceCase() {
       && ["activity", "outputs"].every((workspace) => String(overviewMoreRoot.innerHTML || "").includes(`data-menu="proj-overview" data-menu-workspace="${workspace}"`))
       && ["pending", "dispositions", "history"].every((workspace) => String(reviewMoreRoot.innerHTML || "").includes(`data-menu="review" data-menu-workspace="${workspace}"`)),
     "侧栏变短的同时把历史、事件、诊断或审核明细变成了不可达死路");
+  // 【平台能力说明页别混英文行话】（09-11 沙箱爬页：「优先处理 stale 技能源」「固定 DISPATCH 信封」）。
+  {
+    const sysHelpRoot = el("div");
+    loadConsole(sysHelpRoot, {realI18n: true}).renderFullPagePaneWith(navState, systemAccount, null, "sys-settings", "help");
+    const sysHelpText = String(sysHelpRoot.innerHTML || "").replace(/<[^>]+>/gu, " ");
+    check("平台能力说明页的指引不印 stale／DISPATCH 这类英文行话",
+      /同步失效/u.test(sysHelpText) && !/\bstale\b|DISPATCH/u.test(sysHelpText),
+      `平台能力说明页：${(sysHelpText.match(/.{0,30}(?:stale|DISPATCH).{0,30}/u) || ["没找到英文行话，但也没找到「同步失效」"])[0]}`);
+  }
+  // 【顶栏账号名与账号类型同名时只写一遍】（09-11：种子系统账号改名「系统管理员」后顶栏会印成「系统管理员 系统管理员」）。
+  {
+    const chipOf = (account, projectId, pageId) => {
+      const rootEl = el("div");
+      loadConsole(rootEl, {realI18n: true}).renderFullPagePaneWith(navState, account, projectId, pageId, "overview");
+      const html = String(rootEl.innerHTML || "");
+      const at = html.indexOf('class="account-chip"');
+      return html.slice(at, html.indexOf("</span>", html.indexOf("</span>", at) + 1)).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").trim();
+    };
+    const sysChip = chipOf(systemAccount, null, "sys-overview");
+    const projChip = chipOf(projectAccount, "p1", "proj-overview");
+    check("顶栏账号名与账号类型同名时只写一遍；不同名时名字后仍带类型徽标",
+      (sysChip.match(/系统管理员/gu) || []).length === 1 && /项目成员/u.test(projChip) && projChip.replace("项目成员", "").trim().length > 0,
+      `系统账号顶栏：「${sysChip}」；项目成员顶栏：「${projChip}」`);
+  }
   // 【说明页要渲染归到它名下的面板】（09-11 沙箱爬页：流程导航、组织操作路径、任务组处置看板、监控处置看板在 69 页里一处都找不到 ——
   // 栏目表把它们归给「说明」栏目，而说明页只渲染入口清单，从没有一条路渲染到它们；用户拍板留下的「流程导航」就这样没了）。
   {
@@ -9969,7 +9993,7 @@ await runCodedApiErrorCase();
       resource: {resourceType: "system_console", resourceId: "system"},
       role: "system_owner", permissions: ["system:*", "task_group:read", "task_group:control"], status: "active"}],
     accounts: [{schemaVersion: "account/v1", accountId: "acct_system_owner", accountType: "system_admin",
-      displayName: "System Owner", email: "system.admin@local", status: "active", roles: ["system_owner"],
+      displayName: "系统管理员", email: "system.admin@local", status: "active", roles: ["system_owner"],
       permissions: ["system:*", "system:bootstrap", "system:skill_sync", "system:model_registry"]}],
     agentRuntimeNodes: [], agentJoinTokens: [], agentDispatches: [], workSessions: [], closeBarriers: [],
     qualityGates: [], findings: [], humanConfirmationRequests: [], truncatedCollections: []

@@ -14654,6 +14654,30 @@ const MUTATIONS = [
     from: '${tool.available === false ? "（未检测到）" : tool.version ? ` ${tool.version}` : ""}',
     to: '${tool.version ? ` ${tool.version}` : ""}${tool.available === false ? "（不可用）" : ""}',
     expect: "没检测到的工具要写「未检测到」"
+  },
+  {
+    name: "种子账号显示名不得退回英文",
+    file: "data/seed-state.json",
+    check: "verifySeedAccountNamesAreChinese",
+    from: '"displayName": "系统管理员"',
+    to: '"displayName": "System Owner"',
+    expect: "种子账号显示名还是英文"
+  },
+  {
+    name: "平台能力说明页不得印 stale",
+    file: APP,
+    gate: "console",
+    from: '异常时优先处理同步失效的技能源或不可用模型。</div>',
+    to: '异常时优先处理 stale 技能源或不可用模型。</div>',
+    expect: "不印 stale／DISPATCH"
+  },
+  {
+    name: "顶栏账号名与账号类型同名时不得写两遍",
+    file: APP,
+    gate: "console",
+    from: '${t(currentAccount.accountType) === (currentAccount.displayName || "") ? "" : ` ${badge(currentAccount.accountType)}`}</span>',
+    to: '${` ${badge(currentAccount.accountType)}`}</span>',
+    expect: "同名时只写一遍"
   }
 ];
 

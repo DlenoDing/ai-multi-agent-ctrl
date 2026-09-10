@@ -2013,7 +2013,7 @@ function render() {
             <p class="subtitle">${esc(subtitle)}</p>
           </div>
           <div class="topbar-actions">
-            <span class="account-chip">${esc(currentAccount.displayName || currentAccount.email)} ${badge(currentAccount.accountType)}</span>
+            <span class="account-chip">${esc(currentAccount.displayName || currentAccount.email)}${t(currentAccount.accountType) === (currentAccount.displayName || "") ? "" : ` ${badge(currentAccount.accountType)}`}</span>
             ${/* 界面上所有时间都按浏览器本机时区渲染，而服务端日志（audit-log.jsonl、执行事件）是 UTC。
                   不标时区，人拿屏幕上的时间去对日志会差好几个小时，进而以为那条记录根本不存在。 */""}
             <span class="small muted" title="界面时间按本机时区显示；服务端日志用的是 UTC">${esc(localZoneLabel())}</span>
@@ -2749,7 +2749,7 @@ function renderSysSettingsSummary(runtime, metrics) {
       ${summaryMetric("共享定义", sharedDefinitions.length, "公共语义和契约归属")}
       ${summaryMetric("外部升级导入", upgradeImports.length, "系统外维护完成后的待激活记录")}
     </div>
-    <div class="small muted">查看顺序：先看“技能源”和“模型能力注册”，再看“指令压缩指标”“共享定义归属”和“外部升级导入”；异常时优先处理 stale 技能源或不可用模型。</div>
+    <div class="small muted">查看顺序：先看“技能源”和“模型能力注册”，再看“指令压缩指标”“共享定义归属”和“外部升级导入”；异常时优先处理同步失效的技能源或不可用模型。</div>
   `, {wide: true});
 }
 
@@ -2777,7 +2777,7 @@ function renderSysSettingsActionBoard(runtime, metrics) {
       ${jumpModuleCard({
         title: "技能源",
         metric: `${usableSkillSources}/${skillSources.length}`,
-        detail: usableSkillSources ? "可用角色 skill 来源" : "优先同步或排查 stale 来源",
+        detail: usableSkillSources ? "可用角色 Skill 来源" : "优先同步或排查同步失效的来源",
         panelTitle: "技能源",
         tone: usableSkillSources ? "blue" : "orange",
         action: "看同步"
@@ -2877,7 +2877,7 @@ function renderSysSettingsLifecycleGuide(runtime, metrics) {
       ${jumpModuleCard({
         title: "5 指令信封",
         metric: `${envelopeCount}`,
-        detail: "固定 DISPATCH 信封、接收角色、缓存键和目标 token",
+        detail: "固定的派发信封、接收角色、缓存键和目标 token 数",
         panelTitle: "指令信封",
         tone: envelopeCount ? "blue" : "gray",
         action: "看信封"

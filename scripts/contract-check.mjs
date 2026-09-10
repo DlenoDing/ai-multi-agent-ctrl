@@ -753,6 +753,7 @@ run(verifyAgentGatewayContracts);
 run(verifyManifestSegmentNamesCannotEscape);
 run(verifyExecutionEventTailStaysBounded);
 run(verifyHumanAndOrganizationContracts);
+run(verifySeedAccountNamesAreChinese);
 
 for (const toolName of ["ui-console-mcp.runtime_health_get", "room-mcp.room_send", "agent-control-mcp.dispatch_status"]) {
   validateSchema(createMcpGrant(toolName, {tokenDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}), mcpGrantSchema, `McpGrant:${toolName}`, errors);
@@ -1615,6 +1616,17 @@ function verifyCommitWorksWithoutConfiguredIdentity(output) {
     for (const [key, value] of Object.entries(savedEnv)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     rmSync(repo, {recursive: true, force: true});
   }
+}
+
+// 种子账号的显示名会出现在顶栏、审计日志的「操作者」列和成员列表里：本地种子曾是 System Owner / Workspace Owner /
+// Review Lead / Agent Runtime Service（09-11 沙箱爬页：系统管理员登录后顶栏就是一行英文），而 init 脚本给的是「系统管理员」——两条起库路径给出两种名字。
+function verifySeedAccountNamesAreChinese(output) {
+  const seed = JSON.parse(readFileSync(join(root, "data/seed-state.json"), "utf8"));
+  const accounts = seed.accounts || [];
+  if (accounts.length < 3) { output.push(`种子账号只读到 ${accounts.length} 个 —— 这条判据没查成`); return; }
+  const english = accounts.filter((account) => !/[\u4e00-\u9fff]/u.test(String(account.displayName || "")));
+  if (english.length) output.push(`种子账号显示名还是英文：${english.map((account) => `${account.accountId}=${account.displayName}`).join("、")} —— 顶栏、审计「操作者」列会原样印它`);
+  console.log(`种子账号显示名：${accounts.length} 个都有中文`);
 }
 
 function verifyHumanAndOrganizationContracts(output) {

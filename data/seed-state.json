@@ -175,7 +175,7 @@
       "schemaVersion": "account/v1",
       "accountId": "acct_system_owner",
       "accountType": "system_admin",
-      "displayName": "System Owner",
+      "displayName": "系统管理员",
       "email": "system.admin@local",
       "status": "active",
       "roles": [
@@ -233,7 +233,7 @@
       "schemaVersion": "account/v1",
       "accountId": "acct_workspace_owner",
       "accountType": "user_account",
-      "displayName": "Workspace Owner",
+      "displayName": "工作区负责人",
       "email": "owner@local",
       "status": "active",
       "roles": [
@@ -256,7 +256,7 @@
       "schemaVersion": "account/v1",
       "accountId": "acct_reviewer",
       "accountType": "user_account",
-      "displayName": "Review Lead",
+      "displayName": "评审负责人",
       "email": "review@local",
       "status": "active",
       "roles": [
@@ -277,7 +277,7 @@
       "schemaVersion": "account/v1",
       "accountId": "acct_agent_runtime",
       "accountType": "service_account",
-      "displayName": "Agent Runtime Service",
+      "displayName": "Agent 运行时服务",
       "email": "agent.runtime@local",
       "status": "active",
       "roles": [

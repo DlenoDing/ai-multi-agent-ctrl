@@ -602,7 +602,7 @@ function ensureDefaultServiceAccounts(state) {
       schemaVersion: "account/v1",
       accountId: "acct_agent_runtime",
       accountType: "service_account",
-      displayName: "Agent Runtime Service",
+      displayName: "Agent 运行时服务",
       email: "agent.runtime@local",
       status: "active",
       roles: ["service_agent_runtime"],
