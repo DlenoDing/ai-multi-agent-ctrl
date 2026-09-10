@@ -538,6 +538,10 @@ try {
     }
   }
 
+  // 「刷新自检」要真的重做自检：记下下发前的「最近自检」时间，命令完成后它必须往前走。
+  const selfCheckBefore = (await json("/api/state?view=runtime&limit=200", {token: login.sessionToken})).agentRuntimeNodes
+    .find((node) => node.nodeId === agentConfig.nodeId)?.lastSelfCheckAt || null;
+  await new Promise((resolve) => setTimeout(resolve, 5));
   await json(`/api/agent-nodes/${agentConfig.nodeId}/control`, {
     method: "POST",
     token: login.sessionToken,
@@ -554,6 +558,10 @@ try {
   const controlCommand = (controlState.agentControlCommands || []).find((command) => command.idempotencyKey === "doctor-agent-control-refresh");
   if (!controlCommand || controlCommand.status !== "completed" || !controlCommand.resultDigest) throw new Error("Agent control command was not delivered and ACKed");
   if (!controlCommand.deliveredAt || !controlCommand.acknowledgedAt) throw new Error("Agent control command did not persist delivered and ACK timestamps");
+  const selfCheckAfter = (controlState.agentRuntimeNodes || []).find((node) => node.nodeId === agentConfig.nodeId)?.lastSelfCheckAt || null;
+  if (!selfCheckAfter || (selfCheckBefore && selfCheckAfter <= selfCheckBefore)) {
+    throw new Error(`刷新自检没有重做自检：最近自检 ${selfCheckBefore} → ${selfCheckAfter} —— 按钮叫「刷新自检」，控制台上那个时间却一直停在注册那天`);
+  }
 
   const reuse = await jsonRaw("/api/agent/v1/register", {method: "POST", token: joinResult.joinToken, body: {nodeName: "doctor-node", profile: {}}});
   // 只判 409 不够：幂等键撞了也是 409。要的是"这张一次性令牌已经用掉了"这一条，

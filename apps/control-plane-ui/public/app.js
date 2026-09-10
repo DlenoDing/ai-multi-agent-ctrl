@@ -9273,7 +9273,7 @@ document.addEventListener("click", async (event) => {
         body: JSON.stringify({commandType: command, dispatchId: dispatchId || undefined})
       });
       await loadPage();
-      toast.success({pause_dispatch: "已暂停派发", resume_dispatch: "已恢复派发", cancel_dispatch: "已取消派发", refresh_profile: "已下发刷新自检：节点 ACK 后会回写最新能力", shutdown: "已关停节点"}[command] || "已下发控制指令");
+      toast.success({pause_dispatch: "已暂停派发", resume_dispatch: "已恢复派发", cancel_dispatch: "已取消派发", refresh_profile: "已下发刷新自检：节点收到后会重新探测能力并重做一遍自检，几秒后这一页的「最近自检」时间和能力清单会更新", shutdown: "已关停节点"}[command] || "已下发控制指令");
       return;
     }
     if (action === "close-task-group") {

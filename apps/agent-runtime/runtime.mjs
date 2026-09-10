@@ -594,7 +594,11 @@ async function handleControlCommand(config, command, options = {}) {
       writeAgentScopedMcpConfig(config, profile);
       if (globalClientConfigurationEnabled(config)) configureGlobalRemoteMcpClients(config, profile);
     }
-    await ackControlCommand(config, command, "completed", {profileDigest: heartbeat.node?.profileDigest || null});
+    // 按钮叫「刷新自检」，此前只重探能力、不重做自检：控制台上「最近自检」一直停在注册那天，
+    // 人以为节点没收到。自检失败不该让这条命令失败 —— 结果照样回给控制面，让人看到是哪一项没过。
+    let selfCheckResult = null;
+    try { selfCheckResult = await selfCheck(config); } catch (error) { selfCheckResult = {ok: false, error: String(error?.message || error).slice(0, 200)}; }
+    await ackControlCommand(config, command, "completed", {profileDigest: heartbeat.node?.profileDigest || null, selfCheckOk: selfCheckResult?.ok ?? null});
     return;
   }
   if (command.commandType === "resume_dispatch") {

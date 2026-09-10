@@ -14622,6 +14622,14 @@ const MUTATIONS = [
     from: '    return exec === group.status ? "" : `${h.badge(exec)} `;',
     to: '    return `${h.badge(exec)} `;',
     expect: "不得在列表行或详情头部写两遍「已关闭」"
+  },
+  {
+    name: "「刷新自检」必须真的重做自检（不然「最近自检」永远停在注册那天）",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "    try { selfCheckResult = await selfCheck(config); } catch (error) {",
+    to: "    try { selfCheckResult = null; } catch (error) {",
+    expect: "刷新自检没有重做自检"
   }
 ];
 
