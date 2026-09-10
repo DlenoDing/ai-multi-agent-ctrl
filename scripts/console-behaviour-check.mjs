@@ -353,9 +353,7 @@ globalThis.__probe = {
     state = nextState;
     return window.AIMAC_TASK_WORKBENCH.render({groups, state, selected, workDetail,
       pageData: null, eventHistory: false, eventPage: 1, disclosure: {},
-      helpers: {badge, t, explainCoded, fmtTime, progressLine, humanTraceHtml, workItemExitHint,
-        workItemResultHtml, repositoryFailureAction, modelDecisionTextZh, agentEventSummaryZh,
-        isTerminalDispatch: (status) => terminalDispatchStatuses.has(status)}});
+      helpers: taskWorkbenchHelpers()});
   },
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
   decisionSelect: (...args) => decisionSelect(...args),
@@ -1946,7 +1944,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     const currentRun = eventProbe.renderTaskWorkbenchModule({...renderArgs, nextState: baseState});
     {
       const zhState = {...baseState,
-        agentDispatches: [{...baseState.agentDispatches[0], modelDecision: "modelDecision: bounded writeSet directed verification; no architecture裁决 -> openai:gpt-5.5 / medium"}],
+        agentDispatches: [{...baseState.agentDispatches[0], reasoning: "medium", modelDecision: "modelDecision: bounded writeSet directed verification; no architecture裁决 -> openai:gpt-5.5 / medium"}],
         agentExecutionEvents: [{...events[0], summary: "Dispatch package received and binding verified."}]};
       const zhRun = eventProbe.renderTaskWorkbenchModule({...renderArgs, nextState: zhState});
       const zhText = zhRun.replace(/<[^>]+>/gu, " ");
@@ -1954,6 +1952,10 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         /有界写入范围 · 任务类型：定向验证/u.test(zhText) && /已接收派发包并核对绑定/u.test(zhText)
           && !/modelDecision:|Dispatch package received/u.test(zhText),
         `任务详情：${(zhText.match(/选型判断.{0,80}/u) || ["没找到选型判断"])[0]} ｜ ${(zhText.match(/已接收派发.{0,60}/u) || ["没找到执行记录"])[0]}`);
+      // 【推理档要翻中文】（09-11 沙箱爬页：「模型与推理」一栏写着「openai:gpt-5.5 · medium」，旁边的选型判断却写「推理档：中」）。
+      check("任务详情「模型与推理」的推理档要写中文，不印 medium",
+        /模型与推理\s+\S+ · 推理档：中/u.test(zhText.replace(/\s+/gu, " ")) && !/· medium/u.test(zhText),
+        `模型与推理：${(zhText.replace(/\s+/gu, " ").match(/模型与推理.{0,60}/u) || ["没找到"])[0]}`);
     }
     check("任务详情二次限流必须保留最新事件",
       /newest-window-event/u.test(currentRun) && !/oldest-window-event/u.test(currentRun),
@@ -3291,6 +3293,22 @@ async function runErrorGuidanceCase() {
       && ["activity", "outputs"].every((workspace) => String(overviewMoreRoot.innerHTML || "").includes(`data-menu="proj-overview" data-menu-workspace="${workspace}"`))
       && ["pending", "dispositions", "history"].every((workspace) => String(reviewMoreRoot.innerHTML || "").includes(`data-menu="review" data-menu-workspace="${workspace}"`)),
     "侧栏变短的同时把历史、事件、诊断或审核明细变成了不可达死路");
+  // 【说明页要渲染归到它名下的面板】（09-11 沙箱爬页：流程导航、组织操作路径、任务组处置看板、监控处置看板在 69 页里一处都找不到 ——
+  // 栏目表把它们归给「说明」栏目，而说明页只渲染入口清单，从没有一条路渲染到它们；用户拍板留下的「流程导航」就这样没了）。
+  {
+    const orgHelpRoot = el("div");
+    loadConsole(orgHelpRoot, {realI18n: true}).renderFullPagePaneWith(navState, orgAccount, "p1", "org-overview", "help");
+    const overviewPaneRoot = el("div");
+    loadConsole(overviewPaneRoot, {realI18n: true}).renderFullPagePaneWith(navState, projectAccount, "p1", "proj-overview", "overview");
+    const tgHelpRoot = el("div");
+    loadConsole(tgHelpRoot, {realI18n: true}).renderFullPagePaneWith(navState, projectAccount, "p1", "tg", "help");
+    const overviewMore = String(overviewMoreRoot.innerHTML || "");
+    check("说明页要在入口清单之后渲染归到它名下的面板（流程导航／组织操作路径／任务组处置看板／监控处置看板），总览栏目不重复摆",
+      /流程导航/u.test(overviewMore) && overviewMore.indexOf("常用入口") < overviewMore.indexOf("流程导航")
+        && /组织操作路径/u.test(String(orgHelpRoot.innerHTML || "")) && /任务组处置看板/u.test(String(tgHelpRoot.innerHTML || ""))
+        && /监控处置看板/u.test(monitorHelpHtml) && !/流程导航/u.test(String(overviewPaneRoot.innerHTML || "")),
+      `项目说明页：${/流程导航/u.test(overviewMore) ? "有流程导航" : "没有流程导航"}；组织说明页：${/组织操作路径/u.test(String(orgHelpRoot.innerHTML || "")) ? "有操作路径" : "没有操作路径"}；任务组说明页：${/任务组处置看板/u.test(String(tgHelpRoot.innerHTML || "")) ? "有处置看板" : "没有处置看板"}；监控说明页：${/监控处置看板/u.test(monitorHelpHtml) ? "有" : "没有"}；总览栏目${/流程导航/u.test(String(overviewPaneRoot.innerHTML || "")) ? "也摆了流程导航" : "没重复"}`);
+  }
   const runPageRoot = el("div");
   loadConsole(runPageRoot, {realI18n: true}).renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "sessions");
   const runPageTopbar = String(runPageRoot.innerHTML || "").split('<header class="topbar">')[1]?.split("</header>")[0] || "";
@@ -3648,7 +3666,7 @@ async function runErrorGuidanceCase() {
     `${JSON.stringify(executionProbe.sessionState())} ${String(executionRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").slice(0, 260)}`);
   const nodeRoot = el("div");
   const nodeProbe = loadConsole(nodeRoot, {realI18n: true});
-  const routedNode = {nodeId: "node_outside_window", nodeName: "窗口外运行节点", organizationId: "org_default", registrationScope: "project", projectIds: ["p1"], effectiveProjectIds: ["p1"], allowedRoles: ["reviewer"], allowedMcpTools: [], status: "online", admission: "full", profile: {tools: [], models: []}};
+  const routedNode = {nodeId: "node_outside_window", nodeName: "窗口外运行节点", organizationId: "org_default", registrationScope: "project", projectIds: ["p1"], effectiveProjectIds: ["p1"], allowedRoles: ["reviewer"], allowedMcpTools: [], status: "online", admission: "full", profile: {tools: [{name: "cursor", version: "unknown", available: false}, {name: "git", version: "2.39.3", available: true}], models: []}};
   const nodeState = {...windowedState, agentRuntimeNodes: [routedNode], agents: [], agentJoinTokens: [], agentDispatches: []};
   nodeProbe.renderFullPageWith(nodeState, systemAccount, "p1", "proj-overview");
   nodeProbe.restoreRoute({page: "proj-agents", projectId: "p1", workspace: "nodes", nodeId: routedNode.nodeId});
@@ -3674,6 +3692,10 @@ async function runErrorGuidanceCase() {
       nodeText.includes("项目专属 · 项目一") && nodeText.includes("可见项目 项目一") && nodeText.includes("· 写分派文档")
         && !/可见项目 p1\b/u.test(nodeText) && !/· adp_node_recent/u.test(nodeText),
       `节点详情：${nodeText.match(/注册范围.{0,80}/u)?.[0] || "没找到注册范围"}；事件脚注：${nodeText.match(/.{0,40}adp_node_recent|.{0,40}· 写分派文档/u)?.[0] || "没找到"}`);
+    // 【没装的工具别印 unknown】（09-11 沙箱爬页：本机工具一栏写着「cursor unknown（不可用）」）。
+    check("运行节点详情里没检测到的工具要写「未检测到」，不印 unknown；装了的照常带版本",
+      nodeText.includes("cursor（未检测到）") && !/unknown/u.test(nodeText) && nodeText.includes("git 2.39.3"),
+      `本机工具：${nodeText.match(/本机工具.{0,80}/u)?.[0] || "没找到本机工具"}`);
   }
   const browserRouteSource = objectProbe.browserRouteSource();
   check("浏览器历史恢复必须单飞并只排队最新路由",

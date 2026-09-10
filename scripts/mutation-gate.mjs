@@ -14630,6 +14630,30 @@ const MUTATIONS = [
     from: "    try { selfCheckResult = await selfCheck(config); } catch (error) {",
     to: "    try { selfCheckResult = null; } catch (error) {",
     expect: "刷新自检没有重做自检"
+  },
+  {
+    name: "说明页必须渲染归到它名下的面板（流程导航等），不能只有入口清单",
+    file: APP,
+    gate: "console",
+    from: '      }) + (helpTitles.length ? workspaces.run(page, renderPageContent) : "")',
+    to: '      }) + ""',
+    expect: "说明页要在入口清单之后渲染归到它名下的面板"
+  },
+  {
+    name: "任务详情的推理档不得印英文原值",
+    file: "apps/control-plane-ui/public/modules/task-workbench.js",
+    gate: "console",
+    from: '推理档：${esc(h.reasoningLabel(run.reasoning) || "未记录")}',
+    to: '推理档：${esc(run.reasoning || "未记录")}',
+    expect: "推理档要写中文"
+  },
+  {
+    name: "没检测到的本机工具不得印 unknown",
+    file: "apps/control-plane-ui/public/modules/runtime-node-workspace.js",
+    gate: "console",
+    from: '${tool.available === false ? "（未检测到）" : tool.version ? ` ${tool.version}` : ""}',
+    to: '${tool.version ? ` ${tool.version}` : ""}${tool.available === false ? "（不可用）" : ""}',
+    expect: "没检测到的工具要写「未检测到」"
   }
 ];
 

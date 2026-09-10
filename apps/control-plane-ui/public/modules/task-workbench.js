@@ -80,7 +80,7 @@
         <dl class="kv-list"><dt>运行节点</dt><dd>${esc(nodeNames.get(run.assignedNodeId) || run.assignedNodeId || "等待认领")}</dd>
           <dt>角色档案</dt><dd>${esc(logical?.name || logical?.id || session?.agentId || "未记录")}</dd>
           <dt>执行角色</dt><dd>${esc(h.t(run.roleId || work.ownerRole))}</dd>
-          <dt>模型与推理</dt><dd>${esc(run.model || "未记录")} · ${esc(run.reasoning || "未记录")}</dd>
+          <dt>模型与推理</dt><dd>${esc(run.model || "未记录")} · 推理档：${esc(h.reasoningLabel(run.reasoning) || "未记录")}</dd>
           <dt>选型判断</dt><dd>${esc(h.modelDecisionTextZh(run.modelDecision))}</dd>
           <dt>会话</dt><dd class="mono">${esc(run.sessionId || "未记录")}</dd>
           <dt>派发时间</dt><dd>${h.fmtTime(run.createdAt)}</dd>

@@ -2101,13 +2101,17 @@ function renderContent() {
     ? (workspaces.catalog["group-detail"] || []).map((entry) => ({pageId: "group-detail", workspace: entry.id, label: entry.label, description: ""}))
     : functionalMenu.filter((item) => !item.divider && item.id === page)
       .map((item) => ({pageId: item.id, workspace: item.workspace, label: item.label, description: item.description || ""}));
+  // 说明页 = 功能入口清单 + 这一页归到「说明」栏目下的那几块面板（流程导航、组织操作路径、任务组处置看板、
+  // 监控处置看板…）。此前说明页只渲染入口清单，这些面板在栏目表里归了「说明」却从没有一条路能渲染到它们 ——
+  // 用户拍板留下的「流程导航」就这样在页面上消失了。没有归属面板的页（任务组详情等）仍只有入口清单。
+  const helpTitles = (workspaces.catalog[helpPage] || []).find((entry) => entry.id === "help")?.titles || [];
   const pageBody = helpActive
     ? window.AIMAC_DOMAIN_OVERVIEW_WORKSPACE.render({
         pageId: helpPage,
         title: PAGE_META[page]?.[0] || functionalPageLabel,
         items: helpItems,
         helpers: {panel: renderPanel, esc}
-      })
+      }) + (helpTitles.length ? workspaces.run(page, renderPageContent) : "")
     : managementScopeBar() + workspaces.run(page, renderPageContent);
   if (groupDetail) return context + `<div class="object-detail-layout"><aside class="object-section-rail">${workspaces.objectNavigation("group-detail", workspaceOptions())}</aside><div class="object-detail-content">${pageBody}</div></div>`;
   // 页内栏目条：侧栏只留每页一个入口之后，页里的几个栏目（监控的 5 个、审核的 6 个、设置的 6 个…）要在内容区顶部
@@ -2183,9 +2187,7 @@ function renderTaskWorkbench() {
     pageData: taskPageData, workDetail: taskWorkDetail, pageNumber: taskCursorStack.length + 1, loading: taskPageLoading,
     eventHistory: workEventHistoryMode, eventPage: workEventCursorStack.length + 1,
     disclosure: taskRunDisclosure,
-    helpers: {badge, t, explainCoded, fmtTime, progressLine, humanTraceHtml, workItemExitHint, workItemResultHtml, repositoryFailureAction,
-      modelDecisionTextZh, agentEventSummaryZh,
-      isTerminalDispatch: (status) => terminalDispatchStatuses.has(status)}
+    helpers: taskWorkbenchHelpers()
   }), {wide: true, headerSide: !selectedWork && hasPerm("task_group:control")
     ? `<button class="primary-button" data-workspace-page="tasks" data-workspace="create">新建任务</button>` : ""});
 }
@@ -5393,6 +5395,14 @@ function renderTaskGroups() {
   return notices + panel("任务组列表", window.AIMAC_TASK_GROUP_WORKSPACE.list(groups, helpers), {wide: true,
     headerSide: `${filterInput("按任务组名称、状态或语言筛选…", "task-group-list")}${hasProjectPermission("task_group:control")
       ? `<button class="primary-button" data-workspace-page="tg" data-workspace="create">新建任务组</button>` : ""}`});
+}
+
+// 任务工作台模块的人话函数包：页面渲染与门里的探针共用同一份，免得两边各抄一份、加一个函数漏一边。
+function taskWorkbenchHelpers() {
+  return {badge, t, explainCoded, fmtTime, progressLine, humanTraceHtml, workItemExitHint, workItemResultHtml, repositoryFailureAction,
+    modelDecisionTextZh, agentEventSummaryZh,
+    reasoningLabel: (level) => (level ? REASONING_LEVEL_LABELS[level] || level : ""),
+    isTerminalDispatch: (status) => terminalDispatchStatuses.has(status)};
 }
 
 function taskGroupControls(taskGroup) {

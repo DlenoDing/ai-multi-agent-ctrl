@@ -56,7 +56,7 @@
       ${metric("CPU", profile.cpuCount ?? "-")}${metric("内存", h.fmtBytes(profile.memoryBytes))}${metric("磁盘可用", h.fmtBytes(profile.diskFreeBytes))}${metric("网络", profile.networkSpeedMbps ? `${profile.networkSpeedMbps} Mbps` : "-")}
     </div>
     <div class="runtime-node-capability-groups"><div><h4>模型执行器</h4>${chips(models.map((model) => `${model.providerClass ? h.providerLabel(model.providerClass) : model.modelId || "模型"}${model.available === false ? "（不可用）" : ""}`), "未上报模型")}</div>
-      <div><h4>本机工具</h4>${chips(tools.map((tool) => `${tool.name || "tool"}${tool.version ? ` ${tool.version}` : ""}${tool.available === false ? "（不可用）" : ""}`), "未上报工具")}</div>
+      <div><h4>本机工具</h4>${chips(tools.map((tool) => `${tool.name || "tool"}${tool.available === false ? "（未检测到）" : tool.version ? ` ${tool.version}` : ""}`), "未上报工具")}</div>
       <div><h4>能力标记</h4>${chips((profile.capabilityFlags || []).map((flag) => h.capabilityLabel(flag)), "未上报能力标记")}</div></div>`;
   }
 
