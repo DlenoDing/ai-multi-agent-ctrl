@@ -6570,6 +6570,32 @@ async function runPendingTruncationCase() {
       check("执行控制栏目不再另摆一排暂停／恢复按钮，只指向上方工具条",
         controlPane.includes("在上方工具条") && !/data-task-action="(?:pause|resume)"/u.test(controlPane),
         `执行控制栏目：${controlPane.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/执行控制.{0,160}/u)?.[0] || controlPane.slice(0, 200)}`);
+      // 【「请求评审」要看得见效果】（用户 09-11 走查：按下去只有一条 toast，头部四个徽标一个没变，评审人那边也没有任何东西）。
+      {
+        const requestedGroup = {...activeGroup, reviewState: "review_requested", reviewRequestedAt: "2026-09-11T02:00:00.000Z", reviewRequestedBy: "acct_u1"};
+        const requestedHtml = String(toolbarProbe.renderTaskGroupsWith(groupWith(requestedGroup), systemAdmin, "p1", detailTaskGroup.id, controllableDetail));
+        const headerOf = (html) => html.slice(html.indexOf('class="record-meta"'), html.indexOf("task-group-object-actions"));
+        check("任务组被请求评审后，详情头部要挂「待评审」徽标，工具条换成「评审完成」且不再摆「请求评审」",
+          /待评审/u.test(headerOf(requestedHtml)) && !/待评审/u.test(headerOf(activeToolbar))
+            && count(requestedHtml, "finish_review") === 1 && count(requestedHtml, "request_review") === 0
+            && count(activeToolbar, "request_review") === 1 && count(activeToolbar, "finish_review") === 0
+            && /data-task-action="finish_review"[^>]*>评审完成</u.test(toolbarOf(requestedHtml))
+            && /taskAction === "finish_review"\) \{\s*toast\.success\("已结束评审/u.test(controlBranch),
+          `待评审头部：${headerOf(requestedHtml).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 120)}；request×${count(requestedHtml, "request_review")} finish×${count(requestedHtml, "finish_review")}`);
+        const listHtml = String(toolbarProbe.renderTaskGroupsWith(groupWith(requestedGroup), systemAdmin, "p1", "", controllableDetail));
+        // 已关闭的组此前在列表与详情头部都写着「已关闭 已关闭」（执行状态与生命周期状态同名）。
+        const closedGroup = {...detailTaskGroup, status: "closed", goalExecutionStatus: "closed"};
+        const closedList = String(toolbarProbe.renderTaskGroupsWith(groupWith(closedGroup), systemAdmin, "p1", "", controllableDetail));
+        const closedDetail = String(toolbarProbe.renderTaskGroupsWith(groupWith(closedGroup), systemAdmin, "p1", detailTaskGroup.id, controllableDetail));
+        const rowStart = closedList.indexOf(`data-action="tg-detail" data-task="${detailTaskGroup.id}"`);
+        const closedRow = closedList.slice(rowStart, closedList.indexOf("</tr>", rowStart));
+        check("已关闭的任务组不得在列表行或详情头部写两遍「已关闭」",
+          (closedRow.match(/已关闭/gu) || []).length === 1 && (headerOf(closedDetail).match(/已关闭/gu) || []).length === 1,
+          `列表行 ${(closedRow.match(/已关闭/gu) || []).length} 次，详情头部 ${(headerOf(closedDetail).match(/已关闭/gu) || []).length} 次`);
+        check("任务组列表的执行状态列也要挂「待评审」徽标",
+          /待评审/u.test(listHtml.slice(listHtml.indexOf("<table"))),
+          `列表：${listHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 200)}`);
+      }
     }
     // 【事项清单的受阻原因要翻中文】（用户 09-09 走查：反复失败后事项清单写着「受阻原因：execution_failed_repeatedly」）。
     {
@@ -7332,6 +7358,17 @@ async function runPendingTruncationCase() {
       check("打回后停在「待决策」的任务要进待办，并指到人工指令的下达页",
         /待你决策处置的任务（重开／放弃）/u.test(decisionPanel) && /data-menu="directives" data-menu-workspace="compose"/u.test(decisionPanel),
         `待办面板：${decisionPanel.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 200)}`);
+      // 【被请求评审的任务组要进评审人的待办】（用户 09-11 走查：负责人按了「请求评审」，评审人的待办处理里什么都没有）。
+      {
+        const reviewState = {...withBlockers, taskGroups: [{id: "tg1", projectId: "p1", name: "待评审的组", status: "development", reviewState: "review_requested", workItems: []},
+          {id: "tg2", projectId: "p1", name: "已关闭的组", status: "closed", reviewState: "review_requested", workItems: []}]};
+        const reviewPanel = probe.renderPendingPanelWith(reviewState, admin);
+        const reviewText = reviewPanel.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+        // 桶只报数不列名：两个组里只有没关闭的那个算，所以数必须是 1。
+        check("被请求评审的任务组要进待办并指到任务组列表；已关闭的组不算",
+          /被请求评审的任务组（看完点「评审完成」） 1 处置入口：任务组/u.test(reviewText) && /data-menu="tg" data-menu-workspace="list"/u.test(reviewPanel),
+          `待办面板：${reviewText.slice(0, 240)}`);
+      }
       const decisionProbe = loadConsole(el("div"), {realI18n: true});
       decisionProbe.restoreRoute({page: "directives", projectId: "p1", groupId: "tg1", workId: "w_nd", workspace: "compose"});
       const directivesHtml = String(decisionProbe.renderDirectivesWith({...decisionState, projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}]}, admin, "p1", []));

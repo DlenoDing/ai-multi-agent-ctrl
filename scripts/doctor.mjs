@@ -2358,6 +2358,25 @@ try {
   if (machinePause.response.status === 403 && machinePause.payload?.error === "principal_not_allowed_for_action") {
     throw new Error("暂停也被当成真人专属挡掉了 —— 收的是取消/中止，暂停是可恢复的运行调节，不该一起锁");
   }
+  // 【请求评审要能收掉】：此前 request_review 只写一个谁也不读的字段。现在它要记下谁在何时请求，
+  // 并由「评审完成」（finish_review）清掉 —— 不然「待评审」挂上去就永远摘不下来。
+  {
+    const requested = await jsonFetch(port, "/api/task-groups/tg_runtime_management/control", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-request-review", authorization: systemAuth},
+      body: JSON.stringify({action: "request_review"})});
+    const marked = requested.payload?.taskGroup;
+    if (requested.response.status !== 200 || marked?.reviewState !== "review_requested" || !marked.reviewRequestedAt || !marked.reviewRequestedBy) {
+      throw new Error(`请求评审没把任务组标为待评审、或没记下谁何时请求的（HTTP ${requested.response.status} `
+        + `reviewState=${marked?.reviewState} at=${marked?.reviewRequestedAt} by=${marked?.reviewRequestedBy}）`);
+    }
+    const finished = await jsonFetch(port, "/api/task-groups/tg_runtime_management/control", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-finish-review", authorization: systemAuth},
+      body: JSON.stringify({action: "finish_review"})});
+    const cleared = finished.payload?.taskGroup;
+    if (finished.response.status !== 200 || cleared?.reviewState !== undefined || cleared?.reviewRequestedAt !== undefined) {
+      throw new Error(`评审完成没有收掉待评审标记（HTTP ${finished.response.status} reviewState=${cleared?.reviewState}）—— 标记挂上去就摘不下来`);
+    }
+  }
   // 【账号注销】2026-08-26 人定做出来的能力。规范与状态机里一直写着 retired 是终态，
   // 而此前全仓没有任何代码能把账号写成它 —— 「配额统计排除 retired」于是成了一句空话。
   // 「注销」与「停用」的区别只有一条：停用能启用回来，注销回不来。所以判据要验的不是

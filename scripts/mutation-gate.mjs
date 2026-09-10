@@ -5152,8 +5152,8 @@ const MUTATIONS = [
     name: "拼出来的动作名必须被展开（不展开＝把活的保护误报成失效）",
     file: "scripts/contract-check.mjs",
     check: "verifyHumanOnlyActionNamesStillExist",
-    from: 'for (const name of ["pause", "resume", "request_review", "rebound_drift", "cancel", "abort"]) {',
-    to: 'for (const name of ["pause", "resume", "request_review", "rebound_drift"]) {',
+    from: 'for (const name of ["pause", "resume", "request_review", "finish_review", "rebound_drift", "cancel", "abort"]) {',
+    to: 'for (const name of ["pause", "resume", "request_review", "finish_review", "rebound_drift"]) {',
     expect: "已经没有对应的受守卫写入"
   },
   {
@@ -14582,6 +14582,46 @@ const MUTATIONS = [
     from: '  const overridesUpstream = owned && source.split("+").filter(Boolean).length > 1;',
     to: '  const overridesUpstream = owned;',
     expect: "规则行徽标要分清「本层新增」「本层覆盖」「继承」"
+  },
+  {
+    name: "被请求评审的任务组必须在详情头部挂「待评审」徽标",
+    file: "apps/control-plane-ui/public/modules/task-group-workspace.js",
+    gate: "console",
+    from: '${execBadge(group, h)}${group.reviewState === "review_requested" ? ` ${h.badge("review_requested")}` : ""}</div>',
+    to: '${execBadge(group, h)}</div>',
+    expect: "详情头部要挂「待评审」徽标"
+  },
+  {
+    name: "已被请求评审的任务组不得再摆「请求评审」，要换成「评审完成」",
+    file: APP,
+    gate: "console",
+    from: '${activeGroup && taskGroup.reviewState === "review_requested" && (hasGroupPerm(taskGroup.id, "task_group:review")',
+    to: '${activeGroup && false && (hasGroupPerm(taskGroup.id, "task_group:review")',
+    expect: "工具条换成「评审完成」"
+  },
+  {
+    name: "被请求评审的任务组必须进评审人的待办",
+    file: APP,
+    gate: "console",
+    from: '    groups.filter((taskGroup) => taskGroup.reviewState === "review_requested" && !settledTaskGroupStatuses.has(taskGroup.status))',
+    to: '    groups.filter(() => false)',
+    expect: "被请求评审的任务组要进待办"
+  },
+  {
+    name: "「评审完成」必须真的收掉待评审标记",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (action === "finish_review") {\n      delete taskGroup.reviewState;\n',
+    to: '    if (action === "finish_review") {\n',
+    expect: "评审完成没有收掉待评审标记"
+  },
+  {
+    name: "执行状态与生命周期状态同名时不得写两遍「已关闭」",
+    file: "apps/control-plane-ui/public/modules/task-group-workspace.js",
+    gate: "console",
+    from: '    return exec === group.status ? "" : `${h.badge(exec)} `;',
+    to: '    return `${h.badge(exec)} `;',
+    expect: "不得在列表行或详情头部写两遍「已关闭」"
   }
 ];
 

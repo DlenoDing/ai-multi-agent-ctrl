@@ -7662,7 +7662,7 @@ function verifyCommandBusLifecycle(output) {
   // 以及人工指令的消费循环 —— 两条路原先都没有终态检查，一个已关闭的组照样能被改成
   // 「已被控制暂停」、被重开评审、被打成需关注，而关闭是真人做的终局决定。
   {
-    for (const action of ["pause", "resume", "request_review", "rebound_drift", "cancel"]) {
+    for (const action of ["pause", "resume", "request_review", "finish_review", "rebound_drift", "cancel"]) {
       const refusal = taskGroupRuntimeControlRefusal({id: "tg_x", status: "closed"}, action);
       if (!refusal || refusal.error !== "task_group_already_terminal") {
         output.push(`已关闭的任务组还接受「${action}」：${JSON.stringify(refusal)} —— `
@@ -10602,7 +10602,7 @@ function verifyHumanOnlyActionNamesStillExist(output) {
     // 一条路由服务六个动作。只认字面量的话，cancel/abort 在这道门眼里等于"没有受守卫写入"，
     // 而它们其实被守着 —— 门看不见写法，不是保护失效。展开成那六个真实动作名。
     if (call.includes("`task_group_${action}`")) {
-      for (const name of ["pause", "resume", "request_review", "rebound_drift", "cancel", "abort"]) {
+      for (const name of ["pause", "resume", "request_review", "finish_review", "rebound_drift", "cancel", "abort"]) {
         guarded.add(`task_group_${name}`);
       }
     }

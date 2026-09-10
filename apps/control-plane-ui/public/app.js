@@ -383,6 +383,10 @@ function pendingForMe() {
     groups.flatMap((taskGroup) => (taskGroup.workItems || [])
       .filter((item) => item.status === "needs_decision")
       .map((item) => ({...item, taskGroupId: taskGroup.id}))), canControlGroup, "taskGroups");
+  // 负责人按了「请求评审」，此前只落一个谁也不读的字段：评审人的待办里没有它，按的人也看不到任何效果。
+  add("reviewRequests", "被请求评审的任务组（看完点「评审完成」）", "tg", "list",
+    groups.filter((taskGroup) => taskGroup.reviewState === "review_requested" && !settledTaskGroupStatuses.has(taskGroup.status))
+      .map((taskGroup) => ({...taskGroup, taskGroupId: taskGroup.id})), canReviewGroup, "taskGroups");
   add("directives", "待你确认已被消费的人工指令", "directives", "history",
     (state.humanDirectives || []).filter((item) => inScope(item)
       && ["queued", "acknowledged"].includes(item.status)), canControlGroup, "humanDirectives");
@@ -5396,7 +5400,8 @@ function taskGroupControls(taskGroup) {
   return `<div class="button-row">
     ${activeGroup && hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="primary-button" data-workspace-page="tasks" data-workspace="create" data-create-for-group="${esc(taskGroup.id)}">创建任务</button>` : ""}
     ${taskGroupLifecycleControl(taskGroup)}
-    ${activeGroup && (hasGroupPerm(taskGroup.id, "task_group:review") || hasGroupPerm(taskGroup.id, "task_group:control")) ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="request_review">请求评审</button>` : ""}
+    ${activeGroup && taskGroup.reviewState !== "review_requested" && hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="request_review">请求评审</button>` : ""}
+    ${activeGroup && taskGroup.reviewState === "review_requested" && (hasGroupPerm(taskGroup.id, "task_group:review") || hasGroupPerm(taskGroup.id, "task_group:control")) ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="finish_review" title="收掉「待评审」标记${taskGroup.reviewRequestedAt ? `（${esc(fmtTime(taskGroup.reviewRequestedAt))} 请求）` : ""}">评审完成</button>` : ""}
     ${activeGroup && hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="danger-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="rebound_drift">纠偏</button>` : ""}
   </div>`;
 }
@@ -9307,7 +9312,9 @@ document.addEventListener("click", async (event) => {
       } else if (taskAction === "rebound_drift") {
         toast.success(stopped ? `已触发纠偏：健康度标为「需关注」，并叫停了 ${stopped} 个在跑的派发` : "已触发纠偏：健康度标为「需关注」，当前没有在跑的派发");
       } else if (taskAction === "request_review") {
-        toast.success("已请求评审：任务组审核状态改为「已请求评审」");
+        toast.success("已请求评审：任务组标为「待评审」，有评审权限的成员会在「待办处理」看到它；评审人看完点「评审完成」收掉");
+      } else if (taskAction === "finish_review") {
+        toast.success("已结束评审：任务组的「待评审」标记已收掉");
       } else {
         toast.success("已执行任务组操作");
       }

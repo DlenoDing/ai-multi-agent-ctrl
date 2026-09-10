@@ -1458,7 +1458,7 @@ const MACHINE_ALLOWED_ACTIONS = [
   // 五、任务组运行控制里【可恢复】的那几个：暂停、恢复、要求评审、纠偏。
   // 它们改的是节奏不是结论，停了还能再起来，所以机器可以做。
   // （取消/中止不在这里 —— 见下面真人专属那份清单。）
-  "task_group_pause", "task_group_resume", "task_group_request_review", "task_group_rebound_drift",
+  "task_group_pause", "task_group_resume", "task_group_request_review", "task_group_finish_review", "task_group_rebound_drift",
   // 死信处置（丢弃/重放重试超限的命令）是运维对失败的判断，与质量门豁免同类，不交给机器主体。
   "dlq_entry_resolve",
   // 七、首次引导：空库上建出第一个系统账号，那一刻还没有任何"人"可用。
@@ -2368,7 +2368,7 @@ function sliceItems(items, limit) {
 // 任务组运行时控制的闭集。守卫与审计的动作名都由它拼出，所以它必须是【服务端定死的】：
 // 一旦允许请求体带任意后缀，权限映射（task_group_* → task_group:control）就成了万能钥匙，
 // 审计日志也成了可写入的留言板。
-const TASK_GROUP_CONTROL_ACTIONS = ["recompute_readiness", "pause", "resume", "request_review", "rebound_drift", "cancel", "abort"];
+const TASK_GROUP_CONTROL_ACTIONS = ["recompute_readiness", "pause", "resume", "request_review", "finish_review", "rebound_drift", "cancel", "abort"];
 
 // 【一台节点可能同时服务多个项目】。吊销它、给它下控制命令，影响的是它服务的【全部】项目，
 // 而这两条路原先只按 projectIds[0] 判权：在第一个项目上有权的人，能停掉一台同时给别人干活的
@@ -2405,6 +2405,8 @@ function permissionForAction(action) {
   if (action === "access_grant_create" || action === "access_grant_revoke") return "project:grant";
   if (["agent_create", "agent_profile_update", "agent_activation_update"].includes(action)) return "agent:activate";
   if (action === "agent_join_token_create" || action === "agent_join_token_revoke" || action === "agent_node_revoke" || action === "agent_control_command_create") return "agent:activate";
+  // 「评审完成」是评审人收掉负责人的评审请求 —— 归评审权，不然有评审权、没控制权的人看得见「待评审」却收不掉它。
+  if (action === "task_group_finish_review") return "task_group:review";
   if (action.startsWith("task_group_")) return "task_group:control";
   if (action === "repository_output_target_select") return "project:*";
   if (action === "instruction_envelope_create") return "task_group:control";
@@ -5222,7 +5224,18 @@ async function handleApi(req, res) {
       // 而人只会信离数据最近的那一句。人工指令那条路的 resume 早就在清它，这一条是漏的。
       delete taskGroup.pauseReason;
     }
-    if (action === "request_review") taskGroup.reviewState = "review_requested";
+    // 「请求评审」此前只写一个谁也不读的字段：页面不显示、待办不收、也没有收掉它的动作 —— 人按了看不到任何效果。
+    // 现在它标为「待评审」（列表/详情徽标 + 有评审权的人的待办），由「评审完成」收掉。
+    if (action === "request_review") {
+      taskGroup.reviewState = "review_requested";
+      taskGroup.reviewRequestedAt = now();
+      taskGroup.reviewRequestedBy = guard.actor;
+    }
+    if (action === "finish_review") {
+      delete taskGroup.reviewState;
+      delete taskGroup.reviewRequestedAt;
+      delete taskGroup.reviewRequestedBy;
+    }
     if (action === "rebound_drift") taskGroup.health = "attention";
     const runtimeControl = applyTaskGroupRuntimeControl(state, taskGroup, action, {actor: guard.actor, idempotencyKey: guard.idempotencyKey});
     taskGroup.updatedAt = now();

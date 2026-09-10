@@ -1176,7 +1176,8 @@
     // 下面这些不是字面量写出来的，是 `task_group_${action}` / `agent_control_${commandType}` /
     // `dispatch_${reportedStatus}` 按各自的闭集拼出来的 —— 一样要显示在审计页那一列上。
     task_group_recompute_readiness: "重算任务组完成度",
-    task_group_request_review: "请求任务组互审",
+    task_group_request_review: "请求评审任务组",
+    task_group_finish_review: "结束任务组评审",
     task_group_rebound_drift: "标记任务组偏航",
     task_group_cancel: "取消任务组",
     task_group_abort: "中止任务组",
