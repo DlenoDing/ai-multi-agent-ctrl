@@ -14686,6 +14686,14 @@ const MUTATIONS = [
     from: "仓库变更、推送和检查点准备",
     to: "仓库变更、push 和 checkpoint 准备",
     expect: "不印 push／checkpoint／overlay"
+  },
+  {
+    name: "项目概览「当前下一步」旁必须有完整流程导航的入口",
+    file: "apps/control-plane-ui/public/modules/project-command-center.js",
+    gate: "console",
+    from: '/overview?pane=help" title=',
+    to: '/overview?pane=overview" title=',
+    expect: "要有「查看完整流程导航」入口"
   }
 ];
 

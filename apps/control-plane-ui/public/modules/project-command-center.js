@@ -89,6 +89,7 @@
       <div class="project-command-main"><span>当前下一步</span><strong>${esc(decision.title)}</strong><small>${esc(decision.detail)}</small></div>
       <div class="project-command-metrics"><span>任务组 <strong>${esc(metrics.groups || 0)}</strong></span><span>任务 <strong>${esc(metrics.tasks || 0)}</strong></span><span>运行 <strong>${esc(metrics.runs || 0)}</strong></span><span>待处理 <strong>${esc(metrics.reviews || 0)}</strong></span></div>
       <div class="project-command-action">${actionButton(project, decision.action)}</div>
+      <a class="project-command-guide" href="#/project/${esc(project.id)}/overview?pane=help" title="按当前项目实时计算的整条工作流：项目设置→成员权限→接入 Agent→任务组→任务→执行→审核→复核→指令→收口">查看完整流程导航</a>
     </section>`;
   }
 

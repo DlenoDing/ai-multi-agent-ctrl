@@ -3340,8 +3340,8 @@ async function runErrorGuidanceCase() {
     check("说明页要在入口清单之后渲染归到它名下的面板（流程导航／组织操作路径／任务组处置看板／监控处置看板），总览栏目不重复摆",
       /流程导航/u.test(overviewMore) && overviewMore.indexOf("常用入口") < overviewMore.indexOf("流程导航")
         && /组织操作路径/u.test(String(orgHelpRoot.innerHTML || "")) && /任务组处置看板/u.test(String(tgHelpRoot.innerHTML || ""))
-        && /监控处置看板/u.test(monitorHelpHtml) && !/流程导航/u.test(String(overviewPaneRoot.innerHTML || "")),
-      `项目说明页：${/流程导航/u.test(overviewMore) ? "有流程导航" : "没有流程导航"}；组织说明页：${/组织操作路径/u.test(String(orgHelpRoot.innerHTML || "")) ? "有操作路径" : "没有操作路径"}；任务组说明页：${/任务组处置看板/u.test(String(tgHelpRoot.innerHTML || "")) ? "有处置看板" : "没有处置看板"}；监控说明页：${/监控处置看板/u.test(monitorHelpHtml) ? "有" : "没有"}；总览栏目${/流程导航/u.test(String(overviewPaneRoot.innerHTML || "")) ? "也摆了流程导航" : "没重复"}`);
+        && /监控处置看板/u.test(monitorHelpHtml) && !/>流程导航</u.test(String(overviewPaneRoot.innerHTML || "")),
+      `项目说明页：${/流程导航/u.test(overviewMore) ? "有流程导航" : "没有流程导航"}；组织说明页：${/组织操作路径/u.test(String(orgHelpRoot.innerHTML || "")) ? "有操作路径" : "没有操作路径"}；任务组说明页：${/任务组处置看板/u.test(String(tgHelpRoot.innerHTML || "")) ? "有处置看板" : "没有处置看板"}；监控说明页：${/监控处置看板/u.test(monitorHelpHtml) ? "有" : "没有"}；总览栏目${/>流程导航</u.test(String(overviewPaneRoot.innerHTML || "")) ? "也摆了流程导航" : "没重复"}`);
   }
   const runPageRoot = el("div");
   loadConsole(runPageRoot, {realI18n: true}).renderFullPagePaneWith(navState, systemAccount, "p1", "monitor", "sessions");
@@ -3794,6 +3794,10 @@ async function runErrorGuidanceCase() {
       && commandClickProbe.sessionState().managementGroupId === "tg",
     `CTA 点击后的状态错误：${JSON.stringify(commandClickProbe.sessionState())}`);
   const commandHtml = objectProbe.projectCommandHtml(commandProject, commandResults[0].decision);
+  // 【当前下一步旁边要有整条流程的入口】（09-11：流程导航只在「⋯ 说明」里，概览页看不出有这么一张图）。
+  check("项目概览「当前下一步」旁要有「查看完整流程导航」入口，指向本页说明栏目",
+    /href="#\/project\/[^"]+\/overview\?pane=help"[^>]*>查看完整流程导航</u.test(commandHtml),
+    `命令中心：${commandHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 200)}`);
   check("项目概览只提供一个当前主操作",
     /aria-label="项目当前主操作"/u.test(commandHtml)
       && (commandHtml.match(/<button/gu) || []).length === 1
