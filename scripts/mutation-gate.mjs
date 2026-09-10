@@ -14525,6 +14525,22 @@ const MUTATIONS = [
     from: '    const verb = directive?.resolution === "abandon" || workItem.status === "superseded" ? "放弃" : "重开";',
     to: '    const verb = "重开";',
     expect: "被人放弃的任务详情要写出是谁、什么时候、为什么放弃（不能把放弃说成重开）"
+  },
+  {
+    name: "任务详情头部不得漏掉指定模型",
+    file: "apps/control-plane-ui/public/modules/task-workbench.js",
+    gate: "console",
+    from: '${work.pinnedModelId ? `<span>指定模型：<span class="mono">${esc(work.pinnedModelId)}</span></span>` : ""}<span class="mono">${esc(work.id)}</span></div></div>',
+    to: '<span class="mono">${esc(work.id)}</span></div></div>',
+    expect: "钉了模型的任务，详情头部要写出「指定模型」"
+  },
+  {
+    name: "人工指令的取消类型不得退回「取消任务」这个会误导的名字",
+    file: APP,
+    gate: "console",
+    from: '  ["cancel", "取消整个任务组的执行"],',
+    to: '  ["cancel", "取消任务"],',
+    expect: "人工指令的取消类型要说清作用于整个任务组，并指到「决策处置 → 放弃这个任务」去取消单个任务"
   }
 ];
 

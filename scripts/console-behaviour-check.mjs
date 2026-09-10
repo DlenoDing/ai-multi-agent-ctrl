@@ -7298,6 +7298,12 @@ async function runPendingTruncationCase() {
       const decisionProbe = loadConsole(el("div"), {realI18n: true});
       decisionProbe.restoreRoute({page: "directives", projectId: "p1", groupId: "tg1", workId: "w_nd", workspace: "compose"});
       const directivesHtml = String(decisionProbe.renderDirectivesWith({...decisionState, projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}]}, admin, "p1", []));
+      // 【「取消」是任务组级的】（用户 09-10 走查：选了「取消任务」，作用目标栏消失，人以为在取消一个任务，其实会冻结整个任务组）。
+      check("人工指令的取消类型要说清作用于整个任务组，并指到「决策处置 → 放弃这个任务」去取消单个任务",
+        /<option value="cancel"[^>]*>取消整个任务组的执行<\/option>/u.test(directivesHtml)
+          && /data-directive-types="cancel"[^>]*><div class="notice warn-notice">这条指令作用于【整个任务组】/u.test(directivesHtml)
+          && /放弃这个任务（置为已替代，解除关闭阻塞）/u.test(directivesHtml),
+        `类型下拉：${directivesHtml.match(/<option value="cancel"[^<]*<\/option>/u)?.[0] || "没找到"}；提示：${/data-directive-types="cancel"/u.test(directivesHtml) ? "有" : "无"}`);
       check("从待决策的任务进人工指令页时，指令类型要预选「决策处置」并露出处置方式栏",
         /<option value="resolve_decision" selected>/u.test(directivesHtml)
           && /data-directive-types="resolve_decision"><label>决策处置方式/u.test(directivesHtml)
@@ -7317,7 +7323,16 @@ async function runPendingTruncationCase() {
           humanDirectives: [{directiveId: "hd_abandon", taskGroupId: "tg1", workItemId: "w_nd", directiveType: "resolve_decision", resolution: "abandon", instruction: "执行器无法产出改动，先放弃。", issuedBy: "acct_u1", status: "applied", createdAt: "2026-09-09T02:50:00Z"}]};
         const abandonedHtml = String(loadConsole(el("div"), {realI18n: true}).renderTaskWorkbenchModule({groups: [rejectedGroup], nextState: abandonedState,
           selected: {taskGroupId: "tg1", workItemId: "w_nd"}, workDetail: {taskGroup: rejectedGroup, workItem: abandonedWork, events: [], eventCount: 0, returnedEventCount: 0}}));
-        check("被人放弃的任务详情要写出是谁、什么时候、为什么放弃（不能把放弃说成重开）",
+        // 建任务时钉了模型，任务详情的头部要写出来（用户 09-10 走查：钉了 openai:gpt-5.5，详情头一个字没有）。
+      {
+        const pinnedWork = {...rejectedWork, status: "ready", pinnedModelId: "openai:gpt-5.5"};
+        const pinnedHtml = String(loadConsole(el("div"), {realI18n: true}).renderTaskWorkbenchModule({groups: [rejectedGroup], nextState: {...decisionState, agentDispatches: [], workSessions: [], agentRuntimeNodes: [], agents: [], agentExecutionEvents: [], repositoryOutputs: [], checkpoints: [], qualityGates: []},
+          selected: {taskGroupId: "tg1", workItemId: "w_nd"}, workDetail: {taskGroup: rejectedGroup, workItem: pinnedWork, events: [], eventCount: 0, returnedEventCount: 0}}));
+        check("钉了模型的任务，详情头部要写出「指定模型」",
+          /指定模型：<span class="mono">openai:gpt-5\.5<\/span>/u.test(pinnedHtml),
+          `任务头部：${pinnedHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/任务组：.{0,80}/u)?.[0] || "没找到"}`);
+      }
+      check("被人放弃的任务详情要写出是谁、什么时候、为什么放弃（不能把放弃说成重开）",
           /由人工指令放弃：/u.test(abandonedHtml) && /执行器无法产出改动，先放弃。/u.test(abandonedHtml) && !/由人工指令重开/u.test(abandonedHtml),
           `任务详情：${abandonedHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/由人工指令.{0,80}/u)?.[0] || "没找到溯源行"}`);
       }

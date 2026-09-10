@@ -6657,7 +6657,8 @@ function renderReview() {
 const DIRECTIVE_TYPES = [
   ["pause", "暂停执行"],
   ["resume", "恢复执行"],
-  ["cancel", "取消任务"],
+  // 服务端的 cancel 是任务组级：冻结任务组、叫停组内全部在跑／排队的派发。叫「取消任务」会让人以为能取消单个任务（走查时真的这么以为）。
+  ["cancel", "取消整个任务组的执行"],
   ["adjust_priority", "调整优先级"],
   ["add_requirement", "补充要求"],
   ["resolve_decision", "决策处置（重开 / 放弃）"],
@@ -6840,10 +6841,11 @@ function renderDirectives() {
           <div class="form-row"><label>指令类型</label>
             <select name="directiveType">${DIRECTIVE_TYPES.map(([value, label]) => `<option value="${esc(value)}"${value === defaultDirectiveType ? " selected" : ""}>${esc(label)}</option>`).join("")}</select>
           </div>
+          <div class="form-row directive-fields" data-directive-types="cancel"${fieldHidden("cancel")}><div class="notice warn-notice">这条指令作用于【整个任务组】：冻结任务组并叫停组内所有在跑、排队的派发，受影响的任务退到「待决策」。只想取消某一个任务，请改用「决策处置 → 放弃这个任务」并在作用目标里选中它。</div></div>
           <div class="form-row directive-fields" data-directive-types="resolve_decision"${fieldHidden("resolve_decision")}><label>决策处置方式</label>
             <!-- 不带 required：这个下拉只对「决策处置」类型生效，而浏览器的约束校验不看类型 ——
                  带上就连提交「补充要求」也会被拦住，逼人选一个随后被丢掉的处置方式。空着提交由处理器按类型拒。 -->
-            ${decisionSelect("resolution", [["reopen", "重开（返回就绪，重置返工计数）"], ["abandon", "放弃（置为已替代，解除关闭阻塞）"]], "请选择处置方式…", {required: false})}
+            ${decisionSelect("resolution", [["reopen", "重开（返回就绪，重置返工计数）"], ["abandon", "放弃这个任务（置为已替代，解除关闭阻塞）"]], "请选择处置方式…", {required: false})}
             <span class="small muted">仅“决策处置”类型生效</span>
           </div>
           <div class="form-row directive-fields" data-directive-types="adjust_priority"${fieldHidden("adjust_priority")}><label>优先级档位</label>
