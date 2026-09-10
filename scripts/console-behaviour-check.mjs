@@ -3302,6 +3302,16 @@ async function runErrorGuidanceCase() {
       /同步失效/u.test(sysHelpText) && !/\bstale\b|DISPATCH/u.test(sysHelpText),
       `平台能力说明页：${(sysHelpText.match(/.{0,30}(?:stale|DISPATCH).{0,30}/u) || ["没找到英文行话，但也没找到「同步失效」"])[0]}`);
   }
+  // 【监控说明与角色 Skill 定制的指引别混英文行话】（09-11 成员视角爬页：「push 和 checkpoint 准备」「生效 overlay」）。
+  {
+    const rolesRoot = el("div");
+    loadConsole(rolesRoot, {realI18n: true}).renderFullPagePaneWith(navState, systemAccount, "p1", "proj-settings", "roles");
+    const rolesText = String(rolesRoot.innerHTML || "").replace(/<[^>]+>/gu, " ");
+    const monitorText = monitorHelpHtml.replace(/<[^>]+>/gu, " ");
+    check("监控说明页与角色 Skill 定制说明不印 push／checkpoint／overlay 这类英文行话",
+      /推送和检查点准备/u.test(monitorText) && !/\bpush\b|checkpoint/u.test(monitorText) && /生效的定制/u.test(rolesText) && !/overlay/u.test(rolesText),
+      `监控说明：${(monitorText.match(/.{0,30}(?:push|checkpoint).{0,30}/u) || ["无英文行话"])[0]}；角色定制：${(rolesText.match(/.{0,30}overlay.{0,30}/u) || ["无 overlay"])[0]}`);
+  }
   // 【顶栏账号名与账号类型同名时只写一遍】（09-11：种子系统账号改名「系统管理员」后顶栏会印成「系统管理员 系统管理员」）。
   {
     const chipOf = (account, projectId, pageId) => {

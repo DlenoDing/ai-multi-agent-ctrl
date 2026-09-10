@@ -7043,7 +7043,7 @@ function renderMonitorRealtimeGuide({eventsShown, sessionsAll, dispatchesAll, co
       ${jumpModuleCard({
         title: "2 实时事件",
         metric: eventsShown.length,
-        detail: "Agent 执行中持续回送进度、输出摘要、仓库变更、push 和 checkpoint 准备",
+        detail: "Agent 执行中持续回送进度、输出摘要、仓库变更、推送和检查点准备",
         panelTitle: "实时事件流",
         tone: eventsShown.length ? "blue" : "gray",
         action: "看事件"
@@ -7439,7 +7439,7 @@ function renderProjectSettings() {
       <div class="small muted">这里不再承载注册表单，避免仓库/规则配置与运行节点管理混在一起。</div>
     `, {wide: true}),
     panel("角色 Skill 定制", `
-      <div class="notice">项目级定制会影响本项目后续派发中匹配该角色 Skill 的 agent；任务组里的特殊要求请在对应任务组详情里创建。服务端会把生效 overlay 写进任务契约和下发给 agent 的 Skill 工作集。</div>
+      <div class="notice">项目级定制会影响本项目后续派发中匹配该角色 Skill 的 agent；任务组里的特殊要求请在对应任务组详情里创建。服务端会把生效的定制写进任务契约和下发给 agent 的 Skill 工作集。</div>
       ${roleSkillOverlayTable(projectRoleSkillOverlays(project.id), {showScope: true})}
       ${roleSkillOverlayForm({scope: "project", projectId: project.id, readOnly: !canEdit || archived})}
     `, {wide: true}),

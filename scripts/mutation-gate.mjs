@@ -14678,6 +14678,14 @@ const MUTATIONS = [
     from: '${t(currentAccount.accountType) === (currentAccount.displayName || "") ? "" : ` ${badge(currentAccount.accountType)}`}</span>',
     to: '${` ${badge(currentAccount.accountType)}`}</span>',
     expect: "同名时只写一遍"
+  },
+  {
+    name: "监控说明页不得印 push／checkpoint",
+    file: APP,
+    gate: "console",
+    from: "仓库变更、推送和检查点准备",
+    to: "仓库变更、push 和 checkpoint 准备",
+    expect: "不印 push／checkpoint／overlay"
   }
 ];
 
