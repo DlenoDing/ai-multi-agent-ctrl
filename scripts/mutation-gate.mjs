@@ -14541,6 +14541,14 @@ const MUTATIONS = [
     from: '  ["cancel", "取消整个任务组的执行"],',
     to: '  ["cancel", "取消任务"],',
     expect: "人工指令的取消类型要说清作用于整个任务组，并指到「决策处置 → 放弃这个任务」去取消单个任务"
+  },
+  {
+    name: "提交修改意见不得再被「请先选择一个选项」挡住",
+    file: APP,
+    gate: "console",
+    from: '      const selectedOptionId = data.selectedOptionId || (data.action === "revise" ? "none" : "");',
+    to: '      const selectedOptionId = data.selectedOptionId;',
+    expect: "没勾任何选项也能「提交修改意见」，按「不选择（自定义输入）」发出去"
   }
 ];
 

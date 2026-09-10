@@ -1462,6 +1462,17 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         check("定稿表单点「提交修改意见」发 revise 且带本轮 expectedRound",
           revisePost?.body?.action === "revise" && revisePost?.body?.expectedRound === 2 && revisePost?.body?.selectedOptionId === "opt_a",
           `发出去的是 ${JSON.stringify(revisePost?.body)}`);
+        // 【提交修改意见不必先勾选项】（用户 09-10 走查）：页面写着"可以直接提出你自己的方案"，点下去却被「请先选择一个选项」挡住。
+        recorded.length = 0; toasts.length = 0;
+        const noOptionForm = el("form", {dataset: {form: "hcr-decide", request: "hcr_1", round: "2"}}, [
+          el("textarea", {name: "inputText", value: "请补充成本对比表"}),
+          el("button", {type: "submit", name: "action", value: "revise"})
+        ]);
+        await probe.submit({target: noOptionForm, submitter: noOptionForm.children[1], preventDefault: () => {}});
+        const noOptionPost = recorded.find((item) => item.method === "POST" && /human-confirmations\/hcr_1\/decide$/u.test(item.url));
+        check("没勾任何选项也能「提交修改意见」，按「不选择（自定义输入）」发出去",
+          noOptionPost?.body?.action === "revise" && noOptionPost?.body?.selectedOptionId === "none" && noOptionPost?.body?.inputText === "请补充成本对比表" && !toasts.length,
+          `发出去的是 ${JSON.stringify(noOptionPost?.body) || "什么也没发"}；toast：${JSON.stringify(toasts).slice(0, 120)}`);
         recorded.length = 0; toasts.length = 0;
         const orphanForm = mkForm();
         // 没有提交器：修好的代码当场拒（错误 toast）；缺省成 finalize 的代码会去等确认框（桩里永远不回来），所以加个超时。

@@ -7836,8 +7836,10 @@ document.addEventListener("submit", async (event) => {
       return;
     }
     if (kind === "hcr-decide") {
-      const selectedOptionId = data.selectedOptionId;
-      if (!selectedOptionId) throw new Error("请先选择一个选项");
+      // 「提交修改意见（交 AI 再分析）」只是再商量一轮，不是决定：不该逼人先在三个选项里勾一个
+      //（走查时真的被「请先选择一个选项」挡住，而页面上写的是"可以直接提出你自己的方案"）。没勾就按「不选择（自定义输入）」提交。
+      const selectedOptionId = data.selectedOptionId || (data.action === "revise" ? "none" : "");
+      if (!selectedOptionId) throw new Error("请先勾选一个选项（确认验收 / 打回返工 / 不选择），定稿或打回都得先说清选的是哪一个");
       if (selectedOptionId === "none" && !String(data.inputText || "").trim()) throw new Error("选择“不选择（自定义输入）”时必须填写确认内容");
       // action 来自被点击的按钮：revise（交 AI 再分析，不锁定）/ finalize（定稿并上锁）/ reject（打回）。
       // 认不出 action 就拒，不缺省成 finalize：定稿是整套人工闸门里最重、不可逆的一步，
