@@ -2009,8 +2009,17 @@ function verifyHumanAndOrganizationContracts(output) {
     ensureRuntimeCollections(abandonState, {root});
     const abandonTg = abandonState.taskGroups.find((item) => item.id === "tg_runtime_management");
     abandonTg.workItems = [{id: "wi_abandon", title: "放弃项", status: "needs_decision", blockedReason: "role_drift_guard_blocked", ownerRole: "agent-runtime", progress: 10}];
+    // 放弃之前先挂一张待确认的验收卡：放弃后它必须作废，而不是留着 pending、再记一条「人提出了方案」。
+    abandonState.humanConfirmationRequests = [...(abandonState.humanConfirmationRequests || []), {requestId: "hcr_abandon_probe", taskGroupId: "tg_runtime_management", workItemId: "wi_abandon",
+      status: "pending", decisionType: "work_item_verification", decisionClass: "major", subjectRef: "WorkItem:wi_abandon", subjectContentDigest: "sha256:before", round: 1, deliberation: [], options: [{optionId: "accept", label: "确认"}], createdAt: new Date().toISOString()}];
     const abandonDirective = createHumanDirective(abandonState, {taskGroupId: "tg_runtime_management", directiveType: "resolve_decision", workItemId: "wi_abandon", resolution: "abandon"}, {actor: "acct_ct"});
     consumeQueuedHumanDirectives(abandonState);
+    {
+      const card = abandonState.humanConfirmationRequests.find((item) => item.requestId === "hcr_abandon_probe");
+      if (card?.status !== "cancelled" || !/任务已由人工放弃/u.test(String(card?.cancelReason || ""))) {
+        output.push(`放弃任务之后它的验收卡没有作废（status=${card?.status}，cancelReason=${card?.cancelReason}，协商记录 ${(card?.deliberation || []).length} 条）—— 待我审核里还挂着一张没法定稿的卡`);
+      }
+    }
     {
       const abandoned = abandonState.taskGroups.find((item) => item.id === "tg_runtime_management").workItems.find((item) => item.id === "wi_abandon");
       const abandonId = abandonDirective?.directiveId || abandonDirective?.directive?.directiveId;

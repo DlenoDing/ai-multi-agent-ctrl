@@ -14549,6 +14549,15 @@ const MUTATIONS = [
     from: '      const selectedOptionId = data.selectedOptionId || (data.action === "revise" ? "none" : "");',
     to: '      const selectedOptionId = data.selectedOptionId;',
     expect: "没勾任何选项也能「提交修改意见」，按「不选择（自定义输入）」发出去"
+  },
+  {
+    name: "放弃任务后它的验收卡必须作废",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '    if (snapshot === null || reason?.cancel === true) {',
+    to: '    if (snapshot === null) {',
+    expect: "放弃任务之后它的验收卡没有作废"
   }
 ];
 

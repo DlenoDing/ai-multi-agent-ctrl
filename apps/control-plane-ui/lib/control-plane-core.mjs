@@ -5669,7 +5669,9 @@ export function refreshConfirmationsAfterHumanChange(state, taskGroupId, workIte
     if (request.status !== "pending" || request.taskGroupId !== taskGroupId) continue;
     if (workItemId && request.workItemId !== workItemId) continue;
     const snapshot = subjectContentSnapshot(state, request);
-    if (snapshot === null) {
+    // 人放弃了这个任务：它名下的确认单该作废，而不是再开一轮、记成「人提出了方案」——
+    // 走查时被放弃的任务的验收卡仍然 pending，协商记录里多了一条不是人说的"提出方案"。
+    if (snapshot === null || reason?.cancel === true) {
       request.status = "cancelled";
       // cancelReason 的声明是字符串（spec/human-confirmation-request.schema.json）。
       // 这里的 reason 是 {actor, summary}：直接写进去会产出一条不合规范的记录，
@@ -6408,7 +6410,7 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
             // cancelPendingConfirmationsForDispatch 够不到它们；不处理的话，格子已经没了，
             // 卡片却仍 pending 且三个动作全被快照校验拒掉，只能等 7 天过期。
             refreshConfirmationsAfterHumanChange(state, taskGroup.id, workItem.id,
-              {actor: directive.issuedBy || "human", summary: "工作项已由人工放弃"});
+              {actor: directive.issuedBy || "human", summary: "任务已由人工放弃", cancel: true});
           } else {
             for (const bundle of (state.reviewBundles || [])) {
               if (bundle.workItemId === workItem.id && bundle.verdict === "changes_requested") bundle.supersededByHumanDecision = true;
