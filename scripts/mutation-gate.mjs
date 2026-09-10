@@ -14574,6 +14574,14 @@ const MUTATIONS = [
     from: '            : "该成员会被立即登出、之后登不进来；已授予的项目与任务组角色保留但不生效，随时可以再启用。",',
     to: '            : "其活动会话将被立即吊销。",',
     expect: "停用成员的确认弹窗要分清撤回邀请与停用已激活成员，并说清后果与可逆性"
+  },
+  {
+    name: "本层新增的规则不得再叫「本层覆盖」",
+    file: APP,
+    gate: "console",
+    from: '  const overridesUpstream = owned && source.split("+").filter(Boolean).length > 1;',
+    to: '  const overridesUpstream = owned;',
+    expect: "规则行徽标要分清「本层新增」「本层覆盖」「继承」"
   }
 ];
 

@@ -5474,6 +5474,8 @@ function ruleRow(rule, layer, readOnly = false) {
   const source = String(rule.source || "");
   const isDefault = source.split("+").includes("default");
   const owned = ruleOwnedAtLayer(source, layer);
+  // 来源是 "default+project" 这种复合串才是【覆盖】了上层那条；只有本层一段的是本层【新增】的，不该也叫「覆盖」（走查时新增的业务规则显示成「本层覆盖」）。
+  const overridesUpstream = owned && source.split("+").filter(Boolean).length > 1;
   const enabled = rule.enabled !== false && (rule.status ? rule.status === "active" : true);
   const canDelete = owned && !isDefault && !readOnly; // 本层新增（非默认）规则可删除
   const ro = readOnly ? "readonly" : "";
@@ -5491,7 +5493,7 @@ function ruleRow(rule, layer, readOnly = false) {
           <strong>${esc(rule.title || rule.ruleId || "未命名规则")}</strong>
           ${ruleSourceBadge(source)}
           ${enabled ? customBadge("已启用", "green") : customBadge("已停用", "gray")}
-          ${owned ? customBadge("本层覆盖", "orange") : customBadge("继承", "gray")}
+          ${overridesUpstream ? customBadge("本层覆盖", "orange") : owned ? customBadge("本层新增", "blue") : customBadge("继承", "gray")}
         </span>
         <span class="rule-content-view">${esc(ruleContentPreview(rule.content || ""))}</span>
       </summary>

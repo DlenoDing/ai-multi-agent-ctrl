@@ -1886,6 +1886,19 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         && /data-orig-content=/u.test(longRuleForm)
         && /第一段规则正文/u.test(longRuleForm),
       "规则折叠不能把正文编辑能力拿掉，也不能破坏保存时判断本层覆盖所需的原始正文");
+    // 【本层新增 ≠ 本层覆盖】（用户 09-11 走查：在项目里新增一条业务规则，保存后徽标写着「本层覆盖」，其实它没覆盖任何上层规则）。
+    {
+      const badgeForm = settingsProbe.ruleEditorFormWith({rules: [
+        {ruleId: "biz_new", title: "本层新增的", content: "内容", category: "business", source: "project", enabled: true},
+        {ruleId: "sys_override", title: "覆盖默认的", content: "内容", category: "system", source: "default+project", enabled: true},
+        {ruleId: "sys_inherit", title: "继承来的", content: "内容", category: "system", source: "default", enabled: true}
+      ], listId: "badge", category: "business", layer: "project", project: proj.id, readOnly: false, note: ""});
+      const rowOf = (id) => { const at = badgeForm.indexOf(`data-rule-id="${id}"`); return badgeForm.slice(at, badgeForm.indexOf("</summary>", at)); };
+      check("规则行徽标要分清「本层新增」「本层覆盖」「继承」",
+        /本层新增/u.test(rowOf("biz_new")) && !/本层覆盖/u.test(rowOf("biz_new"))
+          && /本层覆盖/u.test(rowOf("sys_override")) && /继承/u.test(rowOf("sys_inherit")) && !/本层/u.test(rowOf("sys_inherit")),
+        `新增行：${rowOf("biz_new").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 80)}；覆盖行：${rowOf("sys_override").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 80)}`);
+    }
     const newRuleRow = settingsProbe.ruleRowNewWith("business");
     check("新增规则行要默认展开，点新增后可以直接填写",
       /<details class="rule-row" open/u.test(newRuleRow)
