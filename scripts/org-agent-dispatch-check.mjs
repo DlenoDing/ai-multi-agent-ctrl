@@ -503,7 +503,7 @@ async function runFailureRuntimeAndApprovePermission(baseUrl, auth, dispatchId) 
     fail(`failure-path agent runtime exited with ${result.status ?? result.signal}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
   }
   const combined = `${result.stdout}\n${result.stderr}`;
-  if (!combined.includes("dispatch failed:") || !combined.includes("git_auth_failed")) {
+  if (!combined.includes("派发失败：") || !combined.includes("git_auth_failed")) {
     fail(`failure-path runtime did not surface git_auth_failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
   }
   return {permissionRequestId: request.requestId, runtimeOutput: combined};
@@ -679,7 +679,7 @@ async function main() {
       AIMAC_AGENT_REQUEST_TIMEOUT_MS: "20000",
       AIMAC_AGENT_SWEEP_INTERVAL_MS: "600000"
     });
-    if (!runtimeRun.stdout.includes("dispatch completed:")) {
+    if (!runtimeRun.stdout.includes("派发已完成：")) {
       fail(`agent runtime did not report a completed dispatch:\nstdout:\n${runtimeRun.stdout}\nstderr:\n${runtimeRun.stderr}`);
     }
 

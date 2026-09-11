@@ -754,6 +754,7 @@ run(verifyManifestSegmentNamesCannotEscape);
 run(verifyExecutionEventTailStaysBounded);
 run(verifyHumanAndOrganizationContracts);
 run(verifySeedAccountNamesAreChinese);
+run(verifyAgentRuntimeStdoutIsChinese);
 
 for (const toolName of ["ui-console-mcp.runtime_health_get", "room-mcp.room_send", "agent-control-mcp.dispatch_status"]) {
   validateSchema(createMcpGrant(toolName, {tokenDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}), mcpGrantSchema, `McpGrant:${toolName}`, errors);
@@ -1620,6 +1621,29 @@ function verifyCommitWorksWithoutConfiguredIdentity(output) {
 
 // 种子账号的显示名会出现在顶栏、审计日志的「操作者」列和成员列表里：本地种子曾是 System Owner / Workspace Owner /
 // Review Lead / Agent Runtime Service（09-11 沙箱爬页：系统管理员登录后顶栏就是一行英文），而 init 脚本给的是「系统管理员」——两条起库路径给出两种名字。
+// agent 节点的 stdout 是在那台机器上盯终端的人看的：曾经 30 行英文夹着中文（dispatch completed / stale session directory removed…）。
+// 每一句模板串都要有中文；纯变量（${missLine}）、JSON 转储和 ✓/✗ 行不算。
+function verifyAgentRuntimeStdoutIsChinese(output) {
+  const source = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  const lines = source.split("\n");
+  const english = [];
+  let seen = 0;
+  lines.forEach((line, index) => {
+    // 三元写法（write(cond ? `…` : `…`)）的两支各占一行：紧跟在 write( 后面、以 ? / : 开头的模板串也算。
+    const previous = (lines[index - 1] || "") + (lines[index - 2] || "");
+    const hit = line.match(/process\.std(?:out|err)\.write\((`[^`]*`|"[^"]*")/u)
+      || (/process\.std(?:out|err)\.write\(/u.test(previous) ? line.match(/^\s*[?:]\s*(`[^`]*`)/u) : null);
+    if (!hit) return;
+    const literal = hit[1].slice(1, -1);
+    if (!/[A-Za-z]{3,}/u.test(literal) || /^\s*\$\{/u.test(literal) || literal.startsWith("  $")) return;
+    seen += 1;
+    if (!/[\u4e00-\u9fff]/u.test(literal)) english.push(`${index + 1}: ${literal.slice(0, 80)}`);
+  });
+  if (seen < 20) { output.push(`agent 运行时 stdout 模板串只读到 ${seen} 句 —— 提取形状与代码脱节，这条在空转`); return; }
+  if (english.length) output.push("agent 运行时这些 stdout 句子还是英文：\n  " + english.join("\n  "));
+  console.log(`agent 运行时 stdout：${seen} 句模板串都带中文`);
+}
+
 function verifySeedAccountNamesAreChinese(output) {
   const seed = JSON.parse(readFileSync(join(root, "data/seed-state.json"), "utf8"));
   const accounts = seed.accounts || [];
@@ -11211,10 +11235,10 @@ function verifyAgentSaysWhyItStoppedTakingWork(output) {
   // 同一族：措辞听起来无害（deferred / stopped / skipping），而后果是这台节点从此
   // 少做一件要紧的事。判据只挑【后果会让人走错方向】的那几条，不是要求每条日志都写小作文。
   const cases = [
-    ["dispatch claim deferred", /不再领新活|不再领活/u, "节点停止领活"],
-    ["stale session sweep could not remove", /占盘|需人工/u, "会话目录清不掉"],
+    ["暂不领新派发", /不再领新活|不再领活/u, "节点停止领活"],
+    ["陈旧会话清扫有", /占盘|需人工/u, "会话目录清不掉"],
     // watcher 死掉最隐蔽：人按了取消、界面显示已取消，而这台节点照常跑完并推送。
-    ["control watcher stopped", /收不到取消|不再续期/u, "取消通道断了"],
+    ["控制通道监听已停止", /收不到取消|不再续期/u, "取消通道断了"],
     ["skipping remote MCP merge", /受限工具集|工具不会配/u, "远程 MCP 没配上"]
   ];
   let found = 0;
@@ -12880,7 +12904,8 @@ function verifyServerFieldsReachThePerson(output) {
     // /api/health 的节点汇总：盯着它的是监控与负载均衡器，控制台的节点页有自己的「心跳已超时」派生
     // （同一判据），不再读这个数。
     overdueNodes: "监控读 /api/health.agentGateway.overdueNodes（控制台节点页按同一判据自己派生）",
-    replayed: "派发重放标记，agent 运行时据此判断要不要重复执行",
+    // 曾登记为「agent 运行时据此判断要不要重复执行」——实测运行时从不读它，此前只是日志里恰好有 "replayed" 一词才没被抓到。
+    replayed: "幂等重放标记：同一幂等键重复提交时回执 replayed:true、正文就是上一次的结果；没有读取方据此改变行为，界面按同一份结果显示",
     transport: "入网自检读它（agentctl 比对 streamable-http），不是给人看的",
     // publicUrl 只出现在 /api/health 里，而控制台压根不渲染健康页 —— 它是运维/装机直接
     // curl 这个接口时看的对外地址。原先登记成"给装机脚本用"，实测装机脚本一次都没读（理由写错了）。
@@ -17548,7 +17573,7 @@ async function verifyAgentAnnouncesOutageOnceAndRecovery(output) {
   }
   const outageLines = (said.match(/控制面连不上（/gu) || []).length;
   const recoveryLines = (said.match(/已重新接上控制面/gu) || []).length;
-  const noise = (said.match(/retryable control-plane conflict|loop iteration error|control poll deferred/gu) || []).length;
+  const noise = (said.match(/retryable control-plane conflict|主循环这一轮出错|控制命令轮询暂缓/gu) || []).length;
   if (outageLines !== 1 || recoveryLines !== 1 || noise !== 0) {
     output.push(`控制面中途断掉时 agent 该只说一句「连不上」、接上说一句「已重新接上」、不刷屏：实际 连不上×${outageLines} 已重新接上×${recoveryLines} 英文噪音×${noise}：${said.slice(0, 400).replace(/\n/g, " | ")}`);
   } else {
@@ -17567,7 +17592,7 @@ function verifyOutboxReplayCleansSessionDir(output) {
   }
   const flushAt = runtime.indexOf("async function flushCheckpointOutbox(");
   const flushBody = flushAt < 0 ? "" : runtime.slice(flushAt, runtime.indexOf("\nasync function ", flushAt + 1));
-  const replaySuccess = flushBody.slice(0, flushBody.indexOf("checkpoint replayed:") + 20);
+  const replaySuccess = flushBody.slice(0, flushBody.indexOf("检查点已重放：") + 20);
   if (!/removeSessionDirectoryPath\(config, item\.sessionDir\)/u.test(replaySuccess)) {
     output.push("outbox 重放成功后没清会话目录（removeSessionDirectoryPath(config, item.sessionDir)）—— git 工作树会一直留到 TTL 清扫");
   }

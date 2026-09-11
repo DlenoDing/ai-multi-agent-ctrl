@@ -430,7 +430,7 @@ try {
     const selfCheck = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "self-check"],
       {cwd: root, encoding: "utf8", timeout: 60000, env: {...process.env, AIMAC_AGENT_WORK_DIR: agentWorkDir, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true"}});
     const said = String(selfCheck.stdout || "");
-    if (selfCheck.status !== 0 || !/agent self-check: ok（准入 (full|limited|read_only)）/u.test(said)
+    if (selfCheck.status !== 0 || !/agent 自检：通过（准入 (full|limited|read_only)）/u.test(said)
       || !["runtime", "filesystem", "git", "gateway", "remote_mcp"].every((item) => new RegExp(`^  [✓✗] ${item}\\b`, "mu").test(said))) {
       throw new Error(`agentctl self-check 没有逐项列出查了什么与准入档位（exit ${selfCheck.status}）：${said.slice(0, 300).replace(/\n/g, " | ")}`);
     }
@@ -611,7 +611,7 @@ try {
   if (!/领到派发 adp_[a-z0-9_]+：工作项 .+（角色 .+），开始执行/u.test(run.stdout)) {
     throw new Error(`agentctl run 领到派发时没说一句人话：${run.stdout.slice(0, 300).replace(/\n/g, " | ")}`);
   }
-  if (run.status !== 0 || !run.stdout.includes("checkpoint intentionally deferred")) {
+  if (run.status !== 0 || !run.stdout.includes("检查点按验证要求暂缓提交")) {
     // 【报错路径自己不许崩】。这一段是为了把"远端上到底有什么"一并说出来，可它假设远端至少有两个提交：
     // agent 这一轮要是根本没推上去，远端就只有初始那一个，`HEAD^` 直接 fatal ——
     // 于是真正的失败原因（run.stderr）一个字都看不到，屏幕上只剩一句 git 的 unknown revision。
@@ -632,7 +632,7 @@ try {
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024
   });
-  if (replay.status !== 0 || !replay.stdout.includes("checkpoint replayed")) throw new Error(`Agent checkpoint outbox replay failed: ${replay.stderr || replay.stdout}`);
+  if (replay.status !== 0 || !replay.stdout.includes("检查点已重放")) throw new Error(`Agent checkpoint outbox replay failed: ${replay.stderr || replay.stdout}`);
 
   // outbox 里一条【内容损坏】的条目承载的是提交已经推送成功的检查点。原先只往本机 stderr 写一行，
   // 控制面永远不知道那份证据没了：派发挂在 running 上直到认领过期，人看到的是"还在跑"，
@@ -648,11 +648,11 @@ try {
     maxBuffer: 32 * 1024 * 1024
   });
   const corruptOutput = `${corruptRun.stdout || ""}${corruptRun.stderr || ""}`;
-  if (!corruptOutput.includes("quarantined")) {
+  if (!corruptOutput.includes("已隔离")) {
     throw new Error(`corrupt outbox item was not quarantined: ${corruptOutput.slice(-800)}`);
   }
-  if (!corruptOutput.includes(`corruption reported: ${corruptDispatchId}`)
-    && !corruptOutput.includes(`corruption report failed: ${corruptDispatchId}`)) {
+  if (!corruptOutput.includes(`已报给控制面：${corruptDispatchId}`)
+    && !corruptOutput.includes(`上报失败：${corruptDispatchId}`)) {
     throw new Error(`corrupt outbox item was quarantined without telling the control plane (${corruptDispatchId}) — 证据没了而控制面上一切如常: ${corruptOutput.slice(-800)}`);
   }
   if (corruptRun.status !== 0) {
@@ -690,10 +690,10 @@ try {
     if (!existsSync(blockedItemPath)) {
       throw new Error(`只读目录下这条损坏条目竟然被移走了，本条没验到真实故障: ${stuckOutput.slice(-600)}`);
     }
-    if (!stuckOutput.includes(`still at ${blockedItemPath}`)) {
+    if (!stuckOutput.includes(`仍在 ${blockedItemPath}`)) {
       throw new Error(`隔离失败了，报文却没说文件还在哪 —— 人按 .corrupt-<时间戳> 去找只会扑空: ${stuckOutput.slice(-800)}`);
     }
-    if (/quarantined: d_corrupt_stuck/u.test(stuckOutput)) {
+    if (/已隔离：d_corrupt_stuck/u.test(stuckOutput)) {
       throw new Error(`文件明明还在原地，报文却宣称已隔离: ${stuckOutput.slice(-800)}`);
     }
     if (stuckRun.status !== 0) {
@@ -736,7 +736,7 @@ try {
     if (!existsSync(join(libraryDir, "entry-a"))) {
       throw new Error(`只读 library 目录下条目竟然被清掉了，本条没验到真实故障: ${overCapOutput.slice(-600)}`);
     }
-    if (!overCapOutput.includes("library still over capacity after sweep")) {
+    if (!overCapOutput.includes("清扫后技能库仍超容量")) {
       throw new Error(`盘已超上限、淘汰又全失败，运行时一个字都没说 —— 人只会看到盘莫名其妙满了: ${overCapOutput.slice(-800)}`);
     }
     if (!overCapOutput.includes(`> ${capMb}MB`)) {
@@ -771,7 +771,7 @@ try {
     if (existsSync(staleOne)) {
       throw new Error(`到期的会话目录没被清掉（清理的正路断了，盘会一直涨）: ${freshOut.slice(-600)}`);
     }
-    if (!freshOut.includes("stale session directory removed")) {
+    if (!freshOut.includes("已清理陈旧会话目录")) {
       throw new Error(`清掉了到期目录却一个字没说，回收不可见: ${freshOut.slice(-600)}`);
     }
     rmSync(join(agentWorkDir, "orgs", "org_fresh"), {recursive: true, force: true});
@@ -805,7 +805,7 @@ try {
     if (!existsSync(staleSessionDir)) {
       throw new Error(`只读目录下陈旧会话竟然被清掉了，本条没验到真实故障: ${sweepOutput.slice(-600)}`);
     }
-    if (!sweepOutput.includes("stale session sweep could not remove")) {
+    if (!sweepOutput.includes("陈旧会话清扫有")) {
       throw new Error(`陈旧会话一个都清不掉，运行时一个字都没说 —— 症状只会是若干天后盘满: ${sweepOutput.slice(-800)}`);
     }
   }
@@ -1075,7 +1075,7 @@ try {
   }
   const permissionExit = permissionRace.code;
   if (permissionExit !== 0) throw new Error(`permission-report Agent run failed: ${permissionErr || permissionOut}`);
-  if (!permissionOut.includes("permission report submitted")) throw new Error("Agent did not emit a structured permission report");
+  if (!permissionOut.includes("权限请求已上报")) throw new Error("Agent did not emit a structured permission report");
   const resolvedState = await json("/api/state", {token: login.sessionToken});
   const resolvedRequest = (resolvedState.permissionRequests || []).find((item) => item.requestId === pendingRequest.requestId);
   if (!resolvedRequest || resolvedRequest.status !== "approved" || !resolvedRequest.policyDecisionRef) {
@@ -1437,7 +1437,7 @@ try {
 	        if (deniedRace.code !== 0) {
 	          throw new Error(`推送被拒 → 人授权 → 重推 这一趟没跑通：${deniedErr || deniedOut}`);
 	        }
-	        if (!deniedOut.includes("permission report submitted")) {
+	        if (!deniedOut.includes("权限请求已上报")) {
 	          throw new Error("推送被远端拒掉了，agent 却没有上报权限单 —— 活白干，人也拿不到可处置的选项");
 	        }
 	        deniedRun = denied;

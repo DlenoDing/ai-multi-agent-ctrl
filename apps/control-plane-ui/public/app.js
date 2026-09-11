@@ -5402,6 +5402,8 @@ function taskWorkbenchHelpers() {
   return {badge, t, explainCoded, fmtTime, progressLine, humanTraceHtml, workItemExitHint, workItemResultHtml, repositoryFailureAction,
     modelDecisionTextZh, agentEventSummaryZh,
     reasoningLabel: (level) => (level ? REASONING_LEVEL_LABELS[level] || level : ""),
+    // 没有匹配到 Agent 档案时 core 写的是 agent_unassigned_<角色> 占位 id（新组织还没建档案时每条派发都这样），别原样印。
+    agentProfileLabel: (agentId) => (!agentId ? "未记录" : String(agentId).startsWith("agent_unassigned_") ? "未绑定档案（按角色直接派发）" : agentId),
     isTerminalDispatch: (status) => terminalDispatchStatuses.has(status)};
 }
 

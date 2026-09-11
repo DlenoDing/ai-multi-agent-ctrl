@@ -591,7 +591,7 @@ async function main() {
         AIMAC_AGENT_REQUEST_TIMEOUT_MS: "20000",
         AIMAC_AGENT_SWEEP_INTERVAL_MS: "600000"
       });
-      if (!result.stdout.includes("dispatch completed:")) {
+      if (!result.stdout.includes("派发已完成：")) {
         fail(`agent runtime did not complete ${key} dispatch:\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
       }
     }

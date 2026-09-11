@@ -78,7 +78,7 @@
         <span class="task-run-summary-meta"><span>${esc(h.t(run.roleId || work.ownerRole))}</span><span>${esc(nodeNames.get(run.assignedNodeId) || run.assignedNodeId || "等待认领")}</span><span>${esc(run.model || "未指定模型")}</span><span>${h.fmtTime(run.createdAt)}</span></span></summary>
         <div class="task-run-body"><ol class="execution-stages">${stages.map(([label, done]) => `<li class="${done ? "done" : returned ? "attention" : ""}">${esc(label)}</li>`).join("")}</ol>
         <dl class="kv-list"><dt>运行节点</dt><dd>${esc(nodeNames.get(run.assignedNodeId) || run.assignedNodeId || "等待认领")}</dd>
-          <dt>角色档案</dt><dd>${esc(logical?.name || logical?.id || session?.agentId || "未记录")}</dd>
+          <dt>角色档案</dt><dd>${esc(logical?.name || logical?.id || h.agentProfileLabel(session?.agentId))}</dd>
           <dt>执行角色</dt><dd>${esc(h.t(run.roleId || work.ownerRole))}</dd>
           <dt>模型与推理</dt><dd>${esc(run.model || "未记录")} · 推理档：${esc(h.reasoningLabel(run.reasoning) || "未记录")}</dd>
           <dt>选型判断</dt><dd>${esc(h.modelDecisionTextZh(run.modelDecision))}</dd>

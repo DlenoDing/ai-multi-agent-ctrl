@@ -2946,7 +2946,7 @@ const MUTATIONS = [
     name: "隔离失败时不许宣称已隔离",
     file: "apps/agent-runtime/runtime.mjs",
     skip: "判别力由远程 agent e2e 覆盖（已用 mutate-probe 实证：只读 outbox 目录下那道门变红）",
-    from: "      process.stderr.write(quarantineFault\n        ? `checkpoint outbox item corrupt and quarantine failed: ${filename} still at ${path} (${error.message}; rename: ${quarantineFault})\\n`\n        : ",
+    from: "      process.stderr.write(quarantineFault\n        ? `发件箱检查点文件损坏且隔离失败：${filename} 仍在 ${path}（${error.message}；改名：${quarantineFault}）\\n`\n        : ",
     to: "      process.stderr.write(",
     expect: "隔离失败了，报文却没说文件还在哪"
   },
@@ -4460,7 +4460,7 @@ const MUTATIONS = [
     name: "会话清理清掉到期目录时必须出声（回收可见）",
     file: "apps/agent-runtime/runtime.mjs",
     gate: "agent",
-    from: "              process.stdout.write(`stale session directory removed: ${sessionDir}\\n`);",
+    from: "              process.stdout.write(`已清理陈旧会话目录：${sessionDir}\\n`);",
     to: "              void sessionDir;",
     expect: "清掉了到期目录却一个字没说"
   },
@@ -10433,8 +10433,8 @@ const MUTATIONS = [
     name: "取消通道断了必须说出后果（人按了取消，节点照常推送）",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyAgentSaysWhyItStoppedTakingWork",
-    from: "    process.stderr.write(`control watcher stopped: ${error.message}`\n      + \" —— 本次派发从此收不到取消/暂停信号（agent 会照常跑完并推送），\"\n      + \"认领也不再续期，到期后可能被重排给别人；建议尽快重启本节点\\n\");",
-    to: "    process.stderr.write(`control watcher stopped: ${error.message}\\n`);",
+    from: "    process.stderr.write(`控制通道监听已停止：${error.message}`\n      + \" —— 本次派发从此收不到取消/暂停信号（agent 会照常跑完并推送），\"\n      + \"认领也不再续期，到期后可能被重排给别人；建议尽快重启本节点\\n\");",
+    to: "    process.stderr.write(`控制通道监听已停止：${error.message}\\n`);",
     expect: "取消通道断了"
   },
   {
@@ -10449,8 +10449,8 @@ const MUTATIONS = [
     name: "节点告警的 marker 变了要报空转（判据不得绿着找不到）",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyAgentSaysWhyItStoppedTakingWork",
-    from: "dispatch claim deferred: ${outboxPending}",
-    to: "dispatch claim postponed: ${outboxPending}",
+    from: "暂不领新派发：发件箱里还有 ${outboxPending}",
+    to: "暂不领派发：发件箱里还有 ${outboxPending}",
     expect: "本条在空转"
   },
   {
@@ -14742,6 +14742,22 @@ const MUTATIONS = [
     from: '          currentAccount.passwordSet = true;\n          sessionStorage.setItem("aimac.account", JSON.stringify(currentAccount));',
     to: '          sessionStorage.setItem("aimac.account", JSON.stringify(currentAccount));',
     expect: "不许清会话踢人回登录页"
+  },
+  {
+    name: "agent 运行时的 stdout 句子不得退回英文",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeStdoutIsChinese",
+    from: "`检查点已重放：${item.dispatchId}\\n`",
+    to: "`checkpoint replayed: ${item.dispatchId}\\n`",
+    expect: "还是英文"
+  },
+  {
+    name: "任务详情的角色档案不得印 agent_unassigned_ 占位 id",
+    file: APP,
+    gate: "console",
+    from: '    agentProfileLabel: (agentId) => (!agentId ? "未记录" : String(agentId).startsWith("agent_unassigned_") ? "未绑定档案（按角色直接派发）" : agentId),',
+    to: '    agentProfileLabel: (agentId) => (!agentId ? "未记录" : agentId),',
+    expect: "不许印 agent_unassigned_"
   }
 ];
 

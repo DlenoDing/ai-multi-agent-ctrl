@@ -312,3 +312,8 @@ Claude Opus/high 的第一次全仓只读审查运行约 11 分钟未返回结�
   首次设密码没有旧口令可被冒用、令牌也已作废，这一脚是多余的，像出了故障。现在首次设密码保留当前会话（只撤销别处的），回执带 sessionKept，
   控制台关弹窗提示「本次登录继续有效」；账号已有口令时改密仍撤销全部会话（含当前）。doctor 原来那条「改密后旧会话必须 401」拆成首设保留＋改密撤销两段，
   另加成员首设探针；console 门 +1、变异 +2 条红证（doctor／console）。
+- 2026-09-11 从零开通走查（续）：建成员、建项目、配仓库并测试连接、签发令牌注册节点、建任务组、建任务、节点领活推送 —— 全链路走通。
+  两处修正：① 新组织还没建 Agent 档案时，任务详情「角色档案」印的是 core 的占位 id agent_unassigned_agent-runtime → 「未绑定档案（按角色直接派发）」；
+  ② agent 节点终端上 30 多句 stdout/stderr 是英文夹中文（dispatch completed / stale session directory removed / checkpoint replayed…）→ 全部改中文，
+  契约门新增「运行时 stdout 模板串须含中文」（含三元两支），随之改了 agent 远程 e2e、org 两道门、契约门 marker、规范校验和变异锚点里盯这些原话的 12 处。
+  顺手抓到一条登记写错理由的机器面字段（replayed 说 agent 运行时读它，实测从不读，只是日志里恰好有这个词）。console 门 +1、变异 +2 条红证；契约 285／agent e2e／org 两门／specs 全绿。

@@ -384,6 +384,7 @@ const helpers = {
   modelDecisionTextZh: (value) => String(value || "未记录"),
   agentEventSummaryZh: (value) => String(value || ""),
   reasoningLabel: (value) => ({medium: "中"}[value] || value),
+  agentProfileLabel: (value) => value || "未记录",
   badge: (kind, label) => `<span data-kind="${kind}">${label}</span>`,
   escapeHtml: context.escapeHtml || ((value) => String(value).replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"

@@ -260,7 +260,7 @@ async function selfCheck(config, {verbose = false} = {}) {
     if (error?.status === 409 && error?.payload?.admission) result = {ok: false, ...error.payload};
     else throw error;
   }
-  process.stdout.write(`agent self-check: ${result.ok ? "ok" : "failed"}${verbose ? `（准入 ${result.admission || "?"}${result.ok ? "" : `；没过的：${(result.missingChecks || []).join("、")}`}）` : ""}\n`);
+  process.stdout.write(`agent 自检：${result.ok ? "通过" : "失败"}${verbose ? `（准入 ${result.admission || "?"}${result.ok ? "" : `；没过的：${(result.missingChecks || []).join("、")}`}）` : ""}\n`);
   return result;
 }
 
@@ -377,7 +377,7 @@ async function run(config) {
       // 只说"deferred"会把人引到错误方向：控制台上这个节点是绿的、派发排着，
       // 而它其实【主动停止领活】了 —— 与"角色不匹配/模型不可用"在界面上长得一模一样
       // （控制面那边为此专门做过 claimMissHint）。把后果和出口一起说出来。
-      process.stderr.write(`dispatch claim deferred: ${outboxPending} checkpoint outbox item(s) pending replay`
+      process.stderr.write(`暂不领新派发：发件箱里还有 ${outboxPending} 个检查点等待重放`
         + " —— 本节点在 outbox 清空前不再领新活；控制台上它仍显示在线，"
         + "但派发会一直排队。清空要么靠自动重放成功，要么看上面 replay 的报错\n");
       if (once) return;
@@ -396,7 +396,7 @@ async function run(config) {
     }
     if (!claimed.dispatch && claimed.reason === "node_not_admitted" && Date.now() - lastAdmissionSelfCheckAt > 5 * 60 * 1000) {
       lastAdmissionSelfCheckAt = Date.now();
-      await selfCheck(config).catch((error) => process.stderr.write(`re-admission self-check failed: ${error.message}\n`));
+      await selfCheck(config).catch((error) => process.stderr.write(`重新准入自检失败：${error.message}\n`));
     }
     if (claimed.dispatch) {
       // 领到活先说一句：原先从「正在等待派发」到「dispatch completed」之间一个字都不打，人不知道它在干什么。
@@ -421,11 +421,11 @@ async function run(config) {
         // (A cancel BEFORE the push is caught by control.throwIfCancelled() inside executeDispatch and lands
         // in the catch below, so nothing is pushed in that case.)
         if (control.signal?.cancelled) {
-          process.stdout.write(`dispatch cancelled after push completed; recording the pushed checkpoint rather than orphaning it: ${claimed.dispatch.dispatch.dispatchId}\n`);
+          process.stdout.write(`派发在推送完成后被取消；已推送的检查点照常登记、不留孤儿：${claimed.dispatch.dispatch.dispatchId}\n`);
         }
         const outboxPath = persistCheckpointOutbox(config, claimed.dispatch, checkpoint);
         if (process.env.AIMAC_AGENT_VERIFICATION_DEFER_CHECKPOINT === "true") {
-          process.stdout.write(`checkpoint intentionally deferred for verification: ${claimed.dispatch.dispatch.dispatchId}\n`);
+          process.stdout.write(`检查点按验证要求暂缓提交：${claimed.dispatch.dispatch.dispatchId}\n`);
           // 【这件事必须让控制面知道】。这个开关没有档位围栏：留在生产节点上，活干完了（提交、推送都做了）
           // 而检查点永远不交 —— 派发卡在「进行中」，任务组永远关不掉，而人无从判断为什么。
           // 原先只往本机 stdout 打一行，控制面一无所知。改成上报一条 attention 事件，
@@ -442,11 +442,11 @@ async function run(config) {
             const result = await submitCheckpoint(config, claimed.dispatch.remoteServices.checkpointPath, checkpoint, claimed.dispatch.dispatch?.claimEpoch);
             unlinkSync(outboxPath);
             await submitExecutionEvent(config, claimed.dispatch, "checkpoint_submitted", {progressPercent: 100, summary: "Checkpoint accepted by control plane.", evidenceRefs: [`checkpoint:${result.checkpoint?.runId || "accepted"}`]}).catch(() => {});
-            process.stdout.write(`dispatch completed: ${claimed.dispatch.dispatch.dispatchId} checkpoint=${result.checkpoint?.runId || "accepted"}\n`);
+            process.stdout.write(`派发已完成：${claimed.dispatch.dispatch.dispatchId}，检查点 ${result.checkpoint?.runId || "已接受"}\n`);
             process.stdout.write(`派发 ${claimed.dispatch.dispatch.dispatchId} 已完成：检查点已被控制面接受\n`);
             cleanupSessionDirectory(config, claimed.dispatch);
           } catch (error) {
-            process.stderr.write(`checkpoint pending retry: ${claimed.dispatch.dispatch.dispatchId} ${error.message}\n`);
+            process.stderr.write(`检查点提交待重试：${claimed.dispatch.dispatch.dispatchId} ${error.message}\n`);
           }
         }
       } catch (error) {
@@ -458,7 +458,7 @@ async function run(config) {
         await jsonRequest(`${config.serverUrl}${claimed.dispatch.remoteServices.failurePath}`, {method: "POST", token: config.nodeToken, body: {reason: String(error.message || error).slice(0, 2000), status: error.controlStatus || "failed"}}).catch(
           (reportError) => process.stderr.write(`dispatch failure report failed: ${claimed.dispatch.dispatch.dispatchId} (${reportError?.message || reportError}) —— 控制面那边它仍是 running，要等认领过期才回收\n`)
         );
-        process.stderr.write(`dispatch failed: ${claimed.dispatch.dispatch.dispatchId} ${error.message}\n`);
+        process.stderr.write(`派发失败：${claimed.dispatch.dispatch.dispatchId} ${error.message}\n`);
         process.stderr.write(`派发 ${claimed.dispatch.dispatch.dispatchId} 执行失败：${String(error.message || error).slice(0, 200)} —— 已如实报回控制面；到控制台「执行监控」页看原因与处置\n`);
         cleanupSessionDirectory(config, claimed.dispatch);
       }
@@ -473,7 +473,7 @@ async function run(config) {
     // backoff so a control-plane blip degrades to a retry instead of killing the whole fleet.
     // 连不上控制面只在开始时说一句（每拍都刷一行 fetch failed 没有信息量）；别的错误照旧逐条说。
     if (!announceOutageIfNeeded(error, config.pollIntervalSeconds)) {
-      process.stderr.write(`agent runtime loop iteration error (continuing): ${String(error?.message || error)}\n`);
+      process.stderr.write(`agent 主循环这一轮出错（继续运行）：${String(error?.message || error)}\n`);
     }
     if (once) return;
     await delay(config.pollIntervalSeconds * 1000);
@@ -527,7 +527,7 @@ function startControlWatcher(config, dispatchPackage) {
       try {
         await pollControlCommands(config, {waitMs: 15000, dispatchPackage, controlState: state});
       } catch (error) {
-        process.stderr.write(`control watcher iteration deferred: ${error.message}\n`);
+        process.stderr.write(`控制通道监听这一轮暂缓：${error.message}\n`);
         await delay(1000);
       }
       if (state.running && !state.cancelled && Date.now() - lastKeepAliveAt >= keepAliveMs) {
@@ -541,7 +541,7 @@ function startControlWatcher(config, dispatchPackage) {
     //   人在控制台上按取消，这台节点收不到 —— agent 会照常跑完并推 git（而界面显示"已取消"）；
     //   认领不再续期 → 到期后控制面可能把同一份活重排给别人 → 两边同时在做。
     // 只说 "stopped: <err>" 的话，这两件事都不会自己现形。
-    process.stderr.write(`control watcher stopped: ${error.message}`
+    process.stderr.write(`控制通道监听已停止：${error.message}`
       + " —— 本次派发从此收不到取消/暂停信号（agent 会照常跑完并推送），"
       + "认领也不再续期，到期后可能被重排给别人；建议尽快重启本节点\n");
   });
@@ -558,14 +558,14 @@ async function pollControlCommands(config, options = {}) {
   try {
     result = await retryableAgentRequest(() => jsonRequest(url.href, {token: config.nodeToken, timeoutMs: Math.max(0, Math.min(30000, Number(options.waitMs || 0))) + 15000}), "control_poll");
   } catch (error) {
-    if (!announceOutageIfNeeded(error, config.pollIntervalSeconds)) process.stderr.write(`control poll deferred: ${error.message}\n`);
+    if (!announceOutageIfNeeded(error, config.pollIntervalSeconds)) process.stderr.write(`控制命令轮询暂缓：${error.message}\n`);
     return {commands: [], nextCursor: config.controlCursor || 0};
   }
   for (const command of result.commands || []) {
     try {
       await handleControlCommand(config, command, options);
     } catch (error) {
-      process.stderr.write(`control command handling failed: ${command.commandId} ${error.message}\n`);
+      process.stderr.write(`控制命令处理失败：${command.commandId} ${error.message}\n`);
       // ACK 是控制面判定这条指令死活的唯一依据：吞掉就等于它永远停在待执行，而本机这边早已放弃。
       await ackControlCommand(config, command, "failed", {reason: String(error.message || error).slice(0, 500)}).catch(
         (ackError) => process.stderr.write(`control command failure ack failed: ${command.commandId} (${ackError?.message || ackError}) —— 控制面那边它仍是待执行\n`)
@@ -674,8 +674,8 @@ async function flushCheckpointOutbox(config) {
         ? `隔离失败仍在原地 ${path}（${quarantineFault}），下一拍会再次读到`
         : `已隔离到 ${corruptPath}`;
       process.stderr.write(quarantineFault
-        ? `checkpoint outbox item corrupt and quarantine failed: ${filename} still at ${path} (${error.message}; rename: ${quarantineFault})\n`
-        : `checkpoint outbox item corrupt, quarantined: ${filename} -> ${corruptPath} (${error.message})\n`);
+        ? `发件箱检查点文件损坏且隔离失败：${filename} 仍在 ${path}（${error.message}；改名：${quarantineFault}）\n`
+        : `发件箱检查点文件损坏，已隔离：${filename} -> ${corruptPath}（${error.message}）\n`);
       // 这条 outbox 承载的是【提交已经推送成功】的检查点。只往本机 stderr 写一行，控制面就永远
       // 不知道那份证据没了：派发挂在 running 上直到认领过期，人在控制台看到的是"还在跑"，
       // 而实际上分支上已经有了没人复核过的提交。文件名就是 safeName(dispatchId).json，
@@ -687,10 +687,10 @@ async function flushCheckpointOutbox(config) {
           token: config.nodeToken,
           body: {status: "blocked", reason: `checkpoint_outbox_item_corrupt: 检查点证据文件损坏，${quarantineNote}；该派发的提交可能已经推送，需人工核对该分支`}
         }).then(
-          () => process.stdout.write(`checkpoint outbox corruption reported: ${corruptDispatchId}\n`),
+          () => process.stdout.write(`发件箱里的检查点已损坏，已报给控制面：${corruptDispatchId}\n`),
           // 上报失败不能拖垮持久化循环，但也不能悄悄咽下去：本机日志必须留下"报了但没报成"，
           // 否则事后无从区分"没坏过"和"坏了却没人知道"。
-          (reportError) => process.stderr.write(`checkpoint outbox corruption report failed: ${corruptDispatchId} (${reportError?.message || reportError})\n`)
+          (reportError) => process.stderr.write(`发件箱检查点损坏上报失败：${corruptDispatchId}（${reportError?.message || reportError}）\n`)
         );
       }
       continue;
@@ -702,7 +702,7 @@ async function flushCheckpointOutbox(config) {
       unlinkSync(path);
       // 重放成功＝这个派发彻底完了：把它当初留下的会话工作目录也清掉，不要等 TTL 清扫。
       removeSessionDirectoryPath(config, item.sessionDir);
-      process.stdout.write(`checkpoint replayed: ${item.dispatchId}\n`);
+      process.stdout.write(`检查点已重放：${item.dispatchId}\n`);
       process.stdout.write(`已补交检查点 ${item.dispatchId}（上次没交上的，这次控制面接受了）\n`);
     } catch (error) {
       const attempts = Number(item.replayAttempts || 0) + 1;
@@ -729,14 +729,14 @@ async function flushCheckpointOutbox(config) {
         );
         // 把【为什么】也打出来：只说"挪到恢复区了"的话，运维翻 agent 日志看到的是一个动作，
         // 而他要判断的是"这份证据还能不能用、要不要人工介入" —— 那取决于是终局错误还是重试用尽。
-        process.stderr.write(`checkpoint replay moved to recovery: ${item.dispatchId} -> ${recoverPath}`
+        process.stderr.write(`检查点重放已挪进恢复区：${item.dispatchId} -> ${recoverPath}`
           + ` （${reasonPrefix}: ${String(error.message).slice(0, 200)}）\n`);
         continue;
       }
       // Under the cap: persist the incremented attempt count so it survives an agent restart, then defer.
       try { writeSecretJson(path, {...item, replayAttempts: attempts}); } catch { /* best-effort attempt-count persist */ }
       pending += 1;
-      process.stderr.write(`checkpoint replay deferred (attempt ${attempts}/${attemptCap}): ${item.dispatchId} ${error.message}\n`);
+      process.stderr.write(`检查点重放暂缓（第 ${attempts}/${attemptCap} 次）：${item.dispatchId} ${error.message}\n`);
     }
   }
   return pending;
@@ -779,7 +779,7 @@ function sweepStaleSessionDirectories(config) {
           try {
             if (statSync(sessionDir).mtimeMs < cutoff) {
               rmSync(sessionDir, {recursive: true, force: true});
-              process.stdout.write(`stale session directory removed: ${sessionDir}\n`);
+              process.stdout.write(`已清理陈旧会话目录：${sessionDir}\n`);
             }
           } catch (error) {
             if (error?.code === "ENOENT") continue;
@@ -792,7 +792,7 @@ function sweepStaleSessionDirectories(config) {
   }
   if (sweepFaults) {
     // 清不掉就意味着盘会一直涨，而这条清理是唯一的出口 —— 必须说出后果。
-    process.stderr.write(`stale session sweep could not remove ${sweepFaults} directories`
+    process.stderr.write(`陈旧会话清扫有 ${sweepFaults} 个目录清不掉`
       + " —— 这些目录会一直占盘，且下一轮清理多半同样失败（权限/被占用），需人工处理"
       + `（最后一次失败：${lastSweepFault}）—— 它们会一直占着盘，需人工清理\n`);
   }
@@ -841,14 +841,14 @@ function sweepLibraryOverCapacity(config) {
     try {
       rmSync(entry.dir, {recursive: true, force: true});
       total -= entry.size;
-      process.stdout.write(`library entry evicted for capacity: ${entry.dir}\n`);
+      process.stdout.write(`技能库条目因容量被淘汰：${entry.dir}\n`);
     } catch (error) { evictionFault = error?.message || String(error); }
   }
   // 淘汰全都失败（目录只读、文件被占用），或最大的一个条目本身就超过上限时，这里静默返回过，
   // 下一拍再原样来一遍：盘一直涨，而系统明明【算出来】自己超了，却一个字都没对人说过。
   if (total > maxBytes) {
     const mb = (bytes) => Math.round(bytes / (1024 * 1024));
-    process.stderr.write(`library still over capacity after sweep: ${mb(total)}MB > ${mb(maxBytes)}MB`
+    process.stderr.write(`清扫后技能库仍超容量：${mb(total)}MB > ${mb(maxBytes)}MB`
       + `${evictionFault ? `（最后一次淘汰失败：${evictionFault}）` : "（已没有更多可淘汰的条目）"}`
       + " —— 磁盘会继续涨，需人工清理或调高 AIMAC_AGENT_LIBRARY_MAX_MB\n");
   }
@@ -977,13 +977,13 @@ function removeSessionDirectoryPath(config, dir) {
   // 界外一律不删、说一声留给人处理（多占一点盘是可见的、可修的；删错目录不是）。
   const sessionsRoot = resolve(join(config.workDir, "orgs")) + sep;
   if (!dir || !resolve(dir).startsWith(sessionsRoot)) {
-    if (dir) process.stderr.write(`session directory cleanup skipped (outside ${sessionsRoot}): ${dir}\n`);
+    if (dir) process.stderr.write(`跳过会话目录清理（不在 ${sessionsRoot} 之内）：${dir}\n`);
     return;
   }
   try {
     if (existsSync(dir)) rmSync(dir, {recursive: true, force: true});
   } catch (error) {
-    process.stderr.write(`session directory cleanup failed: ${error.message}\n`);
+    process.stderr.write(`会话目录清理失败：${error.message}\n`);
   }
 }
 
@@ -1100,7 +1100,7 @@ async function registerEvidenceArtifact(config, dispatchPackage, evidence) {
     return result.artifact || null;
   } catch (error) {
     // Evidence registration is best-effort and must never fail the dispatch; deliverables still land in Git.
-    process.stderr.write(`evidence artifact registration deferred: ${error.message}\n`);
+    process.stderr.write(`证据产物登记暂缓：${error.message}\n`);
     return null;
   }
 }
@@ -1196,13 +1196,13 @@ async function runPermissionReport(config, dispatchPackage, block, control) {
   });
   const requestId = submitResult.permissionRequest?.requestId;
   if (!requestId) throw permissionBlockedError("agent_permission_request_not_created:权限单没建起来（控制面没回单号），这一趟停在推送前，活还在这台机器上");
-  process.stdout.write(`permission report submitted: ${requestId} promptType=${block.promptType} capability=${block.requestedCapability}\n`);
+  process.stdout.write(`权限请求已上报：${requestId} 类型=${block.promptType} 能力=${block.requestedCapability}\n`);
   const attempts = clampEnvNumber(process.env.AIMAC_AGENT_PERMISSION_POLL_ATTEMPTS, 1, 240);
   const intervalMs = clampEnvNumber(process.env.AIMAC_AGENT_PERMISSION_POLL_INTERVAL_MS, 200, 1000);
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     control?.throwIfCancelled();
     const statusResult = await mcpToolCall(config, "permission-mcp.permission_status", {requestId, dispatchId: dispatchPackage.dispatch.dispatchId}).catch((error) => {
-      process.stderr.write(`permission status poll deferred: ${error.message}\n`);
+      process.stderr.write(`权限状态轮询暂缓：${error.message}\n`);
       return {};
     });
     const status = statusResult.permissionRequest?.status;
@@ -1584,12 +1584,12 @@ function killChildProcessGroup(child, signal) {
       return;
     }
   } catch (error) {
-    if (error.code !== "ESRCH") process.stderr.write(`process group ${signal} failed: ${error.message}\n`);
+    if (error.code !== "ESRCH") process.stderr.write(`向进程组发 ${signal} 失败：${error.message}\n`);
   }
   try {
     child.kill(signal);
   } catch (error) {
-    if (error.code !== "ESRCH") process.stderr.write(`child ${signal} failed: ${error.message}\n`);
+    if (error.code !== "ESRCH") process.stderr.write(`向子进程发 ${signal} 失败：${error.message}\n`);
   }
 }
 
@@ -1970,7 +1970,7 @@ export function removeGlobalRemoteMcpClients(paths = {}) {
       }
     }
   } catch (error) {
-    process.stderr.write(`[agent-runtime] could not clean codex MCP config: ${error.message}\n`);
+    process.stderr.write(`[agent-runtime] 清理 codex 的 MCP 配置失败：${error.message}\n`);
   }
   for (const path of jsonPaths) {
     try {
@@ -1981,7 +1981,7 @@ export function removeGlobalRemoteMcpClients(paths = {}) {
       writeSecretJson(path, current);
     } catch (error) {
       // 别人的配置文件坏了不是我们的事，但也不能因此把清理整条中断 —— 剩下的还要清。
-      process.stderr.write(`[agent-runtime] could not clean ${path}: ${error.message}\n`);
+      process.stderr.write(`[agent-runtime] 清理 ${path} 失败：${error.message}\n`);
     }
   }
 }
@@ -1996,7 +1996,7 @@ function mergeMcpJson(path, remote) {
     } catch (error) {
       // "skipping" 听着无害，实际后果是 agent 少了它本该有的工具：
       // 远程 MCP 没配上去，这台节点跑出来的活会是【工具受限】的版本，而没有任何地方会说这件事。
-      process.stderr.write(`[agent-runtime] skipping remote MCP merge — ${path} is not valid JSON: ${error.message}`
+      process.stderr.write(`[agent-runtime] 跳过远程 MCP 合并（skipping remote MCP merge）—— ${path} 不是合法 JSON：${error.message}`
         + " —— 远程 MCP 工具不会配到这台节点上，agent 将以受限工具集执行；"
         + "修好这份 JSON 或删掉它再重启\n");
       return;

@@ -1952,6 +1952,14 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         /有界写入范围 · 任务类型：定向验证/u.test(zhText) && /已接收派发包并核对绑定/u.test(zhText)
           && !/modelDecision:|Dispatch package received/u.test(zhText),
         `任务详情：${(zhText.match(/选型判断.{0,80}/u) || ["没找到选型判断"])[0]} ｜ ${(zhText.match(/已接收派发.{0,60}/u) || ["没找到执行记录"])[0]}`);
+      // 【没匹配到档案时别印占位 id】（09-11 从零开通走查：新组织还没建 Agent 档案，任务详情「角色档案」写着 agent_unassigned_agent-runtime）。
+      {
+        const unassignedState = {...baseState, workSessions: [{sessionId: "sess_event_window", taskGroupId: group.id, agentId: "agent_unassigned_agent-runtime"}]};
+        const unassignedText = eventProbe.renderTaskWorkbenchModule({...renderArgs, nextState: unassignedState}).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+        check("任务详情「角色档案」没匹配到档案时要写「未绑定档案」，不许印 agent_unassigned_ 占位 id",
+          /角色档案 未绑定档案（按角色直接派发）/u.test(unassignedText) && !/agent_unassigned_/u.test(unassignedText),
+          `角色档案：${(unassignedText.match(/角色档案.{0,50}/u) || ["没找到"])[0]}`);
+      }
       // 【推理档要翻中文】（09-11 沙箱爬页：「模型与推理」一栏写着「openai:gpt-5.5 · medium」，旁边的选型判断却写「推理档：中」）。
       check("任务详情「模型与推理」的推理档要写中文，不印 medium",
         /模型与推理\s+\S+ · 推理档：中/u.test(zhText.replace(/\s+/gu, " ")) && !/· medium/u.test(zhText),

@@ -751,7 +751,7 @@ errors << "resume_dispatch must have a server-side state transition" unless agen
 errors << "task group controls must reuse dispatch control commands" unless server_source.include?("applyTaskGroupRuntimeControl") && server_source.include?("pause_dispatch") && server_source.include?("cancel_dispatch") && server_source.include?("createAgentControlCommand")
 errors << "MCP session pause/cancel must reuse dispatch control commands" unless mcp_source.include?("createAgentControlCommand") && mcp_source.include?("mcp_session_paused") && mcp_source.include?("revokeDispatchMcpGrants")
 errors << "Agent Runtime must poll and ack the server-side control channel" unless agent_runtime_source.include?("startControlWatcher") && agent_runtime_source.include?("pollControlCommands") && agent_runtime_source.include?("ackControlCommand")
-errors << "Agent Runtime control watcher must continue after command handling errors" unless agent_runtime_source.include?("control watcher iteration deferred")
+errors << "Agent Runtime control watcher must continue after command handling errors" unless agent_runtime_source.include?("控制通道监听这一轮暂缓")
 errors << "Agent Runtime must terminate executor process groups for stop controls" unless agent_runtime_source.include?("terminateChild") && agent_runtime_source.include?("SIGKILL") && agent_runtime_source.include?("detached:")
 errors << "Agent Runtime must pass selected model and reasoning to known CLIs" unless agent_runtime_source.include?("AIMAC_DISPATCH_MODEL_ID") && agent_runtime_source.include?("--model") && agent_runtime_source.include?("model_reasoning_effort") && agent_runtime_source.include?("--effort")
 errors << "Agent Runtime must not pass provider auto aliases as CLI model ids" unless agent_runtime_source.include?('stripped === "auto"') && agent_runtime_source.include?("reasoningForCli") && agent_runtime_source.include?("rawReasoningLevel")
@@ -995,9 +995,9 @@ errors << "sibling resolve terminal guards need behavioral coverage" unless cont
 # F1: a transient control-plane error on heartbeat/claim must not kill the daemon (retry classification
 # covers 5xx/timeout/network AND the run loop has an outer safety-net that continues on any iteration error).
 errors << "retryable classification must cover transient transport failures" unless agent_runtime_source.include?("status >= 500 && status <= 599") && agent_runtime_source.include?("ECONNREFUSED")
-errors << "the run loop must survive a transient iteration error instead of exiting" unless agent_runtime_source.include?("agent runtime loop iteration error (continuing)")
+errors << "the run loop must survive a transient iteration error instead of exiting" unless agent_runtime_source.include?("agent 主循环这一轮出错（继续运行）")
 # F2: a cancel landing AFTER the irreversible push must record the pushed checkpoint, not orphan it.
-errors << "a cancel after push must record the pushed checkpoint, not discard it" unless agent_runtime_source.include?("recording the pushed checkpoint rather than orphaning it")
+errors << "a cancel after push must record the pushed checkpoint, not discard it" unless agent_runtime_source.include?("已推送的检查点照常登记、不留孤儿")
 # F3: resume_dispatch may only revive a blocked dispatch (not a running one → double execution).
 errors << "resume_dispatch must only revive a blocked dispatch" unless server_source.include?("dispatch_not_resumable") && agent_gateway_source.include?("command.commandType === \"resume_dispatch\" && dispatch.status !== \"blocked\"")
 # M3/M4: ReviewBundle must use its MODELED terminal set (consumed/rejected, not the phantom "closed"), be
