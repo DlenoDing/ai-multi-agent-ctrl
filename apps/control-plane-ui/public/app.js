@@ -6035,9 +6035,14 @@ function cellsWaitingWithNoAgentNotice(groups) {
     .filter((item) => waitingStatuses.has(item.status)).length;
   if (!waiting) return "";
   const total = Number(fleet.total || 0);
-  return `<div class="notice warn-notice compact-notice"><strong>执行已停住：</strong>${esc(waiting)} 个任务正在等待，但【没有任何在线的运行节点】，当前不会有任何进展。`
-    + `${total ? `已注册 ${esc(total)} 个节点，请先恢复并刷新自检。` : "请先注册运行节点。"}`
-    + `<div class="button-row"><button type="button" class="secondary-button" data-menu="proj-agents" data-menu-workspace="${total ? "nodes" : "register"}">${total ? "检查运行节点" : "注册运行节点"}</button></div></div>`;
+  // 没有注册权限的人（评审人、观察者）别指到「注册运行节点」——那页对他只是一句「没有权限」。说清找谁。
+  const canRegister = hasPerm("agent:activate");
+  const nextStep = total ? `已注册 ${esc(total)} 个节点，请先恢复并刷新自检。`
+    : canRegister ? "请先注册运行节点。" : "你没有注册运行节点的权限，请找项目管理员或组织管理员注册。";
+  const button = total || canRegister
+    ? `<div class="button-row"><button type="button" class="secondary-button" data-menu="proj-agents" data-menu-workspace="${total ? "nodes" : "register"}">${total ? "检查运行节点" : "注册运行节点"}</button></div>`
+    : "";
+  return `<div class="notice warn-notice compact-notice"><strong>执行已停住：</strong>${esc(waiting)} 个任务正在等待，但【没有任何在线的运行节点】，当前不会有任何进展。${nextStep}${button}</div>`;
 }
 
 // 在制品额度用满时的出口。这条与"没有在线 agent"那条是两回事，不能合并：

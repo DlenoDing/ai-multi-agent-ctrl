@@ -14710,6 +14710,14 @@ const MUTATIONS = [
     from: '["agent_qa", "质量保障 Agent", "qa", "cost_aware"],',
     to: '["agent_qa", "QA Runtime", "qa", "cost_aware"],',
     expect: "core 默认 Agent 档案名还是英文"
+  },
+  {
+    name: "没有注册权限的人不得被指到注册运行节点页",
+    file: APP,
+    gate: "console",
+    from: '  const canRegister = hasPerm("agent:activate");',
+    to: '  const canRegister = true;',
+    expect: "要被告知找谁，而不是指到注册页"
   }
 ];
 

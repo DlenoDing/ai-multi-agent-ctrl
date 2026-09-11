@@ -8552,6 +8552,17 @@ await runCodedApiErrorCase();
   });
   const probe = loadConsole(el("div"));
   const stalled = probe.renderTaskGroupsWith(withCells("assigned", {online: 0, total: 2}), account, "p1", null, {});
+  // 【没有注册权限的人别被指到注册页】（09-11 评审人视角：纯评审账号看到「请先注册运行节点」和按钮，点进去只有一句没有权限）。
+  {
+    const reviewer = {accountId: "r1", email: "r@b.c", accountType: "user_account", displayName: "评审人", organizationId: "org_default", permissions: []};
+    const reviewerState = {...withCells("assigned", {online: 0, total: 0}), projectPermissions: {projectId: "p1", permissions: ["project:view", "task_group:read", "task_group:review"]}};
+    const reviewerNotice = probe.renderTaskGroupsWith(reviewerState, reviewer, "p1", null, {});
+    const adminNotice = probe.renderTaskGroupsWith(withCells("assigned", {online: 0, total: 0}), account, "p1", null, {});
+    check("没有注册权限的人看到「执行已停住」时要被告知找谁，而不是指到注册页；有权限的人照常给注册按钮",
+      /没有任何在线的运行节点/.test(reviewerNotice) && /没有注册运行节点的权限/.test(reviewerNotice) && !/data-menu-workspace="register"/.test(reviewerNotice)
+        && /data-menu-workspace="register"/.test(adminNotice) && !/没有注册运行节点的权限/.test(adminNotice),
+      `评审人：${reviewerNotice.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/执行已停住.{0,120}/u)?.[0] || "没有提示"}`);
+  }
   check("单元已交给执行方而没有在线 agent 时，要在任务组页上说出来",
     /没有任何在线的运行节点/.test(stalled),
     "进度条不会再动，而这一页一个字都不说 —— 人会一直等，并且会以为是 agent 在慢慢做");
