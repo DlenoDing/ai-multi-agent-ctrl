@@ -2111,6 +2111,18 @@ try {
       }
       console.log("  ok  建组织时填错的配额同样被拒并点名（不再钳成 1 或回落缺省）");
     }
+    // 上限调到当前用量以下要能保存（不踢人），且回执要点名哪几项已超出 —— 界面据此提醒；原先回执只回组织记录，人只看到一个 2/1。
+    {
+      const belowUsage = await jsonFetch(port, `/api/orgs/${encodeURIComponent(orgId)}/quotas`, {
+        method: "POST",
+        headers: {"Idempotency-Key": "doctor-quota-below-usage", authorization: systemAuth},
+        body: JSON.stringify({quotas: {maxMembers: 1}})
+      });
+      const over = Array.isArray(belowUsage.payload?.overQuota) ? belowUsage.payload.overQuota : null;
+      if (!belowUsage.response.ok || !over || !over.some((item) => item.kind === "members" && item.usage > item.quota)) {
+        throw new Error(`把成员上限调到用量以下后，回执没点名「成员已超出」（HTTP ${belowUsage.response.status} overQuota=${JSON.stringify(over)}）—— 人只看到一个 2/1，不知道是数错了还是出了什么事`);
+      }
+    }
     const quotaBump = await jsonFetch(port, `/api/orgs/${encodeURIComponent(orgId)}/quotas`, {
       method: "POST",
       headers: {"Idempotency-Key": "doctor-member-default-quota-bump", authorization: systemAuth},

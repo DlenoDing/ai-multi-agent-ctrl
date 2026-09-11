@@ -14862,6 +14862,22 @@ const MUTATIONS = [
     from: '.length >= detail.scope.ids.length ? "（项目已归档，不再领活；仍占配额，可吊销）" : ""}`',
     to: '.length >= detail.scope.ids.length ? "" : ""}`',
     expect: "要写「项目已归档，不再领活；仍占配额，可吊销」"
+  },
+  {
+    name: "配额超出上限时配额行必须说出来",
+    file: "apps/control-plane-ui/public/modules/ui-primitives.js",
+    gate: "console",
+    from: '    const over = Number(max) > 0 && held > Number(max);',
+    to: '    const over = false;',
+    expect: "配额行要写「已超出上限"
+  },
+  {
+    name: "把上限调到用量以下时回执必须点名超出项",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '      .filter((check) => Number(check.usage) > Number(check.quota)).map((check) => ({kind: check.kind, usage: check.usage, quota: check.quota}));',
+    to: '      .filter(() => false).map((check) => ({kind: check.kind, usage: check.usage, quota: check.quota}));',
+    expect: "回执没点名「成员已超出」"
   }
 ];
 

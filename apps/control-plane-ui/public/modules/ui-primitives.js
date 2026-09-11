@@ -18,8 +18,12 @@
     const held = Number(used || 0) + Number(reserved || 0);
     const percent = Math.round((held / total) * 100);
     const tone = percent >= 100 ? "quota-full" : percent >= 80 ? "quota-warn" : "quota-ok";
+    // 上限被调到当前用量以下（例如成员 2/1）：不会移除已有的，但在降到上限以下前不能再新增 —— 这一行要说出来，
+    // 不然人只看到一个 2/1，不知道是数错了还是出了什么事（09-12 系统管理员调配额走查）。
+    const over = Number(max) > 0 && held > Number(max);
     return `<div class="progress-line">${progressBar(percent, tone)}<em>${used ?? 0}/${max ?? 0}`
-      + `${Number(reserved) > 0 ? `（另有 ${esc(reserved)} 张未使用的加入令牌占着位，合计 ${held}/${max ?? 0}）` : ""}</em></div>`;
+      + `${Number(reserved) > 0 ? `（另有 ${esc(reserved)} 张未使用的加入令牌占着位，合计 ${held}/${max ?? 0}）` : ""}</em></div>`
+      + `${over ? `<div class="small warn-text">已超出上限：不会移除已有的，但降到上限以下前不能再新增</div>` : ""}`;
   }
 
   function panel(title, body, options = {}) {

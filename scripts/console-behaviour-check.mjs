@@ -3320,6 +3320,16 @@ async function runErrorGuidanceCase() {
       /推送和检查点准备/u.test(monitorText) && !/\bpush\b|checkpoint/u.test(monitorText) && /生效的定制/u.test(rolesText) && !/overlay/u.test(rolesText),
       `监控说明：${(monitorText.match(/.{0,30}(?:push|checkpoint).{0,30}/u) || ["无英文行话"])[0]}；角色定制：${(rolesText.match(/.{0,30}overlay.{0,30}/u) || ["无 overlay"])[0]}`);
   }
+  // 【上限低于用量时配额行要说出来】（09-12：成员上限调到 1，页面只写「2/1」）。
+  {
+    const overOrg = {orgId: "org_default", name: "默认组织", status: "active", initialAdminAccountId: "acct_x",
+      usage: {members: 2, projects: 0, taskGroups: 0, agents: 0, agentsReserved: 0}, quotas: {maxMembers: 1, maxProjects: 10, maxTaskGroups: 20, maxAgents: 20}};
+    const overHtml = String(loadConsole(el("div"), {realI18n: true}).renderSysOrgsWith(navState, systemAccount, [overOrg]));
+    const okHtml = String(loadConsole(el("div"), {realI18n: true}).renderSysOrgsWith(navState, systemAccount, [{...overOrg, quotas: {...overOrg.quotas, maxMembers: 10}}]));
+    check("配额用量超过上限时（成员 2/1）配额行要写「已超出上限：不会移除已有的，但降到上限以下前不能再新增」，没超时不写",
+      /已超出上限：不会移除已有的/u.test(overHtml) && !/已超出上限/u.test(okHtml),
+      `超限：${/已超出上限/u.test(overHtml) ? "有提示" : "没提示"}；未超限：${/已超出上限/u.test(okHtml) ? "也有提示" : "没提示"}`);
+  }
   // 【归档项目名下的节点要在组织节点列表里标出来】（09-12：项目归档后节点整个从列表消失，只剩配额里的一个数）。
   {
     const archivedNodeState = {...navState, projects: [{...navState.projects[0], status: "archived"}]};

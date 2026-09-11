@@ -7612,11 +7612,17 @@ document.addEventListener("submit", async (event) => {
       return;
     }
     if (kind === "org-quotas") {
-      await api(`/api/orgs/${encodeURIComponent(form.dataset.org)}/quotas`, {method: "POST", body: JSON.stringify({
+      const saved = await api(`/api/orgs/${encodeURIComponent(form.dataset.org)}/quotas`, {method: "POST", body: JSON.stringify({
         quotas: quotaBody(data)
       })});
       closeModal();
       await loadPage();
+      // 上限调到当前用量以下：保存是成功的，但人得知道这几项此刻已超出、在降下来之前不能再新增。
+      if (Array.isArray(saved?.overQuota) && saved.overQuota.length) {
+        const kindLabel = {members: "成员", projects: "项目", taskGroups: "任务组", agents: "运行节点"};
+        toast.info(`已保存，但 ${saved.overQuota.map((item) => `${kindLabel[item.kind] || item.kind}上限（${item.quota}）已低于当前用量（${item.usage}）`).join("、")}：不会移除已有的，但降到上限以下前不能再新增`, 6000);
+        return "__skip_success__";
+      }
       return;
     }
     if (kind === "member-create") {

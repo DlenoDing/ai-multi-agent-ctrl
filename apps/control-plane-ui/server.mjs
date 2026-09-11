@@ -6628,9 +6628,13 @@ async function handleApi(req, res) {
     }
     organization.updatedAt = now();
     audit(state, guard.actor, "org_quota_update", `Organization:${organization.orgId}`);
-    finishGuardedWrite(state, guard, 200, organization);
+    // 上限调到当前用量以下是允许的（不会因此踢人），但要把「哪几项已超出」随回执一起说出来，界面据此提醒。
+    const overQuota = ["members", "projects", "taskGroups", "agents"].map((kind) => organizationQuotaCheck(state, organization.orgId, kind))
+      .filter((check) => Number(check.usage) > Number(check.quota)).map((check) => ({kind: check.kind, usage: check.usage, quota: check.quota}));
+    const payload = {...organization, overQuota};
+    finishGuardedWrite(state, guard, 200, payload);
     writeState(state);
-    json(res, 200, organization);
+    json(res, 200, payload);
     return;
   }
 
