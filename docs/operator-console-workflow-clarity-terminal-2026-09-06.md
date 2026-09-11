@@ -317,3 +317,5 @@ Claude Opus/high 的第一次全仓只读审查运行约 11 分钟未返回结�
   ② agent 节点终端上 30 多句 stdout/stderr 是英文夹中文（dispatch completed / stale session directory removed / checkpoint replayed…）→ 全部改中文，
   契约门新增「运行时 stdout 模板串须含中文」（含三元两支），随之改了 agent 远程 e2e、org 两道门、契约门 marker、规范校验和变异锚点里盯这些原话的 12 处。
   顺手抓到一条登记写错理由的机器面字段（replayed 说 agent 运行时读它，实测从不读，只是日志里恰好有这个词）。console 门 +1、变异 +2 条红证；契约 285／agent e2e／org 两门／specs 全绿。
+- 2026-09-11 空组织爬页（59 页）：新组织第一屏只有四张入口卡，看不出先做什么 → 组织管理总览加「查看组织操作路径」链接（指到本页说明栏目）；
+  以英文结尾的页名说明页标题印成「Agent全部功能」→ 隔空格。console 门 +1、变异 +2 条红证；对方一条盯这行的旧锚点同步改。

@@ -3320,6 +3320,17 @@ async function runErrorGuidanceCase() {
       /推送和检查点准备/u.test(monitorText) && !/\bpush\b|checkpoint/u.test(monitorText) && /生效的定制/u.test(rolesText) && !/overlay/u.test(rolesText),
       `监控说明：${(monitorText.match(/.{0,30}(?:push|checkpoint).{0,30}/u) || ["无英文行话"])[0]}；角色定制：${(rolesText.match(/.{0,30}overlay.{0,30}/u) || ["无 overlay"])[0]}`);
   }
+  // 【新组织第一屏要有整条操作路径的入口；英文页名的说明页标题要隔空格】（09-11 空组织走查）。
+  {
+    const orgOverviewRoot = el("div");
+    loadConsole(orgOverviewRoot, {realI18n: true}).renderFullPagePaneWith(navState, orgAccount, "p1", "org-overview", "overview");
+    const agentsHelpRoot = el("div");
+    loadConsole(agentsHelpRoot, {realI18n: true}).renderFullPagePaneWith(navState, projectAccount, "p1", "proj-agents", "help");
+    check("组织概览要有「查看组织操作路径」入口指到本页说明栏目，且英文页名的说明页标题写成「Agent 全部功能」",
+      /href="#\/organization\/overview\?pane=help"[^>]*>查看组织操作路径</u.test(String(orgOverviewRoot.innerHTML || ""))
+        && /<h1>Agent 全部功能<\/h1>/u.test(String(agentsHelpRoot.innerHTML || "")) && !/Agent全部功能/u.test(String(agentsHelpRoot.innerHTML || "")),
+      `组织概览：${/查看组织操作路径/u.test(String(orgOverviewRoot.innerHTML || "")) ? "有入口" : "没有入口"}；说明页标题：${String(agentsHelpRoot.innerHTML || "").match(/<h1>[^<]*全部功能<\/h1>/u)?.[0] || "没找到"}`);
+  }
   // 【顶栏账号名与账号类型同名时只写一遍】（09-11：种子系统账号改名「系统管理员」后顶栏会印成「系统管理员 系统管理员」）。
   {
     const chipOf = (account, projectId, pageId) => {

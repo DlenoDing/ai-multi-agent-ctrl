@@ -12137,7 +12137,7 @@ const MUTATIONS = [
     name: "全部功能页必须使用模块标题",
     file: "apps/control-plane-ui/public/modules/navigation.js",
     gate: "console",
-    from: '    if (workspace === "help" && !context.taskGroupScope) {\n      const parent = PAGE_META[pageId] || base;\n      return [`${parent[0]}全部功能`, parent[1]];\n    }',
+    from: '    if (workspace === "help" && !context.taskGroupScope) {\n      const parent = PAGE_META[pageId] || base;\n      // 「Agent」这类以英文结尾的页名要隔一个空格，不然页头印成「Agent全部功能」。\n      return [`${parent[0]}${/[A-Za-z0-9]$/u.test(parent[0]) ? " " : ""}全部功能`, parent[1]];\n    }',
     to: "",
     expect: "全部功能页必须使用模块名并展开所属分组"
   },
@@ -14758,6 +14758,22 @@ const MUTATIONS = [
     from: '    agentProfileLabel: (agentId) => (!agentId ? "未记录" : String(agentId).startsWith("agent_unassigned_") ? "未绑定档案（按角色直接派发）" : agentId),',
     to: '    agentProfileLabel: (agentId) => (!agentId ? "未记录" : agentId),',
     expect: "不许印 agent_unassigned_"
+  },
+  {
+    name: "组织概览必须有组织操作路径的入口",
+    file: APP,
+    gate: "console",
+    from: '`<a class="project-command-guide" href="#/organization/overview?pane=help" title=',
+    to: '`<a class="project-command-guide" href="#/organization/overview?pane=overview" title=',
+    expect: "要有「查看组织操作路径」入口"
+  },
+  {
+    name: "英文页名的说明页标题必须隔空格",
+    file: "apps/control-plane-ui/public/modules/navigation.js",
+    gate: "console",
+    from: '      return [`${parent[0]}${/[A-Za-z0-9]$/u.test(parent[0]) ? " " : ""}全部功能`, parent[1]];',
+    to: '      return [`${parent[0]}全部功能`, parent[1]];',
+    expect: "说明页标题写成「Agent 全部功能」"
   }
 ];
 

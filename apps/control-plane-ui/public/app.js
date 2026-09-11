@@ -2359,7 +2359,9 @@ function renderOrgManagementHub(org, projects, openTaskGroups) {
       `组织状态 ${statusBadge("organization", org?.status)}`,
       `项目配额 ${esc(quotaStatus)}`,
       `活跃任务组 ${esc(openTaskGroups.length)}`,
-      `受阻 ${esc((openTaskGroups || []).flatMap((taskGroup) => taskGroup.blockers || []).length)}`
+      `受阻 ${esc((openTaskGroups || []).flatMap((taskGroup) => taskGroup.blockers || []).length)}`,
+      // 新开通的组织第一屏只有四张入口卡，看不出先做什么：整条「成员→节点→项目→执行」的路径在说明栏目里，给个入口。
+      `<a class="project-command-guide" href="#/organization/overview?pane=help" title="先把成员权限和运行节点准备好，再创建项目并授权；进入项目后由总控自动拆分、派发和监控">查看组织操作路径</a>`
     ],
     modules: [
       {pageId: "org-members", title: "成员管理", metric: `${memberCount}`, detail: "启用及待接受邀请的成员；创建、邀请与账号管理", action: "管理成员", tone: memberCount ? "blue" : "gray"},

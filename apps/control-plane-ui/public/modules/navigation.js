@@ -149,7 +149,8 @@
     const base = menuMeta(perspective, pageId, workspace);
     if (workspace === "help" && !context.taskGroupScope) {
       const parent = PAGE_META[pageId] || base;
-      return [`${parent[0]}全部功能`, parent[1]];
+      // 「Agent」这类以英文结尾的页名要隔一个空格，不然页头印成「Agent全部功能」。
+      return [`${parent[0]}${/[A-Za-z0-9]$/u.test(parent[0]) ? " " : ""}全部功能`, parent[1]];
     }
     if (pageId === "sys-orgs" && context.organization) return ["组织详情", "组织状态、初始管理员、配额与子账户构成"];
     if (pageId === "org-members" && context.orgMember) return ["成员详情", "账号生命周期、项目角色和任务组角色"];
