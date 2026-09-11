@@ -6719,12 +6719,21 @@ async function runPendingTruncationCase() {
         agentRuntimeNodes: [{nodeId: "node_shared", nodeName: "组织共享走查节点", organizationId: "org_default", status: "online"}],
         workSessions: [{sessionId: "sess_shared", taskGroupId: detailTaskGroup.id, workItemId: "w1", agentId: "agent_shared_reviewer", roleId: "reviewer", status: "active"}],
         agentDispatches: [{dispatchId: "adp_shared_timeline", taskGroupId: detailTaskGroup.id, workItemId: "w1", sessionId: "sess_shared", roleId: "reviewer",
-          assignedNodeId: "node_shared", status: "completed", createdAt: "2026-09-08T01:27:00Z", progressPercent: 100}]};
+          assignedNodeId: "node_shared", status: "completed", createdAt: "2026-09-08T01:27:00Z", progressPercent: 100}],
+        modelSelectionDecisions: [{decisionId: "msd_tl", taskGroupId: detailTaskGroup.id, workItemId: "w1", roleId: "reviewer", status: "selected", createdAt: "2026-09-08T01:26:00Z",
+          selectedModel: {modelId: "openai:gpt-5.5", reasoningLevel: "medium"}, modelDecision: "modelDecision: bounded writeSet implementation; P0 risk -> openai:gpt-5.5 / medium"}],
+        sessionPlacementDecisions: [{decisionId: "spd_tl", taskGroupId: detailTaskGroup.id, workItemId: "w1", placement: "new_session", status: "selected", createdAt: "2026-09-08T01:26:30Z",
+          sessionId: "sess_shared", laneId: "lane_tl", workerCarrierDecision: {carrier: "reusable_top_level_lane"}}]};
       const timelinePane = textOf(timelineProbe.renderTaskGroupDetailPane("tasks", detail, detailTaskGroup, timelineState, systemAdmin, "p1"));
       check("任务组时间线的派发行要写出档案、执行角色和节点，而不是把节点叫 Agent、再贴一串派发号",
         timelinePane.includes("档案：组织共享评审 Agent") && timelinePane.includes("角色：评审员") && timelinePane.includes("节点：组织共享走查节点")
           && !/派发：adp_/u.test(timelinePane) && !/Agent：组织共享走查节点/u.test(timelinePane),
         `时间线：${timelinePane.match(/任务执行时间线[\s\S]{0,300}/u)?.[0] || timelinePane.slice(0, 300)}`);
+      // 【时间线上的选型依据与执行载体要翻中文】（09-12 读真实运行态：「依据：modelDecision: bounded writeSet … / medium」「执行载体：reusable_top_level_lane」「Lane：」各 39 处）。
+      check("任务组时间线的「依据」要翻成人话、「执行载体」用词表、通道叫「执行通道」，不印 core 的英文原句",
+        /依据：.*推理档：中/u.test(timelinePane) && /执行载体：复用顶层执行通道/u.test(timelinePane) && /执行通道：lane_tl/u.test(timelinePane)
+          && !/modelDecision:/u.test(timelinePane) && !/reusable_top_level_lane/u.test(timelinePane) && !/Lane：/u.test(timelinePane),
+        `时间线：${timelinePane.match(/依据：.{0,80}/u)?.[0] || "没找到依据"} ｜ ${timelinePane.match(/执行载体：.{0,40}/u)?.[0] || "没找到执行载体"}`);
       const rolesPane = textOf(timelineProbe.renderTaskGroupDetailPane("roles", detail, detailTaskGroup, timelineState, systemAdmin, "p1"));
       check("执行角色 agent-runtime 在任务组角色配置里也叫「通用任务执行」，与档案页同名",
         rolesPane.includes("通用任务执行") && !rolesPane.includes("智能体运行时"),

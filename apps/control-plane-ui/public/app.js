@@ -5759,7 +5759,7 @@ function agentNodeLabel(nodeId) {
 
 function renderTaskGroupExecutionTimeline(taskGroup, progressData = {}) {
   return window.AIMAC_TASK_GROUP_INSIGHTS.executionTimeline(taskGroup, progressData, {
-    state, terminalDispatchStatuses, t, explainCoded, modelDecisionSummaryZh, agentEventSummaryZh,
+    state, terminalDispatchStatuses, t, explainCoded, modelDecisionSummaryZh, modelDecisionTextZh, agentEventSummaryZh,
     customBadge, badge, esc, fmtTime, agentNodeLabel, dispatchAgentLabel
   });
 }

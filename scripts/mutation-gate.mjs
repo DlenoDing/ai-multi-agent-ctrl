@@ -14894,6 +14894,30 @@ const MUTATIONS = [
     from: '    statusBadge("service", service.status),',
     to: '    badge(service.status),',
     expect: "要写「运行中」"
+  },
+  {
+    name: "老库里仍是旧英文原值的示例名字必须换成中文",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyOldSeedSampleNamesMigrate",
+    from: "  localizeSeedSampleNames(state);\n",
+    to: "",
+    expect: "没换成中文"
+  },
+  {
+    name: "时间线的选型依据不得印 core 的英文原句",
+    file: "apps/control-plane-ui/public/modules/task-group-insights.js",
+    gate: "console",
+    from: "`依据：${modelDecisionTextZh ? modelDecisionTextZh(decision.modelDecision) : decision.modelDecision}`",
+    to: "`依据：${decision.modelDecision}`",
+    expect: "不印 core 的英文原句"
+  },
+  {
+    name: "时间线的执行载体必须走词表",
+    file: "apps/control-plane-ui/public/modules/task-group-insights.js",
+    gate: "console",
+    from: "执行载体：${t(placement.workerCarrierDecision?.carrier) || placement.workerCarrierDecision?.carrier || \"-\"}",
+    to: "执行载体：${placement.workerCarrierDecision?.carrier || \"-\"}",
+    expect: "「执行载体」用词表"
   }
 ];
 

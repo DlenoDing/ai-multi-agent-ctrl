@@ -754,6 +754,7 @@ run(verifyManifestSegmentNamesCannotEscape);
 run(verifyExecutionEventTailStaysBounded);
 run(verifyHumanAndOrganizationContracts);
 run(verifySeedAccountNamesAreChinese);
+run(verifyOldSeedSampleNamesMigrate);
 run(verifyAgentRuntimeStdoutIsChinese);
 runAsync(verifyArchivedProjectNodesStayVisible);
 
@@ -1656,6 +1657,31 @@ function verifyAgentRuntimeStdoutIsChinese(output) {
   if (seen < 20) { output.push(`agent 运行时 stdout 模板串只读到 ${seen} 句 —— 提取形状与代码脱节，这条在空转`); return; }
   if (english.length) output.push("agent 运行时这些 stdout 句子还是英文：\n  " + english.join("\n  "));
   console.log(`agent 运行时 stdout：${seen} 句模板串都带中文`);
+}
+
+// 2026-09-11 之前起的库带着英文示例数据；种子改中文后，老库读进来要按 id 把仍是旧原值的名字换掉，人改过的不碰。
+function verifyOldSeedSampleNamesMigrate(output) {
+  const old = {
+    projects: [{id: "prj_control_plane", name: "AI-native Control Plane", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [{id: "tg_runtime_management", projectId: "prj_control_plane", name: "Runtime and Management Console",
+      objective: "Bootstrap, account control, permissions, project dashboards, task-group monitoring",
+      workItems: [{id: "work_bootstrap", title: "Runtime bootstrap profile"}, {id: "work_custom", title: "My own task"}],
+      taskAnalysis: {items: [{id: "work_bootstrap", title: "Runtime bootstrap profile"}]}},
+      {id: "tg_instruction_efficiency", projectId: "prj_control_plane", name: "我自己改过的名字", workItems: []}],
+    agents: [{id: "agent_qa", name: "QA Runtime", role: "qa"}, {id: "agent_release", name: "我的发布档案", role: "release"}]
+  };
+  ensureRuntimeCollections(old, {root});
+  const project = old.projects.find((item) => item.id === "prj_control_plane");
+  const group = old.taskGroups.find((item) => item.id === "tg_runtime_management");
+  const edited = old.taskGroups.find((item) => item.id === "tg_instruction_efficiency");
+  if (project?.name !== "AI 原生控制面") output.push(`老库里的示例项目名没换成中文：${project?.name}`);
+  if (group?.name !== "运行时与管理控制台" || group?.objective !== "引导启动、账号控制、权限、项目看板、任务组监控") output.push(`老库里的示例任务组名／目标没换成中文：${group?.name} / ${group?.objective}`);
+  if (group?.workItems?.[0]?.title !== "运行时引导档案" || group?.taskAnalysis?.items?.[0]?.title !== "运行时引导档案") output.push("老库里的示例任务标题（含 taskAnalysis.items）没换成中文");
+  if (group?.workItems?.[1]?.title !== "My own task") output.push("不是示例数据的任务标题被改了 —— 只许换旧原值");
+  if (edited?.name !== "我自己改过的名字") output.push("人改过的任务组名被覆盖了 —— 只许换仍是旧原值的");
+  if (old.agents.find((item) => item.id === "agent_qa")?.name !== "质量保障 Agent") output.push("老库里的默认 Agent 档案名没换成中文");
+  if (old.agents.find((item) => item.id === "agent_release")?.name !== "我的发布档案") output.push("人改过的 Agent 档案名被覆盖了");
+  if (!output.length) console.log("老库示例数据：旧英文原值按 id 换成中文，人改过的原样保留 —— 核过");
 }
 
 function verifySeedAccountNamesAreChinese(output) {

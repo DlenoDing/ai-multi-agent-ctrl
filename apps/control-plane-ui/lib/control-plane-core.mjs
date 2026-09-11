@@ -293,6 +293,7 @@ export function ensureRuntimeCollections(state, options = {}) {
   ensureDefaultAccessGrants(state);
   ensureDefaultAgents(state);
   ensureOrganizations(state);
+  localizeSeedSampleNames(state);
   if (!Array.isArray(state.progressSnapshots) || !state.progressSnapshots.length) computeProgressSnapshots(state);
   Object.defineProperty(state, "__runtimeEnsured", {value: true, enumerable: false, configurable: true});
   return state;
@@ -569,6 +570,46 @@ function ensureServices(state, endpoint) {
     health: existing.get(serviceId)?.health || "ok",
     ...(serviceId === "control-plane" || serviceId === "ui-console-service" || serviceId === "agent-gateway" || serviceId === "mcp-proxy" || serviceId === "skill-registry" ? {endpoint: endpoint || existing.get(serviceId)?.endpoint || "http://127.0.0.1:4317"} : {})
   }));
+}
+
+// 2026-09-11 之前起的库带着英文的示例数据（AI-native Control Plane / Runtime bootstrap profile / Orchestrator Runtime…），
+// 种子改中文后老库不会自己变：按 id 把【仍是旧英文原值】的名字换成中文；人改过的名字原样保留（不等于旧原值就不碰）。
+const SEED_SAMPLE_RENAMES = {
+  projects: {prj_control_plane: {name: ["AI-native Control Plane", "AI 原生控制面"]}},
+  taskGroups: {
+    tg_runtime_management: {name: ["Runtime and Management Console", "运行时与管理控制台"],
+      objective: ["Bootstrap, account control, permissions, project dashboards, task-group monitoring", "引导启动、账号控制、权限、项目看板、任务组监控"]},
+    tg_instruction_efficiency: {name: ["Instruction Format and Cache Efficiency", "指令格式与缓存效率"],
+      objective: ["Compact role instructions, stable prefix cache keys, delta-only room messages", "精简角色指令、稳定前缀缓存键、房间消息只传增量"]}
+  },
+  workItems: {
+    work_bootstrap: ["Runtime bootstrap profile", "运行时引导档案"],
+    work_management_ui: ["System and user management console", "系统与用户管理控制台"],
+    work_permissions: ["Project and task-group permission model", "项目与任务组权限模型"],
+    work_progress: ["Progress snapshots and task visibility", "进度快照与任务可见性"],
+    work_instruction_envelope: ["InstructionEnvelope schema", "指令信封结构"],
+    work_cache_hints: ["Cache hint and token budget policy", "缓存提示与 token 预算策略"]
+  },
+  agents: {
+    agent_orchestrator: ["Orchestrator Runtime", "总控编排 Agent"], agent_scheduler: ["Scheduler Agent", "调度 Agent"],
+    agent_reviewer: ["Independent Reviewer", "独立评审 Agent"], agent_qa: ["QA Runtime", "质量保障 Agent"],
+    agent_security: ["Security Reviewer", "安全评审 Agent"], agent_release: ["Release Runtime", "发布 Agent"],
+    agent_monitor: ["Monitor Agent", "监控 Agent"]
+  }
+};
+function localizeSeedSampleNames(state) {
+  const swap = (record, field, pair) => { if (record && pair && record[field] === pair[0]) record[field] = pair[1]; };
+  for (const project of state.projects || []) {
+    const rename = SEED_SAMPLE_RENAMES.projects[project.id];
+    if (rename) swap(project, "name", rename.name);
+  }
+  for (const group of state.taskGroups || []) {
+    const rename = SEED_SAMPLE_RENAMES.taskGroups[group.id];
+    if (rename) { swap(group, "name", rename.name); swap(group, "objective", rename.objective); }
+    for (const item of group.workItems || []) swap(item, "title", SEED_SAMPLE_RENAMES.workItems[item.id]);
+    for (const item of group.taskAnalysis?.items || []) swap(item, "title", SEED_SAMPLE_RENAMES.workItems[item.id || item.workId]);
+  }
+  for (const agent of state.agents || []) swap(agent, "name", SEED_SAMPLE_RENAMES.agents[agent.id]);
 }
 
 function ensureDefaultAgents(state) {

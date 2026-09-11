@@ -16,7 +16,7 @@
   }
 
   function executionTimeline(taskGroup, progressData = {}, helpers) {
-    const {state, terminalDispatchStatuses, t, explainCoded, modelDecisionSummaryZh, agentEventSummaryZh = (value) => value,
+    const {state, terminalDispatchStatuses, t, explainCoded, modelDecisionSummaryZh, modelDecisionTextZh, agentEventSummaryZh = (value) => value,
       customBadge, badge, esc, fmtTime, agentNodeLabel, dispatchAgentLabel = () => ""} = helpers;
     const groupId = taskGroup.id;
     const workItems = progressData.workItems || taskGroup.workItems || [];
@@ -48,7 +48,8 @@
         detail: modelDecisionSummaryZh(decision),
         meta: [`角色：${t(decision.roleId) || decision.roleId || "-"}`,
           `模型：${decision.selectedModel?.modelId || "-"}`,
-          decision.modelDecision ? `依据：${decision.modelDecision}` : ""]
+          // core 拼的是英文句（modelDecision: bounded writeSet … -> model / medium），要翻成人话再上屏。
+          decision.modelDecision ? `依据：${modelDecisionTextZh ? modelDecisionTextZh(decision.modelDecision) : decision.modelDecision}` : ""]
       }));
     }
     for (const placement of (state.sessionPlacementDecisions || []).filter(inGroup).slice(0, 40)) {
@@ -58,8 +59,8 @@
         status: placement.status,
         at: eventTimeOf(placement),
         tone: placement.status === "blocked" ? "red" : "blue",
-        detail: `放置方式：${t(placement.placement) || placement.placement || "-"}；执行载体：${placement.workerCarrierDecision?.carrier || "-"}`,
-        meta: [placement.sessionId ? `会话：${placement.sessionId}` : "", placement.laneId ? `Lane：${placement.laneId}` : ""]
+        detail: `放置方式：${t(placement.placement) || placement.placement || "-"}；执行载体：${t(placement.workerCarrierDecision?.carrier) || placement.workerCarrierDecision?.carrier || "-"}`,
+        meta: [placement.sessionId ? `会话：${placement.sessionId}` : "", placement.laneId ? `执行通道：${placement.laneId}` : ""]
       }));
     }
     for (const dispatch of (state.agentDispatches || []).filter(inGroup)) {
