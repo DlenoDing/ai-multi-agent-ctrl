@@ -415,7 +415,7 @@
     {
       "schemaVersion": "agent/v1",
       "id": "agent_orchestrator",
-      "name": "Orchestrator Runtime",
+      "name": "总控编排 Agent",
       "role": "orchestrator",
       "model": "auto_best",
       "status": "active",
@@ -425,7 +425,7 @@
     {
       "schemaVersion": "agent/v1",
       "id": "agent_scheduler",
-      "name": "Scheduler Agent",
+      "name": "调度 Agent",
       "role": "scheduler",
       "model": "balanced",
       "status": "active",
@@ -435,7 +435,7 @@
     {
       "schemaVersion": "agent/v1",
       "id": "agent_reviewer",
-      "name": "Independent Reviewer",
+      "name": "独立评审 Agent",
       "role": "reviewer",
       "model": "deep",
       "status": "inactive",
@@ -445,7 +445,7 @@
     {
       "schemaVersion": "agent/v1",
       "id": "agent_qa",
-      "name": "QA Runtime",
+      "name": "质量保障 Agent",
       "role": "qa",
       "model": "cost_aware",
       "status": "active",
@@ -455,7 +455,7 @@
     {
       "schemaVersion": "agent/v1",
       "id": "agent_security",
-      "name": "Security Reviewer",
+      "name": "安全评审 Agent",
       "role": "security",
       "model": "auto_best",
       "status": "active",
@@ -465,7 +465,7 @@
     {
       "schemaVersion": "agent/v1",
       "id": "agent_release",
-      "name": "Release Runtime",
+      "name": "发布 Agent",
       "role": "release",
       "model": "auto_fast",
       "status": "active",
@@ -475,7 +475,7 @@
     {
       "schemaVersion": "agent/v1",
       "id": "agent_monitor",
-      "name": "Monitor Agent",
+      "name": "监控 Agent",
       "role": "monitor",
       "model": "auto_fast",
       "status": "active",
@@ -487,7 +487,7 @@
     {
       "schemaVersion": "project/v1",
       "id": "prj_control_plane",
-      "name": "AI-native Control Plane",
+      "name": "AI 原生控制面",
       "status": "active",
       "ownerAccountId": "acct_workspace_owner",
       "members": [
@@ -522,8 +522,8 @@
       "schemaVersion": "task-group/v1",
       "id": "tg_runtime_management",
       "projectId": "prj_control_plane",
-      "name": "Runtime and Management Console",
-      "objective": "Bootstrap, account control, permissions, project dashboards, task-group monitoring",
+      "name": "运行时与管理控制台",
+      "objective": "引导启动、账号控制、权限、项目看板、任务组监控",
       "status": "development",
       "goalExecutionStatus": "active",
       "phase": "implementation",
@@ -572,7 +572,7 @@
       "workItems": [
         {
           "id": "work_bootstrap",
-          "title": "Runtime bootstrap profile",
+          "title": "运行时引导档案",
           "status": "verified",
           "ownerRole": "agent-runtime",
           "progress": 100,
@@ -580,7 +580,7 @@
         },
         {
           "id": "work_management_ui",
-          "title": "System and user management console",
+          "title": "系统与用户管理控制台",
           "status": "in_progress",
           "ownerRole": "ui-console-service",
           "progress": 58,
@@ -588,7 +588,7 @@
         },
         {
           "id": "work_permissions",
-          "title": "Project and task-group permission model",
+          "title": "项目与任务组权限模型",
           "status": "review_requested",
           "ownerRole": "policy-engine",
           "progress": 74,
@@ -596,7 +596,7 @@
         },
         {
           "id": "work_progress",
-          "title": "Progress snapshots and task visibility",
+          "title": "进度快照与任务可见性",
           "status": "in_progress",
           "ownerRole": "monitor",
           "progress": 44,
@@ -610,7 +610,7 @@
         "items": [
           {
             "itemId": "ta_1",
-            "title": "Runtime bootstrap profile",
+            "title": "运行时引导档案",
             "kind": "major",
             "status": "completed",
             "progress": 100,
@@ -622,7 +622,7 @@
           },
           {
             "itemId": "ta_2",
-            "title": "System and user management console",
+            "title": "系统与用户管理控制台",
             "kind": "major",
             "status": "in_progress",
             "progress": 58,
@@ -634,7 +634,7 @@
           },
           {
             "itemId": "ta_3",
-            "title": "Project and task-group permission model",
+            "title": "项目与任务组权限模型",
             "kind": "major",
             "status": "in_progress",
             "progress": 74,
@@ -646,7 +646,7 @@
           },
           {
             "itemId": "ta_4",
-            "title": "Progress snapshots and task visibility",
+            "title": "进度快照与任务可见性",
             "kind": "major",
             "status": "in_progress",
             "progress": 44,
@@ -668,8 +668,8 @@
       "schemaVersion": "task-group/v1",
       "id": "tg_instruction_efficiency",
       "projectId": "prj_control_plane",
-      "name": "Instruction Format and Cache Efficiency",
-      "objective": "Compact role instructions, stable prefix cache keys, delta-only room messages",
+      "name": "指令格式与缓存效率",
+      "objective": "精简角色指令、稳定前缀缓存键、房间消息只传增量",
       "status": "solution_design",
       "goalExecutionStatus": "active",
       "phase": "protocol",
@@ -711,7 +711,7 @@
       "workItems": [
         {
           "id": "work_instruction_envelope",
-          "title": "InstructionEnvelope schema",
+          "title": "指令信封结构",
           "status": "verified",
           "ownerRole": "orchestrator",
           "progress": 100,
@@ -719,7 +719,7 @@
         },
         {
           "id": "work_cache_hints",
-          "title": "Cache hint and token budget policy",
+          "title": "缓存提示与 token 预算策略",
           "status": "in_progress",
           "ownerRole": "room-broker",
           "progress": 60,
@@ -733,7 +733,7 @@
         "items": [
           {
             "itemId": "ta_1",
-            "title": "InstructionEnvelope schema",
+            "title": "指令信封结构",
             "kind": "major",
             "status": "completed",
             "progress": 100,
@@ -745,7 +745,7 @@
           },
           {
             "itemId": "ta_2",
-            "title": "Cache hint and token budget policy",
+            "title": "缓存提示与 token 预算策略",
             "kind": "major",
             "status": "in_progress",
             "progress": 60,
@@ -2873,37 +2873,37 @@
       "workItems": [
         {
           "workItemId": "work_bootstrap",
-          "title": "Runtime bootstrap profile",
+          "title": "运行时引导档案",
           "status": "verified",
           "progress": 100
         },
         {
           "workItemId": "work_management_ui",
-          "title": "System and user management console",
+          "title": "系统与用户管理控制台",
           "status": "in_progress",
           "progress": 58
         },
         {
           "workItemId": "work_permissions",
-          "title": "Project and task-group permission model",
+          "title": "项目与任务组权限模型",
           "status": "review_requested",
           "progress": 74
         },
         {
           "workItemId": "work_progress",
-          "title": "Progress snapshots and task visibility",
+          "title": "进度快照与任务可见性",
           "status": "in_progress",
           "progress": 44
         },
         {
           "workItemId": "work_instruction_envelope",
-          "title": "InstructionEnvelope schema",
+          "title": "指令信封结构",
           "status": "verified",
           "progress": 100
         },
         {
           "workItemId": "work_cache_hints",
-          "title": "Cache hint and token budget policy",
+          "title": "缓存提示与 token 预算策略",
           "status": "in_progress",
           "progress": 60
         }
@@ -2960,25 +2960,25 @@
       "workItems": [
         {
           "workItemId": "work_bootstrap",
-          "title": "Runtime bootstrap profile",
+          "title": "运行时引导档案",
           "status": "verified",
           "progress": 100
         },
         {
           "workItemId": "work_management_ui",
-          "title": "System and user management console",
+          "title": "系统与用户管理控制台",
           "status": "in_progress",
           "progress": 58
         },
         {
           "workItemId": "work_permissions",
-          "title": "Project and task-group permission model",
+          "title": "项目与任务组权限模型",
           "status": "review_requested",
           "progress": 74
         },
         {
           "workItemId": "work_progress",
-          "title": "Progress snapshots and task visibility",
+          "title": "进度快照与任务可见性",
           "status": "in_progress",
           "progress": 44
         }
@@ -3030,13 +3030,13 @@
       "workItems": [
         {
           "workItemId": "work_instruction_envelope",
-          "title": "InstructionEnvelope schema",
+          "title": "指令信封结构",
           "status": "verified",
           "progress": 100
         },
         {
           "workItemId": "work_cache_hints",
-          "title": "Cache hint and token budget policy",
+          "title": "缓存提示与 token 预算策略",
           "status": "in_progress",
           "progress": 60
         }

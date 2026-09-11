@@ -573,13 +573,13 @@ function ensureDefaultAgents(state) {
   state.agents ||= [];
   const legacyDefaultModelAliases = {balanced: "auto_best", deep: "auto_best", fast: "auto_fast"};
   const defaults = [
-    ["agent_orchestrator", "Orchestrator Runtime", "orchestrator", "auto_best"],
-    ["agent_scheduler", "Scheduler Agent", "scheduler", "auto_fast"],
-    ["agent_reviewer", "Independent Reviewer", "reviewer", "auto_best"],
-    ["agent_qa", "QA Runtime", "qa", "cost_aware"],
-    ["agent_security", "Security Reviewer", "security", "auto_best"],
-    ["agent_release", "Release Runtime", "release", "auto_fast"],
-    ["agent_monitor", "Monitor Agent", "monitor", "auto_fast"]
+    ["agent_orchestrator", "总控编排 Agent", "orchestrator", "auto_best"],
+    ["agent_scheduler", "调度 Agent", "scheduler", "auto_fast"],
+    ["agent_reviewer", "独立评审 Agent", "reviewer", "auto_best"],
+    ["agent_qa", "质量保障 Agent", "qa", "cost_aware"],
+    ["agent_security", "安全评审 Agent", "security", "auto_best"],
+    ["agent_release", "发布 Agent", "release", "auto_fast"],
+    ["agent_monitor", "监控 Agent", "monitor", "auto_fast"]
   ];
   for (const [id, name, role, model] of defaults) {
     const existing = state.agents.find((agent) => agent.id === id);

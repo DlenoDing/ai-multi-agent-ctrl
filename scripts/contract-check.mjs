@@ -1624,9 +1624,25 @@ function verifySeedAccountNamesAreChinese(output) {
   const seed = JSON.parse(readFileSync(join(root, "data/seed-state.json"), "utf8"));
   const accounts = seed.accounts || [];
   if (accounts.length < 3) { output.push(`种子账号只读到 ${accounts.length} 个 —— 这条判据没查成`); return; }
-  const english = accounts.filter((account) => !/[\u4e00-\u9fff]/u.test(String(account.displayName || "")));
+  const cjk = (value) => /[\u4e00-\u9fff]/u.test(String(value || ""));
+  const english = accounts.filter((account) => !cjk(account.displayName));
   if (english.length) output.push(`种子账号显示名还是英文：${english.map((account) => `${account.accountId}=${account.displayName}`).join("、")} —— 顶栏、审计「操作者」列会原样印它`);
-  console.log(`种子账号显示名：${accounts.length} 个都有中文`);
+  // 示例项目、任务组、任务、Agent 档案的名字同样是首次登录第一屏看到的东西：曾经整套是英文（AI-native Control Plane / Runtime bootstrap profile…）。
+  const sampleNames = [
+    ...(seed.projects || []).map((project) => ["项目", project.id, project.name]),
+    ...(seed.taskGroups || []).flatMap((group) => [["任务组", group.id, group.name], ["任务组目标", group.id, group.objective],
+      ...(group.workItems || []).map((item) => ["任务", item.id, item.title])]),
+    ...(seed.agents || []).map((agent) => ["Agent 档案", agent.id, agent.name])
+  ];
+  const englishSamples = sampleNames.filter(([, , name]) => !cjk(name));
+  if (englishSamples.length) output.push(`种子示例数据还是英文：${englishSamples.map(([kind, id, name]) => `${kind} ${id}=${name}`).join("、")}`);
+  // 空库补默认 Agent 档案走的是 core 里的另一份清单（不是种子），新建组织时每个人都会看到它。
+  const fresh = {};
+  ensureRuntimeCollections(fresh, {root});
+  const englishDefaults = (fresh.agents || []).filter((agent) => !cjk(agent.name));
+  if (englishDefaults.length) output.push(`core 默认 Agent 档案名还是英文：${englishDefaults.map((agent) => `${agent.id}=${agent.name}`).join("、")}`);
+  if (!(fresh.agents || []).length) output.push("空库没有补出默认 Agent 档案 —— 这一半判据没查成");
+  console.log(`种子账号显示名 ${accounts.length} 个、示例数据 ${sampleNames.length} 条、core 默认 Agent ${(fresh.agents || []).length} 个都有中文`);
 }
 
 function verifyHumanAndOrganizationContracts(output) {

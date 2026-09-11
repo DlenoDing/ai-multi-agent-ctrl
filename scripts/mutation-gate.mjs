@@ -14694,6 +14694,22 @@ const MUTATIONS = [
     from: '/overview?pane=help" title=',
     to: '/overview?pane=overview" title=',
     expect: "要有「查看完整流程导航」入口"
+  },
+  {
+    name: "种子示例项目名不得退回英文",
+    file: "data/seed-state.json",
+    check: "verifySeedAccountNamesAreChinese",
+    from: '"name": "AI 原生控制面"',
+    to: '"name": "AI-native Control Plane"',
+    expect: "种子示例数据还是英文"
+  },
+  {
+    name: "core 默认 Agent 档案名不得退回英文",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifySeedAccountNamesAreChinese",
+    from: '["agent_qa", "质量保障 Agent", "qa", "cost_aware"],',
+    to: '["agent_qa", "QA Runtime", "qa", "cost_aware"],',
+    expect: "core 默认 Agent 档案名还是英文"
   }
 ];
 
