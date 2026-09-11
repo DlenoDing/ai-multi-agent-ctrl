@@ -595,7 +595,13 @@ const SEED_SAMPLE_RENAMES = {
     agent_reviewer: ["Independent Reviewer", "独立评审 Agent"], agent_qa: ["QA Runtime", "质量保障 Agent"],
     agent_security: ["Security Reviewer", "安全评审 Agent"], agent_release: ["Release Runtime", "发布 Agent"],
     agent_monitor: ["Monitor Agent", "监控 Agent"]
-  }
+  },
+  accounts: {
+    acct_system_owner: ["System Owner", "系统管理员"], acct_default_org_admin: ["Default Organization Admin", "默认组织管理员"],
+    acct_workspace_owner: ["Workspace Owner", "工作区负责人"], acct_reviewer: ["Review Lead", "评审负责人"],
+    acct_agent_runtime: ["Agent Runtime Service", "Agent 运行时服务"]
+  },
+  organizations: {org_default: ["Default Organization", "默认组织"]}
 };
 function localizeSeedSampleNames(state) {
   const swap = (record, field, pair) => { if (record && pair && record[field] === pair[0]) record[field] = pair[1]; };
@@ -610,6 +616,8 @@ function localizeSeedSampleNames(state) {
     for (const item of group.taskAnalysis?.items || []) swap(item, "title", SEED_SAMPLE_RENAMES.workItems[item.id || item.workId]);
   }
   for (const agent of state.agents || []) swap(agent, "name", SEED_SAMPLE_RENAMES.agents[agent.id]);
+  for (const account of state.accounts || []) swap(account, "displayName", SEED_SAMPLE_RENAMES.accounts[account.accountId]);
+  for (const organization of state.organizations || []) swap(organization, "name", SEED_SAMPLE_RENAMES.organizations[organization.orgId]);
 }
 
 function ensureDefaultAgents(state) {

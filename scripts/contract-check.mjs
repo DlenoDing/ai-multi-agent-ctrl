@@ -1668,9 +1668,15 @@ function verifyOldSeedSampleNamesMigrate(output) {
       workItems: [{id: "work_bootstrap", title: "Runtime bootstrap profile"}, {id: "work_custom", title: "My own task"}],
       taskAnalysis: {items: [{id: "work_bootstrap", title: "Runtime bootstrap profile"}]}},
       {id: "tg_instruction_efficiency", projectId: "prj_control_plane", name: "我自己改过的名字", workItems: []}],
-    agents: [{id: "agent_qa", name: "QA Runtime", role: "qa"}, {id: "agent_release", name: "我的发布档案", role: "release"}]
+    agents: [{id: "agent_qa", name: "QA Runtime", role: "qa"}, {id: "agent_release", name: "我的发布档案", role: "release"}],
+    accounts: [{accountId: "acct_system_owner", accountType: "system_admin", displayName: "System Owner", email: "system.admin@local", status: "active"},
+      {accountId: "acct_reviewer", accountType: "user_account", displayName: "老李", email: "review@local", status: "active"}],
+    organizations: [{orgId: "org_default", name: "Default Organization", status: "active"}]
   };
   ensureRuntimeCollections(old, {root});
+  if (old.accounts.find((item) => item.accountId === "acct_system_owner")?.displayName !== "系统管理员") output.push("老库里的系统管理员显示名没换成中文（顶栏、审计操作者列会一直印 System Owner）");
+  if (old.accounts.find((item) => item.accountId === "acct_reviewer")?.displayName !== "老李") output.push("人改过的账号显示名被覆盖了");
+  if (old.organizations.find((item) => item.orgId === "org_default")?.name !== "默认组织") output.push("老库里的默认组织名没换成中文");
   const project = old.projects.find((item) => item.id === "prj_control_plane");
   const group = old.taskGroups.find((item) => item.id === "tg_runtime_management");
   const edited = old.taskGroups.find((item) => item.id === "tg_instruction_efficiency");
