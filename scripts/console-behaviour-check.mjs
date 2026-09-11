@@ -2916,7 +2916,7 @@ async function runErrorGuidanceCase() {
     // 人不知道是成员还是任务组、差多少，也不知道下一步去哪 —— 而这三样都在同一个响应里。
     {payload: {error: "org_quota_exceeded", quota: 200, usage: 200, kind: "taskGroups"}, expect: "任务组 200/200"},
     {payload: {error: "org_quota_exceeded", quota: 50, usage: 50, kind: "members"}, expect: "成员 50/50"},
-    {payload: {error: "org_quota_exceeded", quota: 20, usage: 20, kind: "projects"}, expect: "组织管理"},
+    {payload: {error: "org_quota_exceeded", quota: 20, usage: 20, kind: "projects"}, expect: "系统管理员在「系统管理」→「组织」调整"},
     // supported 与 required 是同一件事的两面：服务端已经把【合法清单】算出来了（12 处拒绝都带着它），
     // 前端原先一处都没读 —— 人看到的是"认不出的上报状态"，然后自己猜该填什么。
     {payload: {error: "dispatch_fail_status_unknown", supported: ["blocked", "cancelled", "failed"]},
@@ -5808,6 +5808,22 @@ async function runPendingTruncationCase() {
         check("表单提交被拒（403）只弹提示，不许在顶栏挂「这一页加载失败／旧数据」横幅",
           errors.some((message) => /组织已停用/u.test(message) && !/需要 org:project_admin/u.test(message)) && !/连不上控制面或这一页加载失败/u.test(denyHtml),
           `提示：${errors.join(" | ") || "无"}；横幅：${denyHtml.match(/连不上控制面或这一页加载失败.{0,40}/u)?.[0] || "无"}`);
+      }
+      // 【配额超限的提示别把人支去组织管理页调配额】（09-12：提示写「到「组织管理」页调高这一项配额」，而配额只有系统管理员能调）。
+      {
+        const quotaRoot = el("div");
+        const quotaProbe = loadConsole(quotaRoot, {realI18n: true});
+        quotaProbe.setFetch(async (url, init = {}) => ((init.method || "GET") === "POST"
+          ? {ok: false, status: 409, statusText: "Conflict", headers: {get: () => null}, json: async () => ({error: "org_quota_exceeded", quota: 1, usage: 2, kind: "members"}), text: async () => ""}
+          : {ok: true, status: 200, headers: {get: () => null}, json: async () => ({})}));
+        quotaProbe.setAuth("probe-token", {accountId: "acct_q", accountType: "org_admin", displayName: "建成员的人", organizationId: "org_default", roles: ["org_admin"], permissions: ["org:*"]});
+        const quotaErrors = [];
+        quotaProbe.captureToastKind("error", (message) => quotaErrors.push(String(message)));
+        const memberForm = el("form", {dataset: {form: "member-create"}}, [el("input", {name: "displayName", value: "孙测"}), el("input", {name: "email", value: "sun@x.local"}), el("button", {type: "submit"})]);
+        await quotaProbe.submit({target: memberForm, submitter: memberForm.children[2], preventDefault: () => {}});
+        check("配额超限的提示要写「成员 2/1 已满：配额由系统管理员…调整」，不许把人支去「组织管理」页调配额",
+          quotaErrors.some((message) => /组织配额已超限/u.test(message) && /成员 2\/1/u.test(message) && /系统管理员在「系统管理」/u.test(message) && !/「组织管理」页调高/u.test(message)),
+          `提示：${quotaErrors.join(" | ") || "无"}`);
       }
       // 【首次设密码不踢人】（09-11 从零开通走查：新组织管理员用一次性令牌登录、被要求设密码，设完立刻被踢回登录页，像出了故障）。
       {

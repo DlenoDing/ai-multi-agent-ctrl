@@ -14878,6 +14878,14 @@ const MUTATIONS = [
     from: '      .filter((check) => Number(check.usage) > Number(check.quota)).map((check) => ({kind: check.kind, usage: check.usage, quota: check.quota}));',
     to: '      .filter(() => false).map((check) => ({kind: check.kind, usage: check.usage, quota: check.quota}));',
     expect: "回执没点名「成员已超出」"
+  },
+  {
+    name: "配额超限提示不得把人支去组织管理页调配额",
+    file: "apps/control-plane-ui/public/modules/request-failure-guidance.js",
+    gate: "console",
+    from: '已满${breakdown}：配额由系统管理员在「系统管理」→「组织」调整，',
+    to: '已满${breakdown}：到「组织管理」页调高这一项配额，',
+    expect: "不许把人支去「组织管理」页调配额"
   }
 ];
 

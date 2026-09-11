@@ -48,7 +48,7 @@
       const breakdown = payload.outstandingJoinTokens
         ? `（其中 ${payload.nodes} 台节点 + ${payload.outstandingJoinTokens} 张未使用的加入令牌）`
         : "";
-      output += `（${kindLabel} ${payload.usage}/${payload.quota} 已满${breakdown}：到「组织管理」页调高这一项配额，`
+      output += `（${kindLabel} ${payload.usage}/${payload.quota} 已满${breakdown}：配额由系统管理员在「系统管理」→「组织」调整，`
         + `${freeUp}，再重试）`;
       if (payload.projectedUsage !== undefined) {
         output += `（本次操作完成后预计用量：${payload.projectedUsage}/${payload.quota}）`;
