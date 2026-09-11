@@ -6238,7 +6238,8 @@ async function runPendingTruncationCase() {
         const namedMonitorState = {...multiState,
           agentRuntimeNodes: (multiState.agentRuntimeNodes || []).map((node) => ({...node, nodeName: "空闲节点"})),
           taskGroups: (multiState.taskGroups || []).map((group) => group.id === "tg1" ? {...group, workItems: [...(group.workItems || []), {id: "w_named", title: "命名的任务", status: "assigned"}]} : group),
-          workSessions: [{sessionId: "sess_named", taskGroupId: "tg1", workItemId: "w_named", roleId: "reviewer", placement: "new_session", status: "active"}],
+          workSessions: [{sessionId: "sess_named", taskGroupId: "tg1", workItemId: "w_named", roleId: "reviewer", placement: "new_session", status: "active", laneId: "lane_named"}],
+          workerLanes: [{laneId: "lane_named", taskGroupId: "tg1", roleId: "reviewer", laneFunction: "review", status: "busy", reuseGeneration: 3, currentSessionId: "sess_named", updatedAt: "2026-09-08T00:00:00Z"}],
           agentDispatches: [...multiState.agentDispatches, {dispatchId: "adp_named", taskGroupId: "tg1", workItemId: "w_named", sessionId: "sess_named", assignedNodeId: "idle", status: "running"}],
           agentControlCommands: [{commandId: "cmd_named", sequence: 1, nodeId: "idle", commandType: "cancel_dispatch", dispatchId: "adp_named", status: "acknowledged", taskGroupId: "tg1", createdAt: "2026-09-08T00:00:00Z"}]};
         const sessionsText = String(objectProbe.renderMonitorInventoryWith(namedMonitorState, orgAdmin, "p1", ["sessions"])).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
@@ -6248,6 +6249,10 @@ async function runPendingTruncationCase() {
           /sess_named 评审员 命名的任务/u.test(sessionsText) && /adp_named 命名的任务/u.test(sessionsText)
             && Boolean(idleNodeName) && nodesText.includes(`1 ${idleNodeName} `) && /取消派发 命名的任务/u.test(nodesText),
           `会话行：${sessionsText.match(/sess_named.{0,40}/u)?.[0] || "无"}；派发行：${sessionsText.match(/adp_named.{0,40}/u)?.[0] || "无"}；控制通道：${nodesText.match(/控制通道.{0,120}/u)?.[0] || "无"}`);
+        // 【执行载体列要写通道的角色，通道表要带 id】（09-12 读真实运行态：会话表「执行载体」只有 lane_… id，通道表没有 id，两张表对不上）。
+        check("会话表的「执行载体」要写「评审员 通道」再附通道 id，通道表要带 id 副行",
+          /评审员 通道 lane_named/u.test(sessionsText) && (sessionsText.match(/lane_named/gu) || []).length >= 2,
+          `会话行：${sessionsText.match(/sess_named.{0,80}/u)?.[0] || "无"}；lane_named 出现 ${(sessionsText.match(/lane_named/gu) || []).length} 次`);
       }
       const nodesPane = objectProbe.renderMonitorInventoryWith(multiState, orgAdmin, "p1", ["nodes"]);
       check("「节点与命令」栏目含齐运行节点、控制命令和死信队列三个小节",

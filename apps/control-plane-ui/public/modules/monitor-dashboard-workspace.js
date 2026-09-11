@@ -57,8 +57,15 @@ function render(context, helpers) {
 
   const LANE_STATUS = {idle: {label: "空闲", tone: "green"}, busy: {label: "占用中", tone: "blue"}, retired: {label: "已归档", tone: "gray"}};
   const lanesAll = filterSource((state.workerLanes || []).filter((lane) => groups.some((taskGroup) => taskGroup.id === lane.taskGroupId)), "worker-lanes");
+  // 会话表的「执行载体」列原先只印 lane_… id，而通道表上又没有 id —— 两张表对不上。通道表加 id 副行，会话表按角色写「评审员 通道」再附 id。
+  const laneById = new Map((state.workerLanes || []).slice(0, 60).map((lane) => [lane.laneId, lane]));
+  const laneCell = (laneId) => {
+    if (!laneId) return "-";
+    const lane = laneById.get(laneId);
+    return {v: `${lane ? `<span>${esc(t(lane.roleId))} 通道</span>` : ""}<div class="small muted mono">${esc(laneId)}</div>`, c: "nowrap"};
+  };
   const laneRows = lanesAll.slice(0, 20).map((lane) => row([
-    esc(t(lane.roleId)),
+    `${esc(t(lane.roleId))}<div class="small muted mono">${esc(lane.laneId)}</div>`,
     esc(laneFunctionLabel(lane.laneFunction)),
     customBadge((LANE_STATUS[lane.status] || {label: lane.status}).label, (LANE_STATUS[lane.status] || {}).tone || "gray"),
     {v: String(lane.reuseGeneration ?? 0), c: "num"},
@@ -72,7 +79,7 @@ function render(context, helpers) {
     esc(t(session.roleId)),
     esc(workItemTitleOf(session.taskGroupId, session.workItemId) || "-"),
     badge(session.placement),
-    session.laneId ? {v: `<span class="mono">${esc(session.laneId)}</span>`, c: "nowrap"} : "-",
+    laneCell(session.laneId),
     badge(session.status),
     // 会话的阻塞原因此前只写在记录里、从不渲染：人看到一个 needs_decision 的徽标，看不出为什么。
     {v: esc(explainCoded(session.blockedReason)) + repositoryFailureAction(session), c: "text-clip"},

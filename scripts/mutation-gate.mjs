@@ -14918,6 +14918,14 @@ const MUTATIONS = [
     from: "执行载体：${t(placement.workerCarrierDecision?.carrier) || placement.workerCarrierDecision?.carrier || \"-\"}",
     to: "执行载体：${placement.workerCarrierDecision?.carrier || \"-\"}",
     expect: "「执行载体」用词表"
+  },
+  {
+    name: "会话表的执行载体不得只印 lane id",
+    file: "apps/control-plane-ui/public/modules/monitor-dashboard-workspace.js",
+    gate: "console",
+    from: "    return {v: `${lane ? `<span>${esc(t(lane.roleId))} 通道</span>` : \"\"}<div class=\"small muted mono\">${esc(laneId)}</div>`, c: \"nowrap\"};",
+    to: "    return {v: `<div class=\"small muted mono\">${esc(laneId)}</div>`, c: \"nowrap\"};",
+    expect: "要写「评审员 通道」"
   }
 ];
 
