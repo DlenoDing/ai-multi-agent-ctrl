@@ -5715,6 +5715,21 @@ async function runPendingTruncationCase() {
           posted && /data-form="login"/u.test(loginScreen) && /密码已更新/u.test(loginScreen) && /请用新密码重新登录/u.test(loginScreen),
           posted ? `登录页上${/密码已更新/u.test(loginScreen) ? "有" : "没有"}那句提示` : "没记录到 POST /api/auth/change-password —— 这条什么也没验");
       }
+      // 【首次设密码不踢人】（09-11 从零开通走查：新组织管理员用一次性令牌登录、被要求设密码，设完立刻被踢回登录页，像出了故障）。
+      {
+        const keepProbe = loadConsole(el("div"), {realI18n: true});
+        keepProbe.setFetch(async () => ({ok: true, status: 200, headers: {get: () => null}, json: async () => ({ok: true, passwordSet: true, sessionKept: true})}));
+        keepProbe.setAuth("probe-token", {accountId: "acct_first", accountType: "org_admin", displayName: "首次设密码的人", organizationId: "org_default", passwordSet: false});
+        const toasts = [];
+        keepProbe.captureToastKind("success", (message) => toasts.push(String(message)));
+        const keepForm = el("form", {dataset: {form: "change-password"}}, [
+          el("input", {name: "currentPassword", value: ""}), el("input", {name: "newPassword", value: "Walk-2026-sandbox"}), el("input", {name: "confirmPassword", value: "Walk-2026-sandbox"}), el("button", {type: "submit"})]);
+        await keepProbe.submit({target: keepForm, submitter: keepForm.children[3], preventDefault: () => {}});
+        check("服务端说保留了当前会话（首次设密码）时，控制台不许清会话踢人回登录页，要关掉弹窗说「本次登录继续有效」",
+          !/密码已更新/u.test(String(keepProbe.sessionState().modalHtml || ""))
+            && toasts.some((message) => /本次登录继续有效/u.test(message)),
+          `弹窗：${String(keepProbe.sessionState().modalHtml || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 120)}；提示：${toasts.join(" | ") || "无"}`);
+      }
     }
   }
 

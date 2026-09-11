@@ -7524,7 +7524,13 @@ document.addEventListener("submit", async (event) => {
     if (kind === "change-password") {
       if (String(data.newPassword || "").length < 8) throw new Error("新密码至少 8 位");
       if (data.newPassword !== data.confirmPassword) throw new Error("两次输入的新密码不一致");
-      await api("/api/auth/change-password", {method: "POST", body: JSON.stringify({currentPassword: data.currentPassword || undefined, newPassword: data.newPassword})});
+      const changed = await api("/api/auth/change-password", {method: "POST", body: JSON.stringify({currentPassword: data.currentPassword || undefined, newPassword: data.newPassword})});
+      // 首次设密码：服务端保留了当前会话（只撤销别处的），人接着用就行，不必再登录一次。
+      if (changed?.sessionKept) {
+        closeModal();
+        toast.success("密码已设置，本次登录继续有效；以后用邮箱和这个密码登录");
+        return;
+      }
       // 服务端改密即撤销该账号【全部】会话，含当前这一条（那是"我怀疑被盗号"时唯一的自救手段，
       // 不撤销就等于对攻击者毫无影响）。而这里原先说"下次登录可使用新密码" —— 人以为可以接着用，
       // 下一次点击才 401，弹出的还是"会话已过期，请重新登录"：一个刚成功的操作，

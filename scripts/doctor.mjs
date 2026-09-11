@@ -1768,7 +1768,7 @@ try {
   const changePassword = await jsonFetch(port, "/api/auth/change-password", {
     method: "POST",
     headers: {authorization: orgAdminAuth},
-    body: JSON.stringify({newPassword: "doctor-org-admin-pass"})
+    body: JSON.stringify({newPassword: "doctor-org-admin-pass-initial"})
   });
   if (!changePassword.response.ok) throw new Error("org admin change-password failed");
   // 这条断言必须在下面那次登录【之前】：旧格式口令登录成功会就地升级为 scrypt，放在登录之后就
@@ -1780,10 +1780,24 @@ try {
       throw new Error(`改密落盘的不是 scrypt 而是 ${String(changed?.passwordDigest).slice(0, 24)}… —— 无密钥拉伸的摘要可被离线极快暴力破解`);
     }
   }
-  // 改密即撤销该账号【全部】会话（含发起这次改密的那一条）——那是"我怀疑被盗号"时唯一的自救手段，
-  // 不撤销就等于对攻击者毫无影响。这条性质此前只写在注释里，没有任何断言压着。
-  // 界面也依赖它：改完密码要当场回登录页，而不是留在一条已经死掉的会话里。
+  // 上面那次是【首次设密码】（一次性令牌登进来、账号上还没有口令）：没有旧口令可被冒用，
+  // 当前会话要保留 —— 否则人刚设完密码就被踢回登录页（09-11 从零开通走查）。
   {
+    if (changePassword.payload.sessionKept !== true) throw new Error(`首次设密码没有保留当前会话（sessionKept=${changePassword.payload.sessionKept}）`);
+    const keptSession = await jsonFetch(port, "/api/state?view=orgs", {headers: {authorization: orgAdminAuth}});
+    if (keptSession.response.status !== 200) throw new Error(`首次设密码后当前会话其实已经死了（HTTP ${keptSession.response.status}）—— 回执说保留了，实际没有`);
+  }
+  // 【改密码】（账号上已有口令）即撤销该账号【全部】会话（含发起这次改密的那一条）——那是"我怀疑被盗号"时
+  // 唯一的自救手段，不撤销就等于对攻击者毫无影响。界面也依赖它：改完密码要当场回登录页。
+  {
+    const secondChange = await jsonFetch(port, "/api/auth/change-password", {
+      method: "POST",
+      headers: {authorization: orgAdminAuth},
+      body: JSON.stringify({currentPassword: "doctor-org-admin-pass-initial", newPassword: "doctor-org-admin-pass"})
+    });
+    if (!secondChange.response.ok || secondChange.payload.sessionKept !== false) {
+      throw new Error(`改密码（有旧口令）失败或说保留了会话（HTTP ${secondChange.response.status} sessionKept=${secondChange.payload.sessionKept}）`);
+    }
     const staleSession = await jsonFetch(port, "/api/state?view=orgs", {headers: {authorization: orgAdminAuth}});
     if (staleSession.response.status !== 401) {
       throw new Error(`改密之后原来那条会话还能用（HTTP ${staleSession.response.status}）——`
@@ -2820,6 +2834,25 @@ try {
   });
   if (!memberResetLogin.response.ok || memberResetLogin.payload.account?.passwordSet !== false) {
     throw new Error(`重置出来的成员令牌登录不了或没把密码作废（${memberResetLogin.response.status} passwordSet=${memberResetLogin.payload.account?.passwordSet}）`);
+  }
+  // 【首次设密码不踢人】：用一次性令牌登进来、被要求设密码的人，设完后当前会话保留（sessionKept）；
+  // 之后再改密码（有旧口令）才撤销全部会话，含当前 —— 那是「我怀疑被盗号」时的自救手段，两者不能混。
+  {
+    const memberAuth = `Bearer ${memberResetLogin.payload.sessionToken}`;
+    const firstSet = await jsonFetch(port, "/api/auth/change-password", {method: "POST",
+      headers: {authorization: memberAuth}, body: JSON.stringify({newPassword: "doctor-member-first-pass"})});
+    if (firstSet.response.status !== 200 || firstSet.payload.sessionKept !== true) {
+      throw new Error(`首次设密码没有保留当前会话（HTTP ${firstSet.response.status} sessionKept=${firstSet.payload.sessionKept}）—— 人刚设完密码就被踢回登录页`);
+    }
+    const stillIn = await jsonFetch(port, "/api/state", {headers: {authorization: memberAuth}});
+    if (stillIn.response.status !== 200) throw new Error(`首次设密码后当前会话其实已经死了（HTTP ${stillIn.response.status}）—— 回执说保留了，实际没有`);
+    const secondChange = await jsonFetch(port, "/api/auth/change-password", {method: "POST",
+      headers: {authorization: memberAuth}, body: JSON.stringify({currentPassword: "doctor-member-first-pass", newPassword: "doctor-member-second-pass"})});
+    if (secondChange.response.status !== 200 || secondChange.payload.sessionKept !== false) {
+      throw new Error(`改密码（有旧口令）却说保留了会话（HTTP ${secondChange.response.status} sessionKept=${secondChange.payload.sessionKept}）`);
+    }
+    const kickedOut = await jsonFetch(port, "/api/state", {headers: {authorization: memberAuth}});
+    if (kickedOut.response.status !== 401) throw new Error(`改密码后当前会话还活着（HTTP ${kickedOut.response.status}）—— 「我怀疑被盗号」时改密对攻击者没有任何影响`);
   }
   const orgAdminSelfOrg = (await jsonFetch(port, "/api/org/members", {headers: {authorization: orgAdminAuth}})).payload;
   const initialAdminId = (orgAdminSelfOrg.members || []).find((member) => member.accountType === "org_admin")?.accountId;

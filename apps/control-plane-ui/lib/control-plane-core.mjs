@@ -374,11 +374,13 @@ function ensureOrganizations(state) {
 //     一撤一复不对称）；
 //   · 改密码 —— 怀疑被盗号时唯一的自救手段 —— 对已泄露的令牌完全无效。
 // 收敛成一个助手，凡是改变账号可登录性/凭据的地方都必须调用它。
-export function revokeAccountSessions(state, accountId, reason) {
+export function revokeAccountSessions(state, accountId, reason, options = {}) {
   const at = new Date().toISOString();
   let revoked = 0;
   for (const session of state.authSessions || []) {
     if (session.accountId !== accountId || session.status !== "active") continue;
+    // 首次设密码那条路保留当前会话（没有旧口令可被冒用，一次性令牌也已作废），其它会话照撤。
+    if (options.keepSessionId && session.sessionId === options.keepSessionId) continue;
     session.status = "revoked";
     session.revokedReason = reason;
     session.revokedAt = at;

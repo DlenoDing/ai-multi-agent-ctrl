@@ -14718,6 +14718,22 @@ const MUTATIONS = [
     from: '  const canRegister = hasPerm("agent:activate");',
     to: '  const canRegister = true;',
     expect: "要被告知找谁，而不是指到注册页"
+  },
+  {
+    name: "首次设密码必须保留当前会话（服务端）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (firstTimeSet) revokeAccountSessions(state, account.accountId, "password_changed", {keepSessionId: authenticated.session.sessionId});',
+    to: '    if (firstTimeSet) revokeAccountSessions(state, account.accountId, "password_changed");',
+    expect: "首次设密码后当前会话其实已经死了"
+  },
+  {
+    name: "首次设密码后控制台不得把人踢回登录页",
+    file: APP,
+    gate: "console",
+    from: '      if (changed?.sessionKept) {',
+    to: '      if (false) {',
+    expect: "不许清会话踢人回登录页"
   }
 ];
 

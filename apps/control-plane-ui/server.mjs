@@ -6747,16 +6747,20 @@ async function handleApi(req, res) {
       const currentOk = Boolean(body.currentPassword) && verifyAccountPassword(account, body.currentPassword).ok;
       if (!currentOk) return json(res, 403, {error: "current_password_incorrect"});
     }
+    // 首次设密码（一次性令牌登录后被要求设的那次）：没有旧口令可被冒用，令牌也已作废 ——
+    // 保留当前这条会话、只撤销其它会话；否则人刚设完密码就被踢回登录页，像出了故障（09-11 走查）。
+    const firstTimeSet = !account.passwordDigest;
     account.passwordDigest = newPasswordDigest(newPassword);
     // 改密码是"我怀疑被盗号"时唯一的自救手段，而它原先不动任何会话 —— 已泄露的令牌最长还能再用
     // 8 小时，系统也没有"登出其他设备"的入口。改密即撤销该账号的全部会话（含当前这条，
     // 调用方重新登录即可），否则这个动作对攻击者没有任何影响。
-    revokeAccountSessions(state, account.accountId, "password_changed");
+    if (firstTimeSet) revokeAccountSessions(state, account.accountId, "password_changed", {keepSessionId: authenticated.session.sessionId});
+    else revokeAccountSessions(state, account.accountId, "password_changed");
     account.authPolicy = {...(account.authPolicy || {}), method: account.authPolicy?.method || "password", passwordSet: true};
     account.updatedAt = now();
     audit(state, account.accountId, "auth_change_password", `Account:${account.accountId}`);
     commitUnguardedWrite(state);
-    json(res, 200, {ok: true, accountId: account.accountId, passwordSet: true});
+    json(res, 200, {ok: true, accountId: account.accountId, passwordSet: true, sessionKept: firstTimeSet});
     return;
   }
 
