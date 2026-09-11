@@ -14774,6 +14774,14 @@ const MUTATIONS = [
     from: '      return [`${parent[0]}${/[A-Za-z0-9]$/u.test(parent[0]) ? " " : ""}全部功能`, parent[1]];',
     to: '      return [`${parent[0]}全部功能`, parent[1]];',
     expect: "说明页标题写成「Agent 全部功能」"
+  },
+  {
+    name: "节点准入档位不得退回「只读」两个字",
+    file: "apps/control-plane-ui/public/i18n-zh.js",
+    gate: "console",
+    from: '    read_only: "只读准入",',
+    to: '    read_only: "只读",',
+    expect: "要写「只读准入」"
   }
 ];
 

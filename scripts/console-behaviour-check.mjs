@@ -3719,7 +3719,7 @@ async function runErrorGuidanceCase() {
     `${JSON.stringify(executionProbe.sessionState())} ${String(executionRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").slice(0, 260)}`);
   const nodeRoot = el("div");
   const nodeProbe = loadConsole(nodeRoot, {realI18n: true});
-  const routedNode = {nodeId: "node_outside_window", nodeName: "窗口外运行节点", organizationId: "org_default", registrationScope: "project", projectIds: ["p1"], effectiveProjectIds: ["p1"], allowedRoles: ["reviewer"], allowedMcpTools: [], status: "online", admission: "full", profile: {tools: [{name: "cursor", version: "unknown", available: false}, {name: "git", version: "2.39.3", available: true}], models: []}};
+  const routedNode = {nodeId: "node_outside_window", nodeName: "窗口外运行节点", organizationId: "org_default", registrationScope: "project", projectIds: ["p1"], effectiveProjectIds: ["p1"], allowedRoles: ["reviewer"], allowedMcpTools: [], status: "online", admission: "read_only", profile: {tools: [{name: "cursor", version: "unknown", available: false}, {name: "git", version: "2.39.3", available: true}], models: []}};
   const nodeState = {...windowedState, agentRuntimeNodes: [routedNode], agents: [], agentJoinTokens: [], agentDispatches: []};
   nodeProbe.renderFullPageWith(nodeState, systemAccount, "p1", "proj-overview");
   nodeProbe.restoreRoute({page: "proj-agents", projectId: "p1", workspace: "nodes", nodeId: routedNode.nodeId});
@@ -3745,6 +3745,10 @@ async function runErrorGuidanceCase() {
       nodeText.includes("项目专属 · 项目一") && nodeText.includes("可见项目 项目一") && nodeText.includes("· 写分派文档")
         && !/可见项目 p1\b/u.test(nodeText) && !/· adp_node_recent/u.test(nodeText),
       `节点详情：${nodeText.match(/注册范围.{0,80}/u)?.[0] || "没找到注册范围"}；事件脚注：${nodeText.match(/.{0,40}adp_node_recent|.{0,40}· 写分派文档/u)?.[0] || "没找到"}`);
+    // 【准入档位别写成「只读」两个字】（09-11 评审人视角：节点列表「准入」列写着「只读」，像在说看的人自己是只读）。
+    check("运行节点的准入档位要写「只读准入」，不写光秃秃的「只读」",
+      nodeText.includes("只读准入"),
+      `节点详情：${nodeText.match(/.{0,30}只读.{0,30}/u)?.[0] || "没找到只读"}`);
     // 【没装的工具别印 unknown】（09-11 沙箱爬页：本机工具一栏写着「cursor unknown（不可用）」）。
     check("运行节点详情里没检测到的工具要写「未检测到」，不印 unknown；装了的照常带版本",
       nodeText.includes("cursor（未检测到）") && !/unknown/u.test(nodeText) && nodeText.includes("git 2.39.3"),
