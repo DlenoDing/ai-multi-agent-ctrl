@@ -2429,7 +2429,7 @@ function renderSysOverview() {
   const overview = systemOverview;
   const services = (state.runtime?.services || []).map((service) => row([
     esc(t(service.serviceId)),
-    badge(service.status),
+    statusBadge("service", service.status),
     badge(service.health)
   ])).join("");
   const audit = (state.auditLog || []).slice(0, 15).map((entry) => row([

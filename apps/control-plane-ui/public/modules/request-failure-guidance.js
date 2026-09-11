@@ -41,7 +41,7 @@
     }
 
     if (payload.quota !== undefined && payload.usage !== undefined) {
-      const kindLabel = {members: "成员", projects: "项目", taskGroups: "任务组", agents: "智能体"}[payload.kind] || "该资源";
+      const kindLabel = {members: "成员", projects: "项目", taskGroups: "任务组", agents: "运行节点"}[payload.kind] || "该资源";
       const freeUp = payload.kind === "agents"
         ? "或吊销一台不再用的节点（关停、停用档案都不减用量；未签发出去用掉的加入令牌也占着额度）"
         : "或先关掉/归档不再需要的";

@@ -14886,6 +14886,14 @@ const MUTATIONS = [
     from: '已满${breakdown}：配额由系统管理员在「系统管理」→「组织」调整，',
     to: '已满${breakdown}：到「组织管理」页调高这一项配额，',
     expect: "不许把人支去「组织管理」页调配额"
+  },
+  {
+    name: "系统服务的状态不得退回「执行中」",
+    file: APP,
+    gate: "console",
+    from: '    statusBadge("service", service.status),',
+    to: '    badge(service.status),',
+    expect: "要写「运行中」"
   }
 ];
 

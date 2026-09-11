@@ -51,7 +51,9 @@
     grant: {active: "生效中", revoked: "已撤销", expired: "已过期"},
     agent: {active: "已启用", disabled: "已停用", retired: "已退役"},
     skillSource: {active: "已启用", retired: "已退役"},
-    joinToken: {issued: "已签发", consumed: "已使用（一次性票已用掉）", expired: "已过期", revoked: "已撤销"}
+    joinToken: {issued: "已签发", consumed: "已使用（一次性票已用掉）", expired: "已过期", revoked: "已撤销"},
+    // 系统服务的 running 是「运行中」，不是任务那个「执行中」（全局词表 running 给任务用）。
+    service: {running: "运行中", starting: "启动中", stopped: "已停止", degraded: "已降级", failed: "已故障"}
   };
 
   function badge(value, tone) {

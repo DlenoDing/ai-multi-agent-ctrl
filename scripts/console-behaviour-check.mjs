@@ -1756,7 +1756,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     }
     const quotaHint = probe.requestFailureHint({error: "org_quota_exceeded", kind: "agents", quota: 3, usage: 3});
     if (process.env.AIMAC_PRINT_HINTS) console.log(`[hint] 配额: ${String(quotaHint).slice(0, 60)}`);
-    check("配额拒绝要说清是哪一类、用了多少、上限多少", quotaHint.includes("智能体 3/3"), quotaHint.slice(0, 90));
+    check("配额拒绝要说清是哪一类、用了多少、上限多少", quotaHint.includes("运行节点 3/3"), quotaHint.slice(0, 90));
     check("智能体配额要说清只有吊销才腾得出来（关停/停用都不减）", quotaHint.includes("吊销"), quotaHint.slice(0, 120));
     check("配额里的 kind 是「哪一类配额」，不能被当成「故障类型」再打一遍（词表里没有 agents，会露出英文码）",
       !quotaHint.includes("故障类型"), quotaHint.slice(0, 120));
@@ -5845,6 +5845,16 @@ async function runPendingTruncationCase() {
     }
   }
 
+  // 【系统服务的状态叫「运行中」】（09-12 系统管理员视角：技术状态页 15 个服务全写「执行中」，那是任务的词）。
+  {
+    const svcState = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {status: "ok", services: [{serviceId: "control-plane", status: "running", health: "ok"}]},
+      projects: [], taskGroups: [], accounts: [], organizations: [], auditLog: []};
+    const svcHtml = probe.renderSysOverviewWith(svcState, admin, {storage: {}, server: {}, resources: {}, energy: {}, runtime: {}});
+    const svcRow = svcHtml.slice(svcHtml.indexOf("系统服务"), svcHtml.indexOf("维护操作"));
+    check("系统服务表里 running 要写「运行中」，不写任务那个「执行中」",
+      /运行中/u.test(svcRow) && !/执行中/u.test(svcRow),
+      `系统服务表：${svcRow.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 120)}`);
+  }
   // 台账那句脚注原先是无条件的："这里只保留最近 N 条；更早的记录在归档文件里"，N 取当前条数。
   // 于是全新部署只有 2 条时它宣称有更早的记录被挤到归档里 —— 凭空造出一次截断，
   // 还把人支去看一个空归档。真实全新部署上读到的就是这句。两支都要验：
