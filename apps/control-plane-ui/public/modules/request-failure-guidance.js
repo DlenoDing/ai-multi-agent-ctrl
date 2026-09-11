@@ -10,7 +10,8 @@
   function hint(payload, helpers) {
     const {accountName, fmtTime, t, explainCoded, grantRoleLabel} = helpers;
     let output = "";
-    if (payload.requiredPermission) {
+    // 组织被停用时拒绝原因不是权限：再附一句「需要 org:project_admin」会把人支去查授权（09-12 走查）。
+    if (payload.requiredPermission && payload.error !== "organization_suspended") {
       const scope = payload.resourceScope
         ? `${payload.resourceScope.resourceType || "?"}:${payload.resourceScope.resourceId || "?"}`
         : "";

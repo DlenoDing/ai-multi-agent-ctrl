@@ -331,3 +331,4 @@ Claude Opus/high 的第一次全仓只读审查运行约 11 分钟未返回结�
 - 2026-09-12 表单提交被拒（如组织停用期间建项目 403）后，顶栏挂出「连不上控制面或这一页加载失败，下面显示的是 2 秒前的旧数据」——
   这一页没加载失败、数据也没旧。写入被拒与读取失败分开：requestFailure 带 write 标记，showError 对写入失败只弹 toast、不写 lastError。
   console 门 +1、变异 +1（连带两条盯 api() 抛出形状的旧锚点同步改）。
+- 2026-09-12 组织停用期间的拒绝提示后面还附着「（需要 org:project_admin @ organization:…）」，把人支去查授权 → 拒绝原因是 organization_suspended 时不再附权限提示。console 门断言扩展、变异 +1。

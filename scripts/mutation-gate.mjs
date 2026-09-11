@@ -14830,6 +14830,14 @@ const MUTATIONS = [
     from: "  if (error?.writeFailure) {\n    toast.error(error?.message || String(error));",
     to: "  if (false) {\n    toast.error(error?.message || String(error));",
     expect: "不许在顶栏挂「这一页加载失败／旧数据」横幅"
+  },
+  {
+    name: "组织停用的拒绝提示不得再附权限提示",
+    file: "apps/control-plane-ui/public/modules/request-failure-guidance.js",
+    gate: "console",
+    from: '    if (payload.requiredPermission && payload.error !== "organization_suspended") {',
+    to: '    if (payload.requiredPermission) {',
+    expect: "只弹提示，不许在顶栏挂"
   }
 ];
 

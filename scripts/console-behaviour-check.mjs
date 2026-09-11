@@ -5771,7 +5771,7 @@ async function runPendingTruncationCase() {
         const denyRoot = el("div");
         const denyProbe = loadConsole(denyRoot, {realI18n: true});
         denyProbe.setFetch(async (url, init = {}) => ((init.method || "GET") === "POST"
-          ? {ok: false, status: 403, statusText: "Forbidden", headers: {get: () => null}, json: async () => ({error: "organization_suspended"}), text: async () => ""}
+          ? {ok: false, status: 403, statusText: "Forbidden", headers: {get: () => null}, json: async () => ({error: "organization_suspended", requiredPermission: "org:project_admin", resourceScope: {resourceType: "organization", resourceId: "org_default"}}), text: async () => ""}
           : {ok: true, status: 200, headers: {get: () => null}, json: async () => denyState}));
         denyProbe.setAuth("probe-token", denyAccount);
         const errors = [];
@@ -5781,7 +5781,7 @@ async function runPendingTruncationCase() {
         denyProbe.renderFullPagePaneWith(denyState, denyAccount, "p1", "org-projects", "list");
         const denyHtml = String(denyRoot.innerHTML || "");
         check("表单提交被拒（403）只弹提示，不许在顶栏挂「这一页加载失败／旧数据」横幅",
-          errors.some((message) => /组织已停用/u.test(message)) && !/连不上控制面或这一页加载失败/u.test(denyHtml),
+          errors.some((message) => /组织已停用/u.test(message) && !/需要 org:project_admin/u.test(message)) && !/连不上控制面或这一页加载失败/u.test(denyHtml),
           `提示：${errors.join(" | ") || "无"}；横幅：${denyHtml.match(/连不上控制面或这一页加载失败.{0,40}/u)?.[0] || "无"}`);
       }
       // 【首次设密码不踢人】（09-11 从零开通走查：新组织管理员用一次性令牌登录、被要求设密码，设完立刻被踢回登录页，像出了故障）。
