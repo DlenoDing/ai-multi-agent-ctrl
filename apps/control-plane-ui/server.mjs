@@ -156,6 +156,7 @@ import { isTerminalDispatchStatus } from "./lib/lifecycle-states.mjs";
 import { listProjectWorkItems, parseWorkItemListQuery } from "./lib/work-item-pagination.mjs";
 import {
   agentRegistrationResourceScope,
+  runtimeNodeArchivedProjectIds,
   runtimeNodeProjectIds,
   runtimeNodeVisibleForProjectSet
 } from "./lib/runtime-node-scope.mjs";
@@ -7072,6 +7073,8 @@ async function handleApi(req, res) {
         return {
           ...publicNode,
           display: {
+            // 所属项目已归档的节点：还占着配额、还能被吊销，列表上要说明它为什么不再领活。
+            archivedProjectIds: runtimeNodeArchivedProjectIds(state, node),
             region: publicNode.profile?.region || null,
             dataRoot: publicNode.profile?.dataRoot || null,
             health: agentNodeHeartbeatOverdue(node) ? "offline" : publicNode.status === "online" ? (publicNode.admission === "full" ? "healthy" : "limited") : publicNode.status,

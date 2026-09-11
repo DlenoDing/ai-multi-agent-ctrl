@@ -3678,6 +3678,12 @@ function renderOrgMembers() {
 
 /* ---------------- 组织管理员：共享 Agent ---------------- */
 
+// 节点的作用域徽标（组织共享／项目专属），所属项目已归档时再补一枚：那样的节点不再领活、仍占配额、可吊销，列表上要说清。
+function nodeScopeBadges(node) {
+  return `${customBadge(node.registrationScope === "organization" ? "组织共享" : "项目专属", node.registrationScope === "organization" ? "green" : "blue")}`
+    + `${(node.display?.archivedProjectIds || []).length ? ` ${customBadge("所属项目已归档", "gray")}` : ""}`;
+}
+
 function agentHoverPop(node) {
   const profile = node.profile || {};
   const display = node.display || {};
@@ -4270,7 +4276,7 @@ function renderOrgAgents() {
     const nodeRows = nodes.map((node) => {
       const timedOut = heartbeatTimedOut(node);
       return row([
-      `<span class="hover-wrap"><strong>${esc(node.nodeName || node.nodeId)}</strong>${agentHoverPop(node)}</span><div class="small muted mono">${esc(node.nodeId)}</div>${customBadge(node.registrationScope === "organization" ? "组织共享" : "项目专属", node.registrationScope === "organization" ? "green" : "blue")}`,
+      `<span class="hover-wrap"><strong>${esc(node.nodeName || node.nodeId)}</strong>${agentHoverPop(node)}</span><div class="small muted mono">${esc(node.nodeId)}</div>${nodeScopeBadges(node)}`,
       timedOut ? `${badge("heartbeat_timeout")}<div class="small warn-text">上次状态仍为「${esc(t(node.status) || node.status)}」</div>` : badge(node.status),
       esc(node.display?.region || "-"),
       badge(timedOut ? "offline" : node.display?.health || node.status),
@@ -4448,7 +4454,7 @@ function renderProjectAgents() {
   const nodeRows = nodes.map((node) => {
     const timedOut = heartbeatTimedOut(node);
     return row([
-      `<span class="hover-wrap"><strong>${esc(node.nodeName || node.nodeId)}</strong>${agentHoverPop(node)}</span><div class="small muted mono">${esc(node.nodeId)}</div>${customBadge(node.registrationScope === "organization" ? "组织共享" : "项目专属", node.registrationScope === "organization" ? "green" : "blue")}`,
+      `<span class="hover-wrap"><strong>${esc(node.nodeName || node.nodeId)}</strong>${agentHoverPop(node)}</span><div class="small muted mono">${esc(node.nodeId)}</div>${nodeScopeBadges(node)}`,
       `${timedOut
         ? `${badge("heartbeat_timeout")}<div class="small warn-text">项目页提示：上次状态仍为「${esc(t(node.status) || node.status)}」，但心跳已超过判死阈值</div>`
         : badge(node.status)}${claimMissHint(node)}${selfCheckFailureHint(node)}`,

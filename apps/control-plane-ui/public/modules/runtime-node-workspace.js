@@ -68,7 +68,11 @@
     const orgName = (id) => (h.organizationNameOf ? h.organizationNameOf(id) : id) || id;
     const projectName = (id) => (h.projectNameOf ? h.projectNameOf(id) : id) || id;
     const scopeText = detail.scope?.type === "organization" ? `组织共享 · ${orgName(detail.scope.id || node.organizationId) || "当前组织"}`
-      : `项目专属 · ${(detail.scope?.ids || node.projectIds || []).map(projectName).join("、") || projectName(detail.projectId) || "未绑定项目"}`;
+      : (detail.scope?.ids || []).length
+        ? `项目专属 · ${detail.scope.ids.map(projectName).join("、")}`
+        : (node.projectIds || []).length
+          ? `项目专属 · ${node.projectIds.map(projectName).join("、")}（项目已归档，不再领活；仍占配额，可吊销）`
+          : `项目专属 · ${projectName(detail.projectId) || "未绑定项目"}`;
     return `<section class="runtime-node-workspace wide" aria-label="运行节点详情">
       <header class="runtime-node-header" tabindex="-1" data-runtime-node-heading><button class="secondary-button" data-action="close-runtime-node">返回运行节点列表</button>
         <div class="runtime-node-title"><div><span class="governance-eyebrow">${esc(scopeText)}</span><h2>${esc(node.nodeName || node.nodeId)}</h2><span class="mono">${esc(node.nodeId)}</span></div>

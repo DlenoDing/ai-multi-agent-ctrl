@@ -3320,6 +3320,17 @@ async function runErrorGuidanceCase() {
       /推送和检查点准备/u.test(monitorText) && !/\bpush\b|checkpoint/u.test(monitorText) && /生效的定制/u.test(rolesText) && !/overlay/u.test(rolesText),
       `监控说明：${(monitorText.match(/.{0,30}(?:push|checkpoint).{0,30}/u) || ["无英文行话"])[0]}；角色定制：${(rolesText.match(/.{0,30}overlay.{0,30}/u) || ["无 overlay"])[0]}`);
   }
+  // 【归档项目名下的节点要在组织节点列表里标出来】（09-12：项目归档后节点整个从列表消失，只剩配额里的一个数）。
+  {
+    const archivedNodeState = {...navState, projects: [{...navState.projects[0], status: "archived"}]};
+    const archivedNode = {nodeId: "node_arch", nodeName: "归档项目的节点", organizationId: "org_default", registrationScope: "project", projectIds: ["p1"], effectiveProjectIds: [], status: "offline", lastHeartbeatAt: "2026-09-11T00:00:00Z", display: {archivedProjectIds: ["p1"], health: "offline"}};
+    const liveNode = {...archivedNode, nodeId: "node_live", nodeName: "在用项目的节点", effectiveProjectIds: ["p1"], display: {archivedProjectIds: [], health: "offline"}};
+    const orgNodesHtml = String(loadConsole(el("div"), {realI18n: true}).renderOrgAgentsWith(archivedNodeState, orgAccount, [archivedNode, liveNode]));
+    const rowOf = (id) => { const at = orgNodesHtml.indexOf(id); return orgNodesHtml.slice(at, orgNodesHtml.indexOf("</tr>", at)); };
+    check("组织节点列表里所属项目已归档的节点要挂「所属项目已归档」徽标，在用项目的节点不挂",
+      /所属项目已归档/u.test(rowOf("node_arch")) && !/所属项目已归档/u.test(rowOf("node_live")) && orgNodesHtml.includes("归档项目的节点"),
+      `归档节点行：${rowOf("node_arch").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 120) || "没找到"}`);
+  }
   // 【组织停用要在每一页顶上说；归档的项目不再列下一步；退出登录要清掉上一个人的脏表单标记】（09-11 收尾链路走查）。
   {
     const suspendedState = {...navState, organizationContext: {id: "org_default", name: "默认组织", status: "suspended"}};

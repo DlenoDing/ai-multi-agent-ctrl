@@ -54,9 +54,27 @@ export function runtimeNodeCanAccessProject(state, node = {}, projectId) {
   return runtimeNodeScope(state, node).projectIdSet.has(projectId);
 }
 
+// 项目归档后它名下的节点【可见性】不能跟着消失：原先 projectIds 只留 active 项目，节点从组织与项目的节点列表里
+// 一起不见了，只剩配额里的一个数 —— 管理员既吊销不了也不知道它在哪（09-12 收尾链路走查）。
+// 可见按【登记过的项目】算（含已归档），可调度仍按 active 项目算（runtimeNodeCanAccessProject 不变）。
 export function runtimeNodeVisibleForProjectSet(state, node = {}, projectIdSet = new Set()) {
   if (!projectIdSet || !projectIdSet.size) return false;
-  return runtimeNodeProjectIds(state, node).some((projectId) => projectIdSet.has(projectId));
+  const scope = runtimeNodeScope(state, node);
+  const visibleProjectIds = scope.registrationScope === "organization"
+    ? scope.projectIds
+    : [...new Set([...scope.projectIds, ...runtimeNodeArchivedProjectIds(state, node)])];
+  return visibleProjectIds.some((projectId) => projectIdSet.has(projectId));
+}
+
+// 节点登记过、但已归档的项目（只对项目专属节点有意义；组织共享节点跟着组织的在用项目走）。
+export function runtimeNodeArchivedProjectIds(state, node = {}) {
+  const scope = runtimeNodeScope(state, node);
+  if (scope.registrationScope === "organization") return [];
+  return scope.storedProjectIds.filter((projectId) => {
+    const project = (state.projects || []).find((item) => item.id === projectId);
+    return project && project.status === "archived"
+      && (project.organizationId || DEFAULT_NODE_ORGANIZATION_ID) === scope.organizationId;
+  });
 }
 
 export function agentRegistrationResourceScope(recordOrNode = {}) {

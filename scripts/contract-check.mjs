@@ -755,6 +755,7 @@ run(verifyExecutionEventTailStaysBounded);
 run(verifyHumanAndOrganizationContracts);
 run(verifySeedAccountNamesAreChinese);
 run(verifyAgentRuntimeStdoutIsChinese);
+runAsync(verifyArchivedProjectNodesStayVisible);
 
 for (const toolName of ["ui-console-mcp.runtime_health_get", "room-mcp.room_send", "agent-control-mcp.dispatch_status"]) {
   validateSchema(createMcpGrant(toolName, {tokenDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}), mcpGrantSchema, `McpGrant:${toolName}`, errors);
@@ -1623,6 +1624,19 @@ function verifyCommitWorksWithoutConfiguredIdentity(output) {
 // Review Lead / Agent Runtime Service（09-11 沙箱爬页：系统管理员登录后顶栏就是一行英文），而 init 脚本给的是「系统管理员」——两条起库路径给出两种名字。
 // agent 节点的 stdout 是在那台机器上盯终端的人看的：曾经 30 行英文夹着中文（dispatch completed / stale session directory removed…）。
 // 每一句模板串都要有中文；纯变量（${missLine}）、JSON 转储和 ✓/✗ 行不算。
+// 项目归档后它名下的节点要【看得见、调不到】：原先可见与可调度共用一份 active 项目清单，节点从所有列表消失，只剩配额里的一个数。
+async function verifyArchivedProjectNodesStayVisible(output) {
+  const scope = await import(`file://${join(root, "apps/control-plane-ui/lib/runtime-node-scope.mjs")}`);
+  const state = {projects: [{id: "p_arch", organizationId: "org_x", status: "archived"}, {id: "p_live", organizationId: "org_x", status: "active"}]};
+  const node = {nodeId: "n1", organizationId: "org_x", registrationScope: "project", projectIds: ["p_arch"]};
+  if (!scope.runtimeNodeVisibleForProjectSet(state, node, new Set(["p_arch"]))) output.push("归档项目名下的节点在该项目的节点列表里看不见了 —— 管理员既吊销不了也不知道它在哪");
+  if (scope.runtimeNodeCanAccessProject(state, node, "p_arch")) output.push("归档项目名下的节点仍被算作可调度 —— 归档只该收回调度，不该收回可见");
+  if (JSON.stringify(scope.runtimeNodeArchivedProjectIds(state, node)) !== JSON.stringify(["p_arch"])) output.push("runtimeNodeArchivedProjectIds 没把已归档的登记项目报出来");
+  const orgNode = {nodeId: "n2", organizationId: "org_x", registrationScope: "organization"};
+  if (scope.runtimeNodeArchivedProjectIds(state, orgNode).length) output.push("组织共享节点不该报「所属项目已归档」");
+  if (!output.length) console.log("归档项目名下的节点：可见（列表里在）、不可调度、能报出已归档项目 —— 核过");
+}
+
 function verifyAgentRuntimeStdoutIsChinese(output) {
   const source = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
   const lines = source.split("\n");

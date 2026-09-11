@@ -14838,6 +14838,22 @@ const MUTATIONS = [
     from: '    if (payload.requiredPermission && payload.error !== "organization_suspended") {',
     to: '    if (payload.requiredPermission) {',
     expect: "只弹提示，不许在顶栏挂"
+  },
+  {
+    name: "归档项目名下的节点必须仍然可见",
+    file: "apps/control-plane-ui/lib/runtime-node-scope.mjs",
+    check: "verifyArchivedProjectNodesStayVisible",
+    from: "    : [...new Set([...scope.projectIds, ...runtimeNodeArchivedProjectIds(state, node)])];",
+    to: "    : scope.projectIds;",
+    expect: "看不见了"
+  },
+  {
+    name: "组织节点列表必须标出所属项目已归档",
+    file: APP,
+    gate: "console",
+    from: '    + `${(node.display?.archivedProjectIds || []).length ? ` ${customBadge("所属项目已归档", "gray")}` : ""}`;',
+    to: '    + "";',
+    expect: "要挂「所属项目已归档」徽标"
   }
 ];
 
