@@ -5762,6 +5762,28 @@ async function runPendingTruncationCase() {
           posted && /data-form="login"/u.test(loginScreen) && /密码已更新/u.test(loginScreen) && /请用新密码重新登录/u.test(loginScreen),
           posted ? `登录页上${/密码已更新/u.test(loginScreen) ? "有" : "没有"}那句提示` : "没记录到 POST /api/auth/change-password —— 这条什么也没验");
       }
+      // 【写入被拒不是「这一页加载失败」】（09-11 停用组织走查：建项目被拒后顶栏挂出「连不上控制面或这一页加载失败，下面显示的是 2 秒前的旧数据」）。
+      {
+        const denyState = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {}, taskGroups: [], accounts: [], accessGrants: [],
+          projects: [{id: "p1", name: "项目一", organizationId: "org_default", status: "active", members: []}],
+          organizations: [{orgId: "org_default", name: "默认组织", status: "active"}], truncatedCollections: []};
+        const denyAccount = {accountId: "acct_deny", accountType: "org_admin", displayName: "被拒的人", organizationId: "org_default", roles: ["org_admin"], permissions: ["org:*", "project:create"]};
+        const denyRoot = el("div");
+        const denyProbe = loadConsole(denyRoot, {realI18n: true});
+        denyProbe.setFetch(async (url, init = {}) => ((init.method || "GET") === "POST"
+          ? {ok: false, status: 403, statusText: "Forbidden", headers: {get: () => null}, json: async () => ({error: "organization_suspended"}), text: async () => ""}
+          : {ok: true, status: 200, headers: {get: () => null}, json: async () => denyState}));
+        denyProbe.setAuth("probe-token", denyAccount);
+        const errors = [];
+        denyProbe.captureToastKind("error", (message) => errors.push(String(message)));
+        const denyForm = el("form", {dataset: {form: "org-project-create"}}, [el("input", {name: "name", value: "停用后建项目"}), el("button", {type: "submit"})]);
+        await denyProbe.submit({target: denyForm, submitter: denyForm.children[1], preventDefault: () => {}});
+        denyProbe.renderFullPagePaneWith(denyState, denyAccount, "p1", "org-projects", "list");
+        const denyHtml = String(denyRoot.innerHTML || "");
+        check("表单提交被拒（403）只弹提示，不许在顶栏挂「这一页加载失败／旧数据」横幅",
+          errors.some((message) => /组织已停用/u.test(message)) && !/连不上控制面或这一页加载失败/u.test(denyHtml),
+          `提示：${errors.join(" | ") || "无"}；横幅：${denyHtml.match(/连不上控制面或这一页加载失败.{0,40}/u)?.[0] || "无"}`);
+      }
       // 【首次设密码不踢人】（09-11 从零开通走查：新组织管理员用一次性令牌登录、被要求设密码，设完立刻被踢回登录页，像出了故障）。
       {
         const keepRoot = el("div");

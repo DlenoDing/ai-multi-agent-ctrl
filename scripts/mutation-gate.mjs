@@ -1722,8 +1722,8 @@ const MUTATIONS = [
     name: "报错要说清是哪一次请求失败的",
     file: APP,
     gate: "console",
-    from: "${hint}（${requestPath}）`), response.status);",
-    to: "${hint}`), response.status);",
+    from: "${hint}（${requestPath}）`), response.status, {write: method !== \"GET\"});",
+    to: "${hint}`), response.status, {write: method !== \"GET\"});",
     expect: "报错里没有出请求路径"
   },
   {
@@ -14822,6 +14822,14 @@ const MUTATIONS = [
     from: "  formTouched = false;\n  dirtyFormKinds.clear();\n  authToken = \"\";",
     to: "  authToken = \"\";",
     expect: "要清掉脏表单标记"
+  },
+  {
+    name: "写入被拒不得挂「这一页加载失败」横幅",
+    file: APP,
+    gate: "console",
+    from: "  if (error?.writeFailure) {\n    toast.error(error?.message || String(error));",
+    to: "  if (false) {\n    toast.error(error?.message || String(error));",
+    expect: "不许在顶栏挂「这一页加载失败／旧数据」横幅"
   }
 ];
 

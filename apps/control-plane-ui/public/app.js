@@ -550,8 +550,10 @@ function projConfigUnavailableText() {
 // 给"请求级失败"打个记号：连不上、超时、服务端回 4xx/5xx —— 这些是控制面那边的事。
 // 没有这个记号的异常是【控制台自己抛的】（我们代码里的缺陷）。两者在屏幕上必须分开说：
 // 一律写"连不上控制面"会把人支去查网络和服务端，而 bug 就在这一页里。
-function requestFailure(error, status) {
+function requestFailure(error, status, {write = false} = {}) {
   error.requestFailure = true;
+  // 写入被拒与读取失败要分开：前者屏幕上的数据没有过期，不该挂「显示的是旧数据」横幅。
+  error.writeFailure = Boolean(write);
   // 状态码也归在这里：调用点分不清「没权限」和「服务端没给出来」时，只能把两件事写成
   // 一句「读取失败或无权查看」—— 人看了不知道该去要权限还是该重试（任务组房间那块就是）。
   if (status !== undefined) error.status = status;
@@ -729,7 +731,7 @@ async function api(path, options = {}) {
       + `${String(networkError?.message || networkError).slice(0, 120)}）`));
     throw requestFailure(new Error("这次操作没有收到服务端的回应（网络中断或服务未响应）。"
       + "它可能已经生效，也可能没有 —— 请先刷新页面确认结果，不要直接重试："
-      + `重试会以新的幂等键再做一次。（${String(networkError?.message || networkError).slice(0, 120)}）`));
+      + `重试会以新的幂等键再做一次。（${String(networkError?.message || networkError).slice(0, 120)}）`), undefined, {write: true});
   }
   noteServerClock(response);
   if (!response.ok) {
@@ -757,7 +759,7 @@ async function api(path, options = {}) {
     const requestPath = String(path).split("?")[0];
     // 状态码要随错误一起带出去：调用点分不清「没权限」和「服务端没给出来」时，
     // 只能把两件事写成一句「读取失败或无权查看」—— 人看了不知道该去要权限还是该重试。
-    throw requestFailure(new Error(`${response.status} ${detail ? explainCoded(detail) : response.statusText}${hint}（${requestPath}）`), response.status);
+    throw requestFailure(new Error(`${response.status} ${detail ? explainCoded(detail) : response.statusText}${hint}（${requestPath}）`), response.status, {write: method !== "GET"});
   }
   return response.json();
 }
@@ -889,6 +891,13 @@ function clearSession() {
 }
 
 function showError(error) {
+  // 表单提交被拒（4xx / 写入没收到回应）只弹 toast：原先也写进 lastError，顶栏立刻挂出
+  // 「连不上控制面或这一页加载失败，下面显示的是 N 秒前的旧数据」—— 而这一页根本没加载失败，数据也没旧。
+  if (error?.writeFailure) {
+    toast.error(error?.message || String(error));
+    render();
+    return;
+  }
   lastError = error?.message || String(error);
   lastErrorIsRequest = error?.requestFailure === true;
   // 通过顶层 toast 呈现错误，确保弹窗遮罩之上也可见（此前弹窗内表单报错被遮罩挡住成为静默失败）
