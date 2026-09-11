@@ -14734,6 +14734,14 @@ const MUTATIONS = [
     from: '      if (changed?.sessionKept) {',
     to: '      if (false) {',
     expect: "不许清会话踢人回登录页"
+  },
+  {
+    name: "首次设密码后顶栏按钮必须改叫「修改密码」",
+    file: APP,
+    gate: "console",
+    from: '          currentAccount.passwordSet = true;\n          sessionStorage.setItem("aimac.account", JSON.stringify(currentAccount));',
+    to: '          sessionStorage.setItem("aimac.account", JSON.stringify(currentAccount));',
+    expect: "不许清会话踢人回登录页"
   }
 ];
 

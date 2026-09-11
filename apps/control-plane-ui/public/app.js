@@ -7527,8 +7527,14 @@ document.addEventListener("submit", async (event) => {
       const changed = await api("/api/auth/change-password", {method: "POST", body: JSON.stringify({currentPassword: data.currentPassword || undefined, newPassword: data.newPassword})});
       // 首次设密码：服务端保留了当前会话（只撤销别处的），人接着用就行，不必再登录一次。
       if (changed?.sessionKept) {
+        // 顶栏那颗按钮按 passwordSet 决定叫「设置密码」还是「修改密码」：本地账号快照也要跟着改，不然设完还写着「设置密码」。
+        if (currentAccount) {
+          currentAccount.passwordSet = true;
+          sessionStorage.setItem("aimac.account", JSON.stringify(currentAccount));
+        }
         closeModal();
         toast.success("密码已设置，本次登录继续有效；以后用邮箱和这个密码登录");
+        render();
         return;
       }
       // 服务端改密即撤销该账号【全部】会话，含当前这一条（那是"我怀疑被盗号"时唯一的自救手段，
