@@ -1,3 +1,4 @@
+import { runtimeNodeArchivedProjectIds } from "./runtime-node-scope.mjs";
 const TERMINAL_DISPATCH = new Set(["completed", "failed", "cancelled", "rejected", "expired"]);
 
 function newest(items, limit) {
@@ -100,7 +101,8 @@ export function buildRuntimeNodeDetail(state, node, {publicNode, projectId = ""}
     projectId: projectId || null,
     scope: publicNode.registrationScope === "organization"
       ? {type: "organization", id: publicNode.organizationId || node.organizationId || null}
-      : {type: "project", ids: (publicNode.projectIds || []).slice(0, 100)},
+      // archivedIds：登记过但已归档的项目 —— 详情页据此说明这台节点为什么不再领活、为什么还占配额。
+      : {type: "project", ids: (publicNode.projectIds || []).slice(0, 100), archivedIds: runtimeNodeArchivedProjectIds(state, node)},
     activeDispatches: dispatches.filter((dispatch) => !TERMINAL_DISPATCH.has(dispatch.status)),
     recentDispatches: dispatches,
     assignedDispatchCount: assigned.length,

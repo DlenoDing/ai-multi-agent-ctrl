@@ -3762,7 +3762,7 @@ async function runErrorGuidanceCase() {
     const target = new URL(String(url), "http://localhost");
     let payload = nodeState;
     if (target.pathname === "/api/skill-registry") payload = {roleSkillIndex: [], roleSkillOverlays: []};
-    if (target.pathname === `/api/agent-nodes/${routedNode.nodeId}/detail`) payload = {schemaVersion: "runtime-node-detail/v1", node: routedNode, projectId: "p1", scope: {type: "project", ids: ["p1"]}, activeDispatches: [],
+    if (target.pathname === `/api/agent-nodes/${routedNode.nodeId}/detail`) payload = {schemaVersion: "runtime-node-detail/v1", node: routedNode, projectId: "p1", scope: {type: "project", ids: ["p1"], archivedIds: ["p1"]}, activeDispatches: [],
       recentDispatches: [{dispatchId: "adp_node_recent", taskGroupId: "tg_node", workItemId: "w_node", workItemTitle: "写分派文档", taskGroupName: "工单分派", status: "completed"}], assignedDispatchCount: 1, controlCommands: [],
       recentEvents: [{eventType: "checkpoint_submitted", status: "completed", progressPercent: 100, summary: "Checkpoint accepted by control plane.", createdAt: "2026-09-08T00:00:00Z", dispatchId: "adp_node_recent"}], agentProfiles: []};
     return {ok: true, status: 200, statusText: "OK", headers: {get: () => null}, json: async () => payload};
@@ -3780,6 +3780,10 @@ async function runErrorGuidanceCase() {
       nodeText.includes("项目专属 · 项目一") && nodeText.includes("可见项目 项目一") && nodeText.includes("· 写分派文档")
         && !/可见项目 p1\b/u.test(nodeText) && !/· adp_node_recent/u.test(nodeText),
       `节点详情：${nodeText.match(/注册范围.{0,80}/u)?.[0] || "没找到注册范围"}；事件脚注：${nodeText.match(/.{0,40}adp_node_recent|.{0,40}· 写分派文档/u)?.[0] || "没找到"}`);
+    // 【所属项目已归档时详情页的作用域一行要说清】（09-12：列表有徽标，详情只写「项目专属 · 项目一」）。
+    check("节点详情的作用域一行在所属项目已归档时要写「项目已归档，不再领活；仍占配额，可吊销」",
+      nodeText.includes("项目专属 · 项目一（项目已归档，不再领活；仍占配额，可吊销）"),
+      `作用域：${nodeText.match(/项目专属 · .{0,60}/u)?.[0] || "没找到"}`);
     // 【准入档位别写成「只读」两个字】（09-11 评审人视角：节点列表「准入」列写着「只读」，像在说看的人自己是只读）。
     check("运行节点的准入档位要写「只读准入」，不写光秃秃的「只读」",
       nodeText.includes("只读准入"),

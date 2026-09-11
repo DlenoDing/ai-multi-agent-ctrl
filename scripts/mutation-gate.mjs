@@ -14854,6 +14854,14 @@ const MUTATIONS = [
     from: '    + `${(node.display?.archivedProjectIds || []).length ? ` ${customBadge("所属项目已归档", "gray")}` : ""}`;',
     to: '    + "";',
     expect: "要挂「所属项目已归档」徽标"
+  },
+  {
+    name: "节点详情在所属项目已归档时必须说明",
+    file: "apps/control-plane-ui/public/modules/runtime-node-workspace.js",
+    gate: "console",
+    from: '.length >= detail.scope.ids.length ? "（项目已归档，不再领活；仍占配额，可吊销）" : ""}`',
+    to: '.length >= detail.scope.ids.length ? "" : ""}`',
+    expect: "要写「项目已归档，不再领活；仍占配额，可吊销」"
   }
 ];
 

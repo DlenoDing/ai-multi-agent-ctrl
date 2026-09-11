@@ -69,7 +69,7 @@
     const projectName = (id) => (h.projectNameOf ? h.projectNameOf(id) : id) || id;
     const scopeText = detail.scope?.type === "organization" ? `组织共享 · ${orgName(detail.scope.id || node.organizationId) || "当前组织"}`
       : (detail.scope?.ids || []).length
-        ? `项目专属 · ${detail.scope.ids.map(projectName).join("、")}`
+        ? `项目专属 · ${detail.scope.ids.map(projectName).join("、")}${(detail.scope.archivedIds || []).length && (detail.scope.archivedIds || []).length >= detail.scope.ids.length ? "（项目已归档，不再领活；仍占配额，可吊销）" : ""}`
         : (node.projectIds || []).length
           ? `项目专属 · ${node.projectIds.map(projectName).join("、")}（项目已归档，不再领活；仍占配额，可吊销）`
           : `项目专属 · ${projectName(detail.projectId) || "未绑定项目"}`;
