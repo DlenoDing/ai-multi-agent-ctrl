@@ -9863,7 +9863,7 @@ const MUTATIONS = [
     name: "「必须被拒」的断言只判「不是 200」要被逮到",
     file: "scripts/doctor.mjs",
     check: "verifyRejectionAssertionsNameTheirCode",
-    from: '  if (configWhileSuspended.response.status !== 403\n    || configWhileSuspended.payload?.error !== "policy_denied") {',
+    from: '  if (configWhileSuspended.response.status !== 403\n    || configWhileSuspended.payload?.error !== "organization_suspended") {',
     to: "  if (configWhileSuspended.response.status === 200) {",
     expect: "没点名拒绝码"
   },
@@ -9882,7 +9882,7 @@ const MUTATIONS = [
     name: "组织被停用后其管理员不得再改配置",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
-    from: '    if (scopedOrg && scopedOrg.status === "suspended") return false;',
+    from: '    if (scopedOrg && scopedOrg.status === "suspended" && !SUSPENSION_EXEMPT_READ_PERMISSIONS.has(requiredPermission)) return false;',
     to: "    if (false) return false;",
     expect: "组织被暂停后其管理员仍能改配置"
   },
@@ -14465,7 +14465,7 @@ const MUTATIONS = [
     name: "停用组织弹窗不得退回一句「账号与智能体将无法工作」",
     file: APP,
     gate: "console",
-    from: 'sub: "停用后这个组织的成员登不进来、运行节点领不到活、项目里也建不了新东西；已有数据保留，重新启用即可恢复。", danger: true, confirmText: "停用"',
+    from: 'sub: "停用后这个组织里不能再新建、修改或下达指令，运行节点领不到活；成员仍可登录查看现状；已有数据保留，重新启用即可恢复。", danger: true, confirmText: "停用"',
     to: 'sub: "停用后组织内账号与智能体将无法工作。", danger: true, confirmText: "停用"',
     expect: "停用组织的确认弹窗要说清后果与可逆性"
   },
@@ -14782,6 +14782,46 @@ const MUTATIONS = [
     from: '    read_only: "只读准入",',
     to: '    read_only: "只读",',
     expect: "要写「只读准入」"
+  },
+  {
+    name: "组织停用只许挡写，纯读权限必须放行（成员还看得见任务组）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (scopedOrg && scopedOrg.status === "suspended" && !SUSPENSION_EXEMPT_READ_PERMISSIONS.has(requiredPermission)) return false;',
+    to: '    if (scopedOrg && scopedOrg.status === "suspended") return false;',
+    expect: "看不到自己的任务组了"
+  },
+  {
+    name: "组织停用时的拒绝码必须说是组织已停用",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (deniedOrg?.status === "suspended") {',
+    to: '    if (false) {',
+    expect: "期望 403 organization_suspended"
+  },
+  {
+    name: "组织被停用时每一页顶上必须有提示",
+    file: APP,
+    gate: "console",
+    from: '  const suspendedNotice = state.organizationContext?.status === "suspended"',
+    to: '  const suspendedNotice = false',
+    expect: "只能查看」的提示"
+  },
+  {
+    name: "归档项目的流程导航不得再列十步",
+    file: APP,
+    gate: "console",
+    from: '  if (project?.status === "archived") {\n    return panel("流程导航",',
+    to: '  if (false) {\n    return panel("流程导航",',
+    expect: "项目已归档：流程已经结束"
+  },
+  {
+    name: "退出登录必须清掉脏表单标记",
+    file: APP,
+    gate: "console",
+    from: "  formTouched = false;\n  dirtyFormKinds.clear();\n  authToken = \"\";",
+    to: "  authToken = \"\";",
+    expect: "要清掉脏表单标记"
   }
 ];
 

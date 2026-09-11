@@ -951,7 +951,7 @@ function check(name, condition, detail) {
       "开通组织／调整配额表单里 maxAgents 仍叫「智能体上限」，与用量列的「运行节点」对不上");
     const suspendDialog = quotaSource.match(/status === "suspended" && !\(await confirmDialog\(\{[^\n]*/u)?.[0] || "";
     check("停用组织的确认弹窗要说清后果与可逆性",
-      /成员登不进来/u.test(suspendDialog) && /运行节点领不到活/u.test(suspendDialog) && /重新启用即可恢复/u.test(suspendDialog),
+      /成员仍可登录查看现状/u.test(suspendDialog) && !/成员登不进来/u.test(suspendDialog) && /运行节点领不到活/u.test(suspendDialog) && /重新启用即可恢复/u.test(suspendDialog),
       `停用弹窗：${suspendDialog.slice(0, 200) || "没找到"}`);
   }
   check("系统组织详情区分初始管理员与组织子账户并展示状态构成",
@@ -3319,6 +3319,30 @@ async function runErrorGuidanceCase() {
     check("监控说明页与角色 Skill 定制说明不印 push／checkpoint／overlay 这类英文行话",
       /推送和检查点准备/u.test(monitorText) && !/\bpush\b|checkpoint/u.test(monitorText) && /生效的定制/u.test(rolesText) && !/overlay/u.test(rolesText),
       `监控说明：${(monitorText.match(/.{0,30}(?:push|checkpoint).{0,30}/u) || ["无英文行话"])[0]}；角色定制：${(rolesText.match(/.{0,30}overlay.{0,30}/u) || ["无 overlay"])[0]}`);
+  }
+  // 【组织停用要在每一页顶上说；归档的项目不再列下一步；退出登录要清掉上一个人的脏表单标记】（09-11 收尾链路走查）。
+  {
+    const suspendedState = {...navState, organizationContext: {id: "org_default", name: "默认组织", status: "suspended"}};
+    const suspendedRoot = el("div");
+    loadConsole(suspendedRoot, {realI18n: true}).renderFullPagePaneWith(suspendedState, projectAccount, "p1", "proj-overview", "overview");
+    const activeRoot = el("div");
+    loadConsole(activeRoot, {realI18n: true}).renderFullPagePaneWith({...navState, organizationContext: {id: "org_default", name: "默认组织", status: "active"}}, projectAccount, "p1", "proj-overview", "overview");
+    check("组织被停用时项目页顶上要有「已被系统管理员停用：只能查看」的提示，未停用时没有",
+      /已被系统管理员停用：只能查看/u.test(String(suspendedRoot.innerHTML || "")) && !/已被系统管理员停用/u.test(String(activeRoot.innerHTML || "")),
+      `停用态：${/已被系统管理员停用/u.test(String(suspendedRoot.innerHTML || "")) ? "有提示" : "没提示"}；正常态：${/已被系统管理员停用/u.test(String(activeRoot.innerHTML || "")) ? "也有提示" : "没提示"}`);
+    const archivedState = {...navState, projects: [{...navState.projects[0], status: "archived"}]};
+    const archivedRoot = el("div");
+    loadConsole(archivedRoot, {realI18n: true}).renderFullPagePaneWith(archivedState, projectAccount, "p1", "proj-overview", "help");
+    const archivedGuide = String(archivedRoot.innerHTML || "");
+    check("归档项目的流程导航要说「项目已归档：流程已经结束」，不再列十步和「前往」",
+      /项目已归档：流程已经结束/u.test(archivedGuide) && !/1\. 项目设置/u.test(archivedGuide),
+      `归档项目说明页：${archivedGuide.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/流程导航.{0,80}/u)?.[0] || "没找到流程导航"}`);
+    const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+    const clearStart = appSource.indexOf("function clearSession() {");
+    const clearBody = clearStart < 0 ? "" : appSource.slice(clearStart, appSource.indexOf("\n}\n", clearStart));
+    check("退出登录（clearSession）要清掉脏表单标记，不然下一个人登录一提交就弹「存在未保存的其他修改」",
+      /formTouched = false;/u.test(clearBody) && /dirtyFormKinds\.clear\(\)/u.test(clearBody),
+      clearBody ? "clearSession 里没有 formTouched = false / dirtyFormKinds.clear()" : "切不出 clearSession");
   }
   // 【新组织第一屏要有整条操作路径的入口；英文页名的说明页标题要隔空格】（09-11 空组织走查）。
   {

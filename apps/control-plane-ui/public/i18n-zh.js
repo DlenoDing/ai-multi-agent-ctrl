@@ -1099,7 +1099,7 @@
     request_aborted: "请求在传输中被中断（网络断了或页面被关掉），没有任何改动生效",
     request_stream_error: "读取提交内容时连接出错，没有任何改动生效",
     organization_not_found: "未找到组织",
-    organization_suspended: "组织已停用",
+    organization_suspended: "组织已停用：系统管理员停用了这个组织，新建、修改和下达指令都会被拒绝，只能查看；需要恢复请联系系统管理员",
     organization_required: "缺少组织信息",
     org_member_not_found: "未找到组织成员",
 

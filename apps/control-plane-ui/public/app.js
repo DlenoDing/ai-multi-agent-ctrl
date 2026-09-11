@@ -850,6 +850,9 @@ function restoreDraftAfterRelogin() {
 function clearSession() {
   window.AIMAC_WORKSPACE_LOCATION?.clear();
   resetTaskWorkbench();
+  // 上一个账号没保存的表单不该拦住下一个人登录：原先退出后 formTouched 还挂着，登录一提交就弹「存在未保存的其他修改」。
+  formTouched = false;
+  dirtyFormKinds.clear();
   authToken = "";
   currentAccount = null;
   workspaces.setAccount("");
@@ -2084,7 +2087,10 @@ function renderContent() {
     || (taskWorkDetail?.taskGroup?.projectId === currentProjectId && taskWorkDetail.taskGroup.id === managementGroupId ? taskWorkDetail.taskGroup : null);
   const returnTask = ["monitor", "review", "directives", "tg"].includes(page) && group
     && taskReturnContext?.accountId === currentAccount?.accountId && taskReturnContext.projectId === currentProjectId && taskReturnContext.taskGroupId === group.id ? taskReturnContext : null;
-  const context = window.AIMAC_OBJECT_WORKSPACE.trail({organization: state.organizationContext, project, group: project && ["tg", "tasks", "monitor", "review", "directives"].includes(page) ? group : null,
+  // 组织被停用时每一页顶上都要说：原先只有组织概览角落一个「已停用」徽标，成员在项目页里写不进去只会看到「权限不足」。
+  const suspendedNotice = state.organizationContext?.status === "suspended"
+    ? `<div class="notice warn-notice">这个组织已被系统管理员停用：只能查看，不能新建、修改或下达指令，运行节点也领不到活；需要恢复请联系系统管理员。</div>` : "";
+  const context = suspendedNotice + window.AIMAC_OBJECT_WORKSPACE.trail({organization: state.organizationContext, project, group: project && ["tg", "tasks", "monitor", "review", "directives"].includes(page) ? group : null,
     work: page === "tasks" && selectedWork ? taskWorkDetail?.workItem : null, pageLabel: functionalPageLabel, returnTask});
   const governanceObjectOpen = (page === "sys-orgs" && selectedOrganizationId)
     || (page === "org-members" && selectedOrgMemberId)
@@ -4883,6 +4889,10 @@ function renderRepositoryOutputOverview(repoTargets) {
 // （tasks 视图 + 基底 fleet，不发新请求）；「人工审核」步复用 pendingForMe()，与「待你处理」同一口径；
 // 只对当前账号菜单里有的页摆「前往」（没权限的页不摆一个点了会拒的按钮）。
 function workflowGuidePanel(project, groups) {
+  // 归档的项目不再有「下一步」：原先照常列十步，说「还没有任务组」「尚未接入」（其实是收口后归档了）。
+  if (project?.status === "archived") {
+    return panel("流程导航", `<div class="notice">项目已归档：流程已经结束，不再有下一步；任务、执行记录与 Git 证据仍可在「任务组」「最新执行」「仓库产出」里查看。</div>`);
+  }
   const fleet = state.fleet || {};
   const online = Number(fleet.online || 0);
   const registered = Number(fleet.total || 0);
@@ -9008,7 +9018,7 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "org-status") {
       const status = target.dataset.status;
-      if (status === "suspended" && !(await confirmDialog({title: "停用组织", message: "确认停用该组织？", sub: "停用后这个组织的成员登不进来、运行节点领不到活、项目里也建不了新东西；已有数据保留，重新启用即可恢复。", danger: true, confirmText: "停用"}))) return;
+      if (status === "suspended" && !(await confirmDialog({title: "停用组织", message: "确认停用该组织？", sub: "停用后这个组织里不能再新建、修改或下达指令，运行节点领不到活；成员仍可登录查看现状；已有数据保留，重新启用即可恢复。", danger: true, confirmText: "停用"}))) return;
       await api(`/api/orgs/${encodeURIComponent(target.dataset.org)}/status`, {method: "POST", body: JSON.stringify({status})});
       await loadPage();
       toast.success(status === "suspended" ? "已停用组织" : "已启用组织");

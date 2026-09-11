@@ -2885,6 +2885,18 @@ try {
 
   // 暂停组织此前【什么都不停】：全仓只有配额检查一处读 org.status，于是它的实际语义仅仅是
   // "不许再新建"，成员照常登录、照常读写、名下的 agent 继续跑、继续烧模型额度。
+  // 为下面「停用后普通成员仍看得见」那条准备：拿组织管理员自己项目里已有的任务组（任务组配额是 1，建不了新的），给成员 task_group:read。
+  const suspendedProbeProjectId = orgProject.payload.id;
+  let suspendedProbeGroupId = "";
+  {
+    const adminView = await jsonFetch(port, `/api/state?view=tasks&projectId=${encodeURIComponent(suspendedProbeProjectId)}`, {headers: {authorization: orgAdminAuth}});
+    suspendedProbeGroupId = (adminView.payload?.taskGroups || []).find((group) => group.projectId === suspendedProbeProjectId)?.id || "";
+    if (!suspendedProbeGroupId) throw new Error("停用可见性探针：组织管理员的项目里没有任务组可用 —— 这条断言会空转");
+    const probeGrant = await jsonFetch(port, "/api/access-grants", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-suspend-visibility-grant", authorization: orgAdminAuth},
+      body: JSON.stringify({subjectId: memberAccountId, resourceType: "task_group", resourceId: suspendedProbeGroupId, permissions: ["task_group:read"]})});
+    if (!probeGrant.response.ok) throw new Error(`停用可见性探针：给成员授权失败（${probeGrant.response.status} ${JSON.stringify(probeGrant.payload).slice(0, 120)}）`);
+  }
   const suspendOrg = await jsonFetch(port, `/api/orgs/${orgId}/status`, {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-org-suspend", authorization: systemAuth},
@@ -2909,16 +2921,31 @@ try {
   });
   // 拒绝码按【实测落点】写，不按猜的写：这里是 policy_denied（守卫在策略判定处拒的），
   // 不是 permission_denied。写错的话断言会在正确行为上报红。
+  // 拒绝码要说真正的原因：组织被停用了，不是「权限不足」（原先回 policy_denied，管理员会去查授权而不是找系统管理员）。
   if (configWhileSuspended.response.status !== 403
-    || configWhileSuspended.payload?.error !== "policy_denied") {
-    throw new Error("组织被暂停后其管理员仍能改配置 —— 暂停组织实际上只挡住了新建，没有停住任何在跑的东西"
-      + `（期望 403 policy_denied，得到 ${configWhileSuspended.response.status} `
+    || configWhileSuspended.payload?.error !== "organization_suspended") {
+    throw new Error("组织被暂停后其管理员仍能改配置、或拒绝码没说清是组织被停用 —— 暂停组织实际上只挡住了新建，没有停住任何在跑的东西"
+      + `（期望 403 organization_suspended，得到 ${configWhileSuspended.response.status} `
       + `${configWhileSuspended.payload?.error || ""}）`);
   }
   // 读取必须仍然可用，否则被暂停的组织连"为什么停了"都查不到
   const readWhileSuspended = await jsonFetch(port, "/api/state?view=projects", {headers: {authorization: orgAdminAuth}});
   if (!readWhileSuspended.response.ok) {
     throw new Error(`组织被暂停后连读取都被挡住了（应仍可查看现状），got ${readWhileSuspended.response.status}`);
+  }
+  // 「仍可查看」要按【普通成员】验，不能只验组织管理员：管理员是项目负责人，走的是 owner 直通；
+  // 普通成员的可见性走 hasPermission，原先停用一刀切把读也挡了 —— 评审人的任务组列表整个变空（09-11 走查）。
+  {
+    const memberLogin = await jsonFetch(port, "/api/auth/login", {method: "POST",
+      body: JSON.stringify({email: "doctor.member1@local", password: "doctor-member-second-pass"})});
+    if (!memberLogin.response.ok) throw new Error(`暂停期间普通成员登录失败（HTTP ${memberLogin.response.status}）—— 停用组织不该把人锁在门外`);
+    const memberView = await jsonFetch(port, `/api/state?view=tasks&projectId=${encodeURIComponent(suspendedProbeProjectId)}`,
+      {headers: {authorization: `Bearer ${memberLogin.payload.sessionToken}`}});
+    const visible = (memberView.payload?.taskGroups || []).some((group) => group.id === suspendedProbeGroupId);
+    if (memberView.response.status !== 200 || !visible) {
+      throw new Error(`组织被暂停后，有 task_group:read 授权的普通成员看不到自己的任务组了（HTTP ${memberView.response.status}，`
+        + `可见 ${(memberView.payload?.taskGroups || []).length} 个）—— 停用只该挡写，不该让人以为数据没了`);
+    }
   }
   const resumeOrg = await jsonFetch(port, `/api/orgs/${orgId}/status`, {
     method: "POST",

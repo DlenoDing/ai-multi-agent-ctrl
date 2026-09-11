@@ -708,6 +708,15 @@ function beginGuardedWrite(req, state, action, subject, resourceScope = inferRes
     // 结果栏写明是被策略挡下的。actor 来自认证，不取自请求体。
     audit(state, actor, action, subject, "policy_denied");
     commitUnguardedWrite(state);
+    // 组织被停用时拒绝的真正原因是「组织已停用」，不是「权限不足」：原先一律回 policy_denied，
+    // 组织管理员看到的是「权限不足（需要 org:project_admin）」，会去查授权而不是找系统管理员。
+    const deniedAccount = state.accounts.find((item) => accountIdOf(item) === actor);
+    const deniedOrgId = deniedAccount && !isSystemAccount(deniedAccount)
+      ? (resourceScopeOrganizationId(state, resourceScope) || deniedAccount.organizationId || DEFAULT_ORGANIZATION_ID) : null;
+    const deniedOrg = deniedOrgId ? (state.organizations || []).find((item) => item.orgId === deniedOrgId) : null;
+    if (deniedOrg?.status === "suspended") {
+      return {status: 403, payload: {error: "organization_suspended", organizationId: deniedOrg.orgId, actor, requiredPermission, resourceScope}};
+    }
     return {status: 403, payload: {error: "policy_denied", actor, requiredPermission, resourceScope}};
   }
   const command = {
@@ -2480,6 +2489,7 @@ function resourceScopeOrganizationId(state, resourceScope = {}) {
   return null;
 }
 
+const SUSPENSION_EXEMPT_READ_PERMISSIONS = new Set(["project:view", "task_group:read", "task_group:monitor"]);
 function hasPermission(state, actor, requiredPermission, resourceScope) {
   if (!requiredPermission) return true;
   const account = state.accounts.find((item) => accountIdOf(item) === actor);
@@ -2498,7 +2508,10 @@ function hasPermission(state, actor, requiredPermission, resourceScope) {
     // 挡得住 —— 互为冗余的判据没法各自判别，也就没法保证它们各自还活着。
     const accountOrg = account.organizationId || DEFAULT_ORGANIZATION_ID;
     const scopedOrg = (state.organizations || []).find((item) => item.orgId === (resourceOrg || accountOrg));
-    if (scopedOrg && scopedOrg.status === "suspended") return false;
+    // 只挡写：纯读权限放行，不然被暂停组织里的普通成员（非项目负责人）连任务组都看不见了 ——
+    // canReadTaskGroup 也走这里，实测评审人在组织停用后整个任务组列表变空（09-11 走查），
+    // 而上面那段注释承诺的是「读取不受影响」。
+    if (scopedOrg && scopedOrg.status === "suspended" && !SUSPENSION_EXEMPT_READ_PERMISSIONS.has(requiredPermission)) return false;
   }
   const direct = (account.permissions || []).filter((permission) => directPermissionApplies(account, permission, requiredPermission, resourceScope));
   const grantPermissions = state.accessGrants
