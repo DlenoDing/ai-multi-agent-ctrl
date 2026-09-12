@@ -8031,7 +8031,8 @@ server.listen(port, host, () => {
       writeState(rebound);
     } catch (error) { console.error(`补写服务端点失败（不影响运行）：${error.message}`); }
   }
-  console.log(`AI Multi-Agent Ctrl console: http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${boundPort}`);
-  console.log(`Centralized MCP endpoint: ${publicEndpoint()}/mcp`);
-  console.log(`Agent installer: ${publicEndpoint()}/install-agent.sh`);
+  // 起服务的人看的三行：地址、MCP 入口、安装脚本。契约门拿最后一行当「已起来」的标记（verifyStartupSaysWhatIsWrongOnDisk / verifyLocalEndpointUsesBoundPort）。
+  console.log(`管理台地址：http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${boundPort}`);
+  console.log(`MCP 统一入口：${publicEndpoint()}/mcp`);
+  console.log(`Agent 安装脚本：${publicEndpoint()}/install-agent.sh`);
 });

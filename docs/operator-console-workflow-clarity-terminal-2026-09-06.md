@@ -354,3 +354,5 @@ Claude Opus/high 的第一次全仓只读审查运行约 11 分钟未返回结�
 - 2026-09-12 agent 节点命令行走查：help／认不出的命令／没注册就 run 三种输出都清楚；status 在连不上控制面时只有一句「读取节点状态失败」，这台节点是谁、连的是哪要翻 agent-config.json →
   先打「本机登记：节点 ×（id），控制面 …，角色 …，工作目录 …」再报连不上，退出码照旧非 0。契约门 +1（真起子进程读输出）、变异 +1。
 - 2026-09-12 agentctl self-check 逐项那几行原先是「✗ gateway — http://… — fetch failed」「✗ remote_mcp — undefined — Invalid URL」→ 检查项有中文名（括号保留 id）、连不上按同一套口径翻成「连不上控制面：地址或端口没人监听」、地址缺失说是配置残缺。契约门 +1（真起子进程）、变异 +1，agent 远程 e2e 的一条旧断言同步。
+- 2026-09-12 控制面启动横幅三行是英文（AI Multi-Agent Ctrl console / Centralized MCP endpoint / Agent installer）→「管理台地址／MCP 统一入口／Agent 安装脚本」；
+  契约门里拿最后一行当「已起来」标记的两处同步，变异 +1（挂在状态文件损坏那条上，端口那条对标记缺失有 20 秒兜底不报红）。

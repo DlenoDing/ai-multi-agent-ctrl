@@ -17768,8 +17768,8 @@ async function verifyStartupSaysWhatIsWrongOnDisk(output) {
   writeFileSync(join(corruptDir, "control-plane-state.json"), '{"schemaVersion":"runtime-state/v1","stateVersion":3,"projects":[{"id":"p');
   const corrupt = spawnServer(corruptDir);
   try {
-    const seen = await collect(corrupt, (out, err) => /Agent installer:/u.test(out) && /运行态文件损坏/u.test(err), 20000);
-    if (!/Agent installer:/u.test(seen.out)) output.push(`状态文件损坏时服务该照常起来（健康检查要能报 storageFault），实际没起来：${seen.err.slice(0, 200).replace(/\n/g, " ")}`);
+    const seen = await collect(corrupt, (out, err) => /Agent 安装脚本：/u.test(out) && /运行态文件损坏/u.test(err), 20000);
+    if (!/Agent 安装脚本：/u.test(seen.out)) output.push(`状态文件损坏时服务该照常起来（健康检查要能报 storageFault），实际没起来：${seen.err.slice(0, 200).replace(/\n/g, " ")}`);
     if (!/\[startup\] 运行态文件损坏：control-plane-state\.json/u.test(seen.err) || !/npm run backup/u.test(seen.err)) {
       output.push(`状态文件损坏时终端上没说（要点名文件、说清服务虽起来但数据面不可用、给出还原步骤）：${seen.err.slice(0, 200).replace(/\n/g, " ") || "（stderr 是空的，横幅看起来健康）"}`);
     }
@@ -17812,7 +17812,7 @@ async function verifyLocalEndpointUsesBoundPort(output) {
   child.stdout.on("data", (chunk) => { banner += String(chunk); });
   try {
     await new Promise((resolve) => {
-      const tick = setInterval(() => { if (/Agent installer:/u.test(banner)) { clearInterval(tick); resolve(); } }, 50);
+      const tick = setInterval(() => { if (/Agent 安装脚本：/u.test(banner)) { clearInterval(tick); resolve(); } }, 50);
       setTimeout(() => { clearInterval(tick); resolve(); }, 20000);
     });
     const ports = [...banner.matchAll(/127\.0\.0\.1:(\d+)/gu)].map((hit) => hit[1]);

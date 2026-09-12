@@ -14942,6 +14942,14 @@ const MUTATIONS = [
     from: "${CHECK_LABELS[item.checkId] ? `${CHECK_LABELS[item.checkId]}（${item.checkId}）` : item.checkId}",
     to: "${item.checkId}",
     expect: "没有中文名"
+  },
+  {
+    name: "启动横幅不得退回英文（契约门拿它当已起来的标记）",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyStartupSaysWhatIsWrongOnDisk",
+    from: "  console.log(`Agent 安装脚本：${publicEndpoint()}/install-agent.sh`);",
+    to: "  console.log(`Agent installer: ${publicEndpoint()}/install-agent.sh`);",
+    expect: "实际没起来"
   }
 ];
 
