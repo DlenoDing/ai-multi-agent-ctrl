@@ -246,7 +246,7 @@ try {
     console.log(`  PostgreSQL 产出规范核对 ok: ${report.validated} 条记录符合各自声明的 schema；${report.uncoveredNote}；${report.statesNote}`);
   }
   const doctor = spawnSync("npm", ["run", "agentctl", "--", "doctor", `--server=${baseUrl}`], {cwd: root, env: composeEnv, encoding: "utf8"});
-  if (doctor.status !== 0 || !doctor.stdout.includes("agent gateway doctor ok")) throw new Error(`compose agentctl doctor failed: ${doctor.stderr || doctor.stdout}`);
+  if (doctor.status !== 0 || !doctor.stdout.includes("agent 网关自检通过")) throw new Error(`compose agentctl doctor failed: ${doctor.stderr || doctor.stdout}`);
   console.log("docker compose doctor ok: config, build, health, centralized MCP, installer artifacts and PostgreSQL state-store verified");
 } finally {
   spawnSync("docker", ["compose", "down", "-v"], {cwd: root, env: composeEnv, encoding: "utf8", stdio: "pipe"});

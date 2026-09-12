@@ -39,8 +39,8 @@ async function verifyFirstRunPath() {
   check(init.status === 0, "npm run init 能跑通（新部署的第一条命令）",
     init.status === 0 ? "ok" : String(init.stderr || init.stdout).slice(0, 160));
   if (init.status !== 0) return;
-  const email = (init.stdout.match(/system admin login:\s*(\S+)/u) || [])[1];
-  const bootstrapToken = (init.stdout.match(/local bootstrap token:\s*(\S+)/u) || [])[1];
+  const email = (init.stdout.match(/系统管理员登录账号：\s*(\S+)/u) || [])[1];
+  const bootstrapToken = (init.stdout.match(/本地初始化令牌：\s*(\S+)/u) || [])[1];
   check(Boolean(email && bootstrapToken), "init 会把登录账号与令牌一起打印出来",
     `账号 ${email || "（没打印）"}｜令牌 ${bootstrapToken ? "已打印" : "（没打印）"}`);
   // 刚装完登进去，项目概览上是一个 73% 的项目、更新时间在一个月前 —— 那是随发行版附带的
@@ -50,7 +50,7 @@ async function verifyFirstRunPath() {
   // 写死一句"带着示例数据"的话，种子换了项目它也不会变。
   const seedProjectNames = JSON.parse(readFileSync(join(root, "data/seed-state.json"), "utf8"))
     .projects.map((item) => item.name);
-  const sampleLine = (init.stdout.match(/^sample data: (.+)$/mu) || [])[1] || "";
+  const sampleLine = (init.stdout.match(/^示例数据：(.+)$/mu) || [])[1] || "";
   check(Boolean(sampleLine) && seedProjectNames.every((name) => sampleLine.includes(name)),
     "init 要说清运行态里带着示例项目（并点名是哪个）",
     sampleLine ? `打印了：${sampleLine.slice(0, 80)}` : "一个字都没说 —— 人会把示例项目的 73% 当成自己的进度");
@@ -58,14 +58,14 @@ async function verifyFirstRunPath() {
   // init 的输出是新部署者看到的第一屏，里面每一行都要能照着做。
   // 这条原先打印的是字面量 `$AIMAC_PUBLIC_URL/mcp` —— 照抄就是个坏地址，
   // 而且看不出是占位符还是真值。判据：必须是真地址，且不带未展开的变量名。
-  const mcpLine = (init.stdout.match(/^mcp: (.+)$/mu) || [])[1] || "";
+  const mcpLine = (init.stdout.match(/^MCP 统一入口：(.+)$/mu) || [])[1] || "";
   check(/^https?:\/\/\S+\/mcp/u.test(mcpLine) && !mcpLine.includes("$AIMAC"),
     "init 打印的 MCP 地址必须是能直接用的真地址（不是未展开的变量名）",
     `打印的是：${mcpLine || "（这一行没打印）"}`);
   // 打印出来的每一个令牌都要写明用途。三个令牌挤在同一屏，此前只有管理员那个标了怎么用，
   // 另外两个是光秃秃的 base64 —— 人拿到手只能去翻代码才知道往哪儿填。
   // 判据按"每一行 token 都要带括号说明"来核，而不是逐个写死名字（新增令牌时会自动被要求）。
-  const tokenLines = init.stdout.split("\n").filter((line) => /token: \S+/u.test(line));
+  const tokenLines = init.stdout.split("\n").filter((line) => /令牌：\s*\S+/u.test(line));
   const unexplained = tokenLines.filter((line) => !/\(.+\)/u.test(line));
   check(tokenLines.length >= 3 && !unexplained.length,
     "init 打印的每个令牌都要写明用途（拿到一串 base64 却不知道往哪儿填等于没给）",

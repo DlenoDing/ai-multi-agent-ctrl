@@ -68,7 +68,7 @@ if (action === "doctor") {
        `是否允许 agent 自带本地 MCP：${manifest.localMcpServerAllowed}（期望 false）`,
        "多半是连错了地址，或者这台服务跑的是旧版本"]);
   }
-  console.log(`agent gateway doctor ok: ${manifest.serverUrl}`);
+  console.log(`agent 网关自检通过：${manifest.serverUrl}`);
   process.exit(0);
 }
 
@@ -104,7 +104,7 @@ async function login() {
     fail("没有可用的登录凭据",
       ["给 --token=<令牌>，或设环境变量 AIMAC_ADMIN_TOKEN / AIMAC_BOOTSTRAP_TOKEN",
        "已经有会话的话可以给 --session-token=<会话令牌>",
-       "本地初始化时打印过 local bootstrap token（npm run init 的输出里）"]);
+       "本地初始化时打印过「本地初始化令牌」（npm run init 的输出里）"]);
   }
   const result = await request("/api/auth/login", {method: "POST", body: {email, token}});
   return result.sessionToken;

@@ -36,8 +36,8 @@ http://127.0.0.1:4317
 登录需要**两样**：登录账号和令牌。`npm run init` 会把它们一起打印出来：
 
 ```text
-system admin login: system.admin@local  (在登录页「登录账号」处填它)
-local bootstrap token: ...              (与上面的登录账号配合使用)
+系统管理员登录账号：system.admin@local  (在登录页「登录账号」处填它)
+本地初始化令牌：...                    (与上面的登录账号配合使用)
 ```
 
 登录账号填 `system.admin@local`（或用 `AIMAC_SYSTEM_ADMIN_EMAIL` 指定的邮箱），令牌填 bootstrap token。

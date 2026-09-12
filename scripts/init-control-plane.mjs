@@ -97,7 +97,7 @@ if (checkOnly) {
 }
 
 if (!force && storedStateExists(stateStoreOptions())) {
-  console.log(`runtime state already exists: ${stateStoreKind() === "postgresql" ? "postgresql://aimac_control_plane_state/default" : statePath}`);
+  console.log(`运行态已存在：${stateStoreKind() === "postgresql" ? "postgresql://aimac_control_plane_state/default" : statePath}`);
 } else {
   try {
     writeStoredState(buildState(), stateStoreOptions());
@@ -107,7 +107,7 @@ if (!force && storedStateExists(stateStoreOptions())) {
       `当前存储后端：${stateStoreKind()}`
     ]);
   }
-  console.log(`runtime state initialized: ${stateStoreKind() === "postgresql" ? "postgresql://aimac_control_plane_state/default" : statePath}`);
+  console.log(`运行态已初始化：${stateStoreKind() === "postgresql" ? "postgresql://aimac_control_plane_state/default" : statePath}`);
 }
 
 const existingConfig = existsSync(configPath) ? loadJson(configPath) : {};
@@ -152,14 +152,14 @@ writeJson(configPath, {
   updatedAt: new Date().toISOString()
 });
 
-console.log("next: npm start");
+console.log("下一步：npm start");
 // 这里原先原样打印 `$AIMAC_PUBLIC_URL/mcp` —— 一个操作者照抄就用不了的地址，
 // 而且看不出它是占位符还是真值。buildState 本来就算出了有效地址，打印它。
 // 没设 AIMAC_PUBLIC_URL 时那是个回环地址：本机的 MCP 客户端能连，别的机器连不上 ——
 // 这正是人需要提前知道的一件事，而不是等远程客户端连不上再回来查。
 const mcpEndpoint = process.env.AIMAC_PUBLIC_URL
   || `http://${process.env.AIMAC_HOST || "127.0.0.1"}:${Number(process.env.AIMAC_PORT || 4317)}`;
-console.log(`mcp: ${mcpEndpoint}/mcp` + (process.env.AIMAC_PUBLIC_URL
+console.log(`MCP 统一入口：${mcpEndpoint}/mcp` + (process.env.AIMAC_PUBLIC_URL
   ? ""
   : "  (回环地址，只有本机的 MCP 客户端连得上；要给别的机器用，先设 AIMAC_PUBLIC_URL 再重跑)"));
 // 这一屏其余每一行都是"英文标签 + 括号里中文说明"，只有这一行是整句英文 ——
@@ -167,7 +167,7 @@ console.log(`mcp: ${mcpEndpoint}/mcp` + (process.env.AIMAC_PUBLIC_URL
 // 按同一形状改：标签仍是英文（脚本输出要能 grep），说明用中文，并点名那个入口在哪。
 // 入口名要按【界面上真有的那个】写：Agent 现在按项目注册，系统账号页不再是主入口。
 // 常规接入路径必须先进入目标项目，再到「项目 Agent」页签发一次性令牌和安装命令。
-console.log("agent: 登录管理控制台 → 进入目标项目 → 「项目管理」→「注册运行节点」签发一次性入网命令 → "
+console.log("接入 agent：登录管理控制台 → 进入目标项目 → 「项目管理」→「注册运行节点」签发一次性入网命令 → "
   + "把那条命令拿到 Agent 主机上执行（命令里已带好地址与一次性令牌，不必手工配置）");
 // 登录同时需要【身份】和【令牌】：系统管理员的 authPolicy.method 是 bootstrap_token，
 // 登录时要填邮箱/账号 ID 再配上这个令牌。原先只打印令牌，从不打印身份 —— 而那个值只存在于
@@ -179,21 +179,21 @@ console.log("agent: 登录管理控制台 → 进入目标项目 → 「项目�
 // 因为这正是他决定下一步做什么的那一刻。
 const seedState = loadJson(seedPath);
 const seedProjects = (seedState.projects || []).map((item) => item.name).join("、");
-console.log(`sample data: 运行态里带着示例项目 ${seedProjects}（${(seedState.taskGroups || []).length} 个任务组，`
+console.log(`示例数据：运行态里带着示例项目 ${seedProjects}（${(seedState.taskGroups || []).length} 个任务组，`
   + "控制面自身的开发任务）。它的进度与时间都是示例，不是你的数据 —— 建自己的项目再开工；"
   + "要清掉它：登录后到「系统概览」页用「重新初始化运行态」。");
-console.log(`system admin login: ${process.env.AIMAC_SYSTEM_ADMIN_EMAIL || "system.admin@local"}  (在登录页「登录账号」处填它)`);
+console.log(`系统管理员登录账号：${process.env.AIMAC_SYSTEM_ADMIN_EMAIL || "system.admin@local"}  (在登录页「登录账号」处填它)`);
 if (!process.env.AIMAC_BOOTSTRAP_TOKEN) {
-  console.log(`local bootstrap token: ${bootstrapToken}  (与上面的登录账号配合使用)`);
+  console.log(`本地初始化令牌：${bootstrapToken}  (与上面的登录账号配合使用)`);
 }
 // 上面那个管理员令牌写了"配合登录账号使用"，下面两个此前只有一串 base64 —— 人拿到手不知道
 // 往哪儿填。三个令牌打印在同一屏，用途却只标了一个，剩下两个只能去翻代码。
 if (!workspaceOwnerTokenEnv) {
-  console.log(`local seed workspace owner token: ${workspaceOwnerToken}`
+  console.log(`本地种子工作区负责人令牌：${workspaceOwnerToken}`
     + "  (种子里的普通成员账号 owner@local，用来验非管理员视角；登录方式与上面相同)");
 }
 if (!orgAdminTokenEnv) {
-  console.log(`local seed organization admin login: org.admin@local / ${orgAdminToken}`
+  console.log(`本地种子组织管理员登录：org.admin@local / ${orgAdminToken}`
     + "  (默认组织管理员；管理组织子账户、项目目录、两级授权和共享 Agent)");
 }
 // 这两个数原先是写死的字面量（"46 个工具、约 69k token"），而 46 是【过滤前】的条数 ——
@@ -206,7 +206,7 @@ function mcpServiceToolFacts() {
 }
 
 if (!process.env.AIMAC_MCP_SERVICE_TOKEN) {
-  console.log(`central MCP service token: ${mcpServiceToken}`
+  console.log(`中央 MCP 服务令牌：${mcpServiceToken}`
     + `  (远程 MCP 客户端连 ${mcpEndpoint}/mcp 时作 Bearer 令牌；`
     + `默认放行 ${mcpServiceToolFacts().count} 个工具，一次 tools/list 约 ${mcpServiceToolFacts().approxKiloTokens}k token，`
     + "用 AIMAC_MCP_SERVICE_ALLOWED_TOOLS 可再收窄)");
