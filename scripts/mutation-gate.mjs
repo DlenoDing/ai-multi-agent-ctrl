@@ -4648,7 +4648,7 @@ const MUTATIONS = [
     name: "agentctl self-check 要逐项列出查了什么与准入档位",
     file: "apps/agent-runtime/runtime.mjs",
     gate: "agent",
-    from: "    for (const item of checks) process.stdout.write(`  ${item.status === \"ok\" ? \"✓\" : \"✗\"} ${item.checkId}${item.detail ? ` — ${item.detail}` : \"\"}\\n`);",
+    from: "    for (const item of checks) process.stdout.write(`  ${item.status === \"ok\" ? \"✓\" : \"✗\"} ${CHECK_LABELS[item.checkId] ? `${CHECK_LABELS[item.checkId]}（${item.checkId}）` : item.checkId}${item.detail ? ` — ${item.detail}` : \"\"}\\n`);",
     to: "",
     // 逐项清单一拿掉，流程里更早的「坏执行器命令」那块先红（它也读这份清单）：先红的那句才是判据。
     expect: "self-check 没点名找不到哪个执行器命令"
@@ -14934,6 +14934,14 @@ const MUTATIONS = [
     from: "    process.stdout.write(`本机登记：节点 ${config.nodeName || \"-\"}（${config.nodeId || \"-\"}），控制面 ${config.serverUrl || \"-\"}，`\n      + `角色 ${(config.allowedRoles || []).join(\"、\") || \"-\"}，工作目录 ${config.workDir || workDir}\\n`);\n",
     to: "",
     expect: "没先说本机登记"
+  },
+  {
+    name: "self-check 的检查项必须有中文名",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentSelfCheckLinesAreHuman",
+    from: "${CHECK_LABELS[item.checkId] ? `${CHECK_LABELS[item.checkId]}（${item.checkId}）` : item.checkId}",
+    to: "${item.checkId}",
+    expect: "没有中文名"
   }
 ];
 

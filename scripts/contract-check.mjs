@@ -758,6 +758,7 @@ run(verifyOldSeedSampleNamesMigrate);
 run(verifyAgentRuntimeStdoutIsChinese);
 runAsync(verifyArchivedProjectNodesStayVisible);
 run(verifyAgentStatusSaysLocalRegistrationWhenOffline);
+run(verifyAgentSelfCheckLinesAreHuman);
 
 for (const toolName of ["ui-console-mcp.runtime_health_get", "room-mcp.room_send", "agent-control-mcp.dispatch_status"]) {
   validateSchema(createMcpGrant(toolName, {tokenDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}), mcpGrantSchema, `McpGrant:${toolName}`, errors);
@@ -1652,6 +1653,25 @@ function verifyAgentStatusSaysLocalRegistrationWhenOffline(output) {
     if (!/本机登记：节点 探针节点（node_probe），控制面 http:\/\/127\.0\.0\.1:1，角色 \*/u.test(stdout)) output.push(`agentctl status 连不上控制面时没先说本机登记（这台节点是谁、连的是哪）：${(stdout + stderr).slice(0, 200)}`);
     if (!/连不上控制面/u.test(stderr + stdout)) output.push(`agentctl status 连不上时没说「连不上控制面」：${(stdout + stderr).slice(0, 200)}`);
     if (!output.length) console.log("agentctl status：连不上控制面时先报本机登记，再报连不上，退出码非 0 —— 核过");
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+}
+
+// agentctl self-check 逐项那几行原先是「✗ gateway — http://… — fetch failed」「✗ remote_mcp — undefined — Invalid URL」：
+// 检查项要有中文名（括号保留 id），连不上要按同一套口径翻，地址缺失要说是配置残缺。
+function verifyAgentSelfCheckLinesAreHuman(output) {
+  const dir = mkdtempSync(join(tmpdir(), "aimac-agent-selfcheck-"));
+  try {
+    writeFileSync(join(dir, "agent-config.json"), JSON.stringify({schemaVersion: "aimac-agent-local-config/v1", runtimeVersion: "0.3.0",
+      serverUrl: "http://127.0.0.1:1", nodeId: "node_probe", nodeToken: "aimac_node_probe_token_not_real", nodeName: "探针节点", allowedRoles: ["*"], workDir: dir,
+      gateway: {selfCheckUrl: "http://127.0.0.1:1/api/agent/v1/self-check", heartbeatUrl: "http://127.0.0.1:1/api/agent/v1/heartbeat"}}));
+    const run = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "self-check", "--work-dir", dir], {encoding: "utf8", timeout: 60000, env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true"}});
+    const said = String(run.stdout || "") + String(run.stderr || "");
+    if (!/✗ 控制面网关（gateway） — http:\/\/127\.0\.0\.1:1 — 连不上控制面：地址或端口没人监听/u.test(said)) output.push(`self-check 的网关那行没翻成人话：${said.match(/.{0,10}gateway.{0,90}/u)?.[0] || said.slice(0, 200)}`);
+    if (!/✗ 远程 MCP（remote_mcp） — 未配置远程 MCP 地址/u.test(said)) output.push(`self-check 的远程 MCP 那行在地址缺失时没说是配置残缺：${said.match(/.{0,10}remote_mcp.{0,90}/u)?.[0] || said.slice(0, 200)}`);
+    if (!/✓ 运行时（runtime）/u.test(said)) output.push(`self-check 的检查项没有中文名：${said.slice(0, 200)}`);
+    if (!output.length) console.log("agentctl self-check：逐项有中文名、连不上按口径翻、地址缺失说配置残缺 —— 核过");
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }

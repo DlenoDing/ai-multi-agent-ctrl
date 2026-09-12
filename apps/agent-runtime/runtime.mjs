@@ -228,12 +228,16 @@ async function selfCheck(config, {verbose = false} = {}) {
     gatewayOk = health.status === "ok";
     if (!gatewayOk) gatewayDetail = `${config.serverUrl} — 健康检查返回 status=${health.status || "（缺失）"}`;
   } catch (error) {
-    gatewayDetail = `${config.serverUrl} — ${String(error?.message || error).slice(0, 200)}`;
+    // Node 的 fetch 只说 "fetch failed"，真正原因在 cause 里：按同一套口径翻成「连不上控制面：地址或端口没人监听」。
+    gatewayDetail = `${config.serverUrl} — 连不上控制面：${shortCause(error)}`;
   }
   checks.push(check("gateway", gatewayOk, gatewayDetail));
   let mcpOk = false;
-  let mcpDetail = config.gateway.mcpUrl;
-  try {
+  let mcpDetail = config.gateway?.mcpUrl;
+  if (!mcpDetail) {
+    // 没有远程 MCP 地址（配置残缺）时原先去 fetch(undefined)，打出来的是「undefined — Invalid URL」。
+    mcpDetail = "未配置远程 MCP 地址（重新跑一次安装命令可重建 agent-config.json）";
+  } else try {
     const initialized = await jsonRequest(config.gateway.mcpUrl, {
       method: "POST",
       token: config.nodeToken,
@@ -250,7 +254,9 @@ async function selfCheck(config, {verbose = false} = {}) {
   // 单独跑 agentctl self-check 的人是来排障的：一句 ok/failed 不够，要逐项说查了什么、结果如何、准入到哪一档。
   // bootstrap 里顺带跑的那次保持一行（它的输出有安装脚本/e2e 在解析）。
   if (verbose) {
-    for (const item of checks) process.stdout.write(`  ${item.status === "ok" ? "✓" : "✗"} ${item.checkId}${item.detail ? ` — ${item.detail}` : ""}\n`);
+    // 检查项给人看要有中文名，括号里保留 id（控制台「缺少检查／失败检查」和脚本 grep 认的是 id）。
+    const CHECK_LABELS = {runtime: "运行时", filesystem: "文件系统", git: "Git", model_executor: "模型执行器", gateway: "控制面网关", remote_mcp: "远程 MCP", credential: "凭据", permission: "权限探针", integrity: "完整性"};
+    for (const item of checks) process.stdout.write(`  ${item.status === "ok" ? "✓" : "✗"} ${CHECK_LABELS[item.checkId] ? `${CHECK_LABELS[item.checkId]}（${item.checkId}）` : item.checkId}${item.detail ? ` — ${item.detail}` : ""}\n`);
   }
   let result;
   try {

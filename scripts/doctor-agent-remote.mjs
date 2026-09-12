@@ -334,7 +334,7 @@ try {
     }
     const bogusSelfCheck = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "self-check"], {cwd: root, encoding: "utf8", timeout: 60000, env: bogusEnv});
     const selfCheckSaid = String(bogusSelfCheck.stdout || "");
-    if (!/找不到执行器命令 \/nonexistent\/aimac-executor/u.test(selfCheckSaid) || !/✗ model_executor/u.test(selfCheckSaid)) {
+    if (!/找不到执行器命令 \/nonexistent\/aimac-executor/u.test(selfCheckSaid) || !/✗ 模型执行器（model_executor）/u.test(selfCheckSaid)) {
       throw new Error(`self-check 没点名找不到哪个执行器命令：${selfCheckSaid.slice(0, 300).replace(/\n/g, " | ")}`);
     }
     const bogusRun = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "run", "--once"], {cwd: root, encoding: "utf8", timeout: 60000, env: {...bogusEnv, AIMAC_AGENT_REQUEST_TIMEOUT_MS: "5000"}});
@@ -431,7 +431,7 @@ try {
       {cwd: root, encoding: "utf8", timeout: 60000, env: {...process.env, AIMAC_AGENT_WORK_DIR: agentWorkDir, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true"}});
     const said = String(selfCheck.stdout || "");
     if (selfCheck.status !== 0 || !/agent 自检：通过（准入 (full|limited|read_only)）/u.test(said)
-      || !["runtime", "filesystem", "git", "gateway", "remote_mcp"].every((item) => new RegExp(`^  [✓✗] ${item}\\b`, "mu").test(said))) {
+      || !["runtime", "filesystem", "git", "gateway", "remote_mcp"].every((item) => new RegExp(`^  [✓✗] [^（\\n]*（${item}）`, "mu").test(said))) {
       throw new Error(`agentctl self-check 没有逐项列出查了什么与准入档位（exit ${selfCheck.status}）：${said.slice(0, 300).replace(/\n/g, " | ")}`);
     }
   }
