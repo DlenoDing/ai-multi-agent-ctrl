@@ -362,3 +362,5 @@ Claude Opus/high 的第一次全仓只读审查运行约 11 分钟未返回结�
   MCP 建项目时按 URL 末段补出 id（repo_<名>）；core 的「登记改地址就跟上」那支不再把已有 repositoryId 抹成 undefined；
   baseRef 规范放开空串（代码里本就是「项目自己的仓库留空、校验按 finalCommit^ 比对」的设计，规范却要求非空）。
   mcp doctor 失败时改为附上被点名记录的摘要（运行目录跑完即清，原先没法查是谁写的）。变异 +1（挂 mcp 门）；mcp doctor／契约 289／doctor／specs 全绿。
+- 2026-09-12 装机脚本（install-agent.sh）十来句报错是英文（--server is required / Node.js 20 or newer is required / checksum verification failed…）→ 改中文，
+  机器标记（AGENT_JOINED 等）与校验和那句里规范校验盯的英文短语保留；变异 +1（挂 specs 门）；agent 远程 e2e 全绿。

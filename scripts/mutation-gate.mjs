@@ -14958,6 +14958,14 @@ const MUTATIONS = [
     from: "    .map((item, index) => ({...item, id: item.id || repositoryIdFromUrl(item.url, index), defaultBranch: item.defaultBranch || \"main\"}));",
     to: "    .map((item) => ({...item, defaultBranch: item.defaultBranch || \"main\"}));",
     expect: "repositoryId is required"
+  },
+  {
+    name: "装机脚本的报错不得退回英文（加入令牌文件不存在那句要说出路径）",
+    file: "scripts/install-agent.sh",
+    gate: "specs",
+    from: "printf '%s\\n' \"--join-token-file 指定的文件不存在：$JOIN_TOKEN_FILE\" >&2",
+    to: "printf '%s\\n' \"--join-token-file does not exist\" >&2",
+    expect: "要说出具体路径"
   }
 ];
 

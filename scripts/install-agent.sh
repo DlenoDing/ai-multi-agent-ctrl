@@ -66,35 +66,35 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$SERVER_URL" ]; then
-  printf '%s\n' "--server is required" >&2
+  printf '%s\n' "缺 --server <控制面地址>" >&2
   exit 2
 fi
 if [ -n "$JOIN_TOKEN_FILE" ]; then
   if [ ! -f "$JOIN_TOKEN_FILE" ]; then
     # 把找的是哪个路径说出来：人多半是从控制台复制的整条命令，路径错在哪儿只有脚本知道。
-    printf '%s\n' "--join-token-file does not exist: $JOIN_TOKEN_FILE" >&2
+    printf '%s\n' "--join-token-file 指定的文件不存在：$JOIN_TOKEN_FILE" >&2
     exit 2
   fi
   JOIN_TOKEN=$(sed -n '1p' "$JOIN_TOKEN_FILE")
 fi
 if [ -z "$JOIN_TOKEN" ]; then
-  printf '%s\n' "--join-token-file, --join-token or AIMAC_AGENT_JOIN_TOKEN is required" >&2
+  printf '%s\n' "缺加入令牌：给 --join-token-file、--join-token 或 AIMAC_AGENT_JOIN_TOKEN 其中之一" >&2
   exit 2
 fi
 if ! command -v node >/dev/null 2>&1; then
-  printf '%s\n' "Node.js 20 or newer is required on the Agent host" >&2
+  printf '%s\n' "Agent 主机需要 Node.js 20 或更新版本（没找到 node）" >&2
   printf '%s\n' "  · 装好 Node 20+ 后重跑这条安装命令即可；本机什么都没有被安装" >&2
   exit 1
 fi
 NODE_MAJOR=$(node -p 'Number(process.versions.node.split(".")[0])')
 if [ "$NODE_MAJOR" -lt 20 ]; then
-  printf '%s\n' "Node.js 20 or newer is required; found $(node --version)" >&2
+  printf '%s\n' "需要 Node.js 20 或更新版本，本机是 $(node --version)" >&2
   printf '%s\n' "  · 升级 Node 后重跑这条安装命令即可；本机什么都没有被安装" >&2
   exit 1
 fi
 for required_command in curl git; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
-    printf '%s\n' "$required_command is required on the Agent host" >&2
+    printf '%s\n' "Agent 主机缺少 $required_command" >&2
     printf '%s\n' "  · 装好它之后重跑这条安装命令即可；本机什么都没有被安装" >&2
     exit 1
   fi
@@ -106,12 +106,12 @@ case "$SERVER_URL" in
   http://127.0.0.1*|http://localhost*|http://\[::1\]*) ;;
   http://*)
     if [ "${AIMAC_AGENT_ALLOW_INSECURE_HTTP:-false}" != "true" ]; then
-      printf '%s\n' "Public Agent Gateway requires HTTPS. Set AIMAC_AGENT_ALLOW_INSECURE_HTTP=true only for isolated verification." >&2
+      printf '%s\n' "公网 Agent 网关必须走 HTTPS；只有隔离环境做验证时才可设 AIMAC_AGENT_ALLOW_INSECURE_HTTP=true" >&2
       printf '%s\n' "  · 明文 http 会把加入令牌暴露在链路上；换 https 地址后重跑；本机什么都没有被安装" >&2
       exit 1
     fi
     ;;
-  *) printf '%s\n' "invalid server URL: $SERVER_URL" >&2; exit 2 ;;
+  *) printf '%s\n' "控制面地址不合法：$SERVER_URL" >&2; exit 2 ;;
 esac
 
 BIN_DIR="$WORK_DIR/bin"
@@ -147,7 +147,7 @@ if command -v sha256sum >/dev/null 2>&1; then
 elif command -v shasum >/dev/null 2>&1; then
   ACTUAL_HASH=$(shasum -a 256 "$TMP_DIR/agent-runtime.mjs" | awk '{print $1}')
 else
-  printf '%s\n' "sha256sum or shasum is required（校验下载下来的运行时要用它）" >&2
+  printf '%s\n' "缺 sha256sum 或 shasum（校验下载下来的运行时要用它）" >&2
   printf '%s\n' "  · 装好其中一个后重跑；本机什么都没有被安装" >&2
   exit 1
 fi
@@ -155,10 +155,10 @@ if [ -z "$EXPECTED_HASH" ] || [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
   # 校验和对不上是这套安装流程里最要紧的一次失败：它要么是下载损坏，要么是产物在路上被换过。
   # 原先只说 "verification failed"——不说是哪个文件、期望什么、实到什么，也不说接下来该怎么办。
   # 人在这一刻最需要的恰恰是这三件事，而它们都是脚本此刻就知道的。
-  printf '%s\n' "Agent Runtime checksum verification failed" >&2
-  printf '%s\n' "  file:     $SERVER_URL/agent-runtime.mjs" >&2
-  printf '%s\n' "  expected: ${EXPECTED_HASH:-（校验和文件是空的，服务端没给出期望值）}" >&2
-  printf '%s\n' "  actual:   $ACTUAL_HASH" >&2
+  printf '%s\n' "Agent 运行时校验和不一致（checksum verification failed）" >&2
+  printf '%s\n' "  文件：$SERVER_URL/agent-runtime.mjs" >&2
+  printf '%s\n' "  期望：${EXPECTED_HASH:-（校验和文件是空的，服务端没给出期望值）}" >&2
+  printf '%s\n' "  实到：$ACTUAL_HASH" >&2
   printf '%s\n' "  这份产物没有被安装。重试一次；仍不一致就【不要运行它】——" >&2
   printf '%s\n' "  说明下载损坏，或者控制面到本机之间有人替换了产物。" >&2
   exit 1

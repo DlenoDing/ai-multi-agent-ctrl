@@ -162,7 +162,7 @@ else
   errors << "校验和失败时必须明说不要运行这份产物" unless checksum_block.include?("不要运行它")
 end
 # 路径类失败要说出找的是哪个路径：人多半是整条命令复制过来的，只有脚本知道路径错在哪儿。
-errors << "--join-token-file 不存在时要说出具体路径" unless installer_source.include?('"--join-token-file does not exist: $JOIN_TOKEN_FILE"')
+errors << "--join-token-file 不存在时要说出具体路径" unless installer_source.include?('"--join-token-file 指定的文件不存在：$JOIN_TOKEN_FILE"')
 
 unless File.executable?(File.join(ROOT, "scripts/install-agent.sh"))
   errors << "scripts/install-agent.sh must be executable"
