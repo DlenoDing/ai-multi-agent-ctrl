@@ -757,6 +757,7 @@ run(verifySeedAccountNamesAreChinese);
 run(verifyOldSeedSampleNamesMigrate);
 run(verifyAgentRuntimeStdoutIsChinese);
 runAsync(verifyArchivedProjectNodesStayVisible);
+run(verifyAgentStatusSaysLocalRegistrationWhenOffline);
 
 for (const toolName of ["ui-console-mcp.runtime_health_get", "room-mcp.room_send", "agent-control-mcp.dispatch_status"]) {
   validateSchema(createMcpGrant(toolName, {tokenDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}), mcpGrantSchema, `McpGrant:${toolName}`, errors);
@@ -1636,6 +1637,24 @@ async function verifyArchivedProjectNodesStayVisible(output) {
   const orgNode = {nodeId: "n2", organizationId: "org_x", registrationScope: "organization"};
   if (scope.runtimeNodeArchivedProjectIds(state, orgNode).length) output.push("组织共享节点不该报「所属项目已归档」");
   if (!output.length) console.log("归档项目名下的节点：可见（列表里在）、不可调度、能报出已归档项目 —— 核过");
+}
+
+// agentctl status 在连不上控制面时原先只有一句「读取节点状态失败」：这台节点是谁、连的是哪，人得去翻 agent-config.json。
+// 本机登记先说出来，再报连不上（退出码照旧非 0）。
+function verifyAgentStatusSaysLocalRegistrationWhenOffline(output) {
+  const dir = mkdtempSync(join(tmpdir(), "aimac-agent-status-"));
+  try {
+    writeFileSync(join(dir, "agent-config.json"), JSON.stringify({schemaVersion: "aimac-agent-local-config/v1", runtimeVersion: "0.3.0",
+      serverUrl: "http://127.0.0.1:1", nodeId: "node_probe", nodeToken: "aimac_node_probe_token_not_real", nodeName: "探针节点", allowedRoles: ["*"], workDir: dir}));
+    const run = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "status", "--work-dir", dir], {encoding: "utf8", timeout: 30000, env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true"}});
+    const stdout = String(run.stdout || ""); const stderr = String(run.stderr || "");
+    if (run.status === 0) output.push("控制面连不上时 agentctl status 却退出码 0 —— 脚本化巡检会把它当成正常");
+    if (!/本机登记：节点 探针节点（node_probe），控制面 http:\/\/127\.0\.0\.1:1，角色 \*/u.test(stdout)) output.push(`agentctl status 连不上控制面时没先说本机登记（这台节点是谁、连的是哪）：${(stdout + stderr).slice(0, 200)}`);
+    if (!/连不上控制面/u.test(stderr + stdout)) output.push(`agentctl status 连不上时没说「连不上控制面」：${(stdout + stderr).slice(0, 200)}`);
+    if (!output.length) console.log("agentctl status：连不上控制面时先报本机登记，再报连不上，退出码非 0 —— 核过");
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
 }
 
 function verifyAgentRuntimeStdoutIsChinese(output) {

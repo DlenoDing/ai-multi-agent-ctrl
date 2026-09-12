@@ -294,7 +294,15 @@ function describeClaimMiss(claimed) {
 }
 
 async function status(config) {
-  const result = await jsonRequest(`${config.serverUrl}/api/agent/v1/nodes/me`, {token: config.nodeToken});
+  let result;
+  try {
+    result = await jsonRequest(`${config.serverUrl}/api/agent/v1/nodes/me`, {token: config.nodeToken});
+  } catch (error) {
+    // 连不上控制面时，本机登记还是知道的：先把它说出来，人不用去翻 agent-config.json 才知道这台节点是谁、连的是哪。
+    process.stdout.write(`本机登记：节点 ${config.nodeName || "-"}（${config.nodeId || "-"}），控制面 ${config.serverUrl || "-"}，`
+      + `角色 ${(config.allowedRoles || []).join("、") || "-"}，工作目录 ${config.workDir || workDir}\n`);
+    throw error;
+  }
   // 先给人一句：节点是谁、状态、准入档位、最近心跳、角色；完整记录（机器读的）跟在后面。原先只有一大段 JSON。
   const node = result.node || {};
   const heartbeat = node.lastHeartbeatAt ? `${Math.max(0, Math.round((Date.now() - new Date(node.lastHeartbeatAt).getTime()) / 1000))} 秒前` : "还没有";

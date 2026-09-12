@@ -14926,6 +14926,14 @@ const MUTATIONS = [
     from: "    return {v: `${lane ? `<span>${esc(t(lane.roleId))} 通道</span>` : \"\"}<div class=\"small muted mono\">${esc(laneId)}</div>`, c: \"nowrap\"};",
     to: "    return {v: `<div class=\"small muted mono\">${esc(laneId)}</div>`, c: \"nowrap\"};",
     expect: "要写「评审员 通道」"
+  },
+  {
+    name: "agentctl status 连不上控制面时必须先报本机登记",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentStatusSaysLocalRegistrationWhenOffline",
+    from: "    process.stdout.write(`本机登记：节点 ${config.nodeName || \"-\"}（${config.nodeId || \"-\"}），控制面 ${config.serverUrl || \"-\"}，`\n      + `角色 ${(config.allowedRoles || []).join(\"、\") || \"-\"}，工作目录 ${config.workDir || workDir}\\n`);\n",
+    to: "",
+    expect: "没先说本机登记"
   }
 ];
 
