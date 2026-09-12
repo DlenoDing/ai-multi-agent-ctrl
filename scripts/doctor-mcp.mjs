@@ -2349,7 +2349,16 @@ try {
     const mcpSweep = sweepRecordsAgainstDeclaredSchemas(finalState, {
       specDir: join(root, "spec"), label: "MCP e2e 产出", minValidated: 50, maxUncovered: UNCOVERED_CEILINGS["MCP e2e 产出"]});
     if (mcpSweep.errors.length) {
-      throw new Error(`mcp doctor: e2e 真实产出的记录不符合它们自己声明的规范：\n- ${mcpSweep.errors.slice(0, 200).join("\n- ")}`);
+      // 只报「repositoryOutputs[6].repositoryId is required」没法查：运行目录跑完就清，人不知道那条是谁写的。
+      // 把被点名的记录摘要（id／工作项／状态／审计与决策引用／写入时间）跟在后面，从引用就能认出写入路径。
+      const excerpts = [...new Set(mcpSweep.errors.map((line) => line.match(/产出\.([A-Za-z]+)\[(\d+)\]/u)).filter(Boolean).map((hit) => `${hit[1]}[${hit[2]}]`))]
+        .slice(0, 8).map((key) => {
+          const [, collection, index] = key.match(/^([A-Za-z]+)\[(\d+)\]$/u);
+          const record = (finalState[collection] || [])[Number(index)] || {};
+          const pick = Object.fromEntries(Object.entries(record).filter(([field]) => /Id$|^status$|Ref$|At$|^workId$|^keys$/u.test(field)).slice(0, 10));
+          return `${key}: ${JSON.stringify({...pick, keys: Object.keys(record).join(",")}).slice(0, 400)}`;
+        });
+      throw new Error(`mcp doctor: e2e 真实产出的记录不符合它们自己声明的规范：\n- ${mcpSweep.errors.slice(0, 200).join("\n- ")}\n被点名的记录：\n  ${excerpts.join("\n  ")}`);
     }
     if (!(finalState.mcpCalls || []).length) throw new Error("MCP e2e 产出规范核对没造出想测的情形：状态里一条 mcpCalls 都没有 —— 扫描没压到 MCP 自己写的记录");
     console.log(`MCP e2e 产出规范核对 ok: ${mcpSweep.validated} 条记录符合各自声明的 schema（含 ${(finalState.mcpCalls || []).length} 条 mcpCalls）；${mcpSweep.uncoveredNote}`);

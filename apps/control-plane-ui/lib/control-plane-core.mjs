@@ -4735,7 +4735,8 @@ function ensureRepositoryTarget(state, project, taskGroup, workItem, request) {
     } else if (registered && existing.status !== "pushed" && existing.repositoryUrl !== registered.url) {
       // 人在项目设置里改了仓库地址：还没推过的目标要跟上，否则 agent 仍往旧地址推。
       existing.repositoryUrl = registered.url;
-      existing.repositoryId = registered.id;
+      // 登记里没 id 的仓库（老数据）：别把已有的 repositoryId 抹成 undefined（规范要求非空）。
+      existing.repositoryId = registered.id || existing.repositoryId || "repo_registered_1";
       existing.branch = registered.defaultBranch || existing.branch || "main";
       existing.baseRef = "";
       existing.pathAllowlist = Array.isArray(registered.pathAllowlist) && registered.pathAllowlist.length ? registered.pathAllowlist : ["**"];
@@ -4754,7 +4755,7 @@ function ensureRepositoryTarget(state, project, taskGroup, workItem, request) {
     projectId: project?.id || "prj_control_plane",
     taskGroupId: taskGroup?.id || "tg_runtime_management",
     workItemId: workItem?.id || "work_unknown",
-    repositoryId: repository.id,
+    repositoryId: repository.id || "repo_registered_1",
     repositoryUrl: remoteUrl,
     remote,
     branch: repository.defaultBranch || "main",

@@ -1845,9 +1845,17 @@ function createProject(state, args) {
   const quota = organizationQuotaCheck(state, organizationId, "projects");
   if (!quota.allowed) return {ok: false, error: quota.error, quota};
   // 字符串写法（只给地址）与对象写法（带凭证引用名等）都收，统一成读者认识的对象形状。
+  // 只给 URL 的登记也要有 id：产出目标、契约写入范围（resourceKey）都按 repositoryId 引用它，
+  // 没 id 的登记会让那两处落成 undefined（规范要求非空）—— mcp doctor 的外域项目正是这么红的。
+  const repositoryIdFromUrl = (url, index) => {
+    const tail = String(url || "").replace(/[/:]+$/u, "").split(/[/:]/u).pop() || "";
+    const slug = tail.replace(/\.git$/u, "").replace(/[^A-Za-z0-9_-]+/gu, "-").replace(/^-+|-+$/gu, "");
+    return `repo_${slug || `registered_${index + 1}`}`;
+  };
   const normalizeRepositoryEntries = (value) => (Array.isArray(value) ? value : [])
     .map((item) => (typeof item === "string" ? {url: item} : item))
-    .filter((item) => item && typeof item === "object");
+    .filter((item) => item && typeof item === "object")
+    .map((item, index) => ({...item, id: item.id || repositoryIdFromUrl(item.url, index), defaultBranch: item.defaultBranch || "main"}));
   const project = {
     schemaVersion: "project/v1",
     id: projectId,

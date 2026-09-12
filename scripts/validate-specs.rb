@@ -737,7 +737,7 @@ errors << "MCP register script must allow env-controlled output dir" unless mcp_
 errors << "MCP register script must not use central service token as a client bearer default" if mcp_register_source.include?("AIMAC_MCP_SERVICE_TOKEN")
 errors << "npm scripts must not expose standalone MCP client registration" if package_json.dig("scripts", "mcp:register")
 errors << "MCP doctor must verify remote-only generated config" unless mcp_doctor_source.include?("mcp-server.json") && mcp_doctor_source.include?("entry.command") && mcp_doctor_source.include?("streamable-http")
-errors << "local MCP stdio server must be disabled by default" unless mcp_source.include?("Local MCP stdio startup is disabled") && mcp_doctor_source.include?("Agent-local MCP stdio server was not disabled")
+errors << "local MCP stdio server must be disabled by default" unless mcp_source.include?("本地 MCP 的 stdio 启动方式已停用") && mcp_doctor_source.include?("Agent-local MCP stdio server was not disabled")
 errors << "Agent installer must download and verify the server runtime" unless agent_installer_source.include?("agent-runtime.mjs.sha256") && agent_installer_source.include?("checksum verification failed")
 errors << "Agent installer must configure remote MCP clients by default and retain an explicit opt-out" unless agent_installer_source.include?("--no-configure-global-clients") && agent_installer_source.match?(/^CONFIGURE_GLOBAL_CLIENTS=true$/)
 errors << "Agent Gateway must implement one-time join, heartbeat, self-check and dispatch claim" unless %w[registerAgentNode heartbeatAgentNode selfCheckAgentNode claimNextDispatch].all? { |needle| agent_gateway_source.include?(needle) }

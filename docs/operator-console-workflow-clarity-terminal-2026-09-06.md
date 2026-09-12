@@ -358,3 +358,7 @@ Claude Opus/high 的第一次全仓只读审查运行约 11 分钟未返回结�
   契约门里拿最后一行当「已起来」标记的两处同步，变异 +1（挂在状态文件损坏那条上，端口那条对标记缺失有 20 秒兜底不报红）。
 - 2026-09-12 服务端与 MCP 侧剩下的三句英文日志（transition-engine 拒绝转移、MCP 工具崩溃、本地 stdio 已停用）改中文；契约门与 mcp doctor 里盯原话的两处同步。
   顺带修 mcp doctor 一条现成的红：1325146 把 system_upgrade_external_import 加进真人专属登记册时没给 doctor 入参 —— 补上（与正路那次同形）。
+- 2026-09-12 mcp doctor 另一条现成的红：只给 URL 登记的仓库没有 id，产出目标的 repositoryId 与契约写入范围的 resourceKey 都落成 undefined，e2e 产出压规范时红。
+  MCP 建项目时按 URL 末段补出 id（repo_<名>）；core 的「登记改地址就跟上」那支不再把已有 repositoryId 抹成 undefined；
+  baseRef 规范放开空串（代码里本就是「项目自己的仓库留空、校验按 finalCommit^ 比对」的设计，规范却要求非空）。
+  mcp doctor 失败时改为附上被点名记录的摘要（运行目录跑完即清，原先没法查是谁写的）。变异 +1（挂 mcp 门）；mcp doctor／契约 289／doctor／specs 全绿。

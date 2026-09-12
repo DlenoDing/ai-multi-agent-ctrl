@@ -74,7 +74,7 @@
     },
     "baseRef": {
       "type": "string",
-      "minLength": 1
+      "description": "基准提交。自管项目取服务端工作区 HEAD；项目自己的仓库服务端没有检出，留空串：校验按 finalCommit^ 比对，agent 侧按 origin/<branch> 起分支。"
     },
     "pathAllowlist": {
       "type": "array",

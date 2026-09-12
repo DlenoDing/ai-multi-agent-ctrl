@@ -14950,6 +14950,14 @@ const MUTATIONS = [
     from: "  console.log(`Agent 安装脚本：${publicEndpoint()}/install-agent.sh`);",
     to: "  console.log(`Agent installer: ${publicEndpoint()}/install-agent.sh`);",
     expect: "实际没起来"
+  },
+  {
+    name: "只给 URL 的仓库登记必须补出 id（产出目标与契约写入范围都按它引用）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "    .map((item, index) => ({...item, id: item.id || repositoryIdFromUrl(item.url, index), defaultBranch: item.defaultBranch || \"main\"}));",
+    to: "    .map((item) => ({...item, defaultBranch: item.defaultBranch || \"main\"}));",
+    expect: "repositoryId is required"
   }
 ];
 
