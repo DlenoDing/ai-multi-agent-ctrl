@@ -3550,7 +3550,7 @@ export async function handleMcpJsonRpc(message, context = {}) {
       if (!error.status) {
         const tool = message.params?.name || "unknown";
         try {
-          console.error(`[mcp] tool crashed: ${tool}: ${String(error?.message || error).slice(0, 300)}`
+          console.error(`[mcp] 工具执行崩溃：${tool}：${String(error?.message || error).slice(0, 300)}`
             + (process.env.AIMAC_SERVER_ERROR_DEBUG === "1" ? `\n${error?.stack || ""}` : ""));
         } catch { /* 记录错误的代码不能再把服务打死 */ }
         return {jsonrpc: "2.0", id: message.id, result: toolResult({ok: false, tool, error: "server_error",
@@ -3622,7 +3622,7 @@ export function startStdioServer() {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.env.AIMAC_MCP_INTERNAL_STDIO !== "true") {
-    process.stderr.write("Local MCP stdio startup is disabled. Start the control-plane service and connect to its /mcp endpoint.\n");
+    process.stderr.write("本地 MCP 的 stdio 启动方式已停用：请启动控制面服务，改连它的 /mcp 入口（内部用途可设 AIMAC_MCP_INTERNAL_STDIO=true）。\n");
     process.exit(2);
   }
   startStdioServer();

@@ -356,3 +356,5 @@ Claude Opus/high 的第一次全仓只读审查运行约 11 分钟未返回结�
 - 2026-09-12 agentctl self-check 逐项那几行原先是「✗ gateway — http://… — fetch failed」「✗ remote_mcp — undefined — Invalid URL」→ 检查项有中文名（括号保留 id）、连不上按同一套口径翻成「连不上控制面：地址或端口没人监听」、地址缺失说是配置残缺。契约门 +1（真起子进程）、变异 +1，agent 远程 e2e 的一条旧断言同步。
 - 2026-09-12 控制面启动横幅三行是英文（AI Multi-Agent Ctrl console / Centralized MCP endpoint / Agent installer）→「管理台地址／MCP 统一入口／Agent 安装脚本」；
   契约门里拿最后一行当「已起来」标记的两处同步，变异 +1（挂在状态文件损坏那条上，端口那条对标记缺失有 20 秒兜底不报红）。
+- 2026-09-12 服务端与 MCP 侧剩下的三句英文日志（transition-engine 拒绝转移、MCP 工具崩溃、本地 stdio 已停用）改中文；契约门与 mcp doctor 里盯原话的两处同步。
+  顺带修 mcp doctor 一条现成的红：1325146 把 system_upgrade_external_import 加进真人专属登记册时没给 doctor 入参 —— 补上（与正路那次同形）。

@@ -5174,7 +5174,7 @@ function recordTransition(state, machine, objectId, from, to, actor, requiresVal
     // 带上对象 id：没有它，这行警告看起来像"生产代码正在做一件状态机不允许的事"，
     // 而它在本仓库最常见的来源其实是契约门自己造的探针对象。我为此白查过一轮 ——
     // 一行永远滚过去、又无从判断严重性的警告，和没有这行没什么区别。
-    console.warn(`[transition-engine] rejected ${machine} ${objectId} ${from}->${to} by ${actor}: `
+    console.warn(`[transition-engine] 拒绝状态转移：${machine} ${objectId} ${from}->${to}（发起方 ${actor}）：`
       + `${rejection.failureCode} (warn mode; transition still recorded)`);
     // 记进 transitionEvidence 还不够：那个集合上限 240，而【每一次合法迁移也往里挤】——
     // 一次真实 e2e 跑完就有 145 条，非法迁移这条几分钟就被日常流量顶出去了。

@@ -1869,7 +1869,9 @@ try {
         idempotencyKey: "mcp-human-only-7"},
       "identity-mcp.grant_revoke": {grantId: "grant_probe", idempotencyKey: "mcp-human-only-8"},
       // 2026-08-27 补：停一个账号会连带撤销它全部的会话与授权 —— 与发/撤授权同族。
-      "identity-mcp.account_suspend": {accountId: "acct_agent_runtime", idempotencyKey: "mcp-human-only-9"}
+      "identity-mcp.account_suspend": {accountId: "acct_agent_runtime", idempotencyKey: "mcp-human-only-9"},
+      // 外部升级包导入是真人专属（1325146 加进登记册时漏了这里的入参，这道门因此红了）：入参与上面正路那次同形。
+      "governance-mcp.system_upgrade_external_import": {packageRef: "upgrade-package:mcp-human-only", evidenceRefs: ["evidence:mcp-human-only"], idempotencyKey: "mcp-human-only-10"}
     };
     const HUMAN_ONLY_TOOLS = Object.entries(HUMAN_ONLY_MCP_TOOL_REFUSALS)
       .map(([name, code]) => ({name, code, args: HUMAN_ONLY_ARGS[name]}));
@@ -2298,7 +2300,7 @@ try {
   if (mcpStates.errors.length) throw new Error(`mcp doctor: ${mcpStates.errors.join("\n- ")}`);
 
   const localStart = spawnSync(process.execPath, ["apps/mcp-server/server.mjs"], {cwd: root, encoding: "utf8"});
-  if (localStart.status === 0 || !localStart.stderr.includes("Local MCP stdio startup is disabled")) throw new Error("Agent-local MCP stdio server was not disabled");
+  if (localStart.status === 0 || !localStart.stderr.includes("本地 MCP 的 stdio 启动方式已停用")) throw new Error("Agent-local MCP stdio server was not disabled");
   // 【别的活进程持锁：要等满、要报 lock_timeout、健康提示要指向锁而不是磁盘】。用 doctor 自己的
   // pid 造锁 —— 它活着，产品不许破它（那正是这把锁要保护的并发场景）。这 10 秒里控制面会冻住
   //（Atomics.wait），所以放在所有别的断言之后，别让它和别的请求抢。

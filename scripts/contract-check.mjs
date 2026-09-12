@@ -11420,7 +11420,7 @@ function verifyMcpToolCrashIsNotDisguisedAsRefusal(output) {
       + "error 字段里是一句 JS 异常原文 —— agent 会当成自己的请求有误去改参数重发");
     return;
   }
-  if (!/console\.error\([^)]*tool crashed/u.test(crashBranch[0])) {
+  if (!/console\.error\([^)]*工具执行崩溃/u.test(crashBranch[0])) {
     output.push("MCP 工具崩溃没有打到 stderr —— 运维无从知道有 bug");
   }
   if (!/retryable: false/u.test(crashBranch[0]) || !/服务端自己的问题/u.test(crashBranch[0])) {
@@ -12087,8 +12087,8 @@ async function verifyDocumentedApiPathsExist(output) {
   child.stdout.on("data", (chunk) => { banner += String(chunk); });
   const served = new Map();
   try {
-    await new Promise((resolve) => { const tick = setInterval(() => { if (/console: http/u.test(banner)) { clearInterval(tick); resolve(); } }, 50); setTimeout(() => { clearInterval(tick); resolve(); }, 20000); });
-    const port = banner.match(/console: http:\/\/127\.0\.0\.1:(\d+)/u)?.[1];
+    await new Promise((resolve) => { const tick = setInterval(() => { if (/管理台地址：http/u.test(banner)) { clearInterval(tick); resolve(); } }, 50); setTimeout(() => { clearInterval(tick); resolve(); }, 20000); });
+    const port = banner.match(/管理台地址：http:\/\/127\.0\.0\.1:(\d+)/u)?.[1];
     if (!port) { output.push("为核对文档接口起的服务端没打出端口 —— 本条在空转"); return; }
     for (const path of new Set([...documented.keys(), ...Object.keys(NOT_YET_IMPLEMENTED)])) {
       const probePath = path.replace(/\/(?::[A-Za-z]+|\{[^}]+\}|<[^>]+>)/gu, "/x_probe");
